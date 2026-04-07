@@ -8190,8 +8190,9 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = ""):
             json.dumps(historique, indent=2, ensure_ascii=False),
             encoding="utf-8"
         )
+        print(f"  Historique sauvegardé : {_HISTORIQUE_PATH}  ({len(historique)} entrées)", flush=True)
     except Exception as e:
-        print(f"  Historique non sauvegardé : {e}")
+        print(f"  Historique non sauvegardé : {e}", flush=True)
 
 
 def _lire_historique() -> list:
@@ -8231,7 +8232,6 @@ def lancer_gui():
         _lg.propagate = False
 
     SCRIPT  = Path(__file__).resolve()
-    CONFIG  = DOSSIER_TRAVAIL / "lidar2map_config.json"
 
     # ── Table zooms pour la sélection de couche ───────────────────────────────
     _ZOOMS_GUI = {
@@ -8274,27 +8274,7 @@ def lancer_gui():
 
         # ── Données initiales ─────────────────────────────────────────────
         def get_init_data(self):
-            cfg = {}
-            if CONFIG.exists():
-                try:
-                    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
-                    print(f"  Config chargée : {CONFIG.name} ({len(cfg)} clés, ville={cfg.get('ville','?')})")
-                except Exception as e:
-                    print(f"  Config illisible : {e}")
-            else:
-                # Créer un config vide par défaut
-                cfg = {"type":"lidar","mode":"ville","nom":"","ville":"",
-                       "rayon":10,"workers_l":8,"zoom_min_l":13,"zoom_max_l":17,
-                       "apikey": APIKEY_DEFAUT}
-                try:
-                    CONFIG.parent.mkdir(parents=True, exist_ok=True)
-                    CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False),
-                                      encoding="utf-8")
-                    print(f"  Config créée : {CONFIG}")
-                except Exception as e:
-                    print(f"  Config non créée : {e}")
             return {
-                "config":     cfg,
                 "couches":    _COUCHES_DATA,
                 "wfs":        _WFS_DATA,
                 "osm_tags":   _OSM_TAGS_DATA,
@@ -8302,10 +8282,9 @@ def lancer_gui():
                 "historique": _lire_historique(),
             }
 
-        # ── Config ───────────────────────────────────────────────────────
-        def save_config(self, cfg):
-            try: CONFIG.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-            except Exception: pass
+        def get_historique(self):
+            """Retourne la liste historique — appelable depuis JS à tout moment."""
+            return _lire_historique()
 
         # ── Dialogs fichiers ─────────────────────────────────────────────
         def _get_window(self):
@@ -8515,7 +8494,6 @@ def lancer_gui():
         def launch(self, cfg):
             if self._process and self._process.poll() is None:
                 return {"error": "Un processus est déjà en cours."}
-            self.save_config(cfg)
             cmd = self._build_cmd(cfg)
             self._done = False
             self._retcode = None
@@ -8577,6 +8555,7 @@ def lancer_gui():
                     self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
                                          "tag": "ok" if self._retcode == 0 else "err"})
                     if self._retcode == 0:
+                        print(f"  GUI : run terminé code 0 — sauvegarde historique...", flush=True)
                         _duree = int(time.time() - getattr(self, "_t_launch", time.time()))
                         _sauver_historique(
                             getattr(self, "_cfg_launch", {}),
@@ -8625,8 +8604,9 @@ def lancer_gui():
             except queue.Empty:
                 pass
             result_dir = getattr(self, '_result_dir', None) if (self._done and self._retcode == 0) else None
+            historique  = _lire_historique() if (self._done and self._retcode == 0) else None
             return {"items": items, "done": self._done, "code": self._retcode,
-                    "result_dir": result_dir}
+                    "result_dir": result_dir, "historique": historique}
 
     # ┌─────────────────────────────────────────────────────────────────────┐
     # │  HTML / CSS / JS  — éditer ici avec un éditeur supportant le HTML  │
@@ -8663,8 +8643,7 @@ header .ver{font-size:10px;color:var(--dim)}
 #main{padding:10px 24px}
 #form-inner{max-width:900px;width:100%;margin:0 auto;
   display:flex;flex-direction:column;gap:8px}
-#btn-bar{max-width:900px;margin:12px auto 24px auto;padding:0 0;
-  display:flex;gap:8px;align-items:center}
+#btn-bar{max-width:900px;margin:8px auto;padding:0;display:flex;gap:8px;align-items:center}
 /* Form elements */
 .section{background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
   overflow:hidden}
@@ -8766,6 +8745,13 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
   <span class="ver">Prospection LiDAR archéologique</span>
 </header>
 <div id="main">
+<div id="btn-bar">
+ <button class="btn btn-run" id="btn-run" onclick="lancer()">▶ Lancer</button>
+ <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled>■ Arrêter</button>
+ <button class="btn" id="btn-hist" onclick="toggleHistorique()"
+         style="background:var(--bg3);border:1px solid var(--bd);margin-left:12px">⏱ Historique</button>
+ <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
+</div>
 <div id="form-inner">
 
   <!-- Projet -->
@@ -9170,14 +9156,6 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
 
  </div><!-- /form-inner -->
 </div><!-- /main -->
-
-<div id="btn-bar">
- <button class="btn btn-run" id="btn-run" onclick="lancer()">▶ Lancer</button>
- <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled>■ Arrêter</button>
- <button class="btn" id="btn-hist" onclick="toggleHistorique()"
-         style="background:var(--bg3);border:1px solid var(--bd);margin-left:12px">⏱ Historique</button>
- <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
-</div>
 <!-- ═══ PANNEAU HISTORIQUE ═══ -->
 <div id="panneau-hist" class="hidden"
      style="position:fixed;top:0;right:0;width:420px;height:100%;background:var(--bg2);
@@ -9228,12 +9206,14 @@ async function initAsync() {
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);
     document.getElementById('f-apikey').value = d.apikey_def || '';
-    if (d.config && Object.keys(d.config).length) {
-      loadConfig(d.config);
-    }
-    if (d.historique) {
-      buildHistorique(d.historique);
-    }
+    // Charger l'historique via appel dédié
+    pywebview.api.get_historique().then(hist => {
+      if (hist && hist.length) {
+        buildHistorique(hist);
+        const last = hist[0];
+        if (last && last.params) loadConfig(last.params);
+      }
+    }).catch(e => console.error('get_historique init error:', e));
   } catch(e) {
     console.error('initAsync error:', e);
     document.getElementById('footer-status').textContent = 'Erreur init: ' + e;
@@ -9714,8 +9694,16 @@ async function lancer() {
       clearInterval(polling); polling = null;
       document.getElementById('footer-status').textContent =
         r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
-      if (r.code === 0 && r.result_dir) {
-        pywebview.api.open_folder(r.result_dir);
+      if (r.code === 0) {
+        // Recharger l'historique via appel dédié (plus fiable que poll_log)
+        pywebview.api.get_historique().then(hist => {
+          if (hist && hist.length) {
+            buildHistorique(hist);
+            const last = hist[0];
+            if (last && last.params) loadConfig(last.params);
+          }
+        }).catch(e => console.error('get_historique error:', e));
+        if (r.result_dir) pywebview.api.open_folder(r.result_dir);
       }
       btnReset();
     }
