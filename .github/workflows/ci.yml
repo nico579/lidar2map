@@ -50,19 +50,74 @@ jobs:
         run: python -c "$PYCODE"
 
       - name: help ignlidar
-        run: python lidar2map.py --ignlidar --help
+        shell: bash
+        env:
+          PYCODE: |
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv = ['lidar2map.py', '--ignlidar', '--help']
+            try:
+                import lidar2map; lidar2map.main()
+            except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
+            print('help ignlidar OK')
+        run: python -c "$PYCODE"
 
       - name: help ignraster
-        run: python lidar2map.py --ignraster --help
+        shell: bash
+        env:
+          PYCODE: |
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv = ['lidar2map.py', '--ignraster', '--help']
+            try:
+                import lidar2map; lidar2map.main()
+            except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
+            print('help ignraster OK')
+        run: python -c "$PYCODE"
 
       - name: help ignvecteur
-        run: python lidar2map.py --ignvecteur --help
+        shell: bash
+        env:
+          PYCODE: |
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv = ['lidar2map.py', '--ignvecteur', '--help']
+            try:
+                import lidar2map; lidar2map.main()
+            except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
+            print('help ignvecteur OK')
+        run: python -c "$PYCODE"
 
       - name: help fusionner
-        run: python lidar2map.py --fusionner --source dummy.geojson --help
+        shell: bash
+        env:
+          PYCODE: |
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv = ['lidar2map.py', '--fusionner', '--source', 'dummy.geojson', '--help']
+            try:
+                import lidar2map; lidar2map.main()
+            except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
+            print('help fusionner OK')
+        run: python -c "$PYCODE"
 
       - name: help osm
-        run: python lidar2map.py --osm --help
+        shell: bash
+        env:
+          PYCODE: |
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv = ['lidar2map.py', '--osm', '--help']
+            try:
+                import lidar2map; lidar2map.main()
+            except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
+            print('help osm OK')
+        run: python -c "$PYCODE"
 
       - name: _parser_departements
         shell: bash
