@@ -38,11 +38,14 @@ jobs:
         env:
           PYCODE: |
             import sys
+            _out, _err = sys.stdout, sys.stderr
             sys.argv = ['lidar2map.py', '--help']
             try:
                 import lidar2map
             except SystemExit:
                 pass
+            finally:
+                sys.stdout, sys.stderr = _out, _err
             print('Import OK')
         run: python -c "$PYCODE"
 
@@ -65,9 +68,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             assert lidar2map._parser_departements('83') == ['83']
             assert lidar2map._parser_departements('1-3') == ['01','02','03']
             assert lidar2map._parser_departements('30,35,75') == ['30','35','75']
@@ -81,9 +87,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             eps = lidar2map._epsilon_depuis_surface_km2
             assert eps(100)   == 3  / 111000
             assert eps(500)   == 8  / 111000
@@ -97,9 +106,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             assert lidar2map._hms(5)    == '5s'
             assert lidar2map._hms(90)   == '1m30s'
             assert lidar2map._hms(3661) == '1h01m01s'
@@ -110,9 +122,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             assert lidar2map.normaliser_nom('Gareoult') == 'gareoult'
             assert lidar2map.normaliser_nom('Ile-de-France') == 'ile-de-france'
             assert lidar2map.normaliser_nom('Saint Jean') == 'saint_jean'
@@ -123,9 +138,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             codes = [f'{n:02d}' for n in range(1,20)] + [f'{n:02d}' for n in range(21,96)]
             codes += ['2A','2B','971','972','973','974','976']
             print(f'Codes a couvrir : {len(codes)}')
@@ -136,9 +154,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             x, y = lidar2map.wgs84_to_lamb93_approx(6.0423, 43.3156)
             assert 950000 < x < 970000, f'X={x}'
             assert 6250000 < y < 6270000, f'Y={y}'
@@ -149,9 +170,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             lon, lat = lidar2map.lamb93_to_wgs84_approx(960000, 6258000)
             assert 5.9 < lon < 6.2, f'lon={lon}'
             assert 43.2 < lat < 43.5, f'lat={lat}'
@@ -164,9 +188,11 @@ jobs:
           PYCODE: |
             import sys, tempfile
             from pathlib import Path
+            _out, _err = sys.stdout, sys.stderr
             sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             tmp = Path(tempfile.mkdtemp())
             lidar2map._HISTORIQUE_PATH = tmp / 'historique.json'
             lidar2map._sauver_historique({'type':'osm','nom':'test','mode':'dep','dep':'83'}, 120, '/tmp/out')
@@ -182,9 +208,12 @@ jobs:
         shell: bash
         env:
           PYCODE: |
-            import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+            import sys
+            _out, _err = sys.stdout, sys.stderr
+            sys.argv=['lidar2map.py','--ignlidar','--help']
             try: import lidar2map
             except SystemExit: pass
+            finally: sys.stdout, sys.stderr = _out, _err
             import platform
             assert lidar2map.WINDOWS == (platform.system() == 'Windows'), f'WINDOWS={lidar2map.WINDOWS}'
             assert lidar2map.LINUX   == (platform.system() == 'Linux'),   f'LINUX={lidar2map.LINUX}'
