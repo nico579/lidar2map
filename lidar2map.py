@@ -5667,6 +5667,8 @@ Exemples :
     m, s  = divmod(total, 60)
     print(f"\n  Terminé ! Dossier : {dossier_osm if (_osm_seul and 'dossier_osm' in dir()) else dossier_ville}")
     print(f"  Durée totale : {m}m{s:02d}s")
+    dossier_res = str(dossier_osm if (_osm_seul and "dossier_osm" in dir()) else dossier_ville)
+    _historique_depuis_argv(total, dossier_res)
 
 
 
@@ -6688,6 +6690,7 @@ Exemples :
     elapsed = int(time.time() - t_debut)
     print(f"\n  Terminé en {_hms(elapsed)}")
     print(f"  Fichiers dans : {dossier}")
+    _historique_depuis_argv(elapsed, str(dossier))
 
 
 # ============================================================
@@ -7782,6 +7785,7 @@ def main_wfs():
     print(f"\n  Terminé en {_hms(elapsed)} — {len(sorties)}/{len(couches_resolues)} couches")
     for s in sorties:
         print(f"  → {s}")
+    _historique_depuis_argv(elapsed, str(dossier))
 
 
 
@@ -8145,10 +8149,113 @@ Exemples :
             except Exception as _e:
                 print(f"  ERREUR génération .map : {_e}")
         print(f"\n  Terminé en {_hms(int(time.time()-t_debut))}")
+    _historique_depuis_argv(int(time.time()-t_debut))
 
 
 
 
+
+
+def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
+    """
+    Construit un cfg complet depuis sys.argv et sauvegarde dans l'historique.
+    Les clés correspondent exactement à celles attendues par loadConfig() JS.
+    """
+    argv = sys.argv[1:]
+
+    def _arg(flag, default=""):
+        try: return argv[argv.index(flag) + 1]
+        except (ValueError, IndexError): return default
+
+    def _arg_int(flag, default=0):
+        v = _arg(flag, "")
+        try: return int(v) if v else default
+        except ValueError: return default
+
+    def _arg_float(flag, default=0.0):
+        v = _arg(flag, "")
+        try: return float(v) if v else default
+        except ValueError: return default
+
+    def _flag(flag): return flag in argv
+
+    def _args_after(flag):
+        """Retourne tous les args après flag jusqu'au prochain -- ou fin."""
+        try:
+            i = argv.index(flag) + 1
+        except ValueError:
+            return []
+        result = []
+        while i < len(argv) and not argv[i].startswith("--"):
+            result.append(argv[i])
+            i += 1
+        return result
+
+    t = ("lidar"   if "--ignlidar"   in argv else
+         "scan"    if "--ignraster"  in argv else
+         "vecteur" if "--ignvecteur" in argv else
+         "osm"     if "--osm"        in argv else
+         "fusion"  if "--fusionner"  in argv else
+         "decoupe" if "--decouper"   in argv else "lidar")
+
+    mode = ("dep"  if "--zone-departement" in argv else
+            "gps"  if "--zone-gps"         in argv else
+            "bbox" if "--zone-bbox"         in argv else "ville")
+
+    fmts = _args_after("--formats-fichier")
+    ombs = _args_after("--ombrages")
+
+    cfg = {
+        # Zone
+        "type":    t,
+        "mode":    mode,
+        "nom":     _arg("--zone-nom"),
+        "dossier": _arg("--dossier"),
+        "dep":     _arg("--zone-departement"),
+        "ville":   _arg("--zone-ville"),
+        "gps":     _arg("--zone-gps"),
+        "bbox":    _arg("--zone-bbox"),
+        "rayon":   _arg_float("--zone-rayon", 10.0),
+        # LiDAR
+        "tel":           _flag("--telechargement"),
+        "comp":          _flag("--telechargement-compresser"),
+        "ecraser_tel":   _flag("--telechargement-ecraser"),
+        "workers_l":     _arg_int("--workers", 8),
+        "dossier_dalles":_arg("--dossier-dalles"),
+        "no_omb":        bool(ombs) or _flag("--ombrages"),
+        "ombrages":      ombs,
+        "elevation":     _arg_int("--ombrages-elevation", 25),
+        "ecraser_omb":   _flag("--ombrages-ecraser"),
+        "mbtiles_l":     "mbtiles" in fmts,
+        "rmap":          "rmap"    in fmts,
+        "sqlitedb":      "sqlitedb" in fmts,
+        "zoom_min_l":    _arg_int("--zoom-min", 8),
+        "zoom_max_l":    _arg_int("--zoom-max", 18),
+        "qualite_l":     _arg_int("--qualite-image", 85),
+        "ecraser_mbt":   _flag("--tuiles-ecraser"),
+        "cols_decoupe":  _arg_int("--cols-decoupe", 1),
+        "rows_decoupe":  _arg_int("--rows-decoupe", 1),
+        "rayon_decoupe_l": _arg_float("--rayon-decoupe", 0.0),
+        "nettoyage":     _flag("--nettoyage"),
+        # IGN Raster
+        "couche":        _arg("--couche"),
+        "zoom_min_s":    _arg_int("--zoom-min", 12),
+        "zoom_max_s":    _arg_int("--zoom-max", 16),
+        "mbtiles_s":     "mbtiles" in fmts,
+        "rmap_s":        "rmap"    in fmts,
+        "sqlitedb_s":    "sqlitedb" in fmts,
+        "qualite_s":     _arg_int("--qualite-image", 85),
+        "workers_s":     _arg_int("--workers", 8),
+        # OSM
+        "osm_tags_sel":  _args_after("--couche") if t == "osm" else [],
+        "workers_osm":   _arg_int("--workers", 4),
+        # IGN Vectoriel
+        "wfs_couches_sel": _args_after("--couche") if t == "vecteur" else [],
+        "workers_v":     _arg_int("--workers", 4),
+        # Argv complet pour debug
+        "argv":    " ".join(argv),
+    }
+    _sauver_historique(cfg, duree_s, dossier_resultat)
 # ============================================================
 # HISTORIQUE DES TRAITEMENTS
 # ============================================================
@@ -8555,13 +8662,8 @@ def lancer_gui():
                     self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
                                          "tag": "ok" if self._retcode == 0 else "err"})
                     if self._retcode == 0:
-                        print(f"  GUI : run terminé code 0 — sauvegarde historique...", flush=True)
-                        _duree = int(time.time() - getattr(self, "_t_launch", time.time()))
-                        _sauver_historique(
-                            getattr(self, "_cfg_launch", {}),
-                            _duree,
-                            getattr(self, "_result_dir", ""),
-                        )
+                        # Marquer la durée — sauvegarde historique faite dans poll_log
+                        self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
                 except Exception as e:
                     self._log_queue.put({"line": f"\nErreur : {e}\n", "tag": "err"})
                     self._retcode = -1
@@ -8603,10 +8705,25 @@ def lancer_gui():
                     items.append(self._log_queue.get_nowait())
             except queue.Empty:
                 pass
-            result_dir = getattr(self, '_result_dir', None) if (self._done and self._retcode == 0) else None
-            historique  = _lire_historique() if (self._done and self._retcode == 0) else None
+
+            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
+            if self._done and self._retcode == 0 and not getattr(self, "_hist_saved", False):
+                self._hist_saved = True
+                try:
+                    _duree = getattr(self, "_duree_run", 0)
+                    _sauver_historique(
+                        getattr(self, "_cfg_launch", {}),
+                        _duree,
+                        getattr(self, "_result_dir", ""),
+                    )
+                    items.append({"line": f"  Historique sauvegardé : {_HISTORIQUE_PATH}\n",
+                                  "tag": "ok"})
+                except Exception as _he:
+                    items.append({"line": f"  ERREUR historique : {_he}\n", "tag": "err"})
+
+            result_dir = getattr(self, "_result_dir", None) if (self._done and self._retcode == 0) else None
             return {"items": items, "done": self._done, "code": self._retcode,
-                    "result_dir": result_dir, "historique": historique}
+                    "result_dir": result_dir}
 
     # ┌─────────────────────────────────────────────────────────────────────┐
     # │  HTML / CSS / JS  — éditer ici avec un éditeur supportant le HTML  │
@@ -8899,15 +9016,15 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-mbtiles-l"> 3 — Calculer les tuiles</label>
+     <label><input type="checkbox" id="f-mbtiles-l" checked> 3 — Calculer les tuiles</label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-mbt">  Écraser le fichier résultat</label>
     </div>
     <div class="section-body hidden" id="body-mbt">
      <div class="row">
       <label>Zoom :</label>
-      <input type="number" id="f-zoom-min-l" value="13" min="8" max="20" class="inp-short">
+      <input type="number" id="f-zoom-min-l" value="8" min="8" max="20" class="inp-short">
       <span style="color:var(--dim)">–</span>
-      <input type="number" id="f-zoom-max-l" value="17" min="8" max="20" class="inp-short">
+      <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
       <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
        <input type="radio" name="fmt-l" id="fl-auto" value="auto" checked><label for="fl-auto">Auto</label>
@@ -9393,8 +9510,8 @@ function getConfig() {
     mbtiles_l:     g('f-mbtiles-l')?.checked && g('f-mbtiles')?.checked,
     rmap:          g('f-mbtiles-l')?.checked && g('f-rmap')?.checked,
     sqlitedb:      g('f-mbtiles-l')?.checked && g('f-sqlitedb')?.checked,
-    zoom_min_l:    parseInt(g('f-zoom-min-l')?.value) || 13,
-    zoom_max_l:    parseInt(g('f-zoom-max-l')?.value) || 17,
+    zoom_min_l:    parseInt(g('f-zoom-min-l')?.value) || 8,
+    zoom_max_l:    parseInt(g('f-zoom-max-l')?.value) || 18,
     fmt_l:         document.querySelector('input[name=fmt-l]:checked')?.value || 'auto',
     qualite_l:     parseInt(g('f-qualite-l')?.value) || 85,
     ecraser_mbt:   g('f-ecraser-mbt')?.checked,
@@ -9498,6 +9615,9 @@ function loadConfig(cfg) {
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
+  // Forcer le toggle du body-mbt après restauration
+  { const _cb = g('f-mbtiles-l'); const _bd = g('body-mbt');
+    if (_cb && _bd) _bd.classList.toggle('hidden', !_cb.checked); }
   s('f-mbtiles',        cfg.mbtiles_l !== undefined ? cfg.mbtiles_l : (cfg.mbtiles !== undefined ? cfg.mbtiles : false));
   s('f-rmap',           cfg.rmap);
   s('f-sqlitedb',       cfg.sqlitedb);
