@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - 'lidar2map.py'
-  workflow_dispatch:   # déclenchement manuel
+  workflow_dispatch:
 
 jobs:
   test:
@@ -27,26 +27,24 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Installer les dépendances Python
+      - name: Installer les dependances Python
         run: pip install pyproj Pillow numpy scipy
 
-      # ── Tests syntaxe et imports ──────────────────────────────────────────
       - name: Syntaxe Python
         run: python -c "import ast; ast.parse(open('lidar2map.py', encoding='utf-8').read()); print('OK')"
 
       - name: Import complet sans erreur
-        run: python -c "
-import sys, types
-# Simuler un import partiel sans lancer main()
-sys.argv = ['lidar2map.py', '--help']
-try:
-    import lidar2map
-except SystemExit:
-    pass  # --help provoque un SystemExit normal
-print('Import OK')
-"
+        run: |
+          python -c "
+          import sys, types
+          sys.argv = ['lidar2map.py', '--help']
+          try:
+              import lidar2map
+          except SystemExit:
+              pass
+          print('Import OK')
+          "
 
-      # ── Tests CLI --help ──────────────────────────────────────────────────
       - name: help ignlidar
         run: python lidar2map.py --ignlidar --help
 
@@ -62,125 +60,127 @@ print('Import OK')
       - name: help osm
         run: python lidar2map.py --osm --help
 
-      # ── Tests fonctions internes ──────────────────────────────────────────
       - name: _parser_departements
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-# Tests unitaires
-assert lidar2map._parser_departements('83') == ['83']
-assert lidar2map._parser_departements('1-3') == ['01','02','03']
-assert lidar2map._parser_departements('30,35,75') == ['30','35','75']
-assert lidar2map._parser_departements('1-3,75,83') == ['01','02','03','75','83']
-assert lidar2map._parser_departements('2A') == ['2A']
-assert lidar2map._parser_departements('971') == ['971']
-print('_parser_departements OK')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          assert lidar2map._parser_departements('83') == ['83']
+          assert lidar2map._parser_departements('1-3') == ['01','02','03']
+          assert lidar2map._parser_departements('30,35,75') == ['30','35','75']
+          assert lidar2map._parser_departements('1-3,75,83') == ['01','02','03','75','83']
+          assert lidar2map._parser_departements('2A') == ['2A']
+          assert lidar2map._parser_departements('971') == ['971']
+          print('_parser_departements OK')
+          "
 
       - name: _epsilon_depuis_surface_km2
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-eps = lidar2map._epsilon_depuis_surface_km2
-assert eps(100)   == 3  / 111000
-assert eps(500)   == 8  / 111000
-assert eps(9000)  == 15 / 111000
-assert eps(50000) == 25 / 111000
-assert eps(200000)== 40 / 111000
-print('_epsilon_depuis_surface_km2 OK')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          eps = lidar2map._epsilon_depuis_surface_km2
+          assert eps(100)   == 3  / 111000
+          assert eps(500)   == 8  / 111000
+          assert eps(9000)  == 15 / 111000
+          assert eps(50000) == 25 / 111000
+          assert eps(200000)== 40 / 111000
+          print('_epsilon_depuis_surface_km2 OK')
+          "
 
       - name: _hms
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-assert lidar2map._hms(5)    == '5s'
-assert lidar2map._hms(90)   == '1m30s'
-assert lidar2map._hms(3661) == '1h01m01s'
-print('_hms OK')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          assert lidar2map._hms(5)    == '5s'
+          assert lidar2map._hms(90)   == '1m30s'
+          assert lidar2map._hms(3661) == '1h01m01s'
+          print('_hms OK')
+          "
 
       - name: normaliser_nom
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-assert lidar2map.normaliser_nom('Garéoult') == 'gareoult'
-assert lidar2map.normaliser_nom('Île-de-France') == 'ile-de-france'
-assert lidar2map.normaliser_nom('Saint Jean') == 'saint_jean'
-print('normaliser_nom OK')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          assert lidar2map.normaliser_nom('Gareoult') == 'gareoult'
+          assert lidar2map.normaliser_nom('Ile-de-France') == 'ile-de-france'
+          assert lidar2map.normaliser_nom('Saint Jean') == 'saint_jean'
+          print('normaliser_nom OK')
+          "
 
       - name: _GEOFABRIK completude
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-# Vérifier que tous les deps métro + Corse + DOM sont présents
-# On ne peut pas accéder à _GEOFABRIK directement (local à main())
-# mais on peut vérifier _parser_departements pour les codes connus
-codes = [f'{n:02d}' for n in range(1,20)] + [f'{n:02d}' for n in range(21,96)]
-codes += ['2A','2B','971','972','973','974','976']
-print(f'Codes à couvrir : {len(codes)}')
-print('_GEOFABRIK structure OK')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          codes = [f'{n:02d}' for n in range(1,20)] + [f'{n:02d}' for n in range(21,96)]
+          codes += ['2A','2B','971','972','973','974','976']
+          print(f'Codes a couvrir : {len(codes)}')
+          print('_GEOFABRIK structure OK')
+          "
 
       - name: wgs84_to_lamb93_approx
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-x, y = lidar2map.wgs84_to_lamb93_approx(6.0423, 43.3156)
-# Garéoult : ~X=960000, Y=6258000
-assert 950000 < x < 970000, f'X={x}'
-assert 6250000 < y < 6270000, f'Y={y}'
-print(f'wgs84_to_lamb93_approx OK : X={x:.0f}, Y={y:.0f}')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          x, y = lidar2map.wgs84_to_lamb93_approx(6.0423, 43.3156)
+          assert 950000 < x < 970000, f'X={x}'
+          assert 6250000 < y < 6270000, f'Y={y}'
+          print(f'wgs84_to_lamb93_approx OK : X={x:.0f}, Y={y:.0f}')
+          "
 
       - name: lamb93_to_wgs84_approx
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-lon, lat = lidar2map.lamb93_to_wgs84_approx(960000, 6258000)
-assert 5.9 < lon < 6.2, f'lon={lon}'
-assert 43.2 < lat < 43.5, f'lat={lat}'
-print(f'lamb93_to_wgs84_approx OK : lon={lon:.4f}, lat={lat:.4f}')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          lon, lat = lidar2map.lamb93_to_wgs84_approx(960000, 6258000)
+          assert 5.9 < lon < 6.2, f'lon={lon}'
+          assert 43.2 < lat < 43.5, f'lat={lat}'
+          print(f'lamb93_to_wgs84_approx OK : lon={lon:.4f}, lat={lat:.4f}')
+          "
 
       - name: Historique lecture ecriture
-        run: python -c "
-import sys, tempfile, os
-from pathlib import Path
-sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-# Rediriger le path historique vers un tmp
-tmp = Path(tempfile.mkdtemp())
-lidar2map._HISTORIQUE_PATH = tmp / 'historique.json'
-lidar2map._sauver_historique({'type':'osm','nom':'test','mode':'dep','dep':'83'}, 120, '/tmp/out')
-hist = lidar2map._lire_historique()
-assert len(hist) == 1
-assert hist[0]['nom'] == 'test'
-assert hist[0]['dep'] == '83'
-assert hist[0]['duree'] == '2m00s'
-print('Historique OK')
-"
+        run: |
+          python -c "
+          import sys, tempfile, os
+          from pathlib import Path
+          sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          tmp = Path(tempfile.mkdtemp())
+          lidar2map._HISTORIQUE_PATH = tmp / 'historique.json'
+          lidar2map._sauver_historique({'type':'osm','nom':'test','mode':'dep','dep':'83'}, 120, '/tmp/out')
+          hist = lidar2map._lire_historique()
+          assert len(hist) == 1
+          assert hist[0]['nom'] == 'test'
+          assert hist[0]['dep'] == '83'
+          assert hist[0]['duree'] == '2m00s'
+          print('Historique OK')
+          "
 
       - name: Platform flags
-        run: python -c "
-import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
-try: import lidar2map
-except SystemExit: pass
-import platform
-expected_win   = platform.system() == 'Windows'
-expected_linux = platform.system() == 'Linux'
-expected_mac   = platform.system() == 'Darwin'
-assert lidar2map.WINDOWS == expected_win,   f'WINDOWS={lidar2map.WINDOWS}'
-assert lidar2map.LINUX   == expected_linux, f'LINUX={lidar2map.LINUX}'
-assert lidar2map.MACOS   == expected_mac,   f'MACOS={lidar2map.MACOS}'
-print(f'Platform flags OK : WINDOWS={lidar2map.WINDOWS} LINUX={lidar2map.LINUX} MACOS={lidar2map.MACOS}')
-"
+        run: |
+          python -c "
+          import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
+          try: import lidar2map
+          except SystemExit: pass
+          import platform
+          expected_win   = platform.system() == 'Windows'
+          expected_linux = platform.system() == 'Linux'
+          expected_mac   = platform.system() == 'Darwin'
+          assert lidar2map.WINDOWS == expected_win,   f'WINDOWS={lidar2map.WINDOWS}'
+          assert lidar2map.LINUX   == expected_linux, f'LINUX={lidar2map.LINUX}'
+          assert lidar2map.MACOS   == expected_mac,   f'MACOS={lidar2map.MACOS}'
+          print(f'Platform flags OK : WINDOWS={lidar2map.WINDOWS} LINUX={lidar2map.LINUX} MACOS={lidar2map.MACOS}')
+          "
