@@ -8391,9 +8391,9 @@ def lancer_gui():
                         cmd += ["--formats-image", cfg["fmt_l"]]
                     if cfg.get("qualite_l"): cmd += ["--qualite-image", str(cfg["qualite_l"])]
                     if cfg.get("ecraser_mbt"): cmd.append("--tuiles-ecraser")
-                    _cols = cfg.get("cols_decoupe", 0) or 0
-                    _rows = cfg.get("rows_decoupe", 0) or 0
-                    if _cols > 0 and _rows > 0:
+                    _cols = cfg.get("cols_decoupe", 1) or 1
+                    _rows = cfg.get("rows_decoupe", 1) or 1
+                    if _cols > 1 and _rows > 1:
                         cmd += ["--cols-decoupe", str(_cols),
                                 "--rows-decoupe", str(_rows)]
                     elif cfg.get("rayon_decoupe_l", 0) > 0:
@@ -9145,9 +9145,9 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
     <div class="section-body">
      <div class="row">
       <label>Grille :</label>
-      <input type="number" id="f-cols-decoupe" value="2" min="1" max="50" class="inp-short" title="Colonnes (Est-Ouest)">
+      <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" title="Colonnes (Est-Ouest)">
       <span class="hint" style="margin:0 4px">cols ×</span>
-      <input type="number" id="f-rows-decoupe" value="2" min="1" max="50" class="inp-short" title="Lignes (Nord-Sud)">
+      <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" title="Lignes (Nord-Sud)">
       <span class="hint" style="margin:0 4px">lignes  ou rayon</span>
       <input type="number" id="f-rayon-decoupe-d" value="0" min="0" step="10" class="inp-short">
       <span class="hint" style="margin-left:4px">km</span>
@@ -9469,8 +9469,8 @@ function getConfig() {
     simplif_fusion:parseFloat(g('f-simplif-fusion')?.value) || null,
     // Découpage raster (à posteriori)
     source_decoupe:  g('f-source-decoupe')?.value.trim(),
-    cols_decoupe:    parseInt(g('f-cols-decoupe')?.value) || 2,
-    rows_decoupe:    parseInt(g('f-rows-decoupe')?.value) || 2,
+    cols_decoupe:    parseInt(g('f-cols-decoupe')?.value) || 1,
+    rows_decoupe:    parseInt(g('f-rows-decoupe')?.value) || 1,
     rayon_decoupe_d: parseFloat(g('f-rayon-decoupe-d')?.value) || 0,
     mbtiles_d:       g('f-mbtiles-d')?.checked,
     rmap_d:          g('f-rmap-d')?.checked,
