@@ -1,4 +1,4 @@
-# archeo_terrain.py — Prospection LiDAR archéologique & cartes offline pour Locus Map Pro
+# lidar2map.py — Prospection LiDAR archéologique & cartes offline pour Locus Map / OsmAnd
 # Copyright (C) 2025 Nicolas Martin
 #
 # Ce logiciel a été conçu, architecturé et dirigé par Nicolas Martin.
@@ -17,10 +17,11 @@
 # ou d'ADÉQUATION À UN USAGE PARTICULIER.
 #
 """
-archeo_terrain.py — Prospection archéologique LiDAR & cartes offline
+lidar2map.py — Prospection archéologique LiDAR & cartes offline
 ======================================================================
 
-Script unifié 5 modes pour Locus Map Pro / OsmAnd / TwoNav.
+Script unifié 5 modes pour Locus Map / OsmAnd / TwoNav.
+Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   CONCEPT ET WORKFLOW
@@ -161,15 +162,28 @@ Script unifié 5 modes pour Locus Map Pro / OsmAnd / TwoNav.
     etatmajor40 État-Major 1/40000 (jpeg, public, z6-15)
     etatmajor10 État-Major 1/10000 (jpeg, public, z8-16)
     pentes      Carte des pentes (png, public, z6-14)
-    ortho       Orthophotos (jpeg, public, z10-20)
+    ortho       Orthophotos actuelles (jpeg, public, z10-20)
+    ortho_1950  Orthos historiques 1950-1965 (png, z10-18)    ← archéo, exploration
+    ortho_1965  Orthos historiques 1965-1980 (png, z10-18)
+    ortho_1980  Orthos historiques 1980-1995 (png, z10-18)
+    ortho_irc   Orthos infrarouge couleur (jpeg, z10-19)      ← végétation, humidité sol
+    pleiades    Satellite Pléiades 50cm 2024 (jpeg, z10-19)
+    spot        Satellite SPOT 1.5m 2024 (jpeg, z8-16)
     cadastre    Parcellaire express (png, public, z12-19)
     ombrage     Ombrage IGN (png, public, z6-14)
+    edugeo_marseille_*  Orthos historiques Marseille-Martigues
+                  (1969, 1980, 1987, 1988, 2010 — emprise urbaine restreinte)
+    edugeo_toulon_1972  Ortho historique Toulon-Hyères 1972 (emprise urbaine)
     scan25      Scan 25 000 (jpeg, z8-18)    ⚠ PRO — clé API requise
     scan25tour  Scan 25 Tourisme (jpeg, z8-18) ⚠ PRO — clé API requise
     scan100     Scan 100 000 (jpeg, z6-14)   ⚠ PRO — clé API requise
     scanoaci    Scan OACI (jpeg, z6-15)       ⚠ PRO — clé API requise
 
   Note : scan25 au-delà de z16 → IGN bascule automatiquement vers planIGN.
+  Note : orthos historiques — couverture variable selon département/période.
+    Pour la PACA : 1950-1965 et 1965-1980 généralement disponibles, mais
+    tester d'abord sur petite zone. Si la couche est vide à votre date sur
+    votre département, le téléchargement renverra des tuiles transparentes.
   ⚠ Les couches Scan sont réservées aux professionnels (CGU IGN).
     Compte sur cartes.gouv.fr avec SIRET requis. Les particuliers doivent
     utiliser planign ou ortho, accessibles sans clé.
@@ -266,6 +280,20 @@ Script unifié 5 modes pour Locus Map Pro / OsmAnd / TwoNav.
   --version             Afficher la version
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  GUI (mode interactif sans arguments)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Lancer sans argument : python lidar2map.py
+  Onglets : LiDAR MNT, IGN Raster, IGN Vecteur, OSM Vecteur, Fusion, Découpage.
+
+  Fonctionnalités :
+    • Historique : 50 dernières commandes, rappel par clic, vidable
+    • Zoom interface : Ctrl+molette (Windows/macOS), Ctrl++/Ctrl+-
+    • Annulation : 1er Ctrl+C demande l'arrêt propre, 2nd force la sortie
+    • Logs en temps réel + erreurs en boîte de dialogue à la fin
+    • Validation des paramètres : zoom_min ≤ zoom_max, etc.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   DÉCOUPAGE À PRIORI (--ignlidar et --ignraster uniquement)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -291,13 +319,30 @@ Script unifié 5 modes pour Locus Map Pro / OsmAnd / TwoNav.
   DÉPENDANCES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Python 3.8+  Dépendances auto-installées : Pillow, rasterio,
-               numpy, scipy, mapbox-vector-tile
-  GDAL         Téléchargé automatiquement dans bin/gdal/ (Windows)
-               ou via OSGeo4W/système (Linux/macOS)
-  osmosis      Téléchargé automatiquement dans bin/osmosis/
-  JRE Temurin  Téléchargé automatiquement dans bin/jre/
-  mapwriter    Téléchargé automatiquement dans ~/.openstreetmap/osmosis/plugins/
+  Python 3.8+    Python 3.12+ recommandé pour les patches sécurité tarfile.
+                 Dépendances pip auto-installées au 1er lancement :
+                   Pillow, pyproj, numpy, scipy, ijson
+                 Optionnelles (auto-installées à la demande) :
+                   numba (accélération SVF ~15×), py7zr (BD TOPO bulk),
+                   mapbox-vector-tile (lecture vector tiles)
+
+  GDAL           Windows : binaires GISInternals téléchargés dans bin/gdal/
+                 macOS   : brew install gdal (avec consentement utilisateur)
+                 Linux   : sudo apt install gdal-bin (avec consentement)
+                 Autres  : message d'instructions selon distribution
+
+  osmosis        Téléchargé automatiquement dans bin/osmosis/ (toutes plateformes)
+  JRE Temurin 21 Téléchargé automatiquement dans bin/jre/
+                   Windows x64 : zip   |   macOS x64/arm64 : tar.gz
+                   Linux x64/arm64 : tar.gz
+  mapwriter      Téléchargé automatiquement (plugin osmosis)
+
+  GUI (mode sans arguments) :
+                 Windows : WebView2 natif (préinstallé Win10+)
+                 macOS   : Cocoa WebKit natif (préinstallé)
+                 Linux   : pywebview[qt] auto-installé via pip
+                          (paquets système requis pour Qt5/QtWebEngine —
+                           voir messages au démarrage si import échoue)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   EXEMPLES
@@ -358,6 +403,10 @@ Script unifié 5 modes pour Locus Map Pro / OsmAnd / TwoNav.
   python lidar2map.py --ignlidar --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
       --cols-decoupe 4 --rows-decoupe 4 --nettoyage --oui
+
+  # Linux/macOS : la commande est identique, sauf 'python' → 'python3'
+  python3 lidar2map.py --ignlidar --zone-ville Gareoult --zone-rayon 1 \
+      --ombrages svf --formats-fichier mbtiles --oui
 """
 import os
 import re
@@ -378,7 +427,7 @@ import urllib.request
 import urllib.parse
 import platform
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 # Vérification version Python
 if sys.version_info < (3, 8):
@@ -416,6 +465,7 @@ def _installer_deps():
         ("pyproj",    "pyproj"),
         ("numpy",     "numpy"),
         ("scipy",     "scipy"),
+        ("ijson",     "ijson"),     # streaming JSON (BD TOPO dept-scale, OSM XML)
     ]:
         try:
             __import__(mod)
@@ -645,10 +695,12 @@ class Manifeste:
 
     def _sauver(self):
         try:
-            self.path.write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8")
+            _ecrire_json_atomique(self.path, self._data, indent=2)
         except Exception:
+            # Le manifeste est best-effort : si le disque est saturé ou
+            # si les permissions changent, on n'interrompt pas le pipeline
+            # principal. Mais cela peut conduire à un manifeste obsolète —
+            # voir TODO Tier 4 pour amélioration future.
             pass
 
 
@@ -749,8 +801,214 @@ WMS_URL   = "https://data.geopf.fr/wms-r"
 WMS_LAYER = "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93"
 WFS_URL   = "https://data.geopf.fr/wfs/ows"
 
+# ── Geofabrik : département → région (URL slug) ──────────────────────────────
+# Table statique (135 entrées) construite une seule fois à l'import au lieu
+# d'être recréée à chaque appel d'`if args.osm:` dans main().
+_GEOFABRIK = {
+    # Auvergne-Rhône-Alpes
+    "01": "auvergne-rhone-alpes",  # Ain
+    "03": "auvergne-rhone-alpes",  # Allier
+    "07": "auvergne-rhone-alpes",  # Ardèche
+    "15": "auvergne-rhone-alpes",  # Cantal
+    "26": "auvergne-rhone-alpes",  # Drôme
+    "38": "auvergne-rhone-alpes",  # Isère
+    "42": "auvergne-rhone-alpes",  # Loire
+    "43": "auvergne-rhone-alpes",  # Haute-Loire
+    "63": "auvergne-rhone-alpes",  # Puy-de-Dôme
+    "69": "auvergne-rhone-alpes",  # Rhône
+    "73": "auvergne-rhone-alpes",  # Savoie
+    "74": "auvergne-rhone-alpes",  # Haute-Savoie
+    # Bourgogne-Franche-Comté
+    "21": "bourgogne-franche-comte",  # Côte-d'Or
+    "25": "bourgogne-franche-comte",  # Doubs
+    "39": "bourgogne-franche-comte",  # Jura
+    "58": "bourgogne-franche-comte",  # Nièvre
+    "70": "bourgogne-franche-comte",  # Haute-Saône
+    "71": "bourgogne-franche-comte",  # Saône-et-Loire
+    "89": "bourgogne-franche-comte",  # Yonne
+    "90": "bourgogne-franche-comte",  # Territoire de Belfort
+    # Bretagne
+    "22": "bretagne",  # Côtes-d'Armor
+    "29": "bretagne",  # Finistère
+    "35": "bretagne",  # Ille-et-Vilaine
+    "56": "bretagne",  # Morbihan
+    # Centre-Val de Loire
+    "18": "centre-val-de-loire",  # Cher
+    "28": "centre-val-de-loire",  # Eure-et-Loir
+    "36": "centre-val-de-loire",  # Indre
+    "37": "centre-val-de-loire",  # Indre-et-Loire
+    "41": "centre-val-de-loire",  # Loir-et-Cher
+    "45": "centre-val-de-loire",  # Loiret
+    # Corse
+    "2A": "corse",  # Corse-du-Sud
+    "2B": "corse",  # Haute-Corse
+    # Grand Est
+    "08": "grand-est",  # Ardennes
+    "10": "grand-est",  # Aube
+    "51": "grand-est",  # Marne
+    "52": "grand-est",  # Haute-Marne
+    "54": "grand-est",  # Meurthe-et-Moselle
+    "55": "grand-est",  # Meuse
+    "57": "grand-est",  # Moselle
+    "67": "grand-est",  # Bas-Rhin
+    "68": "grand-est",  # Haut-Rhin
+    "88": "grand-est",  # Vosges
+    # Hauts-de-France
+    "02": "hauts-de-france",  # Aisne
+    "59": "hauts-de-france",  # Nord
+    "60": "hauts-de-france",  # Oise
+    "62": "hauts-de-france",  # Pas-de-Calais
+    "80": "hauts-de-france",  # Somme
+    # Île-de-France
+    "75": "ile-de-france",  # Paris
+    "77": "ile-de-france",  # Seine-et-Marne
+    "78": "ile-de-france",  # Yvelines
+    "91": "ile-de-france",  # Essonne
+    "92": "ile-de-france",  # Hauts-de-Seine
+    "93": "ile-de-france",  # Seine-Saint-Denis
+    "94": "ile-de-france",  # Val-de-Marne
+    "95": "ile-de-france",  # Val-d'Oise
+    # Normandie
+    "14": "normandie",  # Calvados
+    "27": "normandie",  # Eure
+    "50": "normandie",  # Manche
+    "61": "normandie",  # Orne
+    "76": "normandie",  # Seine-Maritime
+    # Nouvelle-Aquitaine
+    "16": "nouvelle-aquitaine",  # Charente
+    "17": "nouvelle-aquitaine",  # Charente-Maritime
+    "19": "nouvelle-aquitaine",  # Corrèze
+    "23": "nouvelle-aquitaine",  # Creuse
+    "24": "nouvelle-aquitaine",  # Dordogne
+    "33": "nouvelle-aquitaine",  # Gironde
+    "40": "nouvelle-aquitaine",  # Landes
+    "47": "nouvelle-aquitaine",  # Lot-et-Garonne
+    "64": "nouvelle-aquitaine",  # Pyrénées-Atlantiques
+    "79": "nouvelle-aquitaine",  # Deux-Sèvres
+    "86": "nouvelle-aquitaine",  # Vienne
+    "87": "nouvelle-aquitaine",  # Haute-Vienne
+    # Occitanie
+    "09": "occitanie",  # Ariège
+    "11": "occitanie",  # Aude
+    "12": "occitanie",  # Aveyron
+    "30": "occitanie",  # Gard
+    "31": "occitanie",  # Haute-Garonne
+    "32": "occitanie",  # Gers
+    "34": "occitanie",  # Hérault
+    "46": "occitanie",  # Lot
+    "48": "occitanie",  # Lozère
+    "65": "occitanie",  # Hautes-Pyrénées
+    "66": "occitanie",  # Pyrénées-Orientales
+    "81": "occitanie",  # Tarn
+    "82": "occitanie",  # Tarn-et-Garonne
+    # Pays de la Loire
+    "44": "pays-de-la-loire",  # Loire-Atlantique
+    "49": "pays-de-la-loire",  # Maine-et-Loire
+    "53": "pays-de-la-loire",  # Mayenne
+    "72": "pays-de-la-loire",  # Sarthe
+    "85": "pays-de-la-loire",  # Vendée
+    # Provence-Alpes-Côte d'Azur
+    "04": "provence-alpes-cote-d-azur",  # Alpes-de-Haute-Provence
+    "05": "provence-alpes-cote-d-azur",  # Hautes-Alpes
+    "06": "provence-alpes-cote-d-azur",  # Alpes-Maritimes
+    "13": "provence-alpes-cote-d-azur",  # Bouches-du-Rhône
+    "83": "provence-alpes-cote-d-azur",  # Var
+    "84": "provence-alpes-cote-d-azur",  # Vaucluse
+    # DOM/TOM (extraits Geofabrik séparés)
+    "971": "guadeloupe",
+    "972": "martinique",
+    "973": "guyane",
+    "974": "reunion",
+    "976": "mayotte",
+}
+_GEOFABRIK_BASE_URL      = "https://download.geofabrik.de/europe/france"
+_GEOFABRIK_BASE_URL_ROOT = "https://download.geofabrik.de/europe"
+
 # ── Rendu archéologique ───────────────────────────────────────────────────────
 ELEVATION_SOLEIL = 25   # degrés — 25° révèle micro-reliefs ; 45° usage général
+
+
+def _valider_zooms(args, parser):
+    """Vérifie zoom_min ≤ zoom_max avant lancement du pipeline.
+
+    Sans ce check, l'utilisateur qui saisit `--zoom-min 18 --zoom-max 13`
+    voit un calculer_grille_xyz() vide et un MBTiles à 0 tuile sans message
+    d'erreur, ou pire (sur dept-scale) tourne longtemps sur des plages
+    invalides avant de produire un fichier vide. parser.error() affiche un
+    message argparse standard et sort en code 2.
+    """
+    zmin = getattr(args, "zoom_min", None)
+    zmax = getattr(args, "zoom_max", None)
+    if zmin is None or zmax is None:
+        return
+    if zmin > zmax:
+        parser.error(
+            f"--zoom-min ({zmin}) > --zoom-max ({zmax}). "
+            f"Inversez les valeurs ou retirez l'un des deux pour utiliser le défaut."
+        )
+    if zmin < 0 or zmax > 22:
+        parser.error(
+            f"Zoom hors plage : --zoom-min={zmin} --zoom-max={zmax} "
+            f"(valeurs valides : 0 à 22)."
+        )
+
+
+# Cache des Transformer pyproj : leur création prend ~10 ms (lecture proj.db,
+# parsing CRS, init de la chaîne d'opérations). Inutile de les recréer à chaque
+# appel — ils sont thread-safe et réutilisables.
+# 5 sites du code créaient le même Transformer 4326↔2154 ; gain marginal mais
+# code plus propre. On utilise functools.lru_cache pour mémoriser par paire
+# (src_crs, dst_crs).
+import functools as _functools
+
+@_functools.lru_cache(maxsize=8)
+def _get_transformer(src_crs, dst_crs, always_xy=True):
+    """Retourne un pyproj Transformer mémorisé pour la paire (src, dst).
+
+    Utilisation :
+        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        x_l93, y_l93 = t.transform(lon, lat)
+
+    Note : ne pas appeler avec always_xy=False et always_xy=True alternativement
+    sur la même paire — le cache verra ça comme deux entrées distinctes (correct).
+    """
+    from pyproj import Transformer
+    return Transformer.from_crs(src_crs, dst_crs, always_xy=always_xy)
+
+
+def _ecrire_json_atomique(path, data, indent=None):
+    """Écrit data en JSON dans path de façon atomique.
+
+    Pattern : sérialiser en RAM, écrire dans path.tmp, fsync, replace path.
+    Garantit que path est soit l'ancienne version, soit la nouvelle complète,
+    jamais une troncature. Critique pour les caches (manifeste, dep_bbox,
+    TMS) où une corruption silencieuse fait perdre l'état entre runs.
+
+    En cas d'OSError (disque plein, permission, etc.), le tmp est nettoyé
+    et l'exception remonte. Pas de swallow silencieux comme l'ancien
+    `except Exception: pass` du Manifeste.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        # Sérialisation en RAM d'abord (un seul write atomique sur le tmp)
+        if indent is not None:
+            payload = json.dumps(data, ensure_ascii=False, indent=indent)
+        else:
+            payload = json.dumps(data, ensure_ascii=False)
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            try:
+                os.fsync(f.fileno())  # garantit que le contenu est sur disque
+            except (OSError, AttributeError):
+                pass  # fsync indisponible (ramdisk, certains FS) — non critique
+        tmp.replace(path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
 
 # Événement d'arrêt propre — positionné par Ctrl+C en mode CLI.
 # Vérifié dans les boucles longues (pagination WFS, WMTS, etc.)
@@ -759,9 +1017,26 @@ _stop_event = threading.Event()
 
 import signal as _signal
 def _on_sigint(sig, frame):
+    """Soft cancel : 1er Ctrl+C demande l'arrêt, 2nd force la sortie.
+
+    Pattern standard Unix (git, rsync, etc.) : on laisse l'opération en cours
+    finir proprement (cleanup .tmp, fermeture sqlite, etc.) plutôt que de
+    couper sec. Si l'utilisateur insiste avec un 2nd Ctrl+C, on quitte direct.
+
+    Limites connues :
+    - Subprocess fils (osmosis, ogr2ogr) ne sont PAS tués — ils tournent
+      jusqu'au bout de leur opération courante (Java buffer flush, etc.)
+    - Kernel Numba (SVF, RRIM) est intuable pendant son exécution.
+      L'interruption est respectée APRÈS le kernel courant, entre directions
+      sur le fallback numpy uniquement.
+    """
+    if _stop_event.is_set():
+        # 2ème Ctrl+C → sortie immédiate (code 128+SIGINT par convention POSIX)
+        print("\n\nForçage — sortie immédiate.", flush=True)
+        sys.exit(130)
     _stop_event.set()
-    print("\n\nInterrompu.")
-    sys.exit(0)
+    print("\n\nInterruption demandée — finition de l'opération en cours.", flush=True)
+    print("  Pressez Ctrl+C à nouveau pour forcer la sortie.", flush=True)
 _signal.signal(_signal.SIGINT, _on_sigint)
 
 # ============================================================
@@ -852,8 +1127,7 @@ def geocoder_ville_l93(nom_ville):
     if lat is None:
         return None, None
     try:
-        from pyproj import Transformer
-        t = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+        t = _get_transformer("EPSG:4326", "EPSG:2154")
         x, y = t.transform(lon, lat)
     except ImportError:
         x, y = wgs84_to_lamb93_approx(lon, lat)
@@ -885,8 +1159,7 @@ def geocoder_departement(num_dep):
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
         try:
-            from pyproj import Transformer
-            t = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+            t = _get_transformer("EPSG:4326", "EPSG:2154")
             bx1, by1 = t.transform(c['lon_min'], c['lat_min'])
             bx2, by2 = t.transform(c['lon_max'], c['lat_max'])
         except ImportError:
@@ -947,8 +1220,7 @@ def geocoder_departement(num_dep):
         "lon_min": lon_min, "lon_max": lon_max
     }
     try:
-        _cache_path.write_text(json.dumps(_cache, ensure_ascii=False, indent=2),
-                               encoding="utf-8")
+        _ecrire_json_atomique(_cache_path, _cache, indent=2)
     except Exception:
         pass  # cache non critique
 
@@ -956,8 +1228,7 @@ def geocoder_departement(num_dep):
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
     try:
-        from pyproj import Transformer
-        t = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+        t = _get_transformer("EPSG:4326", "EPSG:2154")
         bx1, by1 = t.transform(lon_min, lat_min)
         bx2, by2 = t.transform(lon_max, lat_max)
     except ImportError:
@@ -1073,7 +1344,6 @@ def chemin_dalle(dossier_dalles, nom):
         sous_dossier = dossier_dalles / m.group(1)
         return sous_dossier / nom
     return chemin_racine  # fallback si nom non reconnu
-
 
 
 def construire_url_wms(x_km, y_km):
@@ -1210,8 +1480,7 @@ def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
             print()
         # Sauvegarder le cache (seulement les entrées sans erreur)
         try:
-            CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False),
-                                  encoding="utf-8")
+            _ecrire_json_atomique(CACHE_PATH, cache)
         except Exception:
             pass
 
@@ -1270,12 +1539,17 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     return buf_size
 
 
-def telecharger_dalle_directe(nom, url_wms, dossier):
+def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
     """Télécharge une dalle depuis son URL WMS fournie par le TMS IGN."""
     chemin = chemin_dalle(dossier, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        return "skip"
+        if not ecraser:
+            return "skip"
+        # Mode écrasement : supprimer l'existant pour forcer le retéléchargement.
+        # On évite de tirer dans une dalle valide qui pourrait servir de fallback
+        # en cas d'échec — mais c'est explicitement ce que l'utilisateur demande.
+        chemin.unlink()
     chemin_tmp = chemin.parent / (nom + ".tmp")
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
@@ -1286,7 +1560,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier):
             if taille < SEUIL_DALLE_VALIDE:
                 chemin_tmp.unlink(missing_ok=True)
                 return "absent"
-            chemin_tmp.rename(chemin)
+            chemin_tmp.replace(chemin)
             _enregistrer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
@@ -1303,13 +1577,15 @@ def telecharger_dalle_directe(nom, url_wms, dossier):
     return "erreur"
 
 
-def telecharger_dalle(x_km, y_km, dossier, compresser=False):
+def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
     nom    = nom_dalle(x_km, y_km)
     chemin = chemin_dalle(dossier, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
 
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        return "skip"
+        if not ecraser:
+            return "skip"
+        chemin.unlink()
 
     url = construire_url_wms(x_km, y_km)
     chemin_tmp = chemin.parent / (nom + ".tmp")
@@ -1325,7 +1601,7 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False):
                 return "absent"
 
             if compresser:
-                gdal_tr = _trouver_gdal_translate()
+                gdal_tr = _trouver_outil_gdal("gdal_translate")
                 if gdal_tr:
                     cmd_c = [gdal_tr, "-of", "GTiff",
                              "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
@@ -1337,9 +1613,9 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False):
                     if r.returncode != 0:
                         return "erreur"
                 else:
-                    chemin_tmp.rename(chemin)
+                    chemin_tmp.replace(chemin)
             else:
-                chemin_tmp.rename(chemin)
+                chemin_tmp.replace(chemin)
 
             _enregistrer_fichier(chemin)
             return "ok"
@@ -1564,7 +1840,13 @@ def _telecharger_jre_local():
             z.extractall(JRE_DIR)
     else:
         with tarfile.open(archive, "r:gz") as t:
-            t.extractall(JRE_DIR)
+            # Python 3.12+ : filter='data' requis pour bloquer les exploits
+            # (chemins absolus, traversée ../, liens symboliques sortants).
+            # Python 3.11- : pas de support du paramètre → fallback.
+            try:
+                t.extractall(JRE_DIR, filter='data')
+            except TypeError:
+                t.extractall(JRE_DIR)
     archive.unlink(missing_ok=True)
 
     # Le JRE est extrait dans un sous-dossier au nom variable (ex: jdk-21+35-jre)
@@ -1617,12 +1899,20 @@ def _trouver_osmosis():
     return _telecharger_osmosis_local()
 
 
-
-
 def _trouver_outil_gdal(nom):
-    """Cherche un executable GDAL uniquement dans l'installation locale du script.
-    Ne jamais utiliser QGIS/OSGeo4W/PATH — incompatibilités PROJ garanties.
-    Si introuvable : télécharge GDAL sur Windows, installe via apt/brew sur Linux/macOS."""
+    """Cherche un executable GDAL.
+
+    Stratégie :
+      1. Installation locale du script (DOSSIER_TRAVAIL/bin/gdal/bin/) — toutes plateformes
+      2. PATH système (Linux/macOS uniquement — apt/brew installé)
+      3. Auto-installation : GISInternals (Windows) ou apt/brew (Linux/macOS)
+      4. Retry des étapes 1+2
+
+    Sur Windows, on n'utilise JAMAIS QGIS/OSGeo4W/PATH système — incompatibilités
+    PROJ garanties (proj.db v4 vs v6+ selon les installations cohabitantes).
+
+    Retourne le chemin absolu de l'exe ou None avec message d'erreur explicite.
+    """
     exe = nom + (".exe" if WINDOWS else "")
     local = DOSSIER_TRAVAIL / "bin" / "gdal" / "bin" / exe
     if local.exists():
@@ -1635,6 +1925,7 @@ def _trouver_outil_gdal(nom):
             return p
     # Auto-install
     if WINDOWS:
+        print(f"  {nom} introuvable — téléchargement automatique GISInternals...")
         _telecharger_gdal_local()
     else:
         _installer_gdal_systeme()
@@ -1646,24 +1937,13 @@ def _trouver_outil_gdal(nom):
         p = _shutil.which(nom)
         if p:
             return p
-    return None
-
-
-def _trouver_gdaldem():
-    """Cherche gdaldem, installe automatiquement si introuvable."""
-    p = _trouver_outil_gdal("gdaldem")
-    if p:
-        return p
+    # Échec final — message d'instructions claires
     if WINDOWS:
-        print("  gdaldem introuvable — téléchargement automatique GISInternals...")
-        return _telecharger_gdal_local()
-    ok = _installer_gdal_systeme()
-    if ok:
-        p = _trouver_outil_gdal("gdaldem")
-        if p:
-            return p
-    cmd = "sudo apt install gdal-bin" if LINUX else "brew install gdal"
-    print(f"  ERREUR : installation échouée. Installez manuellement : {cmd}")
+        print(f"  ERREUR : {nom} introuvable et téléchargement automatique échoué.")
+        print(f"  Installez OSGeo4W manuellement : https://trac.osgeo.org/osgeo4w/")
+    else:
+        cmd = "sudo apt install gdal-bin" if LINUX else "brew install gdal"
+        print(f"  ERREUR : {nom} introuvable. Installez manuellement : {cmd}")
     return None
 
 
@@ -1855,33 +2135,68 @@ def _run_gdal_avec_jauge(cmd, nom_fichier, env, largeur=30):
 
 
 def _installer_gdal_systeme():
-    """Installe gdal-bin via apt (Linux) ou brew (macOS)."""
+    """Installe gdal-bin via apt (Linux) ou brew (macOS).
+
+    Demande explicitement l'autorisation à l'utilisateur avant tout sudo/brew
+    (intrusif vs. l'esprit "single-file"). Vérifie aussi que les outils
+    système nécessaires sont présents avant de tenter.
+
+    Retourne True/False selon succès.
+    """
+    import shutil as _shutil
+
     if LINUX:
+        # Vérifier prérequis : sudo + apt
+        if not _shutil.which("apt") and not _shutil.which("apt-get"):
+            print("  Cette distribution Linux n'a pas apt — installation manuelle requise.")
+            print("  Selon votre distribution :")
+            print("    Fedora/RHEL  : sudo dnf install gdal")
+            print("    Arch         : sudo pacman -S gdal")
+            print("    openSUSE     : sudo zypper install gdal")
+            return False
+        if not _shutil.which("sudo"):
+            print("  ERREUR : sudo introuvable. Lancez en root ou installez gdal-bin manuellement :")
+            print("    apt install gdal-bin")
+            return False
+        # Demander explicitement l'autorisation : c'est intrusif
+        print()
+        print("  GDAL système absent — installation requise.")
+        print("  Commande à exécuter : sudo apt install -y gdal-bin")
+        try:
+            rep = input("  Lancer maintenant ? [O/n] ").strip().lower()
+        except EOFError:
+            rep = "n"  # mode non-interactif → refuser
+        if rep and rep[0] not in ("o", "y"):
+            print("  Annulé. Pour installer manuellement : sudo apt install gdal-bin")
+            return False
         print("  Installation gdal-bin via apt...")
         r = subprocess.run(["sudo", "apt", "install", "-y", "gdal-bin"])
         return r.returncode == 0
+
     if MACOS:
-        print("  Installation gdal via brew...")
+        # Vérifier prérequis : brew installé
+        if not _shutil.which("brew"):
+            print("  Homebrew absent — installation manuelle requise.")
+            print("  1) Installez Homebrew : https://brew.sh/")
+            print("     (commande à coller dans le terminal)")
+            print("  2) Puis : brew install gdal")
+            return False
+        # Demander explicitement
+        print()
+        print("  GDAL système absent — installation requise.")
+        print("  Commande à exécuter : brew install gdal")
+        try:
+            rep = input("  Lancer maintenant ? [O/n] ").strip().lower()
+        except EOFError:
+            rep = "n"
+        if rep and rep[0] not in ("o", "y"):
+            print("  Annulé. Pour installer manuellement : brew install gdal")
+            return False
+        print("  Installation gdal via brew (peut prendre 5-15 min)...")
         r = subprocess.run(["brew", "install", "gdal"])
         return r.returncode == 0
+
     return False
-
-
-def _trouver_gdal(nom):
-    """Cherche un outil GDAL par nom, installe GDAL si introuvable."""
-    p = _trouver_outil_gdal(nom)
-    if p:
-        return p
-    if WINDOWS:
-        _telecharger_gdal_local()
-    else:
-        _installer_gdal_systeme()
-    return _trouver_outil_gdal(nom)
-
-
-
-def _trouver_gdal_translate():
-    return _trouver_gdal("gdal_translate")
 
 
 def _geoinfo_depuis_gdalinfo(src_tif, env):
@@ -2282,6 +2597,11 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
         except ImportError:
             _use_scipy = False
 
+        # Check précoce : si l'utilisateur a déjà fait Ctrl+C avant qu'on arrive
+        # ici (ex. pendant l'init Numba), on n'enchaîne pas le fallback.
+        if _stop_event.is_set():
+            raise KeyboardInterrupt("SVF interrompu avant traitement")
+
         def _process_direction(k):
             angle   = k * 2.0 * np.pi / n_directions
             dx      =  np.sin(angle)
@@ -2289,6 +2609,11 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
             max_tan = np.full((h, w), -np.inf, dtype=np.float32)
 
             for r in range(1, max_dist_px + 1):
+                # Check au sein du rayon : sur dept-scale, max_dist_px peut
+                # atteindre 200+ et chaque shift scipy prend 1-3s → permet
+                # l'interruption en quelques secondes max.
+                if _stop_event.is_set():
+                    return None
                 dist_m = r * resolution
                 if _use_scipy:
                     neighbor  = _shift(dem_f, [dy * r, dx * r],
@@ -2311,19 +2636,45 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
 
             mt = np.maximum(max_tan, 0.0)
             return (1.0 / (1.0 + mt * mt)).astype(np.float32)
+
         n_workers = min(n_directions, max(1, os.cpu_count() or 4))
         svf_sum   = np.zeros((h, w), dtype=np.float32)
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {pool.submit(_process_direction, k): k
                        for k in range(n_directions)}
             done = 0
-            for fut in as_completed(futures):
-                svf_sum += fut.result()
-                done += 1
-                pct_svf = done * 100 // max(n_directions, 1)
-                print(f"\r  SVF directions : {pct_svf:3d}%  {done}/{n_directions}",
-                      end="", flush=True)
+            try:
+                for fut in as_completed(futures):
+                    if _stop_event.is_set():
+                        # Annuler les futures non encore démarrées (les autres
+                        # finiront leur direction courante mais retourneront None).
+                        for f in futures:
+                            f.cancel()
+                        # On ne raise pas tout de suite — on laisse les workers
+                        # actifs se terminer avant de quitter le with-block,
+                        # sinon ThreadPoolExecutor.__exit__ va attendre quand même.
+                        break
+                    res = fut.result()
+                    if res is None:
+                        # Worker a vu _stop_event en interne et a retourné None
+                        break
+                    svf_sum += res
+                    done += 1
+                    pct_svf = done * 100 // max(n_directions, 1)
+                    print(f"\r  SVF directions : {pct_svf:3d}%  {done}/{n_directions}",
+                          end="", flush=True)
+            except KeyboardInterrupt:
+                # Signal arrivé pendant l'attente du future — annuler ce qu'on peut
+                for f in futures:
+                    f.cancel()
+                raise
         print()
+        # Si l'utilisateur a interrompu, propager l'arrêt à l'appelant.
+        # Le résultat partiel n'est pas utilisable (sommation incomplète sur
+        # n_directions). KeyboardInterrupt = standard Python, ne sera pas
+        # capturé par les `except Exception:` en aval.
+        if _stop_event.is_set():
+            raise KeyboardInterrupt("SVF interrompu en cours de calcul")
         svf = svf_sum / n_directions
 
     svf[nodata_mask] = 0.0
@@ -2354,10 +2705,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     if isinstance(cogs, Path):
         cogs = [cogs]
 
-    gdaldem       = _trouver_gdaldem()
-    gdalbuildvrt  = _trouver_gdal("gdalbuildvrt")
-    gdal_translate = _trouver_gdal_translate()
-    env_dem       = _env_gdaldem()
+    gdaldem        = _trouver_outil_gdal("gdaldem")
+    gdalbuildvrt   = _trouver_outil_gdal("gdalbuildvrt")
+    gdal_translate = _trouver_outil_gdal("gdal_translate")
+    env_dem        = _env_gdaldem()
 
     CATALOGUE_GDAL = {
         "315":   ("315_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az","315","-alt",str(elevation_soleil)]),
@@ -2440,8 +2791,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             nom_fichier = nom_base + "_" + suffix + ".tif"
             chemin_out  = dossier_ville / nom_fichier
 
-            if chemin_out.exists():
+            if chemin_out.exists() and not ecraser_ombrages:
                 return cle, nom_fichier, "skip", 0, []
+            # Si on écrase, supprimer l'ancien : sinon GDAL peut refuser
+            # ou laisser un fichier corrompu en cas d'échec.
+            if chemin_out.exists() and ecraser_ombrages:
+                chemin_out.unlink()
 
             cmd = [gdaldem] + args_dem + [str(source), str(chemin_out)] + co
             code, _, errs = _run_gdal_avec_jauge(cmd, nom_fichier, env_dem)
@@ -2511,13 +2866,23 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 choix_numpy = []
 
         for cle in choix_numpy:
+            # Cancellation propre entre 2 ombrages : si l'utilisateur a fait
+            # Ctrl+C pendant le précédent (kernel Numba intuable), l'ombrage
+            # courant a été sauvegardé mais on n'enchaîne pas le suivant.
+            if _stop_event.is_set():
+                print("  Interruption — ombrages restants ignorés.")
+                break
             sous_dossier_name, outil_numpy, params_numpy = CATALOGUE_NUMPY[cle]
             nom_fichier  = nom_base + "_" + sous_dossier_name + ".tif"
             chemin_out   = dossier_ville / nom_fichier
 
-            if chemin_out.exists():
+            if chemin_out.exists() and not ecraser_ombrages:
                 print("  " + nom_fichier.ljust(56) + " -> déjà présent")
                 continue
+            # Si on écrase, supprimer l'ancien : évite que rasterio_write
+            # tombe sur un fichier figé (Windows file locking) ou demi-écrit.
+            if chemin_out.exists() and ecraser_ombrages:
+                chemin_out.unlink()
 
             t0_numpy = time.time()
 
@@ -2725,8 +3090,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     print("\n  Ombrages dans : " + str(dossier_ville))
 
 
-
-
 def _bbox_depuis_gdalinfo(chemin, env):
     """Retourne (xmin, ymin, xmax, ymax) en unités natives du fichier."""
     gdalinfo = _trouver_outil_gdal("gdalinfo")
@@ -2809,8 +3172,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         print(f"  {mbtiles.name} → écrasement")
 
     env      = _env_gdaldem()
-    gdalwarp = _trouver_gdal("gdalwarp")
-    gdal_tr  = _trouver_gdal_translate()
+    gdalwarp = _trouver_outil_gdal("gdalwarp")
+    gdal_tr  = _trouver_outil_gdal("gdal_translate")
     if not gdalwarp or not gdal_tr:
         print("  ERREUR : gdalwarp ou gdal_translate introuvable")
         return None
@@ -2969,8 +3332,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # "left,bottom,right,top" en degrés WGS84
     if bbox_l93 is not None:
         try:
-            from pyproj import Transformer as _Tr_bounds
-            _tb = _Tr_bounds.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+            _tb = _get_transformer("EPSG:2154", "EPSG:4326")
             _lon0, _lat0 = _tb.transform(bbox_l93[0], bbox_l93[1])
             _lon1, _lat1 = _tb.transform(bbox_l93[2], bbox_l93[3])
         except Exception:
@@ -3038,8 +3400,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _y0 = y0_l if y0_l is not None else y0_bb
             _y1 = y1_l if y1_l is not None else y1_bb
             try:
-                from pyproj import Transformer as _Tr
-                _t = _Tr.from_crs("EPSG:2154", "EPSG:3857", always_xy=True)
+                _t = _get_transformer("EPSG:2154", "EPSG:3857")
                 te_xmin, te_ymin = _t.transform(x0, _y0)
                 te_xmax, te_ymax = _t.transform(x1, _y1)
             except Exception:
@@ -3115,8 +3476,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         elif warp_deja_fait and bb_src is not None:
             # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src
             try:
-                from pyproj import Transformer as _Tr2
-                _t2 = _Tr2.from_crs("EPSG:2154", "EPSG:3857", always_xy=True)
+                _t2 = _get_transformer("EPSG:2154", "EPSG:3857")
                 _rx0, _ry0 = _t2.transform(bb_src[0], bb_src[1])
                 _rx1, _ry1 = _t2.transform(bb_src[2], bb_src[3])
             except Exception:
@@ -3296,7 +3656,6 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     return mbtiles
 
 
-
 # ============================================================
 # PIPELINE WMTS — SCAN 25 / ORTHO
 # ============================================================
@@ -3332,6 +3691,27 @@ COUCHES = {
     "pentes":        ("GEOGRAPHICALGRIDSYSTEMS.SLOPES.MOUNTAIN",   "normal", "image/png",  False),
     # ── Imagerie (public, sans clé) ───────────────────────────────────────────
     "ortho":         ("ORTHOIMAGERY.ORTHOPHOTOS",                  "normal", "image/jpeg", False),
+    # Orthophotographies historiques métropole — clé pour archéo et exploration
+    # (restanques avant déprise, anciens chemins encore parcourus, cabanons).
+    # Couverture variable selon les départements : tester avant de se fier dessus.
+    "ortho_1950":    ("ORTHOIMAGERY.ORTHOPHOTOS.1950-1965",        "normal", "image/png",  False),
+    "ortho_1965":    ("ORTHOIMAGERY.ORTHOPHOTOS.1965-1980",        "normal", "image/png",  False),
+    "ortho_1980":    ("ORTHOIMAGERY.ORTHOPHOTOS.1980-1995",        "normal", "image/png",  False),
+    # Infrarouge couleur — distingue feuillus/résineux, repère humidité du sol
+    # (utile pour trouver d'anciens drainages, fossés, cours d'eau dévoyés).
+    "ortho_irc":     ("ORTHOIMAGERY.ORTHOPHOTOS.IRC",              "normal", "image/jpeg", False),
+    # Imagerie satellitaire (vrai satellite, pas avion)
+    "pleiades":      ("ORTHOIMAGERY.ORTHO-SAT.PLEIADES.2024",      "normal", "image/jpeg", False),
+    "spot":          ("ORTHOIMAGERY.ORTHO-SAT.SPOT.2024",          "normal", "image/jpeg", False),
+    # Orthos EDUGEO PACA — emprises locales restreintes aux centres urbains.
+    # Tester d'abord la couverture pour Toulon-Hyères ou Marseille-Martigues
+    # selon ta zone (Garéoult/Mazaugues est entre les deux, hors emprises).
+    "edugeo_marseille_1969": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1969", "normal", "image/png", False),
+    "edugeo_marseille_1980": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1980", "normal", "image/png", False),
+    "edugeo_marseille_1987": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1987", "normal", "image/png", False),
+    "edugeo_marseille_1988": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1988", "normal", "image/png", False),
+    "edugeo_marseille_2010": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES2010", "normal", "image/png", False),
+    "edugeo_toulon_1972":    ("ORTHOIMAGERY.EDUGEO.TOULON-HYERES1972",      "normal", "image/png", False),
     # ── Données thématiques (public, sans clé) ────────────────────────────────
     "cadastre":      ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS",      "normal", "image/png",  False),
     "ombrage":       ("ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW",    "normal", "image/png",  False),
@@ -3505,7 +3885,7 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
         except KeyboardInterrupt:
             print("\n\nInterrompu.")
             sys.exit(0)
-        except (urllib.error.URLError, IOError, OSError) as e:
+        except (urllib.error.URLError, IOError, OSError):
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY * tentative)
             else:
@@ -3649,35 +4029,64 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
             pending[pool.submit(_dl, t)] = t
             idx += 1
 
+        # Boucle principale : on attend qu'au moins une future termine, puis
+        # on draine TOUTES les futures terminées avant de re-remplir la fenêtre.
+        # Performance : wait() enregistre ses callbacks UNE fois par appel,
+        # contrairement à next(as_completed(pending)) en boucle qui réenregistre
+        # des callbacks sur toutes les futures à chaque itération
+        # (complexité O(N × FENETRE) → O(N) en surcharge bookkeeping).
+        # Sur 100k tuiles dept-scale : gagne plusieurs minutes de CPU pur overhead.
         while pending:
-            # Attendre la prochaine future terminée
-            done_future = next(as_completed(pending))
-            del pending[done_future]
+            if _stop_event.is_set():
+                # Cancellation propre : annuler les futures non démarrées,
+                # laisser les actives finir leur HTTP courant.
+                for f in list(pending.keys()):
+                    f.cancel()
+                break
 
-            z, x, y, data = done_future.result()
-            done      += 1
-            z_courant  = z
+            done_set, _ = wait(pending, return_when=FIRST_COMPLETED)
 
-            if data:
-                y_tms = (1 << z) - 1 - y
-                batch.append((z, x, y_tms, data))
-                ok += 1
-            else:
-                absentes += 1
+            # Drainer tout ce qui est terminé (peut être plusieurs en concurrent)
+            for done_future in done_set:
+                del pending[done_future]
 
-            if len(batch) >= BATCH:
-                cur.executemany(
-                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-                con.commit()
-                batch.clear()
+                try:
+                    z, x, y, data = done_future.result()
+                except Exception:
+                    # Worker raise propagé : on traite comme tuile absente plutôt
+                    # que de tuer toute la boucle (fail-soft sur timeout réseau).
+                    done     += 1
+                    absentes += 1
+                    _afficher(done, total, ok, absentes, z_courant, t0)
+                    if idx < n:
+                        t = tuiles_list[idx]
+                        pending[pool.submit(_dl, t)] = t
+                        idx += 1
+                    continue
 
-            _afficher(done, total, ok, absentes, z_courant, t0)
+                done      += 1
+                z_courant  = z
 
-            # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
-            if idx < n:
-                t = tuiles_list[idx]
-                pending[pool.submit(_dl, t)] = t
-                idx += 1
+                if data:
+                    y_tms = (1 << z) - 1 - y
+                    batch.append((z, x, y_tms, data))
+                    ok += 1
+                else:
+                    absentes += 1
+
+                if len(batch) >= BATCH:
+                    cur.executemany(
+                        "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
+                    con.commit()
+                    batch.clear()
+
+                _afficher(done, total, ok, absentes, z_courant, t0)
+
+                # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
+                if idx < n:
+                    t = tuiles_list[idx]
+                    pending[pool.submit(_dl, t)] = t
+                    idx += 1
 
     if batch:
         cur.executemany(
@@ -3685,6 +4094,14 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         con.commit()
 
     con.close()
+
+    if _stop_event.is_set():
+        # Manifeste partiel : signaler à l'utilisateur que l'écriture est incomplète
+        elapsed = int(time.time() - t0)
+        taille_mo = chemin.stat().st_size / 1e6 if chemin.exists() else 0.0
+        print(f"\n  Interrompu — {ok} tuiles écrites avant arrêt  ({taille_mo:.0f} Mo)")
+        raise KeyboardInterrupt("MBTiles WMTS interrompu par utilisateur")
+
     elapsed = int(time.time() - t0)
     taille_mo = chemin.stat().st_size / 1e6
     print(f"\n  100%  {ok} tuiles  ({absentes} absentes)  {_hms(elapsed)}")
@@ -4023,7 +4440,6 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     return sqlitedb
 
 
-
 def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_max):
     """Génère le bloc texte CompeGPS MAP (calibration géographique)."""
     lines = [
@@ -4056,9 +4472,6 @@ def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_m
         "</MainPolygonBitmap>\r\n",
     ]
     return "".join(lines)
-
-
-
 
 
 _MAPWRITER_VERSION = "0.25.0"
@@ -4127,6 +4540,86 @@ def _preparer_osmosis(dossier_hint=None):
         return None, None
     _java_home = str(Path(_java_exe).parent.parent)
     return _osmosis_exe, _java_home
+
+
+# Tokens d'intérêt : seules les lignes qui contiennent un de ces marqueurs
+# sont AFFICHÉES en live. Le reste est silencieux (le terminal reste propre,
+# comme avant l'étape 5 quand on faisait capture_output=True).
+# Les lignes silencieuses sont quand même conservées dans stderr_diag pour
+# le diagnostic en cas de returncode != 0.
+# Couvre Java util.logging FR/EN, exceptions, et causes chaînées.
+_OSMOSIS_INTERESSANT = (
+    "ERROR", "SEVERE", "FATAL", "Exception", "Caused by",
+    "WARNING", "AVERTISSEMENT", "WARN ",
+)
+
+
+def _run_osmosis_streaming(cmd_or_str, shell, env):
+    """Lance osmosis en streaming live.
+
+    Remplace `subprocess.run(capture_output=True)` qui buffer toute la sortie
+    en RAM (problème sur dept-scale où Java peut produire des Mo de logs).
+
+    Stratégie de filtrage : whitelist. Seules les lignes contenant un marqueur
+    de _OSMOSIS_INTERESSANT (ERROR, WARNING, Exception, AVERTISSEMENT…) sont
+    affichées en temps réel. Les lignes ordinaires (timestamps Java, classes
+    org.mapsforge, INFO, SLF4J, etc.) sont silencieuses — comportement
+    identique à l'ancien capture_output=True en cas de succès.
+
+    Garde les 500 dernières lignes stderr (accumulation totale, pas filtrée)
+    pour diagnostic en cas d'échec. Buffer borné, ~50 Ko max.
+
+    Returns: (returncode, stderr_diagnostic_string)
+    """
+    import threading as _th
+
+    proc = subprocess.Popen(
+        cmd_or_str,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        shell=shell, env=env,
+    )
+
+    # Buffer borné des dernières lignes stderr (collections.deque pour O(1) ops)
+    from collections import deque
+    stderr_tail = deque(maxlen=500)
+    affichees = [0]   # nb de lignes vraiment affichées (pour ajouter \n initial)
+    lock = _th.Lock()
+
+    def _reader(stream, is_stderr):
+        try:
+            for raw in iter(stream.readline, b""):
+                try:
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                except Exception:
+                    continue
+                if not line:
+                    continue
+                if is_stderr:
+                    stderr_tail.append(line)
+                # Whitelist : afficher seulement si la ligne contient un marqueur
+                # d'erreur ou d'avertissement explicite. Tout le reste est silent.
+                if not any(tok in line for tok in _OSMOSIS_INTERESSANT):
+                    continue
+                with lock:
+                    if affichees[0] == 0:
+                        print()  # newline avant la 1ère ligne intéressante
+                    affichees[0] += 1
+                    print(f"  {line}", flush=True)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    th_out = _th.Thread(target=_reader, args=(proc.stdout, False), daemon=True)
+    th_err = _th.Thread(target=_reader, args=(proc.stderr, True),  daemon=True)
+    th_out.start(); th_err.start()
+
+    proc.wait()
+    th_out.join(timeout=5)
+    th_err.join(timeout=5)
+
+    return proc.returncode, "\n".join(stderr_tail)
 
 
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
@@ -4241,36 +4734,37 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             for a in cmd
         )
     _log_req(cmd)
-    r = subprocess.run(
+    rc, stderr_diag = _run_osmosis_streaming(
         cmd_str if _shell else cmd,
-        capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
         shell=_shell, env=_env_osm,
     )
 
-    if r.returncode == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
-        chemin_map_tmp.rename(chemin_map)
-        taille = chemin_map.stat().st_size / 1e6
-        print(f"  {chemin_map.name} : {taille:.1f} Mo  {_hms(time.time()-t0)}")
+    if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
+        chemin_map_tmp.replace(chemin_map)
+        taille_b = chemin_map.stat().st_size
+        if taille_b < 1_000_000:
+            print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
+        else:
+            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} Mo  {_hms(time.time()-t0)}")
         if export_geojson:
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
             generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src, osm_tags=osm_tags)
         return chemin_map
     else:
         chemin_map_tmp.unlink(missing_ok=True)
-        print(f"  ERREUR osmosis mapfile-writer (code {r.returncode})")
-        if r.stderr:
-            # Filtrer le bruit SLF4J/Java INFO pour exposer l'erreur réelle
-            lignes_err = [l for l in r.stderr.splitlines()
-                          if not any(tok in l for tok in
-                                     ("SLF4J:", "INFOS:", "INFO:", "org.openstreetmap",
-                                      "Osmosis Version", "StaticLoggerBinder"))]
+        print(f"  ERREUR osmosis mapfile-writer (code {rc})")
+        if stderr_diag:
+            # stderr_diag contient les 500 dernières lignes (toutes confondues).
+            # On extrait celles qui contiennent un marqueur d'erreur/warning.
+            lignes_err = [l for l in stderr_diag.splitlines()
+                          if any(tok in l for tok in _OSMOSIS_INTERESSANT)]
             if lignes_err:
                 print("  Détail osmosis :")
                 for _l in lignes_err[:20]:
                     print(f"    {_l}")
             else:
-                print(f"  {r.stderr.strip()[:600]}")
+                # Pas de marqueur connu → afficher la queue brute
+                print(f"  {stderr_diag.strip()[-600:]}")
         return None
 
 def main():
@@ -4424,6 +4918,7 @@ Exemples :
         sys.exit(0)
 
     args = parser.parse_args()
+    _valider_zooms(args, parser)
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
@@ -4543,7 +5038,7 @@ Exemples :
                 else:
                     for _t in range(5):
                         try:
-                            f.rename(dest)
+                            f.replace(dest)
                             break
                         except PermissionError:
                             time.sleep(0.2)
@@ -4612,8 +5107,7 @@ Exemples :
         if not args.telechargement:
             print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
             try:
-                from pyproj import Transformer
-                t = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+                t = _get_transformer("EPSG:4326", "EPSG:2154")
                 cx, cy = t.transform(lon, lat)
             except ImportError:
                 cx, cy = wgs84_to_lamb93_approx(lon, lat)
@@ -4646,8 +5140,7 @@ Exemples :
             if not args.telechargement:
                 print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
                 try:
-                    from pyproj import Transformer
-                    t = Transformer.from_crs("EPSG:4326", "EPSG:2154", always_xy=True)
+                    t = _get_transformer("EPSG:4326", "EPSG:2154")
                     cx, cy = t.transform(lon, lat)
                 except ImportError:
                     cx, cy = wgs84_to_lamb93_approx(lon, lat)
@@ -4740,11 +5233,16 @@ Exemples :
     etape_cur = [0]
     etape_t0  = [time.time()]
     def print_etape(nom):
-        # Afficher le temps de l'étape précédente + cumul
+        # Cancellation au passage entre 2 étapes : si l'utilisateur a fait
+        # Ctrl+C pendant l'étape précédente, on finit le print de bilan
+        # mais on raise avant d'imprimer le marqueur de la suivante.
+        # Le KeyboardInterrupt remonte au main() qui peut faire son cleanup.
         if etape_cur[0] > 0:
             elap  = int(time.time() - etape_t0[0])
             cumul = int(time.time() - t_debut)
             print(f"  ✓ Étape {etape_cur[0]} terminée en {_hms(elap)}  (cumul {_hms(cumul)})")
+        if _stop_event.is_set():
+            raise KeyboardInterrupt("Interruption demandée — étapes restantes ignorées")
         etape_cur[0] += 1
         etape_t0[0] = time.time()
         print("ETAPE:" + str(etape_cur[0]) + "/" + str(etapes_total) + " " + nom, flush=True)
@@ -4821,7 +5319,7 @@ Exemples :
             y_new = y_old * 2
             nouveau = f.parent / f"LHD_FXX_{x_new:04d}_{y_new:04d}_{reste}"
             if not nouveau.exists():
-                f.rename(nouveau)
+                f.replace(nouveau)
                 renommes += 1
             else:
                 f.unlink()  # doublon
@@ -4850,11 +5348,11 @@ Exemples :
                 else:
                     for _tentative in range(5):
                         try:
-                            f.rename(dest)
+                            f.replace(dest)
                             break
                         except PermissionError:
                             time.sleep(0.2)  # attendre que l'AV relâche
-                        except Exception as _e:
+                        except Exception:
                             erreurs += 1
                             break
                     else:
@@ -4951,8 +5449,7 @@ Exemples :
         # ── Interrogation WFS IGN ─────────────────────────────────────────────
         tms_dalles = None
         try:
-            from pyproj import Transformer as _TrWFS
-            _t = _TrWFS.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+            _t = _get_transformer("EPSG:2154", "EPSG:4326")
             lon1, lat1 = _t.transform(bbox[0], bbox[1])
             lon2, lat2 = _t.transform(bbox[2], bbox[3])
             lon_min_w = min(lon1, lon2) - 0.05
@@ -5031,7 +5528,8 @@ Exemples :
 
         def telecharger_une_wfs(a):
             i, (nom, url) = a
-            res = telecharger_dalle_directe(nom, url, dossier_dalles)
+            res = telecharger_dalle_directe(nom, url, dossier_dalles,
+                                            ecraser=args.telechargement_ecraser)
             taille = 0
             if res in ("ok", "skip") and chemin_dalle(dossier_dalles, nom).exists():
                 taille = chemin_dalle(dossier_dalles, nom).stat().st_size / 1e6
@@ -5040,7 +5538,8 @@ Exemples :
         def telecharger_une_wms(a):
             i, (x_km, y_km) = a
             nom = nom_dalle(x_km, y_km)
-            res = telecharger_dalle(x_km, y_km, dossier_dalles, compresser)
+            res = telecharger_dalle(x_km, y_km, dossier_dalles, compresser,
+                                    ecraser=args.telechargement_ecraser)
             taille = 0
             if res == "ok" and chemin_dalle(dossier_dalles, nom).exists():
                 taille = chemin_dalle(dossier_dalles, nom).stat().st_size / 1e6
@@ -5235,7 +5734,7 @@ Exemples :
     # Compression des ombrages existants
     # -------------------------------------------------------
     if args.ombrages_compresser:
-        gdal_translate = _trouver_gdal_translate()
+        gdal_translate = _trouver_outil_gdal("gdal_translate")
         if not gdal_translate:
             print("  ERREUR : gdal_translate introuvable.")
         else:
@@ -5253,7 +5752,7 @@ Exemples :
                 for chemin_out in sorted(tifs_a_compresser):
                     taille_brut = chemin_out.stat().st_size / 1e6
                     chemin_tmp  = chemin_out.with_suffix(".tmp.tif")
-                    chemin_out.rename(chemin_tmp)
+                    chemin_out.replace(chemin_tmp)
                     cmd_cmp = [
                         gdal_translate, "-of", "GTiff",
                         "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
@@ -5274,7 +5773,7 @@ Exemples :
                     else:
                         print("  ERREUR compression " + chemin_out.name)
                         for e in errs[:3]: print("    " + e)
-                        chemin_tmp.rename(chemin_out)
+                        chemin_tmp.replace(chemin_out)
 
     if dalles_ombrages and args.ombrages:
         if "aucun" in args.ombrages:
@@ -5412,126 +5911,7 @@ Exemples :
     if args.osm:
         print_etape("Carte OSM vectorielle")
 
-        # Table département → URL Geofabrik
-        _GEOFABRIK = {
-            # Auvergne-Rhône-Alpes
-            "01": "auvergne-rhone-alpes",  # Ain
-            "03": "auvergne-rhone-alpes",  # Allier
-            "07": "auvergne-rhone-alpes",  # Ardèche
-            "15": "auvergne-rhone-alpes",  # Cantal
-            "26": "auvergne-rhone-alpes",  # Drôme
-            "38": "auvergne-rhone-alpes",  # Isère
-            "42": "auvergne-rhone-alpes",  # Loire
-            "43": "auvergne-rhone-alpes",  # Haute-Loire
-            "63": "auvergne-rhone-alpes",  # Puy-de-Dôme
-            "69": "auvergne-rhone-alpes",  # Rhône
-            "73": "auvergne-rhone-alpes",  # Savoie
-            "74": "auvergne-rhone-alpes",  # Haute-Savoie
-            # Bourgogne-Franche-Comté
-            "21": "bourgogne-franche-comte",  # Côte-d'Or
-            "25": "bourgogne-franche-comte",  # Doubs
-            "39": "bourgogne-franche-comte",  # Jura
-            "58": "bourgogne-franche-comte",  # Nièvre
-            "70": "bourgogne-franche-comte",  # Haute-Saône
-            "71": "bourgogne-franche-comte",  # Saône-et-Loire
-            "89": "bourgogne-franche-comte",  # Yonne
-            "90": "bourgogne-franche-comte",  # Territoire de Belfort
-            # Bretagne
-            "22": "bretagne",  # Côtes-d'Armor
-            "29": "bretagne",  # Finistère
-            "35": "bretagne",  # Ille-et-Vilaine
-            "56": "bretagne",  # Morbihan
-            # Centre-Val de Loire
-            "18": "centre-val-de-loire",  # Cher
-            "28": "centre-val-de-loire",  # Eure-et-Loir
-            "36": "centre-val-de-loire",  # Indre
-            "37": "centre-val-de-loire",  # Indre-et-Loire
-            "41": "centre-val-de-loire",  # Loir-et-Cher
-            "45": "centre-val-de-loire",  # Loiret
-            # Corse
-            "2A": "corse",  # Corse-du-Sud
-            "2B": "corse",  # Haute-Corse
-            # Grand Est
-            "08": "grand-est",  # Ardennes
-            "10": "grand-est",  # Aube
-            "51": "grand-est",  # Marne
-            "52": "grand-est",  # Haute-Marne
-            "54": "grand-est",  # Meurthe-et-Moselle
-            "55": "grand-est",  # Meuse
-            "57": "grand-est",  # Moselle
-            "67": "grand-est",  # Bas-Rhin
-            "68": "grand-est",  # Haut-Rhin
-            "88": "grand-est",  # Vosges
-            # Hauts-de-France
-            "02": "hauts-de-france",  # Aisne
-            "59": "hauts-de-france",  # Nord
-            "60": "hauts-de-france",  # Oise
-            "62": "hauts-de-france",  # Pas-de-Calais
-            "80": "hauts-de-france",  # Somme
-            # Île-de-France
-            "75": "ile-de-france",  # Paris
-            "77": "ile-de-france",  # Seine-et-Marne
-            "78": "ile-de-france",  # Yvelines
-            "91": "ile-de-france",  # Essonne
-            "92": "ile-de-france",  # Hauts-de-Seine
-            "93": "ile-de-france",  # Seine-Saint-Denis
-            "94": "ile-de-france",  # Val-de-Marne
-            "95": "ile-de-france",  # Val-d'Oise
-            # Normandie
-            "14": "normandie",  # Calvados
-            "27": "normandie",  # Eure
-            "50": "normandie",  # Manche
-            "61": "normandie",  # Orne
-            "76": "normandie",  # Seine-Maritime
-            # Nouvelle-Aquitaine
-            "16": "nouvelle-aquitaine",  # Charente
-            "17": "nouvelle-aquitaine",  # Charente-Maritime
-            "19": "nouvelle-aquitaine",  # Corrèze
-            "23": "nouvelle-aquitaine",  # Creuse
-            "24": "nouvelle-aquitaine",  # Dordogne
-            "33": "nouvelle-aquitaine",  # Gironde
-            "40": "nouvelle-aquitaine",  # Landes
-            "47": "nouvelle-aquitaine",  # Lot-et-Garonne
-            "64": "nouvelle-aquitaine",  # Pyrénées-Atlantiques
-            "79": "nouvelle-aquitaine",  # Deux-Sèvres
-            "86": "nouvelle-aquitaine",  # Vienne
-            "87": "nouvelle-aquitaine",  # Haute-Vienne
-            # Occitanie
-            "09": "occitanie",  # Ariège
-            "11": "occitanie",  # Aude
-            "12": "occitanie",  # Aveyron
-            "30": "occitanie",  # Gard
-            "31": "occitanie",  # Haute-Garonne
-            "32": "occitanie",  # Gers
-            "34": "occitanie",  # Hérault
-            "46": "occitanie",  # Lot
-            "48": "occitanie",  # Lozère
-            "65": "occitanie",  # Hautes-Pyrénées
-            "66": "occitanie",  # Pyrénées-Orientales
-            "81": "occitanie",  # Tarn
-            "82": "occitanie",  # Tarn-et-Garonne
-            # Pays de la Loire
-            "44": "pays-de-la-loire",  # Loire-Atlantique
-            "49": "pays-de-la-loire",  # Maine-et-Loire
-            "53": "pays-de-la-loire",  # Mayenne
-            "72": "pays-de-la-loire",  # Sarthe
-            "85": "pays-de-la-loire",  # Vendée
-            # Provence-Alpes-Côte d'Azur
-            "04": "provence-alpes-cote-d-azur",  # Alpes-de-Haute-Provence
-            "05": "provence-alpes-cote-d-azur",  # Hautes-Alpes
-            "06": "provence-alpes-cote-d-azur",  # Alpes-Maritimes
-            "13": "provence-alpes-cote-d-azur",  # Bouches-du-Rhône
-            "83": "provence-alpes-cote-d-azur",  # Var
-            "84": "provence-alpes-cote-d-azur",  # Vaucluse
-            # DOM/TOM (extraits Geofabrik séparés)
-            "971": "guadeloupe",
-            "972": "martinique",
-            "973": "guyane",
-            "974": "reunion",
-            "976": "mayotte",
-        }
-        _BASE_URL      = "https://download.geofabrik.de/europe/france"
-        _BASE_URL_ROOT = "https://download.geofabrik.de/europe"
+        # Table département → URL Geofabrik : voir _GEOFABRIK au niveau module
 
         # Résoudre le PBF source
         pbf = None
@@ -5568,12 +5948,12 @@ Exemples :
             if not region_slug:
                 print(f"  Département {num_dep} non trouvé dans la table Geofabrik.")
                 print(f"  Repli sur le PBF national France (~4 Go).")
-                url_pbf = f"{_BASE_URL_ROOT}/france-latest.osm.pbf"
+                url_pbf = f"{_GEOFABRIK_BASE_URL_ROOT}/france-latest.osm.pbf"
                 osm_dir = DOSSIER_TRAVAIL / "cache" / "osm_vecteur"
                 osm_dir.mkdir(parents=True, exist_ok=True)
                 pbf = osm_dir / "france-latest.osm.pbf"
             else:
-                url_pbf = f"{_BASE_URL}/{region_slug}-latest.osm.pbf"
+                url_pbf = f"{_GEOFABRIK_BASE_URL}/{region_slug}-latest.osm.pbf"
                 osm_dir = DOSSIER_TRAVAIL / "cache" / "osm_vecteur"
                 osm_dir.mkdir(parents=True, exist_ok=True)
                 pbf = osm_dir / f"{region_slug}-latest.osm.pbf"
@@ -5671,8 +6051,6 @@ Exemples :
     _historique_depuis_argv(total, dossier_res)
 
 
-
-
 # ============================================================
 # INTERFACE GRAPHIQUE (tkinter)
 # ============================================================
@@ -5681,7 +6059,6 @@ Exemples :
 # ============================================================
 # DÉCOUPAGE À PRIORI — FONCTIONS UTILITAIRES
 # ============================================================
-
 
 
 def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=True):
@@ -5759,8 +6136,7 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
     """
     tms_dalles = None
     try:
-        from pyproj import Transformer as _TrWFS
-        _t = _TrWFS.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+        _t = _get_transformer("EPSG:2154", "EPSG:4326")
         lon1, lat1 = _t.transform(bbox[0], bbox[1])
         lon2, lat2 = _t.transform(bbox[2], bbox[3])
         lon_min_w = min(lon1, lon2) - 0.05
@@ -5817,7 +6193,8 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
 
     if a_telecharger_wfs:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles): (nom,)
+            futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
+                                 args.telechargement_ecraser): (nom,)
                        for nom, url in a_telecharger_wfs}
             for fut in as_completed(futures):
                 nom = futures[fut][0]
@@ -5831,7 +6208,8 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
 
     if a_telecharger_wms:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(telecharger_dalle, x, y, dossier_dalles, compresser): (x, y)
+            futures = {ex.submit(telecharger_dalle, x, y, dossier_dalles, compresser,
+                                 args.telechargement_ecraser): (x, y)
                        for x, y in a_telecharger_wms}
             for fut in as_completed(futures):
                 res = fut.result()
@@ -6223,7 +6601,6 @@ def _convertir_formats(mbt_out, args, decoupe_sortie=True):
         _convertir_un_mbtiles(mbt_out, args)
 
 
-
 def _resoudre_zone_wgs84(args):
     """
     Résout la zone géographique depuis les arguments CLI → bbox WGS84 + nom_zone.
@@ -6246,8 +6623,7 @@ def _resoudre_zone_wgs84(args):
             nom_zone = normaliser_nom(nom_dep) + "_" + num_dep.lower()
         # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84 pour le WFS
         try:
-            from pyproj import Transformer as _Tr_dep
-            _t_dep = _Tr_dep.from_crs("EPSG:2154", "EPSG:4326", always_xy=True)
+            _t_dep = _get_transformer("EPSG:2154", "EPSG:4326")
             lon_min, lat_min = _t_dep.transform(bx1, by1)
             lon_max, lat_max = _t_dep.transform(bx2, by2)
         except ImportError:
@@ -6350,6 +6726,7 @@ def main_decouper():
     parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
     parser.add_argument("--oui", action="store_true")
     args = parser.parse_args()
+    _valider_zooms(args, parser)
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
     args.rmap     = "rmap"     in _ff
@@ -6478,6 +6855,7 @@ Exemples :
         sys.exit(0)
 
     args = parser.parse_args()
+    _valider_zooms(args, parser)
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
@@ -6696,8 +7074,6 @@ Exemples :
 # ============================================================
 # INTERFACE GRAPHIQUE (tkinter)
 # ============================================================
-
-
 
 
 # ============================================================
@@ -6960,7 +7336,6 @@ def _coords_flat(geom):
             yield from _coords_flat(sub)
 
 
-
 def _douglas_peucker(coords, epsilon):
     """
     Simplifie une liste de coordonnées [lon, lat] avec l'algorithme Douglas-Peucker.
@@ -7042,181 +7417,252 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
 
     Les tags OSM sont déduits du nom de couche (propriété 'source' ou nom fichier).
     Identifiants négatifs (convention OSM pour données non-officielles).
+
+    Streaming : lit le GeoJSON via ijson (pas de json.load() qui ferait OOM
+    sur 1 Go de données dept-scale). Écrit nodes et ways dans un fichier
+    XML body temporaire au fil de l'eau, puis compose header + bounds + body
+    + footer. Bounds calculés en passe unique (pas 4× _coords_flat).
+    Format XML bit-fidèle à ElementTree (osmosis est un parseur Java strict).
     """
+    from xml.sax.saxutils import escape as _xml_escape
+    import decimal as _dec
+    import traceback as _tb
 
     geojson_path = Path(geojson_path)
     osm_xml_path = Path(osm_xml_path)
+    _eps = epsilon if epsilon is not None else _IGN_SIMPLIFY_EPSILON
+    _TS  = "1970-01-01T00:00:00Z"   # timestamp factice — requis par osmosis 0.6
 
-    # ── Lecture GeoJSON (.gz ou non) ─────────────────────────────────────────
-    try:
-        if geojson_path.suffix == ".gz":
-            with gzip.open(geojson_path, "rt", encoding="utf-8") as f:
-                gj = json.load(f)
+    # ── Itérateur features (streaming si ijson dispo, fallback sinon) ────────
+    def _iter_features():
+        try:
+            import ijson
+        except ImportError:
+            print("  ⚠ ijson absent — chargement RAM intégral du GeoJSON")
+            try:
+                if geojson_path.suffix == ".gz":
+                    with gzip.open(geojson_path, "rt", encoding="utf-8") as f:
+                        gj = json.load(f)
+                else:
+                    gj = json.loads(geojson_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+                print(f"  ERREUR lecture GeoJSON ({type(e).__name__}) : {e}")
+                return
+            yield from gj.get("features", [])
+            return
+
+        try:
+            opener = ((lambda: gzip.open(geojson_path, "rb"))
+                      if geojson_path.suffix == ".gz"
+                      else (lambda: open(geojson_path, "rb")))
+            with opener() as f:
+                yield from ijson.items(f, "features.item")
+        except (OSError, ValueError) as e:
+            print(f"  ERREUR streaming GeoJSON ({type(e).__name__}) : {e}")
+            return
+
+    # ── Helpers d'écriture XML brute (bien plus rapide qu'ElementTree) ───────
+    def _f(v):
+        """Convertit Decimal (ijson) → float ; passe-plat sinon."""
+        return float(v) if isinstance(v, _dec.Decimal) else v
+
+    def _emit_node(out, nid, lat, lon, tags=None):
+        # Format reproduit ElementTree : ordre id/lat/lon/version/timestamp/visible,
+        # self-closing avec espace avant slash, pas d'indentation.
+        attrs = (f'id="{nid}" lat="{lat:.7f}" lon="{lon:.7f}" '
+                 f'version="1" timestamp="{_TS}" visible="true"')
+        if tags:
+            out.write(f'<node {attrs}>')
+            for k, v in tags.items():
+                out.write(f'<tag k="{_xml_escape(k)}" v="{_xml_escape(str(v))}" />')
+            out.write('</node>')
         else:
-            gj = json.loads(geojson_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-        print(f"  ERREUR lecture GeoJSON ({type(e).__name__}) : {e}")
-        return False
+            out.write(f'<node {attrs} />')
 
-    features = gj.get("features", [])
-    if not features:
-        print("  GeoJSON vide — rien à convertir.")
-        return False
-
-    # ── Construction OSM XML ─────────────────────────────────────────────────
-    node_id  = -1
-    way_id   = -1
-    nodes    = []   # list of ET.Element
-    ways     = []   # list of ET.Element
-
-    _TS = "1970-01-01T00:00:00Z"   # timestamp factice — requis par osmosis 0.6
-
-    def _new_node(lat, lon, tags=None):
-        nonlocal node_id
-        el = _ET.Element("node", id=str(node_id), lat=f"{lat:.7f}", lon=f"{lon:.7f}",
-                          version="1", timestamp=_TS, visible="true")
+    def _emit_way(out, wid, nd_refs, tags):
+        out.write(f'<way id="{wid}" version="1" timestamp="{_TS}" visible="true">')
+        for r in nd_refs:
+            out.write(f'<nd ref="{r}" />')
         if tags:
             for k, v in tags.items():
-                _ET.SubElement(el, "tag", k=k, v=str(v))
-        nodes.append((node_id, el))
-        nid = node_id
-        node_id -= 1
+                out.write(f'<tag k="{_xml_escape(k)}" v="{_xml_escape(str(v))}" />')
+        out.write('</way>')
+
+    # ── Compteurs et bounds (passe unique, sans _coords_flat × 4) ────────────
+    state = {"node_id": -1, "way_id": -1, "nb_nodes": 0, "nb_ways": 0,
+             "lon_min":  float("inf"),  "lon_max": float("-inf"),
+             "lat_min":  float("inf"),  "lat_max": float("-inf"),
+             "bounds_valid": False}
+
+    def _track_bounds(lon, lat):
+        if lon < state["lon_min"]: state["lon_min"] = lon
+        if lon > state["lon_max"]: state["lon_max"] = lon
+        if lat < state["lat_min"]: state["lat_min"] = lat
+        if lat > state["lat_max"]: state["lat_max"] = lat
+        state["bounds_valid"] = True
+
+    def _emit_node_track(out_nodes, lat, lon, tags=None):
+        nid = state["node_id"]
+        _emit_node(out_nodes, nid, lat, lon, tags)
+        _track_bounds(lon, lat)
+        state["nb_nodes"] += 1
+        state["node_id"] -= 1
         return nid
 
-    def _new_way(nd_refs, tags):
-        nonlocal way_id
-        el = _ET.Element("way", id=str(way_id), version="1", timestamp=_TS, visible="true")
-        for r in nd_refs:
-            _ET.SubElement(el, "nd", ref=str(r))
-        for k, v in tags.items():
-            _ET.SubElement(el, "tag", k=k, v=str(v))
-        ways.append(el)
-        way_id -= 1
-
-    _eps = epsilon if epsilon is not None else _IGN_SIMPLIFY_EPSILON
-
-    def _process_ring(coords, osm_tags, close=True):
-        """Crée les nœuds d'un anneau et le way correspondant."""
+    def _emit_linestring(out_nodes, out_ways, raw_coords, osm_tags):
+        # Convertir Decimal→float : _douglas_peucker utilise math.hypot et
+        # max(0.0, ...) qui ne supportent pas le mixage Decimal/float.
+        coords = [(_f(c[0]), _f(c[1])) for c in raw_coords]
         coords = _douglas_peucker(coords, _eps)
         if len(coords) < 2:
             return
-        nd_refs = [_new_node(c[1], c[0]) for c in coords]  # c[0]=lon c[1]=lat (ignore z)
-        if close and nd_refs[0] != nd_refs[-1]:
+        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in coords]
+        wid = state["way_id"]
+        _emit_way(out_ways, wid, nd_refs, osm_tags)
+        state["nb_ways"] += 1
+        state["way_id"] -= 1
+
+    def _emit_ring(out_nodes, out_ways, raw_coords, osm_tags):
+        coords = [(_f(c[0]), _f(c[1])) for c in raw_coords]
+        coords = _douglas_peucker(coords, _eps)
+        if len(coords) < 2:
+            return
+        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in coords]
+        if nd_refs[0] != nd_refs[-1]:
             nd_refs.append(nd_refs[0])
-        _new_way(nd_refs, osm_tags)
+        wid = state["way_id"]
+        _emit_way(out_ways, wid, nd_refs, osm_tags)
+        state["nb_ways"] += 1
+        state["way_id"] -= 1
 
-    def _process_linestring(coords, osm_tags):
-        coords = _douglas_peucker(coords, _eps)
-        if len(coords) < 2:
-            return
-        nd_refs = [_new_node(c[1], c[0]) for c in coords]  # c[0]=lon c[1]=lat (ignore z)
-        _new_way(nd_refs, osm_tags)
+    # ── Passe unique : streaming features → 2 fichiers temporaires ───────────
+    # OSM XML impose strictement l'ordre nodes → ways → relations (osmosis
+    # plante sinon). On écrit donc nodes et ways dans des fichiers séparés
+    # puis on les concatène dans l'ordre.
+    nodes_tmp = osm_xml_path.parent / (osm_xml_path.name + ".nodes.tmp")
+    ways_tmp  = osm_xml_path.parent / (osm_xml_path.name + ".ways.tmp")
+    nodes_tmp.parent.mkdir(parents=True, exist_ok=True)
 
-    import traceback as _tb
+    out_nodes = None
+    out_ways  = None
     try:
-      for feat in features:
-        props = feat.get("properties") or {}
-        geom  = feat.get("geometry")
-        if not geom:
-            continue
+        out_nodes = open(nodes_tmp, "w", encoding="utf-8")
+        out_ways  = open(ways_tmp,  "w", encoding="utf-8")
+        for feat in _iter_features():
+            if _stop_event.is_set():
+                raise KeyboardInterrupt("Interrompu par utilisateur")
+            props = feat.get("properties") or {}
+            geom  = feat.get("geometry")
+            if not geom:
+                continue
 
-        # Déduire le layer depuis la propriété 'source' (ex: "gareoult_ign_cours_d_eau")
-        src = props.get("source", "")
-        layer_short = ""
-        for k in _IGN_LAYER_TAGS:
-            if k in src:
-                layer_short = k
-                break
-        osm_tags = _tags_pour_layer(layer_short)
-        # Ajouter le nom si disponible
-        for name_key in ("nom", "name", "toponyme", "libelle", "NOM"):
-            if props.get(name_key):
-                osm_tags = dict(osm_tags)
-                osm_tags["name"] = str(props[name_key])
-                break
+            # Déduire le layer depuis la propriété 'source' (ex: "gareoult_ign_cours_d_eau")
+            src = props.get("source", "")
+            layer_short = ""
+            for k in _IGN_LAYER_TAGS:
+                if k in src:
+                    layer_short = k
+                    break
+            osm_tags = _tags_pour_layer(layer_short)
+            # Ajouter le nom si disponible
+            for name_key in ("nom", "name", "toponyme", "libelle", "NOM"):
+                if props.get(name_key):
+                    osm_tags = dict(osm_tags)
+                    osm_tags["name"] = str(props[name_key])
+                    break
 
-        gtype = geom.get("type", "")
-        coords = geom.get("coordinates", [])
+            gtype = geom.get("type", "")
+            coords = geom.get("coordinates", [])
 
-        if gtype == "Point":
-            _new_node(coords[1], coords[0], osm_tags)
-
-        elif gtype == "MultiPoint":
-            for pt in coords:
-                _new_node(pt[1], pt[0], osm_tags)
-
-        elif gtype == "LineString":
-            _process_linestring(coords, osm_tags)
-
-        elif gtype == "MultiLineString":
-            for line in coords:
-                _process_linestring(line, osm_tags)
-
-        elif gtype == "Polygon":
-            if coords:
-                _process_ring(coords[0], osm_tags, close=True)
-
-        elif gtype == "MultiPolygon":
-            for poly in coords:
-                if poly:
-                    _process_ring(poly[0], osm_tags, close=True)
-
-        elif gtype == "GeometryCollection":
-            for sub in geom.get("geometries", []):
-                sub_coords = sub.get("coordinates", [])
-                sub_type   = sub.get("type", "")
-                if sub_type == "Point":
-                    _new_node(sub_coords[1], sub_coords[0], osm_tags)
-                elif sub_type == "LineString":
-                    _process_linestring(sub_coords, osm_tags)
-                elif sub_type == "MultiLineString":
-                    for line in sub_coords: _process_linestring(line, osm_tags)
-                elif sub_type == "Polygon" and sub_coords:
-                    _process_ring(sub_coords[0], osm_tags, close=True)
-                elif sub_type == "MultiPolygon":
-                    for poly in sub_coords:
-                        if poly: _process_ring(poly[0], osm_tags, close=True)
-
-    except Exception as _e:
-        print(f"\n  ERREUR dans geojson_ign_vers_osm_xml :")
+            if gtype == "Point":
+                _emit_node_track(out_nodes, _f(coords[1]), _f(coords[0]), osm_tags)
+            elif gtype == "MultiPoint":
+                for pt in coords:
+                    _emit_node_track(out_nodes, _f(pt[1]), _f(pt[0]), osm_tags)
+            elif gtype == "LineString":
+                _emit_linestring(out_nodes, out_ways, coords, osm_tags)
+            elif gtype == "MultiLineString":
+                for line in coords:
+                    _emit_linestring(out_nodes, out_ways, line, osm_tags)
+            elif gtype == "Polygon":
+                if coords:
+                    _emit_ring(out_nodes, out_ways, coords[0], osm_tags)
+            elif gtype == "MultiPolygon":
+                for poly in coords:
+                    if poly:
+                        _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
+            elif gtype == "GeometryCollection":
+                for sub in geom.get("geometries", []):
+                    sub_coords = sub.get("coordinates", [])
+                    sub_type   = sub.get("type", "")
+                    if sub_type == "Point":
+                        _emit_node_track(out_nodes, _f(sub_coords[1]),
+                                                    _f(sub_coords[0]), osm_tags)
+                    elif sub_type == "LineString":
+                        _emit_linestring(out_nodes, out_ways, sub_coords, osm_tags)
+                    elif sub_type == "MultiLineString":
+                        for line in sub_coords:
+                            _emit_linestring(out_nodes, out_ways, line, osm_tags)
+                    elif sub_type == "Polygon" and sub_coords:
+                        _emit_ring(out_nodes, out_ways, sub_coords[0], osm_tags)
+                    elif sub_type == "MultiPolygon":
+                        for poly in sub_coords:
+                            if poly:
+                                _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
+        out_nodes.close(); out_nodes = None
+        out_ways.close();  out_ways  = None
+    except KeyboardInterrupt:
+        if out_nodes: out_nodes.close()
+        if out_ways:  out_ways.close()
+        nodes_tmp.unlink(missing_ok=True)
+        ways_tmp.unlink(missing_ok=True)
+        raise
+    except Exception:
+        print("\n  ERREUR dans geojson_ign_vers_osm_xml :")
         _tb.print_exc()
+        if out_nodes: out_nodes.close()
+        if out_ways:  out_ways.close()
+        nodes_tmp.unlink(missing_ok=True)
+        ways_tmp.unlink(missing_ok=True)
         return False
 
-    # ── Écriture XML ─────────────────────────────────────────────────────────
-    root = _ET.Element("osm", version="0.6", generator="lidar2map")
-    # <bounds> requis par mapsforge mapwriter pour initialiser le tile store
-    try:
-        lon_min_b = min(c[0] for feat in features
-                        for c in _coords_flat(feat.get("geometry") or {}))
-        lon_max_b = max(c[0] for feat in features
-                        for c in _coords_flat(feat.get("geometry") or {}))
-        lat_min_b = min(c[1] for feat in features
-                        for c in _coords_flat(feat.get("geometry") or {}))
-        lat_max_b = max(c[1] for feat in features
-                        for c in _coords_flat(feat.get("geometry") or {}))
-        _ET.SubElement(root, "bounds",
-                       minlat=f"{lat_min_b:.7f}", minlon=f"{lon_min_b:.7f}",
-                       maxlat=f"{lat_max_b:.7f}", maxlon=f"{lon_max_b:.7f}")
-    except Exception as _e:
-        print(f"  ⚠ Calcul bounds échoué ({_e}) — bounds ignoré")
-    for _, node_el in nodes:
-        root.append(node_el)
-    for way_el in ways:
-        root.append(way_el)
+    if state["nb_nodes"] == 0:
+        print("  GeoJSON vide — rien à convertir.")
+        nodes_tmp.unlink(missing_ok=True)
+        ways_tmp.unlink(missing_ok=True)
+        return False
 
-    tree = _ET.ElementTree(root)
-    # Pas d'indentation — osmosis n'en a pas besoin et _ET.indent()
-    # est catastrophiquement lent sur les grands fichiers (8 min pour 6M éléments)
+    # ── Composition du XML final : header + bounds + nodes + ways + footer ───
+    # Format reproduit fidèlement ElementTree.write(xml_declaration=True) :
+    # prologue avec apostrophes simples, encoding utf-8 minuscule.
     try:
-        tree.write(str(osm_xml_path), encoding="utf-8", xml_declaration=True)
-    except TypeError:
-        # Python < 3.9 : pas d'indent
-        tree.write(str(osm_xml_path), encoding="utf-8", xml_declaration=True)
+        with open(osm_xml_path, "w", encoding="utf-8") as out:
+            out.write("<?xml version='1.0' encoding='utf-8'?>\n")
+            out.write('<osm version="0.6" generator="lidar2map">')
+            if state["bounds_valid"]:
+                # <bounds> requis par mapsforge mapwriter pour initialiser le tile store
+                out.write(
+                    f'<bounds minlat="{state["lat_min"]:.7f}"'
+                    f' minlon="{state["lon_min"]:.7f}"'
+                    f' maxlat="{state["lat_max"]:.7f}"'
+                    f' maxlon="{state["lon_max"]:.7f}" />'
+                )
+            # Concat des bodies en chunks de 64 KB (pas de read() global)
+            for tmp in (nodes_tmp, ways_tmp):
+                with open(tmp, "r", encoding="utf-8") as src:
+                    while True:
+                        chunk = src.read(1 << 16)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+            out.write('</osm>')
+    finally:
+        nodes_tmp.unlink(missing_ok=True)
+        ways_tmp.unlink(missing_ok=True)
 
-    nb_nodes = len(nodes)
-    nb_ways  = len(ways)
     sz = osm_xml_path.stat().st_size / 1e6
-    print(f"  OSM XML : {nb_nodes} nœuds, {nb_ways} ways → {osm_xml_path.name} ({sz:.1f} Mo)")
+    print(f"  OSM XML : {state['nb_nodes']} nœuds, {state['nb_ways']} ways "
+          f"→ {osm_xml_path.name} ({sz:.1f} Mo)")
     return True
 
 def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
@@ -7281,10 +7727,8 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
             for a in cmd
         )
     _log_req(cmd)
-    r = subprocess.run(
+    rc, stderr_diag = _run_osmosis_streaming(
         cmd_str if _shell else cmd,
-        capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
         shell=_shell, env=_env_map,
     )
 
@@ -7302,13 +7746,11 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         print(f"  {chemin_osm_xml.name} conservé pour diagnostic.")
         return None
     else:
-        print(f"  ERREUR osmosis mapfile-writer IGN (code {r.returncode})")
-        if r.stderr:
-            print(f"  {r.stderr.strip()[:2000]}")
+        print(f"  ERREUR osmosis mapfile-writer IGN (code {rc})")
+        if stderr_diag:
+            print(f"  {stderr_diag.strip()[:2000]}")
         print(f"  {chemin_osm_xml.name} conservé — relancez osmosis après correction.")
         return None
-
-
 
 
 # ============================================================
@@ -7469,7 +7911,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
                           flush=True)
                 else:
                     print(f"  {done/1e6:.0f} Mo  {_hms(elapsed)}", flush=True)
-        tmp.rename(sz_path)
+        tmp.replace(sz_path)
         print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} Mo)  "
               f"{_hms(int(time.time()-t0))}", flush=True)
     except (OSError, urllib.error.URLError) as e:
@@ -7501,7 +7943,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             extracted = next(cache_dir.glob("**/*.gpkg"), None)
 
         if extracted and extracted != gpkg_path:
-            extracted.rename(gpkg_path)
+            extracted.replace(gpkg_path)
         elif not extracted:
             print("  ERREUR : .gpkg introuvable après extraction")
             return None
@@ -7515,6 +7957,81 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         print(f"  ERREUR extraction .7z ({type(e).__name__}): {e}")
         sz_path.unlink(missing_ok=True)
         return None
+
+
+def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
+    """
+    Streame src_geojson (FeatureCollection) → dst_gz en ajoutant
+    'source'=source_name à chaque feature.
+
+    Utilise ijson pour lecture incrémentale : ne charge JAMAIS l'intégralité
+    du GeoJSON en RAM. Critique pour les couches BD TOPO dept-scale qui
+    peuvent dépasser 1 Go en JSON (= 3-4 Go en RAM Python sans streaming).
+
+    Le format de sortie est identique à celui produit par _ecrire_geojson_gz :
+    JSON compact (separators=(",", ":")), gzip niveau 6, CRS84.
+
+    Retourne le nombre de features écrites (0 si fichier source vide).
+    """
+    import decimal as _dec
+
+    def _enc_default(o):
+        # ijson retourne des decimal.Decimal pour les nombres → reconvertir en float
+        if isinstance(o, _dec.Decimal):
+            return float(o)
+        raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
+
+    dst_gz = Path(dst_gz)
+    if not str(dst_gz).endswith(".gz"):
+        dst_gz = Path(str(dst_gz) + ".gz")
+    dst_gz.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        import ijson
+    except ImportError:
+        # Fallback non-streaming (peut faire OOM sur dept-scale — averti)
+        print("  ⚠ ijson absent — chargement RAM intégral (risque OOM sur dept-scale)")
+        with open(src_geojson, encoding="utf-8") as f:
+            gj = json.load(f)
+        feats = gj.get("features", [])
+        for feat in feats:
+            props = feat.get("properties") or {}
+            props.setdefault("source", source_name)
+            feat["properties"] = props
+        gj["features"] = feats
+        data_bytes = json.dumps(gj, ensure_ascii=False,
+                                 separators=(",", ":"),
+                                 default=_enc_default).encode("utf-8")
+        with gzip.open(dst_gz, "wb", compresslevel=6) as f:
+            f.write(data_bytes)
+        return len(feats)
+
+    # ── Streaming feature par feature ────────────────────────────────────────
+    n = 0
+    crs_obj = {"type": "name",
+               "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
+    header = (
+        '{"type":"FeatureCollection","name":'
+        + json.dumps(source_name, ensure_ascii=False)
+        + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
+        + ',"features":['
+    )
+    # Écriture binaire dans gzip pour éviter le double encoding text→bytes
+    with gzip.open(dst_gz, "wb", compresslevel=6) as out:
+        out.write(header.encode("utf-8"))
+        with open(src_geojson, "rb") as src:
+            for feat in ijson.items(src, "features.item"):
+                props = feat.get("properties") or {}
+                props.setdefault("source", source_name)
+                feat["properties"] = props
+                if n > 0:
+                    out.write(b",")
+                out.write(json.dumps(feat, ensure_ascii=False,
+                                      separators=(",", ":"),
+                                      default=_enc_default).encode("utf-8"))
+                n += 1
+        out.write(b"]}")
+    return n
 
 
 def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
@@ -7555,17 +8072,19 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         tmp_geojson.unlink(missing_ok=True); return None
 
     try:
-        with open(tmp_geojson, encoding="utf-8") as f:
-            gj = json.load(f)
         src_name = sortie_gz.name.replace(".geojson.gz", "")
-        for feat in gj.get("features", []):
-            feat.setdefault("properties", {}).setdefault("source", src_name)
-        gz = _ecrire_geojson_gz(gj, sortie_gz.parent / sortie_gz.name.replace(".gz", ""))
-        n = len(gj.get("features", []))
-        print(f"  {gz.name} : {n} features  ({gz.stat().st_size//1024} Ko)  "
+        # Streaming via ijson : évite de charger tout le GeoJSON en RAM.
+        # Une couche BD TOPO département entier (ex: troncon_route Var) peut faire
+        # 200-800 Mo en JSON, soit 1-3 Go pic RAM avec json.load(). OOM garanti
+        # sur 8 Go RAM. Le streamer écrit feature par feature dans le .gz final.
+        n = _streamer_geojson_ajout_source(tmp_geojson, sortie_gz, src_name)
+        if n == 0:
+            print(f"  ⚠ {layer_name} : 0 features après streaming")
+            return None
+        print(f"  {sortie_gz.name} : {n} features  ({sortie_gz.stat().st_size//1024} Ko)  "
               f"{_hms(int(time.time()-t0))}", flush=True)
-        _creer_fichier(gz, intermediaire=False)
-        return gz
+        _creer_fichier(sortie_gz, intermediaire=False)
+        return sortie_gz
     finally:
         tmp_geojson.unlink(missing_ok=True)
 
@@ -7786,9 +8305,6 @@ def main_wfs():
     for s in sorties:
         print(f"  → {s}")
     _historique_depuis_argv(elapsed, str(dossier))
-
-
-
 
 
 # ============================================================
@@ -8152,10 +8668,6 @@ Exemples :
     _historique_depuis_argv(int(time.time()-t_debut))
 
 
-
-
-
-
 def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
     """
     Construit un cfg complet depuis sys.argv et sauvegarde dans l'historique.
@@ -8293,10 +8805,7 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = ""):
     historique.insert(0, entree)
     historique = historique[:_HISTORIQUE_MAX]
     try:
-        _HISTORIQUE_PATH.write_text(
-            json.dumps(historique, indent=2, ensure_ascii=False),
-            encoding="utf-8"
-        )
+        _ecrire_json_atomique(_HISTORIQUE_PATH, historique, indent=2)
         print(f"  Historique sauvegardé : {_HISTORIQUE_PATH}  ({len(historique)} entrées)", flush=True)
     except Exception as e:
         print(f"  Historique non sauvegardé : {e}", flush=True)
@@ -8325,9 +8834,37 @@ def lancer_gui():
         import webview
     except ImportError:
         print("  PyWebView absent — installation automatique...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "pywebview",
-                 "--break-system-packages", "-q"], check=True)
-        import webview
+        # PyWebView nécessite un backend natif :
+        #   Windows : WebView2 (préinstallé Win10+)         → "pywebview"
+        #   macOS   : Cocoa WebKit (préinstallé)            → "pywebview"
+        #   Linux   : QtWebEngine via PyQt5 (recommandé)    → "pywebview[qt]"
+        #             alternative : GTK via pygobject       → "pywebview[gtk]"
+        #
+        # Sur Linux, sans extra, pywebview lève RuntimeError au démarrage
+        # ("No suitable backend found"). On utilise [qt] par défaut car les
+        # paquets pip sont auto-suffisants ; [gtk] nécessiterait des paquets
+        # système (libgirepository1.0-dev, gir1.2-webkit2-4.0…).
+        if LINUX:
+            pkg = "pywebview[qt]"
+        else:
+            pkg = "pywebview"
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", pkg,
+                            "--break-system-packages", "-q"], check=True)
+        except subprocess.CalledProcessError:
+            # Fallback : tenter sans --break-system-packages (envs Conda/venv)
+            subprocess.run([sys.executable, "-m", "pip", "install", pkg, "-q"],
+                           check=True)
+        try:
+            import webview
+        except ImportError:
+            if LINUX:
+                print("  ERREUR : pywebview installé mais sans backend fonctionnel.")
+                print("  Sur Linux, installez aussi les paquets système requis :")
+                print("    Debian/Ubuntu : sudo apt install python3-pyqt5 python3-pyqt5.qtwebengine")
+                print("    Fedora/RHEL   : sudo dnf install python3-qt5 python3-qt5-webengine")
+                print("    Arch          : sudo pacman -S python-pyqt5 python-pyqt5-webengine")
+            raise
 
     # Supprimer les warnings internes pywebview (AccessibilityObject, COM, etc.)
     import logging as _logging
@@ -8341,11 +8878,24 @@ def lancer_gui():
     SCRIPT  = Path(__file__).resolve()
 
     # ── Table zooms pour la sélection de couche ───────────────────────────────
+    # NB : _lire_zoom_limites_wmts() interroge GetCapabilities au runtime et
+    # corrige automatiquement ces valeurs si elles diffèrent de la réalité.
+    # Cette table sert seulement à pré-remplir la GUI.
     _ZOOMS_GUI = {
         "scan25": (8, 16), "scan25tour": (8, 16), "scan100": (6, 14),
         "scanoaci": (6, 15), "planign": (6, 18), "etatmajor40": (6, 15),
         "etatmajor10": (8, 16), "pentes": (6, 14), "ortho": (10, 20),
         "cadastre": (12, 19), "ombrage": (6, 14),
+        # Orthos historiques métropole (résolution dégradée vs ortho actuelle)
+        "ortho_1950": (10, 18), "ortho_1965": (10, 18), "ortho_1980": (10, 18),
+        # Infrarouge couleur (couverture identique à ortho)
+        "ortho_irc": (10, 19),
+        # Satellite : résolution plus faible que aérien → zoom max plus bas
+        "pleiades": (10, 19), "spot": (8, 16),
+        # EDUGEO : couverture restreinte aux centres urbains, zooms élevés
+        "edugeo_marseille_1969": (12, 18), "edugeo_marseille_1980": (12, 18),
+        "edugeo_marseille_1987": (12, 18), "edugeo_marseille_1988": (12, 18),
+        "edugeo_marseille_2010": (12, 18), "edugeo_toulon_1972": (12, 18),
     }
 
     # ── Données statiques exposées au formulaire ──────────────────────────────
@@ -8392,6 +8942,15 @@ def lancer_gui():
         def get_historique(self):
             """Retourne la liste historique — appelable depuis JS à tout moment."""
             return _lire_historique()
+
+        def clear_historique(self):
+            """Vide intégralement l'historique (action destructive — la confirmation
+            est gérée côté JS via confirm() avant l'appel)."""
+            try:
+                _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
 
         # ── Dialogs fichiers ─────────────────────────────────────────────
         def _get_window(self):
@@ -8638,6 +9197,8 @@ def lancer_gui():
                             start_new_session=True)
                     buf = ""
                     pct_re = re.compile(r"(\d+)%")
+                    # Collecter les lignes d'erreur pour récap modal en fin de run
+                    self._err_lines = []
                     for chunk in iter(lambda: self._process.stdout.read(64), b""):
                         for ch in chunk.decode("utf-8", errors="replace"):
                             if ch == "\r":
@@ -8648,10 +9209,22 @@ def lancer_gui():
                                 buf = ""
                             elif ch == "\n":
                                 if buf.strip():
-                                    tag = "err" if any(
-                                        w in buf.upper()
-                                        for w in ["ERREUR","ERROR","TRACEBACK"]
-                                    ) else "ok"
+                                    # Détection élargie : argparse "error:" en minuscules,
+                                    # erreurs Python "Error:", traces, "usage:" qui suit
+                                    # une erreur argparse, ainsi que "ERREUR" déjà détecté.
+                                    upbuf = buf.upper()
+                                    is_err = (
+                                        any(w in upbuf for w in
+                                            ["ERREUR", "ERROR", "TRACEBACK"])
+                                        or buf.strip().startswith("usage:")
+                                        or ": error:" in buf
+                                    )
+                                    tag = "err" if is_err else "ok"
+                                    if is_err:
+                                        # Garder un échantillon pour la modale finale
+                                        # (max 20 lignes pour ne pas saturer)
+                                        if len(self._err_lines) < 20:
+                                            self._err_lines.append(buf.strip())
                                     self._log_queue.put({"line": buf + "\n", "tag": tag})
                                 buf = ""
                             else:
@@ -8661,6 +9234,12 @@ def lancer_gui():
                     sym = "✓" if self._retcode == 0 else "✗"
                     self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
                                          "tag": "ok" if self._retcode == 0 else "err"})
+                    # Si échec : envoyer un message modal récapitulatif au front
+                    if self._retcode != 0 and self._err_lines:
+                        self._log_queue.put({
+                            "modal_error": "\n".join(self._err_lines[-10:]),
+                            "retcode": self._retcode,
+                        })
                     if self._retcode == 0:
                         # Marquer la durée — sauvegarde historique faite dans poll_log
                         self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
@@ -8738,7 +9317,7 @@ def lancer_gui():
 <!-- ═══════════════════════════════ CSS ════════════════════════════════════ -->
 <style>
 :root{--bg:#12121f;--bg2:#1a1a30;--bg3:#1f1f3a;--bd:#2a2a50;
-  --ac:#7070cc;--ac2:#e07060;--fg:#e0e0e0;--dim:#7070aa;
+  --ac:#7070cc;--ac2:#e07060;--fg:#ececec;--dim:#a0a0d0;
   --green:#60cc80;--red:#cc6060;--fnt:"Segoe UI",system-ui,sans-serif;
   /* Couleurs par type de carte */
   --lidar:  #5b8a6e;  /* vert forêt */
@@ -8866,7 +9445,7 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
  <button class="btn btn-run" id="btn-run" onclick="lancer()">▶ Lancer</button>
  <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled>■ Arrêter</button>
  <button class="btn" id="btn-hist" onclick="toggleHistorique()"
-         style="background:var(--bg3);border:1px solid var(--bd);margin-left:12px">⏱ Historique</button>
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
 </div>
 <div id="form-inner">
@@ -9269,8 +9848,6 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
   </div>
 
 
-
-
  </div><!-- /form-inner -->
 </div><!-- /main -->
 <!-- ═══ PANNEAU HISTORIQUE ═══ -->
@@ -9279,8 +9856,13 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
             border-left:1px solid var(--bd);overflow-y:auto;z-index:100;padding:12px;box-sizing:border-box">
  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
   <strong>Historique des traitements</strong>
-  <button class="btn" onclick="toggleHistorique()"
-          style="background:transparent;border:none;font-size:16px;cursor:pointer">✕</button>
+  <div style="display:flex;gap:6px;align-items:center">
+   <button class="btn" onclick="viderHistorique()"
+           style="background:transparent;border:1px solid var(--red);color:var(--red);
+                  font-size:11px;padding:3px 10px;cursor:pointer">🗑 Vider</button>
+   <button class="btn" onclick="toggleHistorique()"
+           style="background:transparent;border:none;font-size:16px;cursor:pointer">✕</button>
+  </div>
  </div>
  <div id="hist-list"></div>
 <!-- panneau-hist end --
@@ -9371,6 +9953,32 @@ function toggleHistorique() {
   if (p) p.classList.toggle('hidden');
 }
 
+async function viderHistorique() {
+  const n = (_historique || []).length;
+  if (n === 0) {
+    alert('L\'historique est déjà vide.');
+    return;
+  }
+  if (!confirm(`Supprimer ${n} entrée(s) de l'historique ?\n\n`
+             + `Cette action est définitive — les commandes passées ne pourront plus `
+             + `être rappelées.`)) {
+    return;
+  }
+  try {
+    const r = await pywebview.api.clear_historique();
+    if (r && r.ok) {
+      _historique = [];
+      buildHistorique([]);
+      const fs = document.getElementById('footer-status');
+      if (fs) fs.textContent = `✓ Historique vidé (${n} entrée(s) supprimée(s))`;
+    } else {
+      alert('Erreur lors de la suppression : ' + ((r && r.error) || 'inconnue'));
+    }
+  } catch (e) {
+    alert('Erreur lors de la suppression : ' + e);
+  }
+}
+
 function rappelHistorique(i) {
   const e = _historique[i];
   if (!e || !e.params) return;
@@ -9427,37 +10035,45 @@ function buildOsmTags(tags) {
 // ── Bindings dynamiques ───────────────────────────────────────────────────────
 function bindAll() {
   // Mode zone — appliquer l'état initial immédiatement
+  // Même problème que pour 'type' : sr() coche le radio sans tirer 'change',
+  // donc loadConfig() doit appeler applyMode() après sr('mode', ...).
+  window.applyMode = function() {
+    const cur = document.querySelector('input[name=mode]:checked')?.value || 'ville';
+    ['ville','gps','bbox','dep'].forEach(m => {
+      const z = document.getElementById('z-'+m);
+      if (z) z.classList.toggle('hidden', cur !== m);
+    });
+  };
   document.querySelectorAll('input[name=mode]').forEach(r => {
-    r.addEventListener('change', () => {
-      ['ville','gps','bbox','dep'].forEach(m => {
-        document.getElementById('z-'+m).classList.toggle('hidden', r.value !== m);
-      });
-    });
+    r.addEventListener('change', window.applyMode);
   });
-  const curMode = document.querySelector('input[name=mode]:checked')?.value || 'ville';
-  ['ville','gps','bbox','dep'].forEach(m => {
-    document.getElementById('z-'+m).classList.toggle('hidden', m !== curMode);
-  });
+  window.applyMode();
   // Type carte — appliquer l'état initial immédiatement
-  document.querySelectorAll('input[name=type]').forEach(r => {
-    r.addEventListener('change', () => {
-      ['lidar','scan','osm','vecteur','fusion','decoupe'].forEach(t => {
-        document.getElementById('sec-'+t).classList.toggle('hidden', r.value !== t);
-      });
-      document.body.className = 'type-' + r.value;
-      const secZone = document.querySelector('.sec-zone');
-      if (secZone) secZone.classList.toggle('hidden', r.value === 'decoupe');
+  // Fonction réutilisable : sync sections visibles + body class avec le
+  // radio name=type actuellement coché. Appelée :
+  //   - sur événement 'change' du radio (clic utilisateur)
+  //   - une fois au démarrage (depuis bindAll)
+  //   - depuis loadConfig() après avoir coché un radio par programme
+  //     (parce que el.checked = true ne tire PAS l'événement 'change')
+  window.applyType = function() {
+    const cur = document.querySelector('input[name=type]:checked')?.value || 'lidar';
+    ['lidar','scan','osm','vecteur','fusion','decoupe'].forEach(t => {
+      const sec = document.getElementById('sec-'+t);
+      if (sec) sec.classList.toggle('hidden', t !== cur);
     });
+    document.body.className = 'type-' + cur;
+    const secZone = document.querySelector('.sec-zone');
+    if (secZone) secZone.classList.toggle('hidden', cur === 'decoupe');
+  };
+  document.querySelectorAll('input[name=type]').forEach(r => {
+    r.addEventListener('change', window.applyType);
   });
   // Appliquer l'état initial
-  const curType = document.querySelector('input[name=type]:checked')?.value || 'lidar';
-  ['lidar','scan','osm','vecteur','fusion','decoupe'].forEach(t => {
-    document.getElementById('sec-'+t).classList.toggle('hidden', t !== curType);
-  });
-  document.body.className = 'type-' + curType;
-  const _secZoneInit = document.querySelector('.sec-zone');
-  if (_secZoneInit) _secZoneInit.classList.toggle('hidden', curType === 'decoupe');
+  window.applyType();
   // Toggle sections avec checkbox
+  // Même problème que pour les radios : modifier el.checked par programme
+  // (depuis loadConfig) ne tire PAS l'événement 'change'. Donc on expose
+  // window.applyToggles() pour que loadConfig puisse forcer la synchro.
   const toggles = [
     ['f-tel',       'body-tel'],
     ['f-no-omb',    'body-omb'],
@@ -9471,14 +10087,20 @@ function bindAll() {
     ['f-tuiles-v',  'row-simplif-v'],
     ['f-fusion-map','row-simplif-fusion'],
   ];
+  window.applyToggles = function() {
+    toggles.forEach(([cbId, bodyId]) => {
+      const cb = document.getElementById(cbId);
+      const body = document.getElementById(bodyId);
+      if (!cb || !body) return;
+      body.classList.toggle('hidden', !cb.checked);
+    });
+  };
   toggles.forEach(([cbId, bodyId]) => {
     const cb = document.getElementById(cbId);
-    const body = document.getElementById(bodyId);
-    if (!cb || !body) return;
-    const upd = () => body.classList.toggle('hidden', !cb.checked);
-    cb.addEventListener('change', upd);
-    upd();
+    if (!cb) return;
+    cb.addEventListener('change', window.applyToggles);
   });
+  window.applyToggles();
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -9587,9 +10209,32 @@ function loadConfig(cfg) {
   const sr = (name, val) => { const r = document.querySelector(`input[name=${name}][value="${val}"]`);
     if (r) r.checked = true; };
 
+  // Normaliser les zooms hérités d'un historique antérieur à _valider_zooms.
+  // Si min > max sur n'importe quelle paire (LiDAR / Raster / Découpe), on
+  // swap silencieusement et on prévient via le footer. Sans ça, un clic sur
+  // une vieille entrée recharge des valeurs que le pipeline refusera.
+  let _swapped = false;
+  for (const [kmin, kmax] of [
+    ['zoom_min_l', 'zoom_max_l'],
+    ['zoom_min_s', 'zoom_max_s'],
+    ['zoom_min_d', 'zoom_max_d'],
+  ]) {
+    const a = cfg[kmin], b = cfg[kmax];
+    if (typeof a === 'number' && typeof b === 'number' && a > b) {
+      cfg[kmin] = b; cfg[kmax] = a;
+      _swapped = true;
+    }
+  }
+  if (_swapped) {
+    const fs = document.getElementById('footer-status');
+    if (fs) fs.textContent = '⚠ Zooms d\'historique inversés — corrigés au chargement';
+  }
+
   // Zone
   if (cfg.mode) sr('mode', cfg.mode);
   if (cfg.type) sr('type', cfg.type);
+  // (window.applyMode/applyType seront rappelées en fin de loadConfig
+  //  pour synchroniser les sections visibles avec les radios cochés)
 
   // Projet
   s('f-nom',     cfg.nom);
@@ -9615,9 +10260,6 @@ function loadConfig(cfg) {
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
-  // Forcer le toggle du body-mbt après restauration
-  { const _cb = g('f-mbtiles-l'); const _bd = g('body-mbt');
-    if (_cb && _bd) _bd.classList.toggle('hidden', !_cb.checked); }
   s('f-mbtiles',        cfg.mbtiles_l !== undefined ? cfg.mbtiles_l : (cfg.mbtiles !== undefined ? cfg.mbtiles : false));
   s('f-rmap',           cfg.rmap);
   s('f-sqlitedb',       cfg.sqlitedb);
@@ -9717,13 +10359,13 @@ function loadConfig(cfg) {
     });
   }
 
-  // Re-déclencher les toggles et l'état initial
-  if (cfg.mode) { const r = document.querySelector(`input[name=mode][value="${cfg.mode}"]`);
-    if (r) r.dispatchEvent(new Event('change')); }
-  if (cfg.type) { const r = document.querySelector(`input[name=type][value="${cfg.type}"]`);
-    if (r) r.dispatchEvent(new Event('change')); }
-  document.querySelectorAll('.section-hd input[type=checkbox]').forEach(cb =>
-    cb.dispatchEvent(new Event('change')));
+  // Re-déclencher les toggles et l'état initial.
+  // NB : les fonctions window.apply* sont définies par bindAll() et appelées
+  // directement (au lieu d'un dispatchEvent('change') qui peut échouer
+  // silencieusement selon le timing async d'attache des listeners pywebview).
+  if (typeof window.applyMode    === 'function') window.applyMode();
+  if (typeof window.applyType    === 'function') window.applyType();
+  if (typeof window.applyToggles === 'function') window.applyToggles();
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -9808,6 +10450,15 @@ async function lancer() {
           document.getElementById('footer-status').textContent =
             item.pct + '%  ' + (item.label || '').substring(0, 80);
         }
+        // Récap d'erreur en fin de run : alerte modale avec les lignes
+        // d'erreur capturées dans le subprocess. Sans ça, l'utilisateur
+        // doit aller chercher dans le panneau de log pour comprendre
+        // pourquoi le run a échoué.
+        if (item.modal_error) {
+          alert(`Le traitement a échoué (code ${item.retcode}).\n\n`
+              + item.modal_error
+              + `\n\n(détails complets dans le panneau de log)`);
+        }
       });
     }
     if (r.done) {
@@ -9854,6 +10505,7 @@ function btnReset() {
         js_api=api,
         width=1300, height=850,
         min_size=(1000, 600),
+        zoomable=True,   # active Ctrl+molette (Edge WebView2 sur Windows)
     )
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win
@@ -9908,6 +10560,12 @@ if __name__ == "__main__":
                     _dispatch()
             else:
                 _dispatch()
+    except KeyboardInterrupt:
+        # Cancellation propre : raisée par print_etape() ou _svf_numpy()
+        # quand _stop_event a été set par Ctrl+C. Le finally restaure stdout
+        # avant que Python imprime un message synthétique.
+        print("\n\n  Traitement interrompu par l'utilisateur.", flush=True)
+        sys.exit(130)
     finally:
         if isinstance(sys.stdout, _TeeLogger):
             sys.stdout.close()

@@ -1,0 +1,79 @@
+# ─── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ─── lidar2map : sorties générées (jamais committer) ────────────────
+# Données géospatiales produites
+*.tif
+*.tiff
+*.vrt
+*.mbtiles
+*.rmap
+*.sqlitedb
+*.map
+*.osm
+*.geojson
+*.geojson.gz
+*.pbf
+*.gpkg
+
+# Archives téléchargées
+*.7z
+*.zip
+*.tar.gz
+
+# ─── lidar2map : binaires et caches (téléchargés à la demande) ──────
+bin/
+cache/
+logs/
+.lidar2map_cache/
+
+# ─── lidar2map : structure de travail ──────────────────────────────
+Projets/
+output/
+sortie/
+
+# ─── lidar2map : état utilisateur (perso, jamais public) ────────────
+historique.json
+dep_bbox_cache.json
+ville_bbox_cache.json
+manifeste.json
+*_manifeste.json
+
+# ─── Tests temporaires ──────────────────────────────────────────────
+test_*.py.bak
+*.bak
+*.tmp
+*.swp
+
+# ─── Éditeurs / IDE ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.spyderproject
+.spyproject
+
+# ─── OS ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
