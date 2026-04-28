@@ -1,4 +1,4 @@
-# lidar2map.py — Prospection LiDAR archéologique & cartes offline pour Locus Map / OsmAnd
+# lidar2map.py — Prospection LiDAR & cartes offline pour Locus Map / OsmAnd
 # Copyright (C) 2025 Nicolas Martin
 #
 # Ce logiciel a été conçu, architecturé et dirigé par Nicolas Martin.
@@ -522,43 +522,76 @@ class _TeeLogger:
 
     def write(self, msg):
         # ── Terminal ─────────────────────────────────────────────────────────
+        # Toutes les opérations sont défensives parce que cette méthode est
+        # appelée par Python lui-même au shutdown. Si un de ses appels lève
+        # une exception, Windows retourne le code 120 (ERROR_CALL_NOT_IMPLEMENTED)
+        # à la place du code passé à sys.exit().
         try:
             self._terminal.write(msg)
         except UnicodeEncodeError:
-            self._terminal.write(msg.encode(self._terminal.encoding or "cp1252",
-                                             errors="replace").decode(
-                                             self._terminal.encoding or "cp1252"))
-        if "\r" in msg:
-            self._terminal.flush()
+            try:
+                self._terminal.write(msg.encode(self._terminal.encoding or "cp1252",
+                                                 errors="replace").decode(
+                                                 self._terminal.encoding or "cp1252"))
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            if "\r" in msg:
+                self._terminal.flush()
+        except Exception:
+            pass
 
         # ── Log ──────────────────────────────────────────────────────────────
         # Traiter caractère par caractère pour gérer \r et \n proprement
-        for ch in msg:
-            if ch == "\r":
-                # \r : écrase le contenu de la ligne courante (barre de progression)
-                # On garde le dernier état dans _cr_buf ; on ne loggue rien encore
-                self._cr_buf = self._buf
-                self._buf = ""
-            elif ch == "\n":
-                # \n : fin de ligne — logguer le contenu final
-                # Si la ligne était précédée de \r, prendre le dernier \r
-                line = self._buf or self._cr_buf
-                self._log_line(line)
-                self._buf = ""
-                self._cr_buf = ""
-            else:
-                self._buf += ch
+        try:
+            for ch in msg:
+                if ch == "\r":
+                    # \r : écrase le contenu de la ligne courante (barre de progression)
+                    # On garde le dernier état dans _cr_buf ; on ne loggue rien encore
+                    self._cr_buf = self._buf
+                    self._buf = ""
+                elif ch == "\n":
+                    # \n : fin de ligne — logguer le contenu final
+                    # Si la ligne était précédée de \r, prendre le dernier \r
+                    line = self._buf or self._cr_buf
+                    self._log_line(line)
+                    self._buf = ""
+                    self._cr_buf = ""
+                else:
+                    self._buf += ch
+        except Exception:
+            pass
 
     def flush(self):
-        self._terminal.flush()
-        self._log.flush()
+        # Défensif : flush() est appelé par Python au shutdown, après que
+        # close() a peut-être déjà fermé self._log. Sans try/except, l'erreur
+        # "I/O operation on closed file" remonte → code retour Windows = 120.
+        try:
+            self._terminal.flush()
+        except Exception:
+            pass
+        try:
+            self._log.flush()
+        except Exception:
+            pass
 
     def close(self):
-        # Flush des buffers résiduels
-        remaining = self._buf or self._cr_buf
-        if remaining:
-            self._log_line(remaining)
-        self._log.close()
+        # Flush des buffers résiduels — défensif : pendant le shutdown
+        # Python, sys.stdout/sys.stderr peuvent être dans un état partiel,
+        # et toute exception ici peut polluer le code retour du process
+        # (Windows retourne 120 si l'atexit handler échoue).
+        try:
+            remaining = self._buf or self._cr_buf
+            if remaining:
+                self._log_line(remaining)
+        except Exception:
+            pass
+        try:
+            self._log.close()
+        except Exception:
+            pass
 
 def _activer_log():
     import atexit
@@ -577,8 +610,17 @@ def _activer_log():
     tee = _TeeLogger(log_path)
     sys.stdout = tee
     sys.stderr = tee   # stderr → même log (tracebacks, warnings)
-    atexit.register(lambda: (sys.stdout.close()
-                    if isinstance(sys.stdout, _TeeLogger) else None))
+    # atexit : fonction nommée robuste plutôt qu'un lambda. Toute exception
+    # ici peut faire que Windows retourne le code 120 (ERROR_CALL_NOT_IMPLEMENTED)
+    # au lieu du code passé à sys.exit() — ça casse à la fois le contrat CLI
+    # et le mécanisme d'erreur modale GUI qui se base sur retcode != 0.
+    def _close_tee_safely():
+        try:
+            if isinstance(sys.stdout, _TeeLogger):
+                sys.stdout.close()
+        except Exception:
+            pass
+    atexit.register(_close_tee_safely)
     # ── Intercepter les exceptions non gérées → log avant exit ───────────────
     import traceback as _tb
     def _excepthook(exc_type, exc_value, exc_tb):
@@ -1123,7 +1165,7 @@ def geocoder_ville_wgs84(nom_ville):
         print(f"  ERREUR geocodage ({type(e).__name__}) : {e}")
         return None, None
     if not data:
-        print(f"  Ville non trouvée : {nom_ville}")
+        print(f"  ERREUR : ville non trouvée : {nom_ville}")
         return None, None
 
     # Validation du type de lieu retourné
@@ -1141,7 +1183,7 @@ def geocoder_ville_wgs84(nom_ville):
 
     # Rejet immédiat si pas un lieu (boutique, restaurant, route, etc.)
     if cat not in ("place", "boundary", "landuse"):
-        msg = (f"  Lieu '{nom_ville}' non reconnu comme ville/village.\n"
+        msg = (f"  ERREUR : lieu '{nom_ville}' non reconnu comme ville/village.\n"
                f"  Nominatim a renvoyé : {display} (type={cat}/{addrtype}).\n"
                f"  Précisez le nom de la commune.")
         print(msg)
@@ -1158,7 +1200,7 @@ def geocoder_ville_wgs84(nom_ville):
             print(f"  Vérifiez que c'est bien le lieu attendu.")
         else:
             # Type complètement inattendu (industrial, retail, etc.) : rejeter
-            print(f"  Lieu '{nom_ville}' ambigu : Nominatim a renvoyé "
+            print(f"  ERREUR : lieu '{nom_ville}' ambigu — Nominatim a renvoyé "
                   f"{display} (type={addrtype}).")
             print(f"  Précisez le nom complet (commune, pas POI).")
             return None, None
@@ -9249,6 +9291,10 @@ def lancer_gui():
                     pct_re = re.compile(r"(\d+)%")
                     # Collecter les lignes d'erreur pour récap modal en fin de run
                     self._err_lines = []
+                    # Buffer circulaire des dernières lignes non-vides : sert de
+                    # fallback si le run sort en code != 0 sans ligne marquée
+                    # comme "ERREUR" (ex: print() libre suivi de sys.exit(1))
+                    self._tail_lines = []
                     for chunk in iter(lambda: self._process.stdout.read(64), b""):
                         for ch in chunk.decode("utf-8", errors="replace"):
                             if ch == "\r":
@@ -9275,21 +9321,59 @@ def lancer_gui():
                                         # (max 20 lignes pour ne pas saturer)
                                         if len(self._err_lines) < 20:
                                             self._err_lines.append(buf.strip())
+                                    # Tenir un buffer des 10 dernières lignes
+                                    # non-vides pour fallback si retcode≠0 sans
+                                    # ligne marquée "ERREUR".
+                                    self._tail_lines.append(buf.strip())
+                                    if len(self._tail_lines) > 10:
+                                        self._tail_lines.pop(0)
                                     self._log_queue.put({"line": buf + "\n", "tag": tag})
                                 buf = ""
                             else:
                                 buf += ch
+                    # Drain final : la boucle for-chunk a vu EOF, mais le buffer
+                    # interne `buf` peut contenir une dernière ligne sans \n
+                    # final (ex : print() Python sans flush avant sys.exit).
+                    # Sans ça, ces lignes sont perdues sur Windows quand le
+                    # child exit en moins de 100ms.
+                    if buf.strip():
+                        upbuf = buf.upper()
+                        is_err = (
+                            any(w in upbuf for w in ["ERREUR","ERROR","TRACEBACK"])
+                            or buf.strip().startswith("usage:")
+                            or ": error:" in buf
+                        )
+                        if is_err and len(self._err_lines) < 20:
+                            self._err_lines.append(buf.strip())
+                        self._tail_lines.append(buf.strip())
+                        if len(self._tail_lines) > 10:
+                            self._tail_lines.pop(0)
+                        self._log_queue.put({"line": buf + "\n",
+                                             "tag": "err" if is_err else "ok"})
+                        buf = ""
                     self._process.wait()
                     self._retcode = self._process.returncode
                     sym = "✓" if self._retcode == 0 else "✗"
                     self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
                                          "tag": "ok" if self._retcode == 0 else "err"})
-                    # Si échec : envoyer un message modal récapitulatif au front
-                    if self._retcode != 0 and self._err_lines:
-                        self._log_queue.put({
-                            "modal_error": "\n".join(self._err_lines[-10:]),
-                            "retcode": self._retcode,
-                        })
+                    # Si échec : préparer le message modal récapitulatif.
+                    # Priorité 1 : lignes marquées comme "ERREUR" (si détectées).
+                    # Priorité 2 : 10 dernières lignes non-vides (fallback générique
+                    # pour les cas où sys.exit(1) suit un print() libre que le filtre
+                    # n'a pas reconnu comme erreur).
+                    # On le stocke à la fois dans la queue ET sur l'instance, car
+                    # les dictionnaires complexes peuvent être mal sérialisés par
+                    # certaines versions de pywebview/WebView2.
+                    self._modal_error_msg = ""
+                    if self._retcode != 0:
+                        modal_lines = self._err_lines[-10:] if self._err_lines \
+                                      else self._tail_lines[-10:]
+                        if modal_lines:
+                            self._modal_error_msg = "\n".join(modal_lines)
+                            self._log_queue.put({
+                                "modal_error": self._modal_error_msg,
+                                "retcode": self._retcode,
+                            })
                     if self._retcode == 0:
                         # Marquer la durée — sauvegarde historique faite dans poll_log
                         self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
@@ -9327,15 +9411,26 @@ def lancer_gui():
             except Exception:
                 pass
 
+        def get_last_error(self):
+            """Retourne le message d'erreur du dernier run (ou chaîne vide).
+
+            Permet au JS de récupérer ce message **après** avoir constaté
+            que `done=True && code!=0`, sans dépendre de la transmission par
+            la queue (que pywebview/WebView2 sérialise parfois mal pour les
+            dicts à plusieurs clés).
+            """
+            return {
+                "msg":     getattr(self, "_modal_error_msg", "") or "",
+                "retcode": getattr(self, "_retcode", 0) or 0,
+            }
+
         def poll_log(self):
             items = []
             try:
                 while True:
                     items.append(self._log_queue.get_nowait())
             except queue.Empty:
-                pass
-
-            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
+                pass            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
             if self._done and self._retcode == 0 and not getattr(self, "_hist_saved", False):
                 self._hist_saved = True
                 try:
@@ -10500,21 +10595,30 @@ async function lancer() {
           document.getElementById('footer-status').textContent =
             item.pct + '%  ' + (item.label || '').substring(0, 80);
         }
-        // Récap d'erreur en fin de run : alerte modale avec les lignes
-        // d'erreur capturées dans le subprocess. Sans ça, l'utilisateur
-        // doit aller chercher dans le panneau de log pour comprendre
-        // pourquoi le run a échoué.
-        if (item.modal_error) {
-          alert(`Le traitement a échoué (code ${item.retcode}).\n\n`
-              + item.modal_error
-              + `\n\n(détails complets dans le panneau de log)`);
-        }
       });
     }
     if (r.done) {
       clearInterval(polling); polling = null;
       document.getElementById('footer-status').textContent =
         r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
+      // Récap d'erreur en fin de run via API dédiée (plus fiable que
+      // le passage par poll_log : pywebview/WebView2 peut perdre des
+      // clés non-standard dans les dicts complexes sérialisés).
+      if (r.code !== 0) {
+        // alert("DEBUG 1 : on entre dans la branche r.code != 0, code=" + r.code);
+        try {
+          const err = await pywebview.api.get_last_error();
+          // alert("DEBUG 2 : get_last_error retourne : " + JSON.stringify(err));
+          if (err && err.msg) {
+            alert(`Le traitement a échoué (code ${err.retcode}).\n\n`
+                + err.msg
+                + `\n\n(détails complets dans le panneau de log)`);
+          }
+        } catch (e) {
+          alert("DEBUG ERREUR catch : " + e);
+          console.error('get_last_error:', e);
+        }
+      }
       if (r.code === 0) {
         // Recharger l'historique via appel dédié (plus fiable que poll_log)
         pywebview.api.get_historique().then(hist => {
