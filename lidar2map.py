@@ -5104,15 +5104,19 @@ Exemples :
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
         if not nom_zone:
             sys.exit(1)
-        if not args.telechargement:
-            print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
-            try:
-                t = _get_transformer("EPSG:4326", "EPSG:2154")
-                cx, cy = t.transform(lon, lat)
-            except ImportError:
-                cx, cy = wgs84_to_lamb93_approx(lon, lat)
-                print("  (pyproj absent, conversion approchee)")
-            print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+        # BUGFIX : la conversion GPS→L93 doit se faire dans TOUS les cas, pas
+        # uniquement quand --telechargement est absent. Sans cela, cx=cy=0.0
+        # (init ligne 5056) et la grille calculée par calculer_grille() est
+        # centrée sur l'origine Lambert 93 (au large du Maroc), produisant
+        # une bbox Mercator vide et un MBTiles à 0 tuiles.
+        print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
+        try:
+            t = _get_transformer("EPSG:4326", "EPSG:2154")
+            cx, cy = t.transform(lon, lat)
+        except ImportError:
+            cx, cy = wgs84_to_lamb93_approx(lon, lat)
+            print("  (pyproj absent, conversion approchee)")
+        print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
 
     elif args.zone_ville:
         nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
@@ -5137,25 +5141,25 @@ Exemples :
                 sys.exit(1)
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
             if not nom_zone: sys.exit(1)
-            if not args.telechargement:
-                print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
-                try:
-                    t = _get_transformer("EPSG:4326", "EPSG:2154")
-                    cx, cy = t.transform(lon, lat)
-                except ImportError:
-                    cx, cy = wgs84_to_lamb93_approx(lon, lat)
-                    print("  (pyproj absent, conversion approchee)")
-                print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+            # BUGFIX : conversion GPS→L93 dans tous les cas (cf. fix ci-dessus)
+            print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
+            try:
+                t = _get_transformer("EPSG:4326", "EPSG:2154")
+                cx, cy = t.transform(lon, lat)
+            except ImportError:
+                cx, cy = wgs84_to_lamb93_approx(lon, lat)
+                print("  (pyproj absent, conversion approchee)")
+            print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
         else:
             ville_saisie = input("  Nom de la ville : ").strip()
             if not ville_saisie:
                 sys.exit(1)
             nom_zone = normaliser_nom(args.zone_nom or ville_saisie)
-            if not args.telechargement:
-                print(f"\n  Geocodage de '{ville_saisie}'...")
-                cx, cy = geocoder_ville_l93(ville_saisie)
-                if cx is None:
-                    sys.exit(1)
+            # BUGFIX : geocodage ville→L93 dans tous les cas (cf. fix ci-dessus)
+            print(f"\n  Geocodage de '{ville_saisie}'...")
+            cx, cy = geocoder_ville_l93(ville_saisie)
+            if cx is None:
+                sys.exit(1)
 
     # Rayon + grille (modes ville / gps / interactif — pas bbox, dept, france)
     if not args.zone_bbox and not args.zone_departement:
