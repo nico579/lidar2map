@@ -1097,11 +1097,21 @@ def lamb93_to_wgs84_approx(x, y):
 # ============================================================
 
 def geocoder_ville_wgs84(nom_ville):
-    """Géocode une ville et retourne (lat, lon) en WGS84. Retourne (None, None) si échec."""
+    """Géocode une ville et retourne (lat, lon) en WGS84. Retourne (None, None) si échec.
+
+    Filtre le résultat sur le champ ``addresstype`` Nominatim pour rejeter les
+    correspondances "fuzzy" non-administratives (POI, commerces, hameaux
+    incertains). Sans ça, Nominatim renvoie n'importe quoi pour une chaîne
+    non-existante : "yyyy" → un POI au milieu des Deux-Sèvres, "xxxxx" → un
+    nom de cheval dans un haras, etc.
+
+    En mode --oui, lève une erreur claire si le résultat n'est pas un lieu
+    administratif/habité reconnu. En mode interactif, demande confirmation.
+    """
     url = (
         "https://nominatim.openstreetmap.org/search"
         f"?q={urllib.parse.quote(nom_ville + ', France')}"
-        "&format=json&limit=1"
+        "&format=json&limit=1&addressdetails=1"
     )
     req = urllib.request.Request(url, headers={"User-Agent": "lidar-mnt-downloader/1.0 (outil SIG personnel)"})
     _log_req(url, "Nominatim")
@@ -1115,8 +1125,44 @@ def geocoder_ville_wgs84(nom_ville):
     if not data:
         print(f"  Ville non trouvée : {nom_ville}")
         return None, None
+
+    # Validation du type de lieu retourné
+    # Lieux acceptés sans question : entités administratives ou habitées clairement
+    # nommées. "locality" et "isolated_dwelling" sont OSM-spécifiques et marquent
+    # respectivement un hameau non-officiel et une habitation isolée — acceptés
+    # mais avec un avertissement.
+    TYPES_OK    = {"city", "town", "village", "municipality", "administrative",
+                   "suburb", "quarter", "neighbourhood"}
+    TYPES_DOUTE = {"hamlet", "locality", "isolated_dwelling", "farm"}
+
+    addrtype = (data[0].get("addresstype") or "").lower()
+    display  = data[0].get("display_name", "(?)")
+    cat      = (data[0].get("class") or "").lower()
+
+    # Rejet immédiat si pas un lieu (boutique, restaurant, route, etc.)
+    if cat not in ("place", "boundary", "landuse"):
+        msg = (f"  Lieu '{nom_ville}' non reconnu comme ville/village.\n"
+               f"  Nominatim a renvoyé : {display} (type={cat}/{addrtype}).\n"
+               f"  Précisez le nom de la commune.")
+        print(msg)
+        return None, None
+
     lat = float(data[0]["lat"])
     lon = float(data[0]["lon"])
+
+    # Type non-administratif → demander confirmation (ou rejeter en mode --oui)
+    if addrtype not in TYPES_OK:
+        if addrtype in TYPES_DOUTE:
+            # Lieu-dit ou hameau : signaler mais accepter
+            print(f"  ⚠ '{nom_ville}' résolu en {display} (type={addrtype}).")
+            print(f"  Vérifiez que c'est bien le lieu attendu.")
+        else:
+            # Type complètement inattendu (industrial, retail, etc.) : rejeter
+            print(f"  Lieu '{nom_ville}' ambigu : Nominatim a renvoyé "
+                  f"{display} (type={addrtype}).")
+            print(f"  Précisez le nom complet (commune, pas POI).")
+            return None, None
+
     print(f"  {nom_ville} -> lat={lat:.5f}, lon={lon:.5f}")
     return lat, lon
 
