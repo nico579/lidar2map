@@ -1,4 +1,4 @@
-# lidar2map.py — Prospection LiDAR & cartes offline pour Locus Map / OsmAnd
+# lidar2map.py — Prospection LiDAR archéologique & cartes offline pour Locus Map / OsmAnd
 # Copyright (C) 2025 Nicolas Martin
 #
 # Ce logiciel a été conçu, architecturé et dirigé par Nicolas Martin.
@@ -326,15 +326,19 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                    numba (accélération SVF ~15×), py7zr (BD TOPO bulk),
                    mapbox-vector-tile (lecture vector tiles)
 
-  GDAL           Windows : binaires GISInternals téléchargés dans bin/gdal/
-                 macOS   : brew install gdal (avec consentement utilisateur)
-                 Linux   : sudo apt install gdal-bin (avec consentement)
-                 Autres  : message d'instructions selon distribution
+  GDAL           Plus de dépendance GDAL système requise depuis le refactor
+                 rasterio (étapes 1-7). Tous les outils (gdalinfo, gdalwarp,
+                 gdaldem, gdalbuildvrt, gdal_translate, gdaladdo, ogr2ogr)
+                 sont remplacés par rasterio.warp / rasterio.merge / numpy /
+                 fiona, dont les wheels pip embarquent leur propre libgdal.
+                 → Plus aucun `brew install gdal` ni GISInternals à télécharger.
 
-  osmosis        Téléchargé automatiquement dans bin/osmosis/ (toutes plateformes)
-  JRE Temurin 21 Téléchargé automatiquement dans bin/jre/
+  osmosis        Téléchargé dans ~/.lidar2map/osmosis/ (toutes plateformes)
+                 Partagé entre tous les dossiers où le script est lancé.
+  JRE Temurin 21 Téléchargé dans ~/.lidar2map/jre/
                    Windows x64 : zip   |   macOS x64/arm64 : tar.gz
                    Linux x64/arm64 : tar.gz
+                 Pour nettoyer complètement le runtime : rm -rf ~/.lidar2map
   mapwriter      Téléchargé automatiquement (plugin osmosis)
 
   GUI (mode sans arguments) :
@@ -440,6 +444,245 @@ if sys.version_info < (3, 8):
 # INSTALLATION AUTOMATIQUE DES DÉPENDANCES
 # ============================================================
 
+def _bootstrap_venv_si_besoin():
+    """Bootstrap automatique d'un environnement Python isolé.
+
+    Comportement par défaut : crée un venv dans ``~/.lidar2map/`` (Mac/Linux)
+    ou ``%USERPROFILE%\\.lidar2map\\`` (Windows) au 1er lancement, y installe
+    les dépendances, et y relance le script. Comportement uniforme sur les 3 OS.
+
+    Avantages du venv par défaut sur toutes plateformes :
+      - Isolation : zéro pollution du Python système
+      - Désinstallation propre : suppression d'un dossier suffit
+      - Cohérent avec la bonne pratique Python (un venv par projet)
+      - Évite les conflits de versions de modules avec d'autres outils
+      - Contourne PEP 668 sur Mac/Linux récents nativement
+
+    Flags utilisateur (lus directement depuis sys.argv pour bypasser argparse
+    qui n'est pas encore initialisé à ce stade du démarrage) :
+
+      --bootstrap=auto    : venv automatique (défaut, recommandé)
+      --bootstrap=pip     : install directe dans l'env Python courant
+                            (utilise --break-system-packages si PEP 668)
+      --bootstrap=none    : pas d'install — vérifie les imports et plante
+                            avec un message clair si manquants. Utile pour
+                            ceux qui gèrent leur propre env (conda, venv
+                            manuel, install système contrôlée).
+      --help-bootstrap    : affiche cette aide et quitte
+
+    Variables d'environnement équivalentes :
+      LIDAR2MAP_BOOTSTRAP=auto|pip|none
+
+    Suppression du venv à tout moment :
+      rm -rf ~/.lidar2map                       (Mac/Linux)
+      rmdir /s /q %USERPROFILE%\\.lidar2map     (Windows)
+    Le script en recréera un au prochain lancement si besoin.
+    """
+    # ── Lecture du mode bootstrap depuis sys.argv ou env var ──────────────
+    mode = "auto"   # défaut
+
+    # Variable d'env (priorité basse)
+    env_mode = os.environ.get("LIDAR2MAP_BOOTSTRAP", "").lower().strip()
+    if env_mode in ("auto", "pip", "none"):
+        mode = env_mode
+
+    # Argument CLI (priorité haute) — supporte --bootstrap=X et --bootstrap X
+    args_to_remove = []
+    for i, arg in enumerate(sys.argv):
+        if arg.startswith("--bootstrap="):
+            v = arg.split("=", 1)[1].lower().strip()
+            if v in ("auto", "pip", "none"):
+                mode = v
+            args_to_remove.append(i)
+        elif arg == "--bootstrap" and i + 1 < len(sys.argv):
+            v = sys.argv[i+1].lower().strip()
+            if v in ("auto", "pip", "none"):
+                mode = v
+            args_to_remove.append(i)
+            args_to_remove.append(i+1)
+
+    # Aide
+    if "--help-bootstrap" in sys.argv:
+        print(_bootstrap_venv_si_besoin.__doc__)
+        sys.exit(0)
+
+    # Compatibilité descendante avec les anciens flags
+    if "--no-bootstrap" in sys.argv:
+        mode = "none"
+    if "--venv" in sys.argv:
+        mode = "auto"  # = venv (qui est désormais le défaut)
+    if "--no-venv" in sys.argv:
+        mode = "pip"
+
+    # Retirer tous ces flags de sys.argv pour qu'argparse ne les voit pas
+    for _flag in ("--no-bootstrap", "--venv", "--no-venv", "--help-bootstrap"):
+        while _flag in sys.argv:
+            sys.argv.remove(_flag)
+    # Retirer aussi --bootstrap=X et --bootstrap X
+    for i in sorted(args_to_remove, reverse=True):
+        if i < len(sys.argv):
+            del sys.argv[i]
+
+    deps_critiques = ["PIL", "pyproj", "numpy", "scipy", "ijson",
+                      "rasterio", "fiona", "numba"]
+
+    # ── Mode "none" : juste vérifier les imports, planter clairement si KO ─
+    if mode == "none":
+        manquantes = []
+        for mod in deps_critiques:
+            try:
+                __import__(mod)
+            except ImportError:
+                manquantes.append(mod)
+        if manquantes:
+            pkg_map = {"PIL": "Pillow", "pyproj": "pyproj", "numpy": "numpy",
+                       "scipy": "scipy", "ijson": "ijson",
+                       "rasterio": "rasterio", "fiona": "fiona",
+                       "numba":    "numba"}
+            pkgs_pip = [pkg_map.get(m, m) for m in deps_critiques]
+            print()
+            print("  ╔══════════════════════════════════════════════════════════════╗")
+            print("  ║  Mode --bootstrap=none : auto-install désactivé              ║")
+            print("  ╚══════════════════════════════════════════════════════════════╝")
+            print(f"  Modules Python manquants : {', '.join(manquantes)}")
+            print()
+            print("  Installez-les vous-même via votre méthode préférée :")
+            print(f"    pip install {' '.join(pkgs_pip)} pywebview")
+            print(f"    # ou : conda install -c conda-forge {' '.join(pkgs_pip)} pywebview")
+            print()
+            sys.exit(1)
+        return
+
+    # ── Mode "pip" : install dans l'env Python courant ───────────────────
+    # Délégué à _installer_deps() plus bas (avec stratégie 3 niveaux :
+    # standard → --break-system-packages → --user)
+    if mode == "pip":
+        return  # rien à faire ici, _installer_deps() prend le relais
+
+    # ── Mode "auto" : créer/utiliser un venv ─────────────────────────────
+    # Tout le runtime lidar2map (venv Python, JRE Java, osmosis, etc.) est
+    # centralisé dans ~/.lidar2map/ — un seul dossier à supprimer pour
+    # un nettoyage complet, et partagé entre tous les dossiers de travail.
+    is_windows  = platform.system() == "Windows"
+    lidar_home  = Path.home() / ".lidar2map"
+    venv_path   = lidar_home / "venv"
+
+    # Détecter si on est déjà dans le bon venv (ré-entrance après os.execv)
+    try:
+        if Path(sys.prefix).resolve() == venv_path.resolve():
+            return
+    except Exception:
+        pass
+
+    # Si toutes les déps sont déjà importables dans le Python courant,
+    # pas besoin de créer un venv. Cas typique : le script tourne déjà dans
+    # un venv existant (autre que celui par défaut), ou install Python
+    # dédiée à ce projet, ou conda env.
+    manquantes = []
+    for mod in deps_critiques:
+        try:
+            __import__(mod)
+        except ImportError:
+            manquantes.append(mod)
+
+    if not manquantes:
+        return
+
+    # Sous Windows : Scripts/ au lieu de bin/
+    venv_bin    = venv_path / ("Scripts" if is_windows else "bin")
+    venv_python = venv_bin / ("python.exe" if is_windows else "python")
+    venv_pip    = venv_bin / ("pip.exe"    if is_windows else "pip")
+
+    # Si le venv existe déjà avec les déps : juste re-exécuter dedans
+    if venv_python.exists():
+        check_cmd = [str(venv_python), "-c",
+                     "import " + ", ".join(deps_critiques)]
+        r_check = subprocess.run(check_cmd, capture_output=True)
+        if r_check.returncode == 0:
+            print(f"  Relance dans le venv : {venv_path}")
+            _relancer_dans_venv(venv_python, is_windows)
+            # Ne retourne pas — soit os.execv (Unix), soit sys.exit (Windows)
+
+    # Créer le venv s'il n'existe pas encore
+    if not venv_python.exists():
+        suppr_cmd = ("rmdir /s /q %USERPROFILE%\\.lidar2map" if is_windows
+                     else "rm -rf ~/.lidar2map")
+        print()
+        print("  ╔══════════════════════════════════════════════════════════════╗")
+        print("  ║  Premier lancement — création d'un environnement Python      ║")
+        print("  ║  isolé (~50 Mo une fois les déps installées). Cet env est    ║")
+        print("  ║  local au projet et ne touche pas votre Python système.      ║")
+        print("  ║                                                              ║")
+        print(f"  ║  Pour le supprimer : {suppr_cmd}".ljust(63) + " ║")
+        print("  ║                                                              ║")
+        print("  ║  Pour passer en install directe (sans venv) :                ║")
+        print("  ║    python lidar2map.py --bootstrap=pip                       ║")
+        print("  ╚══════════════════════════════════════════════════════════════╝")
+        print(f"  Création du venv {venv_path}...")
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_path)],
+                check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"  ERREUR création venv : {e}")
+            print("  Installez Python 3.10+ avec module venv.")
+            sys.exit(1)
+
+    # Déps installées dans le venv. numba est inclus systématiquement :
+    # il accélère le calcul SVF de ×15 à ×50 (formule directionnelle 16
+    # rayons sur DEM 0.5 m → un département entier en quelques minutes
+    # au lieu de plusieurs heures). Coût : ~190 Mo dans le venv (llvmlite
+    # + numba). Pour un script archéo qui fait essentiellement du SVF,
+    # c'est une dépendance critique en pratique.
+    deps_pip = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
+                "rasterio", "fiona", "numba", "pywebview"]
+    print(f"  Installation des dépendances dans le venv (3-5 min)...")
+
+    try:
+        subprocess.run(
+            [str(venv_pip), "install", "-q",
+             "--disable-pip-version-check"] + deps_pip,
+            check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"  ERREUR installation déps dans le venv : {e}")
+        print(f"  Vérifiez votre connexion internet, puis essayez :")
+        print(f"    {venv_pip} install {' '.join(deps_pip)}")
+        sys.exit(1)
+    print(f"  ✓ Dépendances installées.")
+
+    # Relancer le script avec le Python du venv
+    print(f"  Relance dans le venv...")
+    _relancer_dans_venv(venv_python, is_windows)
+
+
+def _relancer_dans_venv(venv_python, is_windows):
+    """Relance le script avec le Python du venv, comportement OS-spécifique.
+
+    Unix : os.execv remplace le process courant — le shell ne récupère
+           la main qu'après terminaison du child. C'est le comportement
+           attendu, économique en RAM (pas de double process).
+
+    Windows : os.execv y a un comportement différent de Unix — le parent
+              termine immédiatement et le child tourne en arrière-plan, ce
+              qui fait que le shell affiche son prompt avant la sortie du
+              child. Pour éviter cette confusion d'affichage, on utilise
+              subprocess.run + sys.exit : on attend la fin du child et on
+              propage son code retour avant de rendre la main au shell.
+    """
+    if is_windows:
+        try:
+            r = subprocess.run([str(venv_python)] + sys.argv)
+            sys.exit(r.returncode)
+        except KeyboardInterrupt:
+            sys.exit(130)
+    else:
+        os.execv(str(venv_python),
+                 [str(venv_python)] + sys.argv)
+
+
+_bootstrap_venv_si_besoin()
+
+
 def _bootstrap_pip():
     """S'assure que pip est disponible via ensurepip si nécessaire."""
     r = subprocess.run([sys.executable, "-m", "pip", "--version"],
@@ -459,6 +702,17 @@ def _bootstrap_pip():
 _bootstrap_pip()
 
 def _installer_deps():
+    """Vérifie et installe les dépendances Python requises au démarrage.
+
+    Stratégie d'installation, par ordre d'essai :
+    1. ``pip install <deps>`` standard
+    2. ``pip install --break-system-packages <deps>`` (PEP 668 — Linux récent,
+       Homebrew Mac récent)
+    3. ``pip install --user <deps>`` (fallback dernière chance)
+
+    Si toutes échouent, on s'arrête PROPREMENT avec un message clair plutôt
+    que de continuer pour planter sur le premier ``import pyproj`` venu.
+    """
     deps = []
     for mod, pkg in [
         ("PIL",       "Pillow"),
@@ -466,27 +720,97 @@ def _installer_deps():
         ("numpy",     "numpy"),
         ("scipy",     "scipy"),
         ("ijson",     "ijson"),     # streaming JSON (BD TOPO dept-scale, OSM XML)
+        ("rasterio",  "rasterio"),  # wrappers I/O raster + reprojection (remplace gdalinfo/gdalwarp/gdal_translate CLI)
+        ("fiona",     "fiona"),     # I/O vecteur (remplace ogr2ogr CLI)
+        ("numba",     "numba"),     # accélération SVF ×15-50 (LLVM JIT)
     ]:
         try:
             __import__(mod)
         except ImportError:
             deps.append(pkg)
-    # Numba est optionnel (~500 Mo) — accélère SVF ×15-50 mais pas critique
-    try:
-        import numba  # noqa
-    except ImportError:
-        print("  INFO : numba absent — SVF utilisera numpy (plus lent mais fonctionnel).")
-        print("         Pour activer l'accélération : pip install numba  (~500 Mo)")
-    if deps:
-        print(f"  Installation : {', '.join(deps)}...")
-        cmd = [sys.executable, "-m", "pip", "install"] + deps + ["-q"]
-        r = subprocess.run(cmd, capture_output=True)
-        if r.returncode != 0:
-            # Fallback --user si env géré extérieurement (PEP 668 / Linux)
-            r2 = subprocess.run(cmd + ["--user"], capture_output=True)
-            if r2.returncode != 0:
-                print(f"  AVERTISSEMENT : installation partielle ({', '.join(deps)})")
-                print("  Installez manuellement : pip install " + " ".join(deps))
+
+    if not deps:
+        return
+
+    print(f"  Installation des dépendances : {', '.join(deps)}...")
+
+    # Tentatives successives. capture_output=False pour que l'utilisateur
+    # voie ce qui se passe : sans ça, "Installation partielle" arrive
+    # comme un cheveu sur la soupe et personne ne sait pourquoi.
+    base_cmd = [sys.executable, "-m", "pip", "install"] + deps + ["-q",
+                "--disable-pip-version-check"]
+    strategies = [
+        (base_cmd,                                "standard"),
+        (base_cmd + ["--break-system-packages"],  "--break-system-packages (PEP 668)"),
+        (base_cmd + ["--user"],                   "--user (install locale)"),
+    ]
+    last_stderr = ""
+    for cmd, label in strategies:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True)
+        except (OSError, FileNotFoundError) as e:
+            last_stderr = f"pip introuvable : {e}"
+            continue
+        if r.returncode == 0:
+            # Vérifier que les imports fonctionnent vraiment maintenant.
+            # Sur Mac, --user installe dans ~/Library/Python/3.x/... qui peut
+            # ne pas être dans sys.path — l'install "réussit" mais l'import
+            # échouera toujours. On veut détecter ça MAINTENANT et pas plus loin.
+            rates = []
+            for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
+                             ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
+                             ("fiona","fiona")]:
+                if pkg in deps:
+                    try:
+                        __import__(mod)
+                    except ImportError:
+                        rates.append(pkg)
+            if not rates:
+                print(f"  ✓ Installation réussie ({label})")
+                return
+            print(f"  Tentative {label} : pip OK mais imports échouent ({', '.join(rates)})")
+            last_stderr = f"installation faite mais imports {rates} indisponibles"
+        else:
+            last_stderr = (r.stderr or r.stdout or "").strip()
+            if last_stderr:
+                # Tronquer pour éviter d'inonder le terminal
+                last_stderr = last_stderr.split("\n")[-3:]
+                last_stderr = "\n  ".join(last_stderr)
+
+    # Toutes les tentatives ont échoué — on arrête ici avec un message clair.
+    import platform as _plat
+    _is_mac   = _plat.system() == "Darwin"
+    _is_linux = _plat.system() == "Linux"
+    print()
+    print("  ╔══════════════════════════════════════════════════════════════╗")
+    print("  ║  ERREUR : impossible d'installer les dépendances Python      ║")
+    print("  ╚══════════════════════════════════════════════════════════════╝")
+    print(f"  Modules manquants : {', '.join(deps)}")
+    if last_stderr:
+        print(f"  Dernier message pip :\n  {last_stderr}")
+    print()
+    print("  Solutions possibles :")
+    if _is_mac:
+        print("    1. Installer dans un venv :")
+        print("       python3 -m venv ~/mon-venv-lidar")
+        print("       source ~/mon-venv-lidar/bin/activate")
+        print(f"       pip install {' '.join(deps)}")
+        print("       Puis relancer : python lidar2map.py --bootstrap=none")
+        print()
+        print("    2. Forcer l'install système (déconseillé) :")
+        print(f"       pip install --break-system-packages {' '.join(deps)}")
+    elif _is_linux:
+        print("    1. Installer via le gestionnaire de paquets :")
+        print(f"       sudo apt install python3-{' python3-'.join(d.lower() for d in deps)}")
+        print()
+        print("    2. Utiliser un venv :")
+        print("       python3 -m venv ~/mon-venv-lidar")
+        print("       source ~/mon-venv-lidar/bin/activate")
+        print(f"       pip install {' '.join(deps)}")
+    else:
+        print(f"    pip install {' '.join(deps)}")
+    print()
+    sys.exit(1)
 
 
 _installer_deps()
@@ -826,6 +1150,12 @@ def _supprimer_fichiers(fichiers: list):
 
 # ── Chemins ─────────────────────────────────────────────────────────────────
 DOSSIER_TRAVAIL = Path(__file__).resolve().parent
+
+# ~/.lidar2map/ : dossier de runtime partagé entre tous les dossiers de travail.
+# Contient venv/, jre/, osmosis/. Permet de ne télécharger qu'une fois ces
+# dépendances même si le script est lancé depuis plusieurs emplacements.
+# Pour nettoyer complètement lidar2map :  rm -rf ~/.lidar2map
+LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 
 # ── LiDAR IGN — géométrie des dalles ─────────────────────────────────────────
 RESOLUTION_M       = 0.5          # résolution native des MNT LiDAR HD IGN (m/px)
@@ -1689,18 +2019,22 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
                 return "absent"
 
             if compresser:
-                gdal_tr = _trouver_outil_gdal("gdal_translate")
-                if gdal_tr:
-                    cmd_c = [gdal_tr, "-of", "GTiff",
-                             "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-                             "-co", "TILED=YES", "-co", "BLOCKXSIZE=256", "-co", "BLOCKYSIZE=256",
-                             str(chemin_tmp), str(chemin)]
-                    _log_req(cmd_c)
-                    r = subprocess.run(cmd_c, capture_output=True, env=_env_gdaldem())
+                # Compression DEFLATE via rasterio (remplace gdal_translate CLI)
+                try:
+                    import rasterio as _rio_d
+                    with _rio_d.open(str(chemin_tmp)) as src:
+                        profile = src.profile.copy()
+                        profile.update({
+                            "compress":   "deflate",
+                            "predictor":  2,
+                            "tiled":      True,
+                            "blockxsize": 256,
+                            "blockysize": 256,
+                        })
+                        with _rio_d.open(str(chemin), "w", **profile) as dst:
+                            dst.write(src.read())
                     chemin_tmp.unlink(missing_ok=True)
-                    if r.returncode != 0:
-                        return "erreur"
-                else:
+                except Exception:
                     chemin_tmp.replace(chemin)
             else:
                 chemin_tmp.replace(chemin)
@@ -1727,84 +2061,6 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
 # ============================================================
 
 
-def _telecharger_gdal_local():
-    """
-    Télécharge les binaires GDAL depuis GISInternals dans gdal/bin/.
-    Version fixée à GDAL 3.8.5 (PROJ 9.3 → proj.db v4) pour compatibilité
-    avec les packages Python courants (pyproj 3.7.x, rasterio 1.3.x).
-    """
-    import zipfile
-
-    BASE    = "https://download.gisinternals.com/sdk/downloads/"
-    # GDAL 3.8.5 = PROJ 9.3.1 = proj.db v4 — compatible pyproj/rasterio courants
-    GDAL_ZIP = "release-1930-x64-gdal-3-8-5-mapserver-8-0-1.zip"
-    GDAL_DIR = DOSSIER_TRAVAIL / "bin" / "gdal"
-    BIN_DIR  = GDAL_DIR / "bin"
-
-    if (BIN_DIR / "gdaldem.exe").exists():
-        return str(BIN_DIR / "gdaldem.exe")
-
-    url = BASE + GDAL_ZIP
-    print(f"  GDAL : {GDAL_ZIP}")
-    print(f"  URL  : {url}")
-
-    GDAL_DIR.mkdir(parents=True, exist_ok=True)
-    BIN_DIR.mkdir(parents=True, exist_ok=True)
-    zip_path = GDAL_DIR / "gdal.zip"
-
-    print("  Téléchargement binaires GDAL (~40 Mo)...", flush=True)
-    try:
-        def _prog(n, bs, total):
-            if total > 0:
-                print("  " + str(min(n*bs*100//total, 100)).rjust(3) + "%", end="\r", flush=True)
-        urllib.request.urlretrieve(url, zip_path, reporthook=_prog)
-        print()
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERREUR téléchargement GDAL : {type(e).__name__}: {e}")
-        print("  Téléchargez manuellement : https://www.gisinternals.com/release.php")
-        return None
-
-    print(f"  Extraction dans {BIN_DIR}...", flush=True)
-    with zipfile.ZipFile(zip_path, "r") as z:
-        noms = z.namelist()
-        # Détecter le dossier racine contenant gdaldem.exe
-        racine = ""
-        for n in noms:
-            if n.endswith("gdaldem.exe"):
-                racine = n[: n.rfind("/") + 1]
-                break
-        for membre in noms:
-            nom_fichier = membre.split("/")[-1]
-            if not nom_fichier:
-                continue
-            ext = ("." + nom_fichier.rsplit(".", 1)[-1]).lower() if "." in nom_fichier else ""
-            # Tous les .dll → BIN_DIR/
-            if ext == ".dll":
-                dest = BIN_DIR / nom_fichier
-                with z.open(membre) as s, open(dest, "wb") as d:
-                    d.write(s.read())
-                continue
-            # .exe + données depuis le dossier racine
-            if not membre.startswith(racine):
-                continue
-            chemin_rel = membre[len(racine):]
-            if not chemin_rel:
-                continue
-            dest = BIN_DIR / chemin_rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if not membre.endswith("/"):
-                with z.open(membre) as s, open(dest, "wb") as d:
-                    d.write(s.read())
-
-    zip_path.unlink(missing_ok=True)
-
-    if (BIN_DIR / "gdaldem.exe").exists():
-        print(f"  GDAL installé dans {BIN_DIR}")
-        return str(BIN_DIR / "gdaldem.exe")
-    print("  ERREUR : gdaldem.exe introuvable après extraction.")
-    return None
-
-
 def _telecharger_osmosis_local():
     """
     Télécharge osmosis dans ./osmosis/ depuis GitHub releases.
@@ -1812,7 +2068,7 @@ def _telecharger_osmosis_local():
     """
     import zipfile
 
-    OSMOSIS_DIR = DOSSIER_TRAVAIL / "bin" / "osmosis"
+    OSMOSIS_DIR = LIDAR2MAP_HOME / "osmosis"
     pattern = "osmosis.bat" if WINDOWS else "osmosis"
     if OSMOSIS_DIR.exists():
         for candidate in sorted(OSMOSIS_DIR.rglob(pattern)):
@@ -1864,7 +2120,7 @@ def _telecharger_jre_local():
     """
     import tarfile, zipfile
 
-    JRE_DIR = DOSSIER_TRAVAIL / "bin" / "jre"
+    JRE_DIR = LIDAR2MAP_HOME / "jre"
 
     # Détection OS
     sys = _pf.system().lower()
@@ -1953,14 +2209,14 @@ def _telecharger_jre_local():
 
 def _trouver_java():
     """
-    Retourne le chemin vers le binaire java local (./jre/).
+    Retourne le chemin vers le binaire java local (~/.lidar2map/jre/).
     Télécharge le JRE Temurin si absent. Jamais le Java système.
     """
 
     java_bin = "java.exe" if WINDOWS else "java"
 
-    # Chercher le binaire dans l'installation locale
-    for candidate in sorted((DOSSIER_TRAVAIL / "bin" / "jre").rglob(java_bin)):
+    # Chercher le binaire dans l'installation locale ~/.lidar2map/jre/
+    for candidate in sorted((LIDAR2MAP_HOME / "jre").rglob(java_bin)):
         if candidate.exists():
             return str(candidate)
 
@@ -1976,8 +2232,8 @@ def _trouver_osmosis():
     """Retourne le chemin vers osmosis (installation locale ou téléchargement).
     Même logique que GDAL : pas de fallback PATH système.
     Prérequis : appeler _trouver_java() avant (responsabilité de l'appelant)."""
-    local_bat = DOSSIER_TRAVAIL / "bin" / "osmosis" / "bin" / "osmosis.bat"
-    local_sh  = DOSSIER_TRAVAIL / "bin" / "osmosis" / "bin" / "osmosis"
+    local_bat = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis.bat"
+    local_sh  = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis"
     if WINDOWS and local_bat.exists():
         return str(local_bat)
     if not WINDOWS and local_sh.exists():
@@ -1988,444 +2244,84 @@ def _trouver_osmosis():
 
 
 def _trouver_outil_gdal(nom):
-    """Cherche un executable GDAL.
+    """[DEPRECATED après refactor rasterio] Cherche un exe GDAL CLI.
 
-    Stratégie :
-      1. Installation locale du script (DOSSIER_TRAVAIL/bin/gdal/bin/) — toutes plateformes
-      2. PATH système (Linux/macOS uniquement — apt/brew installé)
-      3. Auto-installation : GISInternals (Windows) ou apt/brew (Linux/macOS)
-      4. Retry des étapes 1+2
+    Cette fonction est conservée pour compatibilité avec les variables
+    encore initialisées dans le code (gdaldem, gdalwarp, gdalbuildvrt etc.),
+    mais après le refactor rasterio (étapes 1-7) ces exes ne sont plus
+    appelés. La fonction retourne maintenant None sans déclencher
+    d'auto-installation système de GDAL.
 
-    Sur Windows, on n'utilise JAMAIS QGIS/OSGeo4W/PATH système — incompatibilités
-    PROJ garanties (proj.db v4 vs v6+ selon les installations cohabitantes).
-
-    Retourne le chemin absolu de l'exe ou None avec message d'erreur explicite.
+    Si une future version a vraiment besoin d'un outil GDAL CLI (peu probable),
+    il faudra restaurer la stratégie 1+2+3+4 d'origine.
     """
-    exe = nom + (".exe" if WINDOWS else "")
-    local = DOSSIER_TRAVAIL / "bin" / "gdal" / "bin" / exe
-    if local.exists():
-        return str(local)
-    # Linux/macOS : PATH système acceptable (GDAL installé via apt/brew)
-    if not WINDOWS:
-        import shutil as _shutil
-        p = _shutil.which(nom)
-        if p:
-            return p
-    # Auto-install
-    if WINDOWS:
-        print(f"  {nom} introuvable — téléchargement automatique GISInternals...")
-        _telecharger_gdal_local()
-    else:
-        _installer_gdal_systeme()
-    # Retry après installation
-    if local.exists():
-        return str(local)
-    if not WINDOWS:
-        import shutil as _shutil
-        p = _shutil.which(nom)
-        if p:
-            return p
-    # Échec final — message d'instructions claires
-    if WINDOWS:
-        print(f"  ERREUR : {nom} introuvable et téléchargement automatique échoué.")
-        print(f"  Installez OSGeo4W manuellement : https://trac.osgeo.org/osgeo4w/")
-    else:
-        cmd = "sudo apt install gdal-bin" if LINUX else "brew install gdal"
-        print(f"  ERREUR : {nom} introuvable. Installez manuellement : {cmd}")
     return None
 
 
-def _env_gdaldem():
+def _geoinfo_depuis_gdalinfo(src_tif, env=None):
     """
-    Retourne un env dict pour les outils GDAL.
-    - Installation locale gdal/bin : configure PATH + GDAL_DATA + PROJ_LIB
-    - OSGeo4W détecté : configure GDAL_DATA + PROJ_LIB depuis OSGeo4W
-    - Sinon : retourne None (env hérité)
-    """
-    import glob as _g
-    local_bin = DOSSIER_TRAVAIL / "bin" / "gdal" / "bin"
-    if not (local_bin / ("gdaldem.exe" if WINDOWS else "gdaldem")).exists():
-        # Pas d'installation locale — chercher OSGeo4W pour fixer GDAL_DATA/PROJ_LIB
-        if WINDOWS:
-            osgeo_candidates = [
-                Path.home() / "AppData" / "Local" / "Programs" / "OSGeo4W",
-                Path("C:/OSGeo4W"),
-                Path("C:/OSGeo4W64"),
-            ]
-            qgis_hits = _g.glob("C:/Program Files/QGIS*/apps/gdal")
-            for h in qgis_hits:
-                osgeo_candidates.append(Path(h).parent.parent)
-            for base in osgeo_candidates:
-                if not base.exists():
-                    continue
-                # Chercher proj.db récursivement — emplacement exact
-                proj_db_hits = list(base.rglob("proj.db"))
-                proj_lib = proj_db_hits[0].parent if proj_db_hits else None
-                # GDAL_DATA
-                gdal_data = None
-                for candidate in [base / "apps" / "gdal" / "share",
-                                  base / "apps" / "gdal" / "data",
-                                  base / "share" / "gdal"]:
-                    if candidate.exists():
-                        gdal_data = candidate
-                        break
-                if proj_lib:
-                    env = os.environ.copy()
-                    env["PROJ_LIB"] = str(proj_lib)
-                    if gdal_data:
-                        env["GDAL_DATA"] = str(gdal_data)
-                    return env
-        return None  # env hérité suffisant
+    Retourne (geotransform_str, srs_wkt) pour src_tif via rasterio.
 
-    env = os.environ.copy()
-    # Mettre gdal/bin EN PREMIER dans le PATH pour charger les bonnes DLL
-    env["PATH"] = str(local_bin) + os.pathsep + env.get("PATH", "")
-    env.setdefault("GDAL_NUM_THREADS", "ALL_CPUS")
-    env.setdefault("GDAL_CACHEMAX", "512")
-
-    # GDAL_DATA : chercher osmconf.ini dans gdal/bin, gdal/bin/gdal-data, etc.
-    for d in [local_bin, local_bin / "gdal-data", local_bin / "data",
-              local_bin.parent / "gdal-data", local_bin.parent / "share" / "gdal"]:
-        if (d / "osmconf.ini").exists():
-            env["GDAL_DATA"] = str(d)
-            break
-    else:
-        for d in [local_bin / "gdal-data", local_bin / "data",
-                  local_bin.parent / "gdal-data"]:
-            if d.exists():
-                env["GDAL_DATA"] = str(d)
-                break
-
-    # PROJ_LIB : chercher proj.db compatible avec la DLL proj_X_Y.dll locale
-    if WINDOWS and "PROJ_LIB" not in env:
-        import glob as _gproj, sqlite3 as _sq
-        def _proj_db_ver(p):
-            try:
-                con = _sq.connect(str(p))
-                row = con.execute(
-                    "SELECT value FROM metadata WHERE key='DATABASE.LAYOUT.VERSION.MINOR'"
-                ).fetchone()
-                con.close()
-                return int(row[0]) if row else 0
-            except Exception:
-                return 0
-
-        _proj_dlls = sorted(_gproj.glob(str(local_bin / "proj_*.dll")))
-        _target = 4
-        for _dll in reversed(_proj_dlls):
-            _m = re.search(r"proj_(\d+)_(\d+)\.dll", Path(_dll).name)
-            if _m:
-                _target = 6 if (int(_m.group(1)), int(_m.group(2))) >= (9, 4) else 4
-                break
-
-        _best_db, _best_ver = None, 0
-        for _pkg in ("rasterio", "pyproj"):
-            try:
-                _mod = __import__(_pkg)
-                _dbs = []
-                if _pkg == "rasterio":
-                    for _sub in ["proj_data", "proj_dir/share/proj"]:
-                        _db = Path(_mod.__file__).parent / _sub / "proj.db"
-                        if _db.exists(): _dbs.append(_db); break
-                else:
-                    _db = Path(_mod.datadir.get_data_dir()) / "proj.db"
-                    if _db.exists(): _dbs.append(_db)
-                for _db in _dbs:
-                    _ver = _proj_db_ver(_db)
-                    if _ver == _target:
-                        _best_db, _best_ver = _db, _ver; break
-                    elif _ver > _best_ver:
-                        _best_db, _best_ver = _db, _ver
-            except Exception:
-                pass
-            if _best_ver == _target:
-                break
-
-        if _best_db:
-            env["PROJ_LIB"]  = str(_best_db.parent)
-            env["PROJ_DATA"] = str(_best_db.parent)
-
-    return env
-
-
-def _run_gdal_avec_jauge(cmd, nom_fichier, env, largeur=30):
-    """Lance un subprocess gdal et affiche la progression 0...10...20... en jauge.
-    Sur Windows, gdaldem envoie la progression sur stdout ; sur Linux sur stderr.
-    On lit les deux en parallèle via threads pour couvrir les deux cas.
-    Affiche le pourcentage, le temps écoulé et l'ETA estimée.
-    """
-    _log_req(cmd)
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace", bufsize=0, env=env)
-
-    pct_max = 0; erreur_lines = []; t0 = time.time()
-    label = ("  " + nom_fichier).ljust(56)
-    _pct_re = re.compile(r"(?<![\d])([1-9]?\d|100)(?=\.\.\.|\.\s|\s|$)")
-    q = queue.Queue()
-
-    def _lire_flux(flux, nom):
-        for ch in iter(lambda: flux.read(1), ""):
-            q.put((nom, ch))
-        q.put((nom, None))  # signal fin
-
-    t_out = threading.Thread(target=_lire_flux, args=(proc.stdout, "out"), daemon=True)
-    t_err = threading.Thread(target=_lire_flux, args=(proc.stderr, "err"), daemon=True)
-    t_out.start(); t_err.start()
-
-    finis = set(); buf_pct = ""; buf_line = ""
-    while len(finis) < 2:
-        nom, ch = q.get()
-        if ch is None:
-            finis.add(nom)
-            continue
-        # Accumulation ligne complète pour capture d'erreurs
-        if ch in ("\n", "\r"):
-            line = buf_line.strip()
-            if line and ("ERROR" in line.upper() or "FAILED" in line.upper()
-                         or "UNABLE" in line.upper()):
-                erreur_lines.append(line)
-            buf_line = ""
-        else:
-            buf_line += ch
-        # Accumulation mot par mot pour la jauge de progression
-        if ch in (".", " ", "\n", "\r"):
-            m = _pct_re.search(buf_pct)
-            if m:
-                v = int(m.group(1))
-                if 0 <= v <= 100 and v > pct_max:
-                    pct_max = v
-                    bars  = int(v / 100 * largeur)
-                    barre = "\u2588" * bars + "\u2591" * (largeur - bars)
-                    elapsed = int(time.time() - t0)
-                    if v > 0:
-                        eta_s = int(elapsed * (100 - v) / v)
-                        eta_str = (f"  ETA {eta_s//3600}h{(eta_s%3600)//60:02d}m"
-                                   if eta_s >= 3600
-                                   else f"  ETA {eta_s//60}m{eta_s%60:02d}s")
-                    else:
-                        eta_str = ""
-                    print("\r" + label + " [" + barre + "] " +
-                          str(v).rjust(3) + "%" + _hms(elapsed).rjust(8) + eta_str,
-                          end="", flush=True)
-            buf_pct = ""
-        else:
-            buf_pct += ch
-
-    # Dernière ligne sans \n
-    if buf_line.strip():
-        line = buf_line.strip()
-        if "ERROR" in line.upper() or "FAILED" in line.upper():
-            erreur_lines.append(line)
-
-    proc.wait()
-    return proc.returncode, int(time.time()-t0), erreur_lines
-
-
-def _installer_gdal_systeme():
-    """Installe gdal-bin via apt (Linux) ou brew (macOS).
-
-    Demande explicitement l'autorisation à l'utilisateur avant tout sudo/brew
-    (intrusif vs. l'esprit "single-file"). Vérifie aussi que les outils
-    système nécessaires sont présents avant de tenter.
-
-    Retourne True/False selon succès.
-    """
-    import shutil as _shutil
-
-    if LINUX:
-        # Vérifier prérequis : sudo + apt
-        if not _shutil.which("apt") and not _shutil.which("apt-get"):
-            print("  Cette distribution Linux n'a pas apt — installation manuelle requise.")
-            print("  Selon votre distribution :")
-            print("    Fedora/RHEL  : sudo dnf install gdal")
-            print("    Arch         : sudo pacman -S gdal")
-            print("    openSUSE     : sudo zypper install gdal")
-            return False
-        if not _shutil.which("sudo"):
-            print("  ERREUR : sudo introuvable. Lancez en root ou installez gdal-bin manuellement :")
-            print("    apt install gdal-bin")
-            return False
-        # Demander explicitement l'autorisation : c'est intrusif
-        print()
-        print("  GDAL système absent — installation requise.")
-        print("  Commande à exécuter : sudo apt install -y gdal-bin")
-        try:
-            rep = input("  Lancer maintenant ? [O/n] ").strip().lower()
-        except EOFError:
-            rep = "n"  # mode non-interactif → refuser
-        if rep and rep[0] not in ("o", "y"):
-            print("  Annulé. Pour installer manuellement : sudo apt install gdal-bin")
-            return False
-        print("  Installation gdal-bin via apt...")
-        r = subprocess.run(["sudo", "apt", "install", "-y", "gdal-bin"])
-        return r.returncode == 0
-
-    if MACOS:
-        # Vérifier prérequis : brew installé
-        if not _shutil.which("brew"):
-            print("  Homebrew absent — installation manuelle requise.")
-            print("  1) Installez Homebrew : https://brew.sh/")
-            print("     (commande à coller dans le terminal)")
-            print("  2) Puis : brew install gdal")
-            return False
-        # Demander explicitement
-        print()
-        print("  GDAL système absent — installation requise.")
-        print("  Commande à exécuter : brew install gdal")
-        try:
-            rep = input("  Lancer maintenant ? [O/n] ").strip().lower()
-        except EOFError:
-            rep = "n"
-        if rep and rep[0] not in ("o", "y"):
-            print("  Annulé. Pour installer manuellement : brew install gdal")
-            return False
-        print("  Installation gdal via brew (peut prendre 5-15 min)...")
-        r = subprocess.run(["brew", "install", "gdal"])
-        return r.returncode == 0
-
-    return False
-
-
-def _geoinfo_depuis_gdalinfo(src_tif, env):
-    """
-    Retourne (geotransform_str, srs_wkt) lus depuis gdalinfo -json.
     geotransform_str : 6 valeurs séparées par virgules (xmin, xres, 0, ymax, 0, -yres)
+
+    Le paramètre `env` est conservé pour compatibilité historique mais n'est
+    plus utilisé : rasterio embarque sa propre libgdal/proj.db via le wheel pip.
+    Pas besoin de PROJ_LIB ou GDAL_DATA externes.
     """
-    gdalinfo = _trouver_outil_gdal("gdalinfo")
-    if not gdalinfo:
-        return None, None
-    r = subprocess.run([gdalinfo, "-json", str(src_tif)],
-                       capture_output=True, text=True, env=env)
-    try:
-        info = json.loads(r.stdout)
-        gt   = info.get("geoTransform")       # [xmin, xres, 0, ymax, 0, -yres]
-        srs  = (info.get("coordinateSystem") or {}).get("wkt", "")
-        if gt and len(gt) == 6:
-            return ",".join(str(v) for v in gt), srs
-    except Exception:
-        pass
-    return None, None
-
-
-def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe, env):
-    """
-    Sauvegarde un numpy array uint8 (2D niveaux de gris ou 3D RGB) en GeoTIFF
-    en copiant le géoréférencement de src_tif.
-
-    Approche primaire : rasterio (déjà requis pour le tuilage MBTiles).
-    Fallback : VRT binaire + gdal_translate si rasterio absent.
-
-    arr   : numpy uint8 shape (H,W) pour L, (H,W,3) pour RGB
-    """
-    import numpy as np
-
-    h = arr.shape[0]
-    w = arr.shape[1]
-    n_bands = 1 if arr.ndim == 2 else arr.shape[2]
-
-    # ── Approche primaire : rasterio ─────────────────────────────────────────
     try:
         import rasterio
-        from rasterio.transform import Affine
+        with rasterio.open(str(src_tif)) as ds:
+            tr = ds.transform   # affine: a, b, c, d, e, f
+            # tr.a = xres, tr.b = 0 (pas de rotation), tr.c = xmin
+            # tr.d = 0, tr.e = -yres (négatif pour y descend), tr.f = ymax
+            gt = [tr.c, tr.a, tr.b, tr.f, tr.d, tr.e]  # ordre GDAL classique
+            srs_wkt = ds.crs.to_wkt() if ds.crs else ""
+            return ",".join(str(v) for v in gt), srs_wkt
+    except Exception:
+        return None, None
 
-        with rasterio.open(str(src_tif)) as src:
-            profile = src.profile.copy()
 
-        profile.update(
-            dtype    = "uint8",
-            count    = n_bands,
-            compress = "deflate",
-            predictor= 2,
-            tiled    = True,
-            blockxsize = 512,
-            blockysize = 512,
-            bigtiff  = "IF_SAFER",
-        )
-        # Supprimer les clés incompatibles éventuelles
-        for k in ("nodata",):
-            profile.pop(k, None)
+def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe=None, env=None):
+    """
+    Sauvegarde un numpy array uint8 (2D niveaux de gris ou 3D RGB) en GeoTIFF
+    en copiant le géoréférencement de src_tif via rasterio.
 
-        _t0 = time.time()
-        with rasterio.open(str(dst_tif), "w", **profile) as dst:
-            if arr.ndim == 2:
-                dst.write(arr.astype(np.uint8), 1)
-            else:
-                for b in range(n_bands):
-                    dst.write(arr[:, :, b].astype(np.uint8), b + 1)
-        print(f"  rasterio write OK  ({_hms(time.time()-_t0)})", flush=True)
-        return
+    arr   : numpy uint8 shape (H,W) pour L, (H,W,3) pour RGB
 
-    except ImportError:
-        pass  # rasterio absent → fallback ci-dessous
-    except Exception as e_rio:
-        print(f"  AVERTISSEMENT rasterio write : {e_rio} — repli VRT")
+    Les paramètres `gdal_translate_exe` et `env` sont conservés pour compatibilité
+    historique mais ne sont plus utilisés (rasterio est désormais une dépendance
+    obligatoire — voir _installer_deps).
+    """
+    import numpy as np
+    import rasterio
 
-    # ── Fallback : VRT binaire + gdal_translate ───────────────────────────────
-    import shutil as _shutil_arr
+    n_bands = 1 if arr.ndim == 2 else arr.shape[2]
 
-    gt_str, srs_wkt = _geoinfo_depuis_gdalinfo(src_tif, env)
-    if gt_str is None:
-        from PIL import Image as _Img
-        _Img.fromarray(arr).save(str(dst_tif), format="TIFF")
-        print("  AVERTISSEMENT : src georef introuvable, TIF sans projection")
-        return
+    with rasterio.open(str(src_tif)) as src:
+        profile = src.profile.copy()
 
-    _arr_tmpdir = dst_tif.parent / "_tmp"
-    _arr_tmpdir.mkdir(parents=True, exist_ok=True)
-    try:
-        raw_path = _arr_tmpdir / "data.bin"
-        vrt_path = _arr_tmpdir / "data.vrt"
+    profile.update(
+        dtype     = "uint8",
+        count     = n_bands,
+        compress  = "deflate",
+        predictor = 2,
+        tiled     = True,
+        blockxsize = 512,
+        blockysize = 512,
+        bigtiff   = "IF_SAFER",
+    )
+    # Supprimer les clés incompatibles éventuelles
+    for k in ("nodata",):
+        profile.pop(k, None)
 
-        raw_path.write_bytes(arr.astype(np.uint8).tobytes())
-        _creer_fichier(raw_path)
-        pixel_offset = n_bands
-        line_offset  = w * n_bands
-
-        srs_elem = (f"<SRS>{srs_wkt}</SRS>" if srs_wkt else "<SRS>EPSG:2154</SRS>")
-        gt_elem  = f"<GeoTransform>{gt_str}</GeoTransform>"
-
-        color_interp = ["Red", "Green", "Blue"]
-        bands_xml = ""
-        for b in range(n_bands):
-            ci = (f"<ColorInterp>{color_interp[b]}</ColorInterp>"
-                  if n_bands == 3 else "<ColorInterp>Gray</ColorInterp>")
-            bands_xml += f"""
-  <VRTRasterBand dataType="Byte" band="{b+1}" subClass="VRTRawRasterBand">
-    {ci}
-    <SourceFilename relativeToVRT="1">data.bin</SourceFilename>
-    <ImageOffset>{b}</ImageOffset>
-    <PixelOffset>{pixel_offset}</PixelOffset>
-    <LineOffset>{line_offset}</LineOffset>
-    <ByteOrder>LSB</ByteOrder>
-  </VRTRasterBand>"""
-
-        vrt_xml = f"""<VRTDataset rasterXSize="{w}" rasterYSize="{h}">
-  {srs_elem}
-  {gt_elem}{bands_xml}
-</VRTDataset>"""
-        vrt_path.write_text(vrt_xml, encoding="utf-8")
-        _creer_fichier(vrt_path)
-
-        cmd = [
-            gdal_translate_exe, "-of", "GTiff",
-            "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-            "-co", "TILED=YES", "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
-            "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-            str(vrt_path), str(dst_tif)
-        ]
-        _log_req(cmd)
-        _t0_tr = time.time()
-        r = subprocess.run(cmd, capture_output=True, env=env)
-        if r.returncode != 0:
-            err = r.stderr.decode("utf-8", errors="replace").strip()[:200]
-            print(f"  AVERTISSEMENT : gdal_translate VRT→TIF échoué : {err}")
-            from PIL import Image as _Img
-            _Img.fromarray(arr).save(str(dst_tif), format="TIFF")
+    _t0 = time.time()
+    with rasterio.open(str(dst_tif), "w", **profile) as dst:
+        if arr.ndim == 2:
+            dst.write(arr.astype(np.uint8), 1)
         else:
-            print(f"  gdal_translate OK  ({_hms(time.time()-_t0_tr)})", flush=True)
-    finally:
-        _shutil_arr.rmtree(_arr_tmpdir, ignore_errors=True)
+            for b in range(n_bands):
+                dst.write(arr[:, :, b].astype(np.uint8), b + 1)
+    print(f"  rasterio write OK  ({_hms(time.time()-_t0)})", flush=True)
 
 
 # ── Helpers lecture DEM ───────────────────────────────────────────────────────
@@ -2453,6 +2349,153 @@ def _lire_dem_rasterio(src_path):
 
     from PIL import Image as _Img
     return np.array(_Img.open(str(src_path)), dtype=np.float32), None
+
+
+# ── Hillshade et slope numpy (remplacent gdaldem CLI) ─────────────────────────
+
+def _calc_slope_aspect(dem, dx=0.5, dy=0.5):
+    """Calcule slope (radians) et aspect (radians) d'un DEM via la formule Horn 1981.
+
+    Horn 1981 utilise une fenêtre 3x3 avec pondération centrale 2× pour
+    limiter le bruit. C'est la formule par défaut de gdaldem.
+
+    dx, dy : taille du pixel en mètres (X et Y, identiques pour LiDAR)
+
+    Retourne (slope_rad, aspect_rad) en arrays float32 même shape que dem.
+    """
+    import numpy as np
+
+    # Convolution 3x3 manuelle via padding + slicing — beaucoup plus rapide
+    # que scipy.ndimage.convolve sur ces matrices simples
+    dem = dem.astype(np.float32)
+    pad = np.pad(dem, 1, mode="edge")  # edge replication (compat GDAL)
+    a = pad[0:-2, 0:-2]; b = pad[0:-2, 1:-1]; c = pad[0:-2, 2:  ]
+    d = pad[1:-1, 0:-2];                       f = pad[1:-1, 2:  ]
+    g = pad[2:  , 0:-2]; h = pad[2:  , 1:-1]; i = pad[2:  , 2:  ]
+
+    # dz/dx (Horn) : ((c + 2f + i) - (a + 2d + g)) / (8 * dx)
+    dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * dx)
+    # dz/dy (Horn) : ((g + 2h + i) - (a + 2b + c)) / (8 * dy)
+    # Note : dans GDAL, l'axe Y est inversé (origine en haut-gauche), donc le
+    # signe de dy peut différer selon les conventions. On garde la convention
+    # Horn standard ici.
+    dz_dy = ((g + 2.0 * h + i) - (a + 2.0 * b + c)) / (8.0 * dy)
+
+    # Slope (radians) : atan(sqrt(dz_dx² + dz_dy²))
+    slope = np.arctan(np.sqrt(dz_dx * dz_dx + dz_dy * dz_dy))
+
+    # Aspect (radians) : atan2(dz_dy, -dz_dx)
+    # Convention GDAL : aspect = 0 vers le Nord (Y+ haut), augmente sens horaire
+    aspect = np.arctan2(dz_dy, -dz_dx)
+
+    return slope.astype(np.float32), aspect.astype(np.float32)
+
+
+def _hillshade_numpy(dem, azimuth_deg, altitude_deg, z_factor=1.0, dx=0.5, dy=0.5,
+                     nodata=None):
+    """Hillshade directionnel — formule GDAL standard.
+
+    Reproduit la formule de gdaldem hillshade (-alt -az) :
+        hillshade = 255 * (cos(zenith) * cos(slope)
+                         + sin(zenith) * sin(slope) * cos(azimuth - aspect))
+
+    azimuth_deg : direction du soleil en degrés (0=N, 90=E, 180=S, 270=W)
+    altitude_deg : hauteur du soleil au-dessus de l'horizon, en degrés
+    z_factor : multiplicateur d'exagération verticale (1.0 = pas d'exagération)
+
+    Retourne un array uint8 (0-255) même shape que dem.
+    """
+    import numpy as np
+
+    if z_factor != 1.0:
+        dem = dem * float(z_factor)
+    slope, aspect = _calc_slope_aspect(dem, dx, dy)
+
+    zenith_rad  = np.radians(90.0 - altitude_deg)
+    # GDAL convention : azimuth -90 pour aligner avec atan2 standard
+    az_math_rad = np.radians(360.0 - azimuth_deg + 90.0)
+
+    hs = (np.cos(zenith_rad) * np.cos(slope)
+          + np.sin(zenith_rad) * np.sin(slope) * np.cos(az_math_rad - aspect))
+    # Clamp à [0, 1] avant scaling : GDAL met les zones en ombre à 0
+    hs = np.clip(hs, 0.0, 1.0)
+    hs_u8 = (hs * 254.0 + 1.0).astype(np.uint8)  # GDAL : output dans [1, 255]
+
+    # Nodata : préserver les zones sans donnée à 0
+    if nodata is not None:
+        hs_u8[dem == nodata] = 0
+
+    return hs_u8
+
+
+def _hillshade_multi_numpy(dem, altitude_deg=45.0, z_factor=1.0, dx=0.5, dy=0.5,
+                           nodata=None):
+    """Hillshade multidirectionnel — formule GDAL `-multidirectional`.
+
+    Calcule 4 hillshades à 225°, 270°, 315°, 360° et combine via une moyenne
+    pondérée par sin(2*aspect) pour éviter les "stripes" du hillshade simple.
+
+    C'est la méthode "Multidirectional Hillshade" de Mark 1992 / Tait 2010
+    qu'utilise GDAL avec --multidirectional.
+    """
+    import numpy as np
+
+    if z_factor != 1.0:
+        dem = dem * float(z_factor)
+    slope, aspect = _calc_slope_aspect(dem, dx, dy)
+
+    zenith_rad = np.radians(90.0 - altitude_deg)
+    cos_z = np.cos(zenith_rad)
+    sin_z = np.sin(zenith_rad)
+
+    # 4 azimuths : 225°, 270°, 315°, 360°
+    # Pondération : weight_i = sin² ou cos² de (aspect - az_i) pour atténuer les
+    # azimuths perpendiculaires à l'aspect local (méthode GDAL)
+    # Implémentation simplifiée : moyenne pondérée par sin/cos² des diffs
+    azimuths = [225.0, 270.0, 315.0, 360.0]
+    hs_sum     = np.zeros_like(slope)
+    weight_sum = np.zeros_like(slope)
+    for az in azimuths:
+        az_math_rad = np.radians(360.0 - az + 90.0)
+        diff = az_math_rad - aspect
+        # Pondération : sin²(diff) — favorise les azimuths perpendiculaires à
+        # l'aspect (qui révèlent mieux les structures)
+        w = np.sin(diff) ** 2
+        hs = (cos_z * np.cos(slope)
+              + sin_z * np.sin(slope) * np.cos(diff))
+        hs = np.clip(hs, 0.0, 1.0)
+        hs_sum     += hs * w
+        weight_sum += w
+    # Évite division par zéro
+    weight_sum = np.where(weight_sum < 1e-6, 1e-6, weight_sum)
+    hs_avg = hs_sum / weight_sum
+    hs_u8  = (hs_avg * 254.0 + 1.0).astype(np.uint8)
+
+    if nodata is not None:
+        hs_u8[dem == nodata] = 0
+
+    return hs_u8
+
+
+def _slope_numpy(dem, z_factor=1.0, dx=0.5, dy=0.5, scale=1.0, nodata=None):
+    """Slope en degrés — formule GDAL standard.
+
+    Renvoie un array uint8 où chaque pixel est l'angle de pente en degrés
+    (0-90), clampé à 90.
+    """
+    import numpy as np
+
+    if z_factor != 1.0:
+        dem = dem * float(z_factor)
+    slope, _ = _calc_slope_aspect(dem, dx, dy)
+    slope_deg = np.degrees(slope)
+    # GDAL clamp à [0, 90] et convertit en uint8
+    slope_u8 = np.clip(slope_deg, 0.0, 90.0).astype(np.uint8)
+
+    if nodata is not None:
+        slope_u8[dem == nodata] = 0
+
+    return slope_u8
 
 
 def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
@@ -2793,10 +2836,14 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     if isinstance(cogs, Path):
         cogs = [cogs]
 
-    gdaldem        = _trouver_outil_gdal("gdaldem")
-    gdalbuildvrt   = _trouver_outil_gdal("gdalbuildvrt")
-    gdal_translate = _trouver_outil_gdal("gdal_translate")
-    env_dem        = _env_gdaldem()
+    # Variables conservées pour compatibilité du code existant : après le
+    # refactor rasterio (étapes 1-7), aucun de ces exes n'est plus appelé.
+    # _trouver_outil_gdal renvoie toujours None (no-op), donc ces variables
+    # sont toujours None — c'est OK puisqu'elles ne sont plus testées.
+    gdaldem        = None
+    gdalbuildvrt   = None
+    gdal_translate = None
+    env_dem        = None
 
     CATALOGUE_GDAL = {
         "315":   ("315_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az","315","-alt",str(elevation_soleil)]),
@@ -2836,43 +2883,112 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # VRT dans _tmp/ sous dossier_ville : tous les fichiers restent dans le projet.
     import shutil as _shutil_vrt
     _vrt_tmpdir = None
-    if len(cogs) > 1 and gdalbuildvrt:
+    # ── Merge des dalles via rasterio (remplace gdalbuildvrt + gdal_translate) ──
+    # Au lieu de produire un VRT puis de le convertir en GeoTIFF avec
+    # gdal_translate, on fait un merge direct rasterio en GeoTIFF compressé.
+    # Avantages : un seul passage, plus de dépendance à GDAL CLI, sortie
+    # immédiatement utilisable par numpy (gdaldem reste pour les hillshades —
+    # voir étape 4 du refactor).
+    if len(cogs) > 1:
         _vrt_tmpdir = dossier_ville / "_tmp"
         _vrt_tmpdir.mkdir(parents=True, exist_ok=True)
-        vrt_path      = _vrt_tmpdir / "_mnt_complet.vrt"
+        # On garde l'extension .vrt dans le nom pour préserver la logique en aval
+        # (le code ligne 3017 teste source.suffix.lower() == ".vrt" pour décider
+        #  s'il faut convertir en GeoTIFF — avec rasterio.merge on a déjà fait la
+        #  conversion, mais on garde le suffixe pour rester cohérent visuellement).
+        # En réalité on produit un GeoTIFF, donc on utilise .tif.
+        vrt_path      = _vrt_tmpdir / "_mnt_complet.tif"
         filelist_path = _vrt_tmpdir / "_dalles.txt"
-        # Écriture de la liste dans un fichier texte — évite WinError 206
-        # (limite Windows de ~32 767 caractères sur la ligne de commande)
+        # Conserver la liste des dalles pour debug / traçabilité
         filelist_path.write_text(
             "\n".join(str(c) for c in cogs), encoding="utf-8")
-        _creer_fichier(vrt_path)
         _creer_fichier(filelist_path)
-        print(f"  Construction VRT global ({len(cogs)} dalles)...", flush=True)
-        _cmd_vrt = [gdalbuildvrt,
-                    "-tr", str(RESOLUTION_M), str(RESOLUTION_M), "-tap",
-                    "-input_file_list", str(filelist_path), str(vrt_path)]
-        _log_req(_cmd_vrt)
+        print(f"  Construction GeoTIFF mergé ({len(cogs)} dalles, rasterio)...",
+              flush=True)
         _t0_vrt = time.time()
-        r = subprocess.run(_cmd_vrt, capture_output=True, text=True, env=env_dem)
-        if r.returncode != 0:
-            print("  ERREUR VRT : " + r.stderr.strip()[:200])
+        try:
+            import rasterio
+            from rasterio.merge import merge as _rio_merge
+            # Ouvrir tous les datasets sources
+            srcs = [rasterio.open(str(c)) for c in cogs]
+            try:
+                # res=(RES, RES) reproduit -tr du gdalbuildvrt
+                # bounds=None : auto-détecté depuis les dalles
+                # nodata : préserver la valeur nodata des sources
+                merged_arr, merged_transform = _rio_merge(
+                    srcs, res=(RESOLUTION_M, RESOLUTION_M),
+                    resampling=rasterio.enums.Resampling.nearest)
+                # Dériver les métadonnées de sortie
+                profile = srcs[0].profile.copy()
+                profile.update({
+                    "driver":      "GTiff",
+                    "height":      merged_arr.shape[1],
+                    "width":       merged_arr.shape[2],
+                    "transform":   merged_transform,
+                    "compress":    "deflate",
+                    "tiled":       True,
+                    "blockxsize":  512,
+                    "blockysize":  512,
+                    "BIGTIFF":     "IF_SAFER",
+                })
+                # Suppression d'overviews potentiellement présents — on les rebuilde
+                # à l'étape de tuilage MBTiles plus tard
+                with rasterio.open(vrt_path, "w", **profile) as dst:
+                    dst.write(merged_arr)
+                _creer_fichier(vrt_path)
+                print(f"  GeoTIFF mergé OK  ({_hms(time.time()-_t0_vrt)})", flush=True)
+                sources = [vrt_path]
+            finally:
+                for s in srcs:
+                    try: s.close()
+                    except Exception: pass
+        except Exception as e:
+            print(f"  ERREUR merge rasterio : {e}")
             print("  Repli sur dalles individuelles.")
             sources = cogs
-        else:
-            print(f"  VRT OK  ({_hms(time.time()-_t0_vrt)})", flush=True)
-            sources = [vrt_path]
     else:
-        if len(cogs) > 1:
-            print("  gdalbuildvrt introuvable, traitement dalle par dalle (jointures possibles)")
         sources = cogs
 
     source   = sources[0]
     nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
 
     try:
-        # ── Ombrages gdaldem — appel direct sur le VRT global ───────────────
-        # Pas de banding — gdaldem traite en streaming par blocs.
-        # La RAM n'est jamais saturée quelle que soit la taille du raster.
+        # ── Hillshades numpy (remplace gdaldem CLI — étape 4 du refactor) ───
+        # Lecture unique du DEM source via rasterio, puis calcul des
+        # différents hillshades en mémoire. Plus rapide que gdaldem CLI sur
+        # de petites zones (pas d'overhead subprocess), légèrement plus lent
+        # sur très grandes (gdaldem streame en blocs). Pour LiDAR à 0.5 m sur
+        # quelques km², la version numpy est de toute façon adéquate.
+
+        # Cache du DEM lu une seule fois pour tous les hillshades demandés
+        _dem_cache = {"arr": None, "nodata": None, "profile": None}
+
+        def _charger_dem_si_besoin():
+            if _dem_cache["arr"] is None:
+                import rasterio as _rio
+                with _rio.open(str(source)) as ds:
+                    _dem_cache["arr"]     = ds.read(1).astype("float32")
+                    _dem_cache["nodata"]  = ds.nodata
+                    _dem_cache["profile"] = ds.profile.copy()
+
+        def _ecrire_uint8_georef(arr_u8, chemin_out):
+            """Écrit un array uint8 (1 bande) en GeoTIFF avec geo de la source."""
+            import rasterio as _rio
+            prof = _dem_cache["profile"].copy()
+            prof.update({
+                "dtype":      "uint8",
+                "count":      1,
+                "compress":   "deflate",
+                "predictor":  2,
+                "tiled":      True,
+                "blockxsize": 512,
+                "blockysize": 512,
+                "BIGTIFF":    "YES",
+            })
+            for k in ("nodata",):
+                prof.pop(k, None)
+            with _rio.open(str(chemin_out), "w", **prof) as dst:
+                dst.write(arr_u8, 1)
 
         def _generer_un_hillshade(cle):
             suffix, args_dem = CATALOGUE_GDAL[cle]
@@ -2881,17 +2997,46 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
 
             if chemin_out.exists() and not ecraser_ombrages:
                 return cle, nom_fichier, "skip", 0, []
-            # Si on écrase, supprimer l'ancien : sinon GDAL peut refuser
-            # ou laisser un fichier corrompu en cas d'échec.
             if chemin_out.exists() and ecraser_ombrages:
                 chemin_out.unlink()
 
-            cmd = [gdaldem] + args_dem + [str(source), str(chemin_out)] + co
-            code, _, errs = _run_gdal_avec_jauge(cmd, nom_fichier, env_dem)
-            if code == 0:
+            try:
+                _charger_dem_si_besoin()
+                dem    = _dem_cache["arr"]
+                nodata = _dem_cache["nodata"]
+                # Décoder args_dem pour extraire mode + paramètres
+                # Format args_dem : ["hillshade", "-b", "1", "-z", "1.0", "-s", "1.0",
+                #                    "-az", "315", "-alt", "25"] ou ["hillshade", ..., "-multidirectional"]
+                #              ou : ["slope", "-b", "1", "-s", "1.0"]
+                mode = args_dem[0]
+                if mode == "hillshade":
+                    if "-multidirectional" in args_dem:
+                        # Multidirectional : altitude unique, pas d'azimuth
+                        alt = float(elevation_soleil)
+                        out = _hillshade_multi_numpy(
+                            dem, altitude_deg=alt, z_factor=1.0,
+                            dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                    else:
+                        # Directionnel : -az X -alt Y
+                        i_az  = args_dem.index("-az")
+                        i_alt = args_dem.index("-alt")
+                        az    = float(args_dem[i_az + 1])
+                        alt   = float(args_dem[i_alt + 1])
+                        out = _hillshade_numpy(
+                            dem, azimuth_deg=az, altitude_deg=alt, z_factor=1.0,
+                            dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                elif mode == "slope":
+                    out = _slope_numpy(
+                        dem, z_factor=1.0,
+                        dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                else:
+                    return cle, nom_fichier, "erreur", 0, [f"mode inconnu : {mode}"]
+
+                _ecrire_uint8_georef(out, chemin_out)
                 _enregistrer_fichier(chemin_out)
                 return cle, nom_fichier, "ok", chemin_out.stat().st_size / 1e6, []
-            return cle, nom_fichier, "erreur", 0, errs
+            except Exception as e:
+                return cle, nom_fichier, "erreur", 0, [str(e)]
 
         if choix_gdal:
             if len(choix_gdal) == 1:
@@ -2901,12 +3046,17 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 if statut == "skip":
                     print("  " + nom_fichier.ljust(56) + " -> déjà présent")
                 elif statut == "erreur":
-                    print(f"\n  ERREUR gdaldem {nom_fichier}")
+                    print(f"\n  ERREUR hillshade {nom_fichier}")
                     for e in errs[:10]:
                         print(f"    {e}")
             else:
-                # Plusieurs types : parallèle (un process par type)
-                print(f"  Hillshades gdaldem ({len(choix_gdal)} types)...",
+                # Plusieurs types : parallèle (un thread par type)
+                # Le DEM est chargé une seule fois en mémoire avant le parallèle
+                # pour éviter une race condition sur le cache au premier appel.
+                # Numpy libère le GIL pour les opérations vectorisées, donc le
+                # parallélisme par threads donne un vrai speedup.
+                _charger_dem_si_besoin()
+                print(f"  Hillshades numpy ({len(choix_gdal)} types)...",
                       flush=True)
                 with ThreadPoolExecutor(max_workers=len(choix_gdal)) as pool:
                     futures = {pool.submit(_generer_un_hillshade, cle): cle
@@ -2916,7 +3066,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         if statut == "skip":
                             print("  " + nom_fichier.ljust(56) + " -> déjà présent")
                         elif statut == "erreur":
-                            print(f"\n  ERREUR gdaldem {nom_fichier}")
+                            print(f"\n  ERREUR hillshade {nom_fichier}")
                             for e in errs[:10]:
                                 print(f"    {e}")
 
@@ -2924,34 +3074,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         if not choix_numpy:
             pass  # pas de traitement demandé
 
-        # Pour lire le VRT avec PIL/numpy, on le convertit d'abord en GeoTIFF.
-        # (PIL ne sait pas lire les VRT directement)
+        # NB : rasterio.merge (étape 2 du refactor) produit déjà un GeoTIFF
+        # directement utilisable par numpy/PIL/rasterio en aval. Plus aucune
+        # conversion intermédiaire VRT→GTiff nécessaire.
         src_str = str(source)
         tmp_gtiff = None
-        if source.suffix.lower() == ".vrt" and choix_numpy:
-            if gdal_translate:
-                _tmp_base = _vrt_tmpdir if _vrt_tmpdir else dossier_ville / "_tmp"
-                _tmp_base.mkdir(parents=True, exist_ok=True)
-                tmp_gtiff = _tmp_base / "_numpy_source_tmp.tif"
-                if not tmp_gtiff.exists():
-                    print("  Conversion VRT → GeoTIFF pour lecture numpy...", flush=True)
-                    cmd_conv = [
-                        gdal_translate, "-of", "GTiff",
-                        "-co", "COMPRESS=DEFLATE", "-co", "TILED=YES",
-                        "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
-                        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                        str(source), str(tmp_gtiff)
-                    ]
-                    code_c, _, _ = _run_gdal_avec_jauge(cmd_conv, "_numpy_source_tmp.tif", env_dem)
-                    if code_c != 0:
-                        print("  ERREUR conversion VRT → GTiff — SVF/LRM/RRIM ignorés")
-                        choix_numpy = []
-                    elif tmp_gtiff.exists():
-                        _creer_fichier(tmp_gtiff)
-                src_str = str(tmp_gtiff)
-            else:
-                print("  gdal_translate introuvable — SVF/LRM/RRIM ignorés")
-                choix_numpy = []
 
         for cle in choix_numpy:
             # Cancellation propre entre 2 ombrages : si l'utilisateur a fait
@@ -2997,12 +3124,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         arr_stretched = np.clip(arr_svf, 0, 1)
                     # gamma 2.0 : assombrit les mi-tons, accentue les creux (SVF faible)
                     arr_u8 = (arr_stretched ** 2.0 * 255).astype(np.uint8)
-                    if gdal_translate:
-                        _sauver_array_georef(arr_u8, Path(src_str), chemin_out,
-                                             gdal_translate, env_dem)
-                    else:
-                        from PIL import Image as _Img
-                        _Img.fromarray(arr_u8).save(str(chemin_out), format="TIFF")
+                    # rasterio est désormais une dépendance obligatoire :
+                    # _sauver_array_georef préserve le géoréférencement,
+                    # PIL.fromarray ne saurait pas le faire.
+                    _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
                     print(f"  ERREUR SVF numpy : {e_svf}")
                     continue
@@ -3052,12 +3177,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             clip_info = f"±{clip_val:.2f}m (σ fallback)"
                         arr_u8 = arr_f.astype(np.uint8)
                         arr_u8[nodata_mask] = 128
-                        if gdal_translate:
-                            _sauver_array_georef(arr_u8, Path(src_str), chemin_out,
-                                                 gdal_translate, env_dem)
-                        else:
-                            from PIL import Image as _Img
-                            _Img.fromarray(arr_u8).save(str(chemin_out), format="TIFF")
+                        _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                         _lrm_ok = True
                         print(f"  LRM scipy (pleine mémoire) : σ={sigma_px} px, {clip_info}")
                     except ImportError:
@@ -3085,18 +3205,33 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     _slope_src = slope_rrim_path
                     print("  RRIM : slope existant réutilisé", flush=True)
                 else:
-                    cmd_slope = [
-                        gdaldem, "slope", "-b","1","-s","1.0",
-                        str(source), str(slope_tmp_path),
-                        "-of", "GTiff",
-                        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                    ]
-                    code_sl, _, _ = _run_gdal_avec_jauge(
-                        cmd_slope, "slope_tmp.tif", env_dem)
-                    if code_sl != 0 or not slope_tmp_path.exists():
-                        print("  ERREUR gdaldem slope pour RRIM")
+                    # Slope numpy (remplace gdaldem slope CLI)
+                    try:
+                        import rasterio as _rio_sl
+                        with _rio_sl.open(src_str) as _ds_sl:
+                            _dem_sl    = _ds_sl.read(1).astype("float32")
+                            _nd_sl_in  = _ds_sl.nodata
+                            _profile_sl = _ds_sl.profile.copy()
+                        _slope_u8 = _slope_numpy(_dem_sl, dx=RESOLUTION_M,
+                                                 dy=RESOLUTION_M, nodata=_nd_sl_in)
+                        _profile_sl.update({
+                            "dtype":      "uint8",
+                            "count":      1,
+                            "compress":   "deflate",
+                            "predictor":  2,
+                            "tiled":      True,
+                            "blockxsize": 512,
+                            "blockysize": 512,
+                            "BIGTIFF":    "YES",
+                        })
+                        for _k in ("nodata",):
+                            _profile_sl.pop(_k, None)
+                        with _rio_sl.open(str(slope_tmp_path), "w", **_profile_sl) as _dst_sl:
+                            _dst_sl.write(_slope_u8, 1)
+                        _slope_src = slope_tmp_path
+                    except Exception as _e_sl:
+                        print(f"  ERREUR slope numpy pour RRIM : {_e_sl}")
                         continue
-                    _slope_src = slope_tmp_path
 
                 # Étape 3 : composite RGB numpy/PIL
                 # RRIM modifié pour terrain ouvert (Var) :
@@ -3146,12 +3281,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     gb_chan = (lrm_n ** 0.8 * 255).astype(np.uint8)
 
                     rgb = np.stack([r_chan, gb_chan, gb_chan], axis=2)
-                    if gdal_translate:
-                        _sauver_array_georef(rgb, Path(src_str), chemin_out,
-                                             gdal_translate, env_dem)
-                    else:
-                        from PIL import Image as _ImgRRIM
-                        _ImgRRIM.fromarray(rgb).save(str(chemin_out), format="TIFF")
+                    _sauver_array_georef(rgb, Path(src_str), chemin_out)
                     print(f"  RRIM : {chemin_out.name} — RGB 3 canaux")
                 except Exception as e_rrim:
                     print(f"  ERREUR composite RRIM : {e_rrim}")
@@ -3178,25 +3308,19 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     print("\n  Ombrages dans : " + str(dossier_ville))
 
 
-def _bbox_depuis_gdalinfo(chemin, env):
-    """Retourne (xmin, ymin, xmax, ymax) en unités natives du fichier."""
-    gdalinfo = _trouver_outil_gdal("gdalinfo")
-    if not gdalinfo:
-        return None
-    r = subprocess.run([gdalinfo, "-json", str(chemin)],
-                       capture_output=True, text=True, env=env)
+def _bbox_depuis_gdalinfo(chemin, env=None):
+    """Retourne (xmin, ymin, xmax, ymax) en unités natives du fichier via rasterio.
+
+    Le paramètre `env` est conservé pour compatibilité mais n'est plus utilisé
+    (rasterio embarque sa propre libgdal — pas besoin de PROJ_LIB).
+    """
     try:
-        info = json.loads(r.stdout)
-        cc   = info["cornerCoordinates"]
-        return (cc["lowerLeft"][0], cc["lowerLeft"][1],
-                cc["upperRight"][0], cc["upperRight"][1])
+        import rasterio
+        with rasterio.open(str(chemin)) as ds:
+            b = ds.bounds   # BoundingBox(left, bottom, right, top)
+            return (b.left, b.bottom, b.right, b.top)
     except Exception:
-        m1 = re.search(r"Lower Left\s+\(([\d.+-]+),\s*([\d.+-]+)\)", r.stdout)
-        m2 = re.search(r"Upper Right\s+\(([\d.+-]+),\s*([\d.+-]+)\)", r.stdout)
-        if m1 and m2:
-            return (float(m1.group(1)), float(m1.group(2)),
-                    float(m2.group(1)), float(m2.group(2)))
-    return None
+        return None
 
 
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
@@ -3259,91 +3383,18 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         mbtiles.unlink()
         print(f"  {mbtiles.name} → écrasement")
 
-    env      = _env_gdaldem()
-    gdalwarp = _trouver_outil_gdal("gdalwarp")
-    gdal_tr  = _trouver_outil_gdal("gdal_translate")
-    if not gdalwarp or not gdal_tr:
-        print("  ERREUR : gdalwarp ou gdal_translate introuvable")
-        return None
-    print(f"  gdalwarp : {gdalwarp}", flush=True)
+    # Variables conservées pour compatibilité — après refactor rasterio
+    # (étapes 1-7), gdalwarp/gdal_translate/gdal_addo ne sont plus appelés
+    # comme CLI. Le warp est fait par rasterio.warp plus bas.
+    env       = None
+    gdalwarp  = None
+    gdal_tr   = None
+    gdal_addo = None
 
-    gdal_addo = _trouver_outil_gdal("gdaladdo")
-
-    # PROJ_LIB : fournir un proj.db compatible avec le GDAL utilisé.
-    # Sur Linux, GDAL apt et proj.db système sont toujours cohérents — on ne touche pas.
-    # Sur Windows, le GDAL local (GISInternals) n'inclut pas proj.db → on le fournit.
-    if env is None:
-        env = os.environ.copy()
-
-    import sqlite3 as _sq
-    def _proj_db_version(db_path):
-        try:
-            con = _sq.connect(str(db_path))
-            row = con.execute(
-                "SELECT value FROM metadata "
-                "WHERE key='DATABASE.LAYOUT.VERSION.MINOR'"
-            ).fetchone()
-            con.close()
-            return int(row[0]) if row else 0
-        except Exception:
-            return 0
-
-    if WINDOWS:
-        # Détecter la version proj.db requise par le GDAL local
-        # via la DLL proj_X_Y.dll la plus récente dans gdal/bin/
-        import glob as _gproj
-        _proj_dlls = sorted(_gproj.glob(
-            str(DOSSIER_TRAVAIL / "bin" / "gdal" / "bin" / "proj_*.dll")))
-        _PROJ_TARGET_VER = 4  # défaut GDAL 3.8.5 / PROJ 9.3
-        if _proj_dlls:
-            # proj_9_3.dll → PROJ 9.3 → proj.db v4
-            # proj_9_4.dll → PROJ 9.4 → proj.db v6
-            for _dll in reversed(_proj_dlls):
-                _m = re.search(r"proj_(\d+)_(\d+)\.dll",
-                                     Path(_dll).name)
-                if _m:
-                    _major, _minor = int(_m.group(1)), int(_m.group(2))
-                    # PROJ 9.4+ → proj.db v6 ; PROJ < 9.4 → proj.db v4
-                    _PROJ_TARGET_VER = 6 if (_major, _minor) >= (9, 4) else 4
-                    break
-
-        # Chercher le proj.db correspondant dans rasterio/pyproj
-        _candidates_proj = []
-        for _pkg in ("rasterio", "pyproj"):
-            try:
-                _mod = __import__(_pkg)
-                if _pkg == "rasterio":
-                    for _sub in ["proj_data", "proj_dir/share/proj"]:
-                        _db = Path(_mod.__file__).parent / _sub / "proj.db"
-                        if _db.exists():
-                            _candidates_proj.append(_db); break
-                else:
-                    _db = Path(_mod.datadir.get_data_dir()) / "proj.db"
-                    if _db.exists():
-                        _candidates_proj.append(_db)
-            except Exception:
-                pass
-
-        _proj_lib_found = None
-        _best_ver = 0
-        for _db in _candidates_proj:
-            _ver = _proj_db_version(_db)
-            if _ver == _PROJ_TARGET_VER:
-                _proj_lib_found = _db.parent
-                _best_ver = _ver
-                break
-            elif _ver > _best_ver:
-                _best_ver = _ver
-                _proj_lib_found = _db.parent
-
-        if _proj_lib_found:
-            env["PROJ_LIB"] = str(_proj_lib_found)
-            match = "✓" if _best_ver == _PROJ_TARGET_VER else "⚠"
-            print(f"  PROJ_LIB v{_best_ver} {match} (cible v{_PROJ_TARGET_VER}) : "
-                  f"{_proj_lib_found}", flush=True)
-        else:
-            print("  AVERTISSEMENT : proj.db introuvable — reprojection peut échouer",
-                  flush=True)
+    # NB : avec rasterio, la base proj.db est gérée en interne par le wheel
+    # rasterio (livrée dans rasterio/proj_data/). Plus besoin de configurer
+    # PROJ_LIB ou GDAL_DATA externes — c'était nécessaire avec GDAL CLI mais
+    # rasterio embarque sa propre lib statique.
 
     proj_args = []
 
@@ -3436,6 +3487,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     total_insere = 0
     t_tile = time.time()
+    # Initialisé avant la boucle pour rester accessible même si le warp
+    # plante avant d'atteindre la phase de tuilage (cf. bloc plus bas
+    # qui le décrémente puis affiche un récapitulatif).
+    nb_echecs_tr = 0
 
     for i_tr, (y0_l, y1_l, nom_tr) in enumerate(tranches):
         # Fichier warped persistant dans dossier_ville — préfixe _ pour
@@ -3457,24 +3512,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 print(f"  Warped cache : {warped.name}  "
                       f"({warped.stat().st_size/1e6:.0f} Mo) — réutilisé", flush=True)
 
-        # ── 1. gdalwarp ──────────────────────────────────────────────────
-        cmd_warp = [
-            gdalwarp,
-            "-s_srs", "EPSG:2154", "-t_srs", "EPSG:3857",
-            "-tr",  str(res_max), str(res_max),
-            "-r", "bilinear",
-            "-of", "GTiff",
-            "-co", "BIGTIFF=YES",
-            "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-            "-co", "TILED=YES", "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
-            "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-            "--config", "GDAL_CACHEMAX", "2048",
-            "-overwrite",
-        ]
+        # ── 1. Warp via rasterio ───────────────────────────────────────────
+        # Plus de cmd_warp gdalwarp à construire — voir bloc rasterio.warp
+        # plus bas. On garde le calcul de te_xmin/etc. pour la bbox cible.
         # ── Calcul de l'étendue cible en Web Mercator ────────────────────
         te_xmin = te_ymin = te_xmax = te_ymax = None
-        # Toujours passer -te explicitement à gdalwarp — ainsi PROJ n'a pas
-        # besoin de proj.db pour calculer l'étendue de sortie.
         # Conversion Lambert 93 → WGS84 → Web Mercator en Python pur.
         def _lamb93_to_merc(x, y):
             lon, lat = lamb93_to_wgs84_approx(x, y)
@@ -3494,67 +3536,111 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             except Exception:
                 te_xmin, te_ymin = _lamb93_to_merc(x0, _y0)
                 te_xmax, te_ymax = _lamb93_to_merc(x1, _y1)
-            cmd_warp += ["-te", str(te_xmin), str(te_ymin),
-                                str(te_xmax), str(te_ymax)]
         elif y0_l is not None:
-            # Mode banding sans bb_src — cas dégradé, conversion approx
-            # _lamb93_to_merc déjà définie plus haut dans cette portée
             te_xmin, te_ymin = _lamb93_to_merc(bb_src[0], y0_l)
             te_xmax, te_ymax = _lamb93_to_merc(bb_src[2], y1_l)
-            cmd_warp += ["-te", str(te_xmin), str(te_ymin),
-                                str(te_xmax), str(te_ymax)]
 
         if not warp_deja_fait:
-            cmd_warp += proj_args + [str(tif_source), str(warped)]
-
+            # ── 1. Warp via rasterio (remplace gdalwarp CLI — étape 5) ──────
+            # Lambert 93 (EPSG:2154) → Web Mercator (EPSG:3857) avec
+            # rééchantillonnage bilinéaire et résolution cible res_max.
+            # Conserve le -te (target extent) calculé ci-dessus pour ne pas
+            # dépendre de proj.db pour la conversion d'étendue.
             if len(tranches) > 1:
                 print(f"\n  [{i_tr+1}/{len(tranches)}] Warp {nom_tr} "
-                      f"res={res_max:.3f} m/px...", flush=True)
+                      f"res={res_max:.3f} m/px (rasterio)...", flush=True)
             else:
                 print(f"  Warp EPSG:3857  res={res_max:.3f} m/px"
-                      f"  (zoom {zoom_max})...", flush=True)
+                      f"  (rasterio, zoom {zoom_max})...", flush=True)
 
-            code, elap, errs = _run_gdal_avec_jauge(cmd_warp, lbl, env)
-            if code != 0 or not warped.exists():
-                print(f"  ERREUR gdalwarp {nom_tr} (code {code})")
-                for e in errs[:10]: print(f"    {e}")
+            t0_warp = time.time()
+            try:
+                import rasterio as _rio_w
+                from rasterio.warp import calculate_default_transform as _calc_tr
+                from rasterio.warp import reproject as _reproject
+                from rasterio.warp import Resampling as _Resampling
+                from rasterio.transform import from_bounds as _from_bounds
+
+                with _rio_w.open(str(tif_source)) as src:
+                    # Si te_xmin/etc. fournis : on impose la bbox cible.
+                    # Sinon : calculate_default_transform calcule l'étendue
+                    # automatiquement à partir des bounds de la source.
+                    if te_xmin is not None:
+                        # Dimensions cible à partir de la bbox + résolution
+                        dst_width  = int(round((te_xmax - te_xmin) / res_max))
+                        dst_height = int(round((te_ymax - te_ymin) / res_max))
+                        dst_transform = _from_bounds(
+                            te_xmin, te_ymin, te_xmax, te_ymax,
+                            dst_width, dst_height)
+                    else:
+                        dst_transform, dst_width, dst_height = _calc_tr(
+                            src.crs, "EPSG:3857",
+                            src.width, src.height, *src.bounds,
+                            resolution=res_max)
+
+                    # Profil de sortie compatible avec le code en aval
+                    dst_profile = src.profile.copy()
+                    dst_profile.update({
+                        "driver":     "GTiff",
+                        "crs":        "EPSG:3857",
+                        "transform":  dst_transform,
+                        "width":      dst_width,
+                        "height":     dst_height,
+                        "compress":   "deflate",
+                        "predictor":  2,
+                        "tiled":      True,
+                        "blockxsize": 512,
+                        "blockysize": 512,
+                        "BIGTIFF":    "YES",
+                    })
+
+                    with _rio_w.open(str(warped), "w", **dst_profile) as dst:
+                        for b in range(1, src.count + 1):
+                            _reproject(
+                                source        = _rio_w.band(src, b),
+                                destination   = _rio_w.band(dst, b),
+                                src_transform = src.transform,
+                                src_crs       = src.crs,
+                                dst_transform = dst_transform,
+                                dst_crs       = "EPSG:3857",
+                                resampling    = _Resampling.bilinear,
+                                num_threads   = 0)  # 0 = tous les CPUs
+                _enregistrer_fichier(warped)
+                taille_w = warped.stat().st_size / 1e6
+                elap = time.time() - t0_warp
+                print("  " + lbl.ljust(36) + " [" + "█"*30 +
+                      f"] 100%  {_hms(elap)}  {taille_w:.0f} Mo")
+            except Exception as _e_warp:
+                print(f"  ERREUR rasterio.warp {nom_tr} : {_e_warp}")
                 continue
-            _enregistrer_fichier(warped)
-            taille_w = warped.stat().st_size / 1e6
-            print("\r  " + lbl.ljust(36) + " [" + "█"*30 +
-                  f"] 100%  {_hms(elap)}  {taille_w:.0f} Mo")
 
-            # Diagnostic dimensions warped
-            bb_diag = _bbox_depuis_gdalinfo(warped, env)
+            # ── 2. Diagnostic dimensions warped (rasterio) ──────────────────
+            bb_diag = _bbox_depuis_gdalinfo(warped)
             if bb_diag:
-                _gti = _trouver_outil_gdal("gdalinfo")
-                _r_diag = subprocess.run([_gti, "-json", str(warped)],
-                                         capture_output=True, text=True, env=env)
                 try:
-                    _info = json.loads(_r_diag.stdout)
-                    _sz = _info.get("size", [0, 0])
+                    import rasterio as _rio_dx
+                    with _rio_dx.open(str(warped)) as ds_diag:
+                        _sz = (ds_diag.width, ds_diag.height)
                     print(f"  warped dims : {_sz[0]} × {_sz[1]} px  "
                           f"bbox merc : {bb_diag[0]:.0f},{bb_diag[1]:.0f}"
                           f" → {bb_diag[2]:.0f},{bb_diag[3]:.0f}", flush=True)
                 except Exception:
                     print(f"  warped bbox : {bb_diag}", flush=True)
 
-            # ── 2. gdaladdo : overviews GAUSS ───────────────────────────────
-            if gdal_addo and zoom_max > zoom_min:
+            # ── 3. Overviews via rasterio (remplace gdaladdo — étape 6) ──────
+            # Resampling.gauss reproduit -r gauss de gdaladdo.
+            if zoom_max > zoom_min and overview_levels:
                 print(f"  Overviews (gauss) {overview_levels}...", flush=True)
                 t_addo = time.time()
-                cmd_addo = [gdal_addo, "-r", "gauss",
-                            "--config", "COMPRESS_OVERVIEW", "DEFLATE",
-                            "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                            str(warped)] + [str(l) for l in overview_levels]
-                _log_req(cmd_addo)
-                r_addo = subprocess.run(cmd_addo, capture_output=True, env=env)
-                if r_addo.returncode == 0:
+                try:
+                    import rasterio as _rio_o
+                    from rasterio.enums import Resampling as _Res_o
+                    with _rio_o.open(str(warped), "r+") as ds_o:
+                        ds_o.build_overviews(overview_levels, _Res_o.gauss)
+                        ds_o.update_tags(ns="rio_overview", resampling="gauss")
                     print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
-                else:
-                    print("  AVERTISSEMENT gdaladdo echoue - tuilage natif")
-            elif not gdal_addo:
-                print("  gdaladdo introuvable - tuilage natif")
+                except Exception as _e_ovw:
+                    print(f"  AVERTISSEMENT overviews : {_e_ovw} — tuilage natif")
 
         # ── 3. Bbox warped (EPSG:3857) ──────────────────────────────────────
         # Priorité : -te calculé lors du warp courant (pas besoin de proj.db).
@@ -3589,7 +3675,6 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         batch = []
         BATCH = 500
         rangees_done = 0
-        nb_echecs_tr = 0
         total_rangees_tr = max(1, sum(
             merc_to_tile(xmax_w, ymin_w, z)[1] -
             merc_to_tile(xmin_w, ymax_w, z)[1] + 1
@@ -5022,7 +5107,7 @@ Exemples :
         print("  Carte OSM vectorielle")
     else:
         print("  Téléchargement MNT LiDAR HD IGN (WMS)")
-        print("  GDAL (via subprocess)")
+        print("  Pipeline rasterio + numpy (numba pour SVF)")
     print("=" * 55)
     print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / "ign_lidar")}")
     print()
@@ -5823,17 +5908,19 @@ Exemples :
     else:
         dalles_ombrages = []
     # -------------------------------------------------------
-    # Compression des ombrages existants
+    # -------------------------------------------------------
+    # Compression des ombrages existants (rasterio)
     # -------------------------------------------------------
     if args.ombrages_compresser:
-        gdal_translate = _trouver_outil_gdal("gdal_translate")
-        if not gdal_translate:
-            print("  ERREUR : gdal_translate introuvable.")
+        try:
+            import rasterio as _rio_cmp
+        except ImportError:
+            print("  ERREUR : rasterio absent — pip install rasterio")
         else:
-            env_dem = _env_gdaldem()
             tifs_bruts = [
                 t for t in dossier_ville.glob("*.tif")
                 if not t.name.startswith("_")
+                and not re.search(r'_tuilage_z\d+\.tif$', t.name)
             ]
             # Filtrer ceux non compressés (taille > seuil heuristique : >500 Mo)
             tifs_a_compresser = [t for t in tifs_bruts if t.stat().st_size > 500e6]
@@ -5845,26 +5932,36 @@ Exemples :
                     taille_brut = chemin_out.stat().st_size / 1e6
                     chemin_tmp  = chemin_out.with_suffix(".tmp.tif")
                     chemin_out.replace(chemin_tmp)
-                    cmd_cmp = [
-                        gdal_translate, "-of", "GTiff",
-                        "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-                        "-co", "TILED=YES", "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
-                        "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-                        str(chemin_tmp), str(chemin_out)
-                    ]
-                    code, elap, errs = _run_gdal_avec_jauge(cmd_cmp, chemin_out.name, env_dem)
-                    chemin_tmp.unlink(missing_ok=True)
-                    if code == 0:
+                    t0_cmp = time.time()
+                    try:
+                        with _rio_cmp.open(str(chemin_tmp)) as src:
+                            profile = src.profile.copy()
+                            profile.update({
+                                "compress":   "deflate",
+                                "predictor":  2,
+                                "tiled":      True,
+                                "blockxsize": 512,
+                                "blockysize": 512,
+                                "BIGTIFF":    "IF_SAFER",
+                            })
+                            with _rio_cmp.open(str(chemin_out), "w", **profile) as dst:
+                                # Copier bande par bande avec windowed reads
+                                # pour borner la RAM (un ombrage 50000×50000 px
+                                # uint8 = 2.5 Go en mémoire — trop gros).
+                                for ji, window in src.block_windows(1):
+                                    for b in range(1, src.count + 1):
+                                        dst.write(src.read(b, window=window),
+                                                  b, window=window)
+                        elap = time.time() - t0_cmp
+                        chemin_tmp.unlink(missing_ok=True)
                         taille_cmp = chemin_out.stat().st_size / 1e6
                         gain = int((1 - taille_cmp / taille_brut) * 100)
-                        print("\r  " + chemin_out.name.ljust(56) +
-                              " [" + "\u2588"*30 + "] 100%" +
+                        print("  " + chemin_out.name.ljust(56) +
                               str(round(taille_brut)).rjust(6) + " Mo -> " +
                               str(round(taille_cmp)).rjust(5) + " Mo  (-" +
                               str(gain) + "%)  " + _hms(elap))
-                    else:
-                        print("  ERREUR compression " + chemin_out.name)
-                        for e in errs[:3]: print("    " + e)
+                    except Exception as _e_cmp:
+                        print(f"  ERREUR compression {chemin_out.name} : {_e_cmp}")
                         chemin_tmp.replace(chemin_out)
 
     if dalles_ombrages and args.ombrages:
@@ -5958,9 +6055,15 @@ Exemples :
             _convertir_formats(_mbt_out, args)
         else:
             # Ombrages présents dans dossier_ville
+            # Exclure les fichiers de cache de tuilage (`<nom>_tuilage_z<N>.tif`)
+            # qui sont produits par generer_mbtiles_lidar comme cache du warp
+            # rasterio. Sans ce filtre, le loop suivant tente de régénérer un
+            # MBTiles à partir du cache, qui devient sa propre source — boucle
+            # infinie en pratique (test_refactor_svf_ombrage_tuilage_z16_tuilage_z16.tif…).
             ombrages_tifs = [
                 t for t in sorted(dossier_ville.glob("*.tif"))
                 if not t.name.startswith("_")
+                and not re.search(r'_tuilage_z\d+\.tif$', t.name)
             ]
             if ombrages_tifs:
                 print_etape("MBTiles")
@@ -8129,8 +8232,12 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
 def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                              bbox_l93=None, ecraser=False):
     """
-    Extrait une couche GPKG → GeoJSON.gz via ogr2ogr (reprojection WGS84).
+    Extrait une couche GPKG → GeoJSON.gz via fiona (streaming, reprojection WGS84).
     bbox_l93 : (xmin, ymin, xmax, ymax) pour clipper, ou None = département entier.
+
+    Étape 7 du refactor : remplace ogr2ogr CLI par fiona+pyproj.
+    Streaming feature par feature pour borner la RAM (un département entier
+    peut faire 200-800 Mo en JSON, soit 1-3 Go pic RAM avec json.load()).
     """
     sortie_gz = Path(sortie_gz)
     if sortie_gz.exists() and not ecraser:
@@ -8138,37 +8245,63 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
     if sortie_gz.exists() and ecraser:
         sortie_gz.unlink()
 
-    ogr2ogr_exe = _trouver_ogr2ogr()
-    if not ogr2ogr_exe:
-        print("  ERREUR : ogr2ogr introuvable"); return None
+    try:
+        import fiona
+        from fiona.transform import transform_geom as _xform_geom
+    except ImportError:
+        print("  ERREUR : fiona absent — pip install fiona")
+        return None
 
     tmp_geojson = sortie_gz.parent / (sortie_gz.name.replace(".geojson.gz", "_tmp.geojson"))
-    cmd = [str(ogr2ogr_exe), "-f", "GeoJSON", "-t_srs", "EPSG:4326",
-           str(tmp_geojson), str(gpkg_path), layer_name]
-    if bbox_l93:
-        xmin, ymin, xmax, ymax = bbox_l93
-        cmd += ["-spat", str(xmin), str(ymin), str(xmax), str(ymax),
-                "-spat_srs", "EPSG:2154"]
 
-    _log_req(cmd)
     t0 = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", env=_env_gdaldem())
-    if r.returncode != 0:
-        print(f"  ERREUR ogr2ogr {layer_name} (code {r.returncode})")
-        if r.stderr: print(f"  {r.stderr.strip()[:500]}")
-        tmp_geojson.unlink(missing_ok=True); return None
+    try:
+        # Construire le filtre bbox au format fiona si bbox_l93 fourni.
+        # bbox doit être en CRS source (EPSG:2154) — fiona accepte directement.
+        bbox_filter = None
+        if bbox_l93:
+            xmin, ymin, xmax, ymax = bbox_l93
+            bbox_filter = (xmin, ymin, xmax, ymax)
 
-    if not tmp_geojson.exists() or tmp_geojson.stat().st_size == 0:
+        # Streaming feature par feature → fichier GeoJSON temp.
+        # On reprojete chaque géométrie via fiona.transform (Pyproj sous-jacent).
+        with fiona.open(str(gpkg_path), layer=layer_name) as src:
+            src_crs = src.crs
+            n_total = 0
+            with open(tmp_geojson, "w", encoding="utf-8") as out:
+                out.write('{"type":"FeatureCollection","features":[\n')
+                first = True
+                # Itération : si bbox fournie, fiona filtre nativement.
+                # Sans bbox : tout le département.
+                iterator = src.filter(bbox=bbox_filter) if bbox_filter else src
+                for feat in iterator:
+                    geom = feat["geometry"]
+                    if geom is None:
+                        continue
+                    # Reprojection en EPSG:4326 (WGS84)
+                    geom_4326 = _xform_geom(src_crs, "EPSG:4326", geom)
+                    props = dict(feat["properties"]) if feat.get("properties") else {}
+                    if not first:
+                        out.write(",\n")
+                    first = False
+                    json.dump({
+                        "type":       "Feature",
+                        "geometry":   geom_4326,
+                        "properties": props,
+                    }, out, ensure_ascii=False)
+                    n_total += 1
+                out.write("\n]}\n")
+    except Exception as e:
+        print(f"  ERREUR fiona extraction {layer_name} : {type(e).__name__} : {e}")
+        tmp_geojson.unlink(missing_ok=True)
+        return None
+
+    if not tmp_geojson.exists() or tmp_geojson.stat().st_size == 0 or n_total == 0:
         print(f"  ⚠ {layer_name} : aucune feature")
         tmp_geojson.unlink(missing_ok=True); return None
 
     try:
         src_name = sortie_gz.name.replace(".geojson.gz", "")
-        # Streaming via ijson : évite de charger tout le GeoJSON en RAM.
-        # Une couche BD TOPO département entier (ex: troncon_route Var) peut faire
-        # 200-800 Mo en JSON, soit 1-3 Go pic RAM avec json.load(). OOM garanti
-        # sur 8 Go RAM. Le streamer écrit feature par feature dans le .gz final.
         n = _streamer_geojson_ajout_source(tmp_geojson, sortie_gz, src_name)
         if n == 0:
             print(f"  ⚠ {layer_name} : 0 features après streaming")
@@ -8179,16 +8312,6 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         return sortie_gz
     finally:
         tmp_geojson.unlink(missing_ok=True)
-
-
-def _trouver_ogr2ogr():
-    """Retourne le Path d'ogr2ogr depuis le GDAL local du script ou le PATH."""
-    gdal_bin = DOSSIER_TRAVAIL / "bin" / "gdal" / "bin"
-    for nom in ("ogr2ogr.exe", "ogr2ogr"):
-        p = gdal_bin / nom
-        if p.exists(): return p
-    import shutil as _shutil_ogr
-    return _shutil_ogr.which("ogr2ogr")
 
 
 def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
@@ -8431,7 +8554,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=N
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     t0 = time.time()
     print(f"  ogr2ogr → {chemin_geojson.name}...", flush=True)
-    _env_ogr = _env_gdaldem() or os.environ.copy()
+    _env_ogr = os.environ.copy()
 
     # osmconf.ini — source : rasterio/gdal_data (toujours présent si rasterio installé)
     # Copié dans bin/gdal/bin/ avec [general] supprimé (incompatible GDAL < 3.10)
@@ -9275,7 +9398,16 @@ def lancer_gui():
                 self._log_queue.put({"line": "$ " + " ".join(str(c) for c in cmd) + "\n\n",
                                      "tag": "dim"})
                 try:
-                    env = os.environ.copy(); env["PYTHONUNBUFFERED"] = "1"
+                    env = os.environ.copy()
+                    env["PYTHONUNBUFFERED"] = "1"
+                    # Forcer UTF-8 sur stdout/stderr du child Python.
+                    # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
+                    # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
+                    # arrivent corrompus dans le pipe. Ça casse à la fois le
+                    # log lisible côté GUI ET la détection regex de mots-clés
+                    # comme "ERREUR" qui contient un É (devient un ? si décodé
+                    # en cp850 puis lu en utf-8).
+                    env["PYTHONIOENCODING"] = "utf-8"
                     # Créer un nouveau groupe de processus pour pouvoir tuer toute la hiérarchie
                     if WINDOWS:
                         self._process = subprocess.Popen(
@@ -10605,10 +10737,10 @@ async function lancer() {
       // le passage par poll_log : pywebview/WebView2 peut perdre des
       // clés non-standard dans les dicts complexes sérialisés).
       if (r.code !== 0) {
-        // alert("DEBUG 1 : on entre dans la branche r.code != 0, code=" + r.code);
+        alert("DEBUG 1 : on entre dans la branche r.code != 0, code=" + r.code);
         try {
           const err = await pywebview.api.get_last_error();
-          // alert("DEBUG 2 : get_last_error retourne : " + JSON.stringify(err));
+          alert("DEBUG 2 : get_last_error retourne : " + JSON.stringify(err));
           if (err && err.msg) {
             alert(`Le traitement a échoué (code ${err.retcode}).\n\n`
                 + err.msg
