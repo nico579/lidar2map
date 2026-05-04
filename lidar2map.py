@@ -523,8 +523,11 @@ def _bootstrap_venv_si_besoin():
         if i < len(sys.argv):
             del sys.argv[i]
 
+    # Deps réellement critiques pour le pipeline LiDAR principal.
+    # numba et osmium sont optionnelles (numba accélère SVF, osmium pour
+    # OSM→GeoJSON) — leur absence ne doit pas planter le bootstrap.
     deps_critiques = ["PIL", "pyproj", "numpy", "scipy", "ijson",
-                      "rasterio", "fiona", "numba"]
+                      "rasterio", "fiona"]
 
     # ── Mode "none" : juste vérifier les imports, planter clairement si KO ─
     if mode == "none":
@@ -629,25 +632,54 @@ def _bootstrap_venv_si_besoin():
             sys.exit(1)
 
     # Déps installées dans le venv. numba est inclus systématiquement :
-    # il accélère le calcul SVF de ×15 à ×50 (formule directionnelle 16
-    # rayons sur DEM 0.5 m → un département entier en quelques minutes
-    # au lieu de plusieurs heures). Coût : ~190 Mo dans le venv (llvmlite
-    # + numba). Pour un script archéo qui fait essentiellement du SVF,
-    # c'est une dépendance critique en pratique.
-    deps_pip = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                "rasterio", "fiona", "numba", "pywebview"]
+    # il accélère le calcul SVF de ×15 à ×50. osmium est inclus pour le
+    # pipeline OSM → GeoJSON (sans, ce pipeline n'est pas disponible).
+    # Si l'install d'une dep optionnelle (osmium, numba) échoue, on retry
+    # sans elle plutôt que de bloquer tout le script.
+    deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
+                       "rasterio", "fiona", "pywebview"]
+    deps_optionnelles = ["osmium", "numba"]
+    deps_pip = deps_critiques + deps_optionnelles
     print(f"  Installation des dépendances dans le venv (3-5 min)...")
 
-    try:
-        subprocess.run(
-            [str(venv_pip), "install", "-q",
-             "--disable-pip-version-check"] + deps_pip,
-            check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"  ERREUR installation déps dans le venv : {e}")
-        print(f"  Vérifiez votre connexion internet, puis essayez :")
-        print(f"    {venv_pip} install {' '.join(deps_pip)}")
-        sys.exit(1)
+    def _pip_install(pkgs):
+        """Tente pip install. Retourne (success, stderr_msg)."""
+        try:
+            r = subprocess.run(
+                [str(venv_pip), "install", "-q",
+                 "--disable-pip-version-check"] + pkgs,
+                capture_output=True, text=True)
+            return r.returncode == 0, (r.stderr or "")[-500:]
+        except subprocess.CalledProcessError as e:
+            return False, str(e)
+
+    install_ok, err_msg = _pip_install(deps_pip)
+    if not install_ok:
+        # Retry sans les deps optionnelles : si l'une d'elles est cassée
+        # (cas pyrosm 0.6.2 sur Python 3.12), on garde au moins le pipeline
+        # principal (LiDAR + raster).
+        print(f"  Install groupée échouée, retry sans les optionnelles...")
+        install_ok, err_msg = _pip_install(deps_critiques)
+        if install_ok:
+            # Tenter ensuite chaque optionnelle individuellement.
+            print(f"  Deps critiques installées. Tentative deps optionnelles une par une...")
+            opt_failed = []
+            for opt in deps_optionnelles:
+                ok_one, _ = _pip_install([opt])
+                if not ok_one:
+                    opt_failed.append(opt)
+                    print(f"    ⚠ {opt} : install échouée — pipeline associé indisponible")
+                else:
+                    print(f"    ✓ {opt} : OK")
+            if opt_failed:
+                print(f"  ⚠ Optionnelles non installées : {', '.join(opt_failed)}")
+                print(f"     Retry manuel possible : {venv_pip} install {' '.join(opt_failed)}")
+        else:
+            print(f"  ERREUR installation déps critiques dans le venv :")
+            print(f"  {err_msg}")
+            print(f"  Vérifiez votre connexion internet, puis essayez :")
+            print(f"    {venv_pip} install {' '.join(deps_critiques)}")
+            sys.exit(1)
     print(f"  ✓ Dépendances installées.")
 
     # Relancer le script avec le Python du venv
@@ -722,6 +754,7 @@ def _installer_deps():
         ("ijson",     "ijson"),     # streaming JSON (BD TOPO dept-scale, OSM XML)
         ("rasterio",  "rasterio"),  # wrappers I/O raster + reprojection (remplace gdalinfo/gdalwarp/gdal_translate CLI)
         ("fiona",     "fiona"),     # I/O vecteur (remplace ogr2ogr CLI)
+        ("osmium",    "osmium"),    # parseur PBF OSM (remplace ogr2ogr OSM)
         ("numba",     "numba"),     # accélération SVF ×15-50 (LLVM JIT)
     ]:
         try:
@@ -732,19 +765,38 @@ def _installer_deps():
     if not deps:
         return
 
+    # Distinguer deps critiques (sans elles, le script ne tourne pas) et
+    # deps optionnelles (utiles pour certains pipelines spécifiques).
+    # Les deps optionnelles ne doivent pas bloquer si elles échouent à
+    # s'installer — sinon un wheel buggé empêcherait toute utilisation
+    # du script (cas vécu avec pyrosm 0.6.2 cassé sur Python 3.12).
+    DEPS_OPTIONNELLES = {"osmium", "numba", "py7zr", "mapbox-vector-tile"}
+    deps_crit = [d for d in deps if d not in DEPS_OPTIONNELLES]
+    deps_opt  = [d for d in deps if d in DEPS_OPTIONNELLES]
+
     print(f"  Installation des dépendances : {', '.join(deps)}...")
 
-    # Tentatives successives. capture_output=False pour que l'utilisateur
-    # voie ce qui se passe : sans ça, "Installation partielle" arrive
-    # comme un cheveu sur la soupe et personne ne sait pourquoi.
-    base_cmd = [sys.executable, "-m", "pip", "install"] + deps + ["-q",
+    # Détecter si on est dans un venv. Dans un venv, --user n'a aucun sens
+    # (pip refuse) — il faut juste tenter l'install standard.
+    in_venv = (hasattr(sys, "real_prefix")
+               or (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix))
+
+    base_cmd = [sys.executable, "-m", "pip", "install", "-q",
                 "--disable-pip-version-check"]
-    strategies = [
-        (base_cmd,                                "standard"),
-        (base_cmd + ["--break-system-packages"],  "--break-system-packages (PEP 668)"),
-        (base_cmd + ["--user"],                   "--user (install locale)"),
-    ]
+    if in_venv:
+        # Dans un venv : juste tenter standard, pas de --user, pas de --break-system-packages
+        strategies = [
+            (base_cmd + deps,                                "standard (venv)"),
+        ]
+    else:
+        strategies = [
+            (base_cmd + deps,                                "standard"),
+            (base_cmd + deps + ["--break-system-packages"],  "--break-system-packages (PEP 668)"),
+            (base_cmd + deps + ["--user"],                   "--user (install locale)"),
+        ]
+
     last_stderr = ""
+    install_ok = False
     for cmd, label in strategies:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True)
@@ -752,30 +804,61 @@ def _installer_deps():
             last_stderr = f"pip introuvable : {e}"
             continue
         if r.returncode == 0:
-            # Vérifier que les imports fonctionnent vraiment maintenant.
-            # Sur Mac, --user installe dans ~/Library/Python/3.x/... qui peut
-            # ne pas être dans sys.path — l'install "réussit" mais l'import
-            # échouera toujours. On veut détecter ça MAINTENANT et pas plus loin.
+            # Vérifier que les imports critiques fonctionnent.
+            # Les deps optionnelles ne sont PAS dans cette vérification —
+            # leur absence ne doit pas bloquer.
             rates = []
             for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
                              ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
                              ("fiona","fiona")]:
-                if pkg in deps:
+                if pkg in deps_crit:
                     try:
                         __import__(mod)
                     except ImportError:
                         rates.append(pkg)
             if not rates:
                 print(f"  ✓ Installation réussie ({label})")
-                return
-            print(f"  Tentative {label} : pip OK mais imports échouent ({', '.join(rates)})")
+                install_ok = True
+                break
+            print(f"  Tentative {label} : pip OK mais imports critiques échouent ({', '.join(rates)})")
             last_stderr = f"installation faite mais imports {rates} indisponibles"
         else:
             last_stderr = (r.stderr or r.stdout or "").strip()
             if last_stderr:
-                # Tronquer pour éviter d'inonder le terminal
                 last_stderr = last_stderr.split("\n")[-3:]
                 last_stderr = "\n  ".join(last_stderr)
+
+    # Si install groupée a échoué, retry avec deps_crit seules (sans les
+    # optionnelles qui peuvent être en cause). Cas typique : osmium Cython
+    # cassé sur Python 3.12 → l'install groupée plante, mais les autres
+    # deps critiques s'installent très bien seules.
+    if not install_ok and deps_opt and deps_crit:
+        print(f"  Retry sans les deps optionnelles ({', '.join(deps_opt)})...")
+        cmd_crit_only = base_cmd + deps_crit
+        if in_venv:
+            try:
+                r = subprocess.run(cmd_crit_only, capture_output=True, text=True)
+            except (OSError, FileNotFoundError):
+                r = None
+            if r is not None and r.returncode == 0:
+                rates = []
+                for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
+                                 ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
+                                 ("fiona","fiona")]:
+                    if pkg in deps_crit:
+                        try:
+                            __import__(mod)
+                        except ImportError:
+                            rates.append(pkg)
+                if not rates:
+                    print(f"  ✓ Deps critiques installées (sans : {', '.join(deps_opt)})")
+                    print(f"  ⚠ Deps optionnelles non installées : pipelines associés indisponibles")
+                    print(f"     - osmium : --osm --formats-fichier geojson")
+                    print(f"     - numba  : SVF lent (×15 fois plus)")
+                    install_ok = True
+
+    if install_ok:
+        return
 
     # Toutes les tentatives ont échoué — on arrête ici avec un message clair.
     import platform as _plat
@@ -785,7 +868,7 @@ def _installer_deps():
     print("  ╔══════════════════════════════════════════════════════════════╗")
     print("  ║  ERREUR : impossible d'installer les dépendances Python      ║")
     print("  ╚══════════════════════════════════════════════════════════════╝")
-    print(f"  Modules manquants : {', '.join(deps)}")
+    print(f"  Modules manquants : {', '.join(deps_crit)}")
     if last_stderr:
         print(f"  Dernier message pip :\n  {last_stderr}")
     print()
@@ -794,7 +877,7 @@ def _installer_deps():
         print("    1. Installer dans un venv :")
         print("       python3 -m venv ~/mon-venv-lidar")
         print("       source ~/mon-venv-lidar/bin/activate")
-        print(f"       pip install {' '.join(deps)}")
+        print(f"       pip install {' '.join(deps_crit)}")
         print("       Puis relancer : python lidar2map.py --bootstrap=none")
         print()
         print("    2. Forcer l'install système (déconseillé) :")
@@ -2123,16 +2206,16 @@ def _telecharger_jre_local():
     JRE_DIR = LIDAR2MAP_HOME / "jre"
 
     # Détection OS
-    sys = _pf.system().lower()
-    if sys == "windows":
+    sys_os = platform.system().lower()
+    if sys_os == "windows":
         os_str, ext, java_bin = "windows", "zip",    "bin/java.exe"
-    elif sys == "darwin":
+    elif sys_os == "darwin":
         os_str, ext, java_bin = "mac",     "tar.gz", "bin/java"
     else:
         os_str, ext, java_bin = "linux",   "tar.gz", "bin/java"
 
     # Détection architecture
-    machine = _pf.machine().lower()
+    machine = platform.machine().lower()
     arch_str = "aarch64" if machine in ("arm64", "aarch64") else "x64"
 
     # URL stable Adoptium API — JRE 21 LTS
@@ -2875,9 +2958,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     choix_gdal = [c for c in choix if c in CATALOGUE_GDAL]
     choix_numpy  = [c for c in choix if c in CATALOGUE_NUMPY]
 
-    if not gdaldem and choix_gdal:
-        print("  ERREUR : gdaldem introuvable.")
-        choix_gdal = []
+    # NB : les "hillshades GDAL" ne sont plus calculés via gdaldem CLI depuis
+    # le refactor étape 4. Ils utilisent maintenant _hillshade_numpy /
+    # _hillshade_multi_numpy / _slope_numpy (numpy direct, formule Horn 1981).
+    # Le nom CATALOGUE_GDAL est conservé pour minimiser le diff.
 
     # ── Construction VRT global (seamless, évite jointures gdaldem) ─────────
     # VRT dans _tmp/ sous dossier_ville : tous les fichiers restent dans le projet.
@@ -4797,12 +4881,18 @@ def _run_osmosis_streaming(cmd_or_str, shell, env):
 
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                       osm_tags=None, export_geojson=True, ecraser_tuiles=False,
-                      skip_bbox=False):
+                      skip_bbox=False, geojson_formats=None):
     """
     Génère une carte Mapsforge (.map) via osmosis — format natif Locus Map.
     Nécessite osmosis + tagmapping-min.xml dans le même dossier que le script.
+
+    geojson_formats : liste des formats à produire pour l'export GeoJSON.
+                      ["gz"] (défaut), ["geojson"], ou ["gz", "geojson"].
     """
     import shutil as _sh
+
+    if geojson_formats is None:
+        geojson_formats = ["gz"]
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     chemin_map     = dossier_ville / f"{nom_zone}.map"
@@ -4834,7 +4924,9 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
             if pbf_src == chemin_pbf_filtre:
                 print(f"  PBF filtré existant : {chemin_pbf_filtre.name}")
-            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src, osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles)
+            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
+                                osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
+                                formats=geojson_formats)
             return chemin_map
 
     if not _verifier_mapwriter():
@@ -4921,7 +5013,8 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} Mo  {_hms(time.time()-t0)}")
         if export_geojson:
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
-            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src, osm_tags=osm_tags)
+            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
+                                osm_tags=osm_tags, formats=geojson_formats)
         return chemin_map
     else:
         chemin_map_tmp.unlink(missing_ok=True)
@@ -5614,7 +5707,29 @@ Exemples :
                 print(f"  Dossier dalles : {dossier_dalles}")
                 print("  Ajoutez --telechargement pour télécharger les dalles manquantes.")
                 sys.exit(1)
-            print(f"\n  Téléchargement ignoré ({len(dalles_existantes)} dalle(s) existantes)")
+            # Vérification zone-spécifique : parmi les dalles du cache, combien
+            # couvrent réellement la zone demandée ? Le cache peut contenir des
+            # dalles d'autres zones (autres tests précédents). Si aucune dalle
+            # ne couvre la zone, on plante avec un message clair plutôt que de
+            # laisser le pipeline continuer puis échouer plus loin.
+            if dalles:  # liste des (x, y) de la grille pour la zone demandée
+                noms_grille_attendus = {nom_dalle(x, y) for x, y in dalles}
+                dalles_zone_cache = [d for d in dalles_existantes
+                                     if d.name in noms_grille_attendus
+                                     and d.stat().st_size > SEUIL_DALLE_VALIDE]
+                if not dalles_zone_cache:
+                    print(f"\n  ATTENTION : {len(dalles_existantes)} dalle(s) dans le cache,")
+                    print(f"              mais AUCUNE ne couvre la zone demandée.")
+                    print(f"  Cache global : {dossier_dalles}")
+                    print(f"  Zone demandée : grille de {len(dalles)} dalle(s) autour de "
+                          f"{nom_zone if 'nom_zone' in dir() else '(zone)'}")
+                    print(f"  Ajoutez --telechargement pour télécharger les dalles manquantes.")
+                    sys.exit(1)
+                print(f"\n  Téléchargement ignoré "
+                      f"({len(dalles_zone_cache)}/{len(dalles)} dalle(s) de la zone trouvées en cache)")
+            else:
+                # Pas de grille définie (cas dégradé) : juste compter les dalles
+                print(f"\n  Téléchargement ignoré ({len(dalles_existantes)} dalle(s) en cache)")
             sauter_telechargement = True
 
     # -------------------------------------------------------
@@ -5870,7 +5985,8 @@ Exemples :
                 pass  # on ne cherche pas les dalles
             else:
                 # dalles_zone.txt absent mais grille connue → reconstruction depuis le cache disque
-                print(f"  AVERTISSEMENT : {dalles_zone_txt.name} absent — reconstruction depuis grille bbox...")
+                # (la vérification en amont garantit qu'on trouvera au moins une dalle)
+                print(f"  Reconstruction de {dalles_zone_txt.name} depuis le cache disque...")
                 noms_grille = {nom_dalle(x, y) for x, y in dalles}
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
@@ -6226,13 +6342,16 @@ Exemples :
                 dossier_osm = (Path(args.dossier).resolve() if args.dossier
                                else DOSSIER_TRAVAIL / "Projets" / nom_zone / "osm_vecteur")
                 dossier_osm.mkdir(parents=True, exist_ok=True)
+                # Liste des formats GeoJSON demandés (parmi "gz" et "geojson")
+                _gj_formats = [f for f in ("gz", "geojson") if f in args.formats_fichier]
                 generer_carte_osm(bbox_wgs, dossier_osm, nom_zone, pbf,
                                   osm_tags=(args.couche
                                             if getattr(args, 'couche', None)
                                             else getattr(args, 'osm_tags', None)),
-                                  export_geojson="gz" in args.formats_fichier or "geojson" in args.formats_fichier,
+                                  export_geojson=bool(_gj_formats),
                                   ecraser_tuiles=args.tuiles_ecraser,
-                                  skip_bbox=False)
+                                  skip_bbox=False,
+                                  geojson_formats=_gj_formats or ["gz"])
 
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
@@ -6487,8 +6606,14 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                      ecraser_ombrages=args.ombrages_ecraser)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
+                # Filtre identique à la fonction main : exclure les caches de
+                # tuilage `_tuilage_z<N>.tif` qui sont produits par le warp
+                # rasterio dans `generer_mbtiles_lidar`. Sans ce filtre,
+                # un re-run avec --tuiles-ecraser tente de retuiler le cache
+                # qui devient sa propre source.
                 ombrages_tifs = [t for t in sorted(dossier_ville.glob("*.tif"))
-                                 if not t.name.startswith("_")]
+                                 if not t.name.startswith("_")
+                                 and not re.search(r'_tuilage_z\d+\.tif$', t.name)]
                 for tif in ombrages_tifs:
                     stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
                     suffix = stem[len(nom_z)+1:] if stem.startswith(nom_z+"_") else stem
@@ -8526,13 +8651,49 @@ def main_wfs():
 # EXPORT GEOJSON DEPUIS PBF OSM (ogr2ogr)
 # ============================================================
 
-def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=None, ecraser_tuiles=False):
+def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
+                        osm_tags=None, ecraser_tuiles=False, formats=None):
     """
-    Exporte le PBF OSM filtré par bbox en GeoJSON via ogr2ogr (GDAL).
-    Produit un seul fichier fusionnant lignes + polygones + points.
-    Chaque feature reçoit source='OSM'.
-    Retourne le Path du .geojson, ou None en cas d'échec.
+    Exporte le PBF OSM filtré par bbox en GeoJSON via PyOsmium.
+    Produit un fichier global ``<nom>_osm.geojson(.gz)`` + un fichier par clé
+    thématique ``<nom>_osm_<cle>.geojson(.gz)``.
+    Chaque feature reçoit ``source='OSM'``.
+
+    Paramètre `formats` : liste indiquant les formats à produire :
+      - ["gz"]                 → .geojson.gz uniquement (défaut, compact)
+      - ["geojson"]            → .geojson uniquement (lisible direct)
+      - ["gz", "geojson"]      → les deux
+
+    Étape 7bis du refactor : remplace l'ancien pipeline ogr2ogr+osmconf.ini
+    par PyOsmium, lib Python pure (binding C++ libosmium) sans dépendance
+    GDAL système. Wheels précompilés disponibles pour Python 3.10-3.13 sur
+    Windows/macOS/Linux.
+
+    Avantages :
+      - Maintenu activement (releases régulières)
+      - Wheels précompilés cp312/win_amd64 (~2 Mo)
+      - Pas de compilation Cython au runtime (contrairement à pyrosm)
+      - API GeoJSONFactory directement utilisable
+
+    Limites :
+      - Le filtre bbox n'est pas natif côté libosmium : on filtre les nodes
+        à la lecture, et on garde uniquement les ways/areas dont au moins
+        un node est dans la bbox (équivalent --spat de ogr2ogr).
+      - Les relations non-multipolygon (route, boundary admin, etc.) ne
+        produisent pas de géométrie GeoJSON directement (limitation libosmium).
+
+    Retourne le Path du fichier fusionné principal (.gz si demandé sinon
+    .geojson), ou None en cas d'échec.
     """
+    # Formats à produire : par défaut .gz uniquement (compatibilité)
+    if formats is None:
+        formats = ["gz"]
+    formats = [f.lower() for f in formats]
+    ecrire_gz      = "gz"      in formats
+    ecrire_geojson = "geojson" in formats
+    if not (ecrire_gz or ecrire_geojson):
+        # Cas dégradé : aucun format reconnu, on tombe sur .gz
+        ecrire_gz = True
 
     chemin_geojson = dossier_ville / f"{nom_zone}_osm.geojson.gz"
     # Compatibilité : vérifier aussi sans .gz
@@ -8545,63 +8706,19 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=N
         _existing_geo.unlink()
         print(f"  GeoJSON OSM : écrasement {_existing_geo.name}")
 
-    # ogr2ogr est inclus dans GDAL — téléchargement automatique si absent
-    ogr2ogr = _trouver_outil_gdal("ogr2ogr")
-    if not ogr2ogr:
-        print("  AVERTISSEMENT : ogr2ogr introuvable — export GeoJSON OSM ignoré")
+    try:
+        import osmium as _osm
+    except ImportError:
+        print("  ERREUR : osmium absent — pip install osmium")
+        print("          (binding Python officiel libosmium, ~2 Mo, wheel précompilé)")
         return None
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     t0 = time.time()
-    print(f"  ogr2ogr → {chemin_geojson.name}...", flush=True)
-    _env_ogr = os.environ.copy()
+    print(f"  PyOsmium → {chemin_geojson.name}...", flush=True)
 
-    # osmconf.ini — source : rasterio/gdal_data (toujours présent si rasterio installé)
-    # Copié dans bin/gdal/bin/ avec [general] supprimé (incompatible GDAL < 3.10)
-    _local_gdal_bin = DOSSIER_TRAVAIL / "bin" / "gdal" / "bin"
-    _osmconf_local  = _local_gdal_bin / "osmconf.ini"
-
-    if not _osmconf_local.exists():
-        _osmconf_src = None
-        # 1. Rasterio — source privilégiée, toujours adaptée
-        try:
-            import rasterio as _rio
-            _c = Path(_rio.__file__).parent / "gdal_data" / "osmconf.ini"
-            if _c.exists():
-                _osmconf_src = _c
-        except Exception:
-            pass
-        # 2. OSGeo4W / système en fallback
-        if not _osmconf_src:
-            for _c in [
-                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/OSGeo4W/apps/gdal/share/gdal/osmconf.ini",
-                Path(_env_ogr.get("GDAL_DATA", "")) / "osmconf.ini",
-            ]:
-                if _c.exists():
-                    _osmconf_src = _c
-                    break
-
-        if _osmconf_src:
-            _txt = _osmconf_src.read_text(encoding="utf-8", errors="replace")
-            # Supprimer [general] — section inconnue pour GDAL < 3.10
-            _txt = re.sub(r"\[general\][^\[]*", "", _txt).strip() + "\n"
-            _osmconf_local.write_text(_txt, encoding="utf-8")
-            print(f"  osmconf.ini → {_osmconf_local.parent} (depuis {_osmconf_src.parent.name})",
-                  flush=True)
-        else:
-            # Fallback minimal intégré
-            _osmconf_local.write_text(
-                "[points]\nosm_id=yes\nattributes=name,barrier,highway,ref,place,man_made\nother_tags=yes\n\n"
-                "[lines]\nosm_id=yes\nattributes=name,highway,waterway,aerialway,barrier,man_made,railway\nother_tags=yes\n\n"
-                "[multipolygons]\nosm_id=yes\nattributes=name,type,aeroway,amenity,admin_level,boundary,building,landuse,leisure,natural,place,shop,tourism\nother_tags=yes\n\n"
-                "[multilinestrings]\nosm_id=yes\nattributes=name,type\nother_tags=yes\n\n"
-                "[other_relations]\nosm_id=yes\nattributes=name,type\nother_tags=yes\n",
-                encoding="utf-8")
-            print(f"  osmconf.ini minimal créé dans {_osmconf_local.parent}", flush=True)
-
-    _env_ogr["GDAL_DATA"] = str(_osmconf_local.parent)
-
-    # Clés thématiques depuis osm_tags (ex: ["highway=*","waterway=*"] → ["highway","waterway"])
+    # Clés thématiques demandées par l'utilisateur (osm_tags="highway=*,waterway=*"
+    # → ["highway","waterway"]). Si rien : ensemble par défaut adapté outdoor.
     _cles = []
     if osm_tags:
         for _t in osm_tags:
@@ -8612,101 +8729,175 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=N
         _cles = ["highway", "waterway", "natural", "boundary",
                  "landuse", "building", "railway", "leisure"]
 
+    cles_set = set(_cles)
     _crs = {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
-    features_total = []
 
-    # ── Extraction sans filtre (3 couches géométriques) ──────────────────
-    _toutes_feats = []
-    for couche in ["lines", "multipolygons", "points"]:
-        tmp = dossier_ville / f"_tmp_osm_{couche}.geojson"
-        tmp.unlink(missing_ok=True)
-        cmd = [
-            ogr2ogr, "-f", "GeoJSON",
-            str(tmp), str(osm_pbf), couche,
-            "-spat", str(lon_min), str(lat_min), str(lon_max), str(lat_max),
-            "-t_srs", "EPSG:4326",
-            "-lco", "RFC7946=YES",
-            "-oo", "TAGS_FORMAT=HSTORE",
-        ]
-        _log_req(cmd)
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", env=_env_ogr)
-        if r.returncode != 0:
-            print(f"  ogr2ogr {couche} : code {r.returncode}"
-                  + (f" — {r.stderr.strip()[:200]}" if r.stderr.strip() else ""), flush=True)
-        if r.returncode == 0 and tmp.exists():
+    # GeoJSONFactory produit du GeoJSON-string ; on parse en dict pour
+    # construire les features avec leurs propriétés.
+    fab = _osm.geom.GeoJSONFactory()
+
+    # Helper : retourne la clé thématique d'un objet (la 1ère trouvée dans cles_set)
+    # et la valeur associée. None si aucune clé thématique.
+    def _cle_obj(tags):
+        for _k in cles_set:
+            if _k in tags:
+                return _k, tags[_k]
+        return None, None
+
+    # Helper : test si une géométrie GeoJSON intersecte la bbox demandée.
+    # On fait un test simple bounding-box vs bounding-box (rapide). Suffisant
+    # pour notre usage : le PBF est déjà pré-filtré par osmosis sur la bbox.
+    def _geom_intersect_bbox(geom_dict):
+        if geom_dict is None:
+            return False
+        coords = geom_dict.get("coordinates")
+        if coords is None:
+            return False
+        # Calcul de la bbox de la géométrie en parcourant les coordonnées
+        def _flatten(c):
+            if isinstance(c, (list, tuple)):
+                if c and isinstance(c[0], (int, float)):
+                    yield c
+                else:
+                    for sub in c:
+                        yield from _flatten(sub)
+        try:
+            xs = []; ys = []
+            for pt in _flatten(coords):
+                xs.append(pt[0]); ys.append(pt[1])
+            if not xs:
+                return False
+            g_xmin, g_xmax = min(xs), max(xs)
+            g_ymin, g_ymax = min(ys), max(ys)
+            return not (g_xmax < lon_min or g_xmin > lon_max
+                        or g_ymax < lat_min or g_ymin > lat_max)
+        except Exception:
+            return False
+
+    # Conteneurs pour les features par clé thématique
+    _par_cle = {k: [] for k in _cles}
+    nb_total = [0]   # mutable pour le print de progression
+    nb_kept  = [0]
+
+    # Itération via FileProcessor moderne (PyOsmium 4.x)
+    # - with_locations() : nécessaire pour reconstruire les linestrings (ways)
+    # - with_areas()     : nécessaire pour reconstruire les multipolygons
+    try:
+        fp = _osm.FileProcessor(str(osm_pbf)).with_locations().with_areas()
+        for o in fp:
+            nb_total[0] += 1
+            tags = dict(o.tags) if o.tags else {}
+            if not tags:
+                continue
+            cle, val = _cle_obj(tags)
+            if cle is None:
+                continue
+
+            # Création de la géométrie selon le type d'objet
             try:
-                data = json.loads(tmp.read_text(encoding="utf-8"))
-                for feat in data.get("features", []):
-                    feat.setdefault("properties", {})
-                    feat["properties"]["source"] = "OSM"
-                    _toutes_feats.append(feat)
-                nb = len(data.get("features", []))
-                if nb: print(f"  ogr2ogr {couche} : {nb} features", flush=True)
-            except Exception as e_j:
-                print(f"  ogr2ogr {couche} parse error : {e_j}")
-            tmp.unlink(missing_ok=True)
+                if o.is_node():
+                    geom_str = fab.create_point(o)
+                elif o.is_way() and not o.is_closed():
+                    # Way ouvert → linestring
+                    geom_str = fab.create_linestring(o)
+                elif o.is_area():
+                    # Area (way fermé ou relation multipolygon) → multipolygon
+                    geom_str = fab.create_multipolygon(o)
+                else:
+                    # Relations non-multipolygon : pas de géométrie directe
+                    continue
+            except Exception:
+                # Géométrie invalide (area mal fermée, etc.) — on ignore
+                continue
 
-    if not _toutes_feats:
-        print("  Aucun feature OSM exporté")
+            try:
+                geom = json.loads(geom_str)
+            except Exception:
+                continue
+
+            if not _geom_intersect_bbox(geom):
+                continue
+
+            # Construction de la feature GeoJSON
+            tags["source"] = "OSM"
+            tags["_cle"]   = cle
+            feat = {"type": "Feature", "geometry": geom, "properties": tags}
+            _par_cle[cle].append(feat)
+            nb_kept[0] += 1
+    except Exception as e_proc:
+        print(f"  ERREUR PyOsmium : {type(e_proc).__name__} : {e_proc}")
         return None
 
-    # ── Dispatch Python par clé thématique ───────────────────────────────
-    def _val_tag(feat, key):
-        props = feat.get("properties") or {}
-        if props.get(key) not in (None, ""):
-            return True
-        ht = props.get("other_tags") or ""
-        return bool(re.search('"' + key + '"', ht))
+    print(f"  PyOsmium : {nb_total[0]} objets parcourus, {nb_kept[0]} dans la bbox", flush=True)
 
-    _par_cle = {k: [] for k in _cles}
-    for feat in _toutes_feats:
-        for _k in _cles:
-            if _val_tag(feat, _k):
-                feat["properties"]["_cle"] = _k
-                _par_cle[_k].append(feat)
-                break
-
+    features_total = []
     for _k, _feats in _par_cle.items():
         if _feats:
             gc = {"type": "FeatureCollection", "name": f"{nom_zone}_osm_{_k}",
                   "crs": _crs, "features": _feats}
-            gz = _ecrire_geojson_gz(gc, dossier_ville / f"{nom_zone}_osm_{_k}.geojson")
-            print(f"  {gz.name} : {len(_feats)} features")
+            base_path = dossier_ville / f"{nom_zone}_osm_{_k}.geojson"
+            if ecrire_gz:
+                gz = _ecrire_geojson_gz(gc, base_path, compresser=True)
+                print(f"  {gz.name} : {len(_feats)} features")
+            if ecrire_geojson:
+                gj = _ecrire_geojson_gz(gc, base_path, compresser=False)
+                print(f"  {gj.name} : {len(_feats)} features")
             features_total.extend(_feats)
 
     if not features_total:
         print("  Aucun feature OSM exporté")
         return None
 
-    # ── Fichier fusionné toutes clés ──────────────────────────────────────
+    # Fichier fusionné global (toutes clés)
     geojson = {"type": "FeatureCollection", "name": f"{nom_zone}_osm",
                "crs": _crs, "features": features_total}
-    chemin_gz = _ecrire_geojson_gz(geojson, dossier_ville / f"{nom_zone}_osm.geojson")
-    taille = chemin_gz.stat().st_size // 1024
-    print(f"  {chemin_gz.name} : {len(features_total)} features"
-          f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-    return chemin_gz
+    base_global = dossier_ville / f"{nom_zone}_osm.geojson"
+    chemin_principal = None
+    if ecrire_gz:
+        chemin_principal = _ecrire_geojson_gz(geojson, base_global, compresser=True)
+        taille = chemin_principal.stat().st_size // 1024
+        print(f"  {chemin_principal.name} : {len(features_total)} features"
+              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
+    if ecrire_geojson:
+        chemin_geo = _ecrire_geojson_gz(geojson, base_global, compresser=False)
+        taille = chemin_geo.stat().st_size // 1024
+        print(f"  {chemin_geo.name} : {len(features_total)} features"
+              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
+        if chemin_principal is None:
+            chemin_principal = chemin_geo
+    return chemin_principal
 
 
 # ============================================================
 # PIPELINE FUSION GEOJSON
 # ============================================================
 
-def _ecrire_geojson_gz(data_dict, chemin):
+def _ecrire_geojson_gz(data_dict, chemin, compresser=True):
     """
-    Écrit un dict GeoJSON en .geojson.gz (compression gzip niveau 6).
-    chemin peut se terminer par .geojson ou .geojson.gz — la sortie est toujours .geojson.gz.
+    Écrit un dict GeoJSON sur disque.
+    - compresser=True (défaut)  : produit `<chemin>.geojson.gz` (gzip niveau 6)
+    - compresser=False           : produit `<chemin>.geojson` (texte brut)
+    Le paramètre `chemin` peut se terminer par .geojson ou .geojson.gz —
+    la sortie respectera le mode demandé indépendamment du suffixe d'entrée.
     Retourne le Path du fichier créé.
     """
     p = Path(chemin)
-    if not str(p).endswith(".gz"):
-        p = Path(str(p) + ".gz")
+    # Normaliser le chemin selon le mode
+    if compresser:
+        if not str(p).endswith(".gz"):
+            p = Path(str(p) + ".gz")
+    else:
+        # Mode non compressé : retirer le .gz éventuel
+        if str(p).endswith(".gz"):
+            p = Path(str(p)[:-3])
     p.parent.mkdir(parents=True, exist_ok=True)
     data_bytes = json.dumps(data_dict, ensure_ascii=False,
                              separators=(",", ":")).encode("utf-8")
-    with gzip.open(p, "wb", compresslevel=6) as f:
-        f.write(data_bytes)
+    if compresser:
+        with gzip.open(p, "wb", compresslevel=6) as f:
+            f.write(data_bytes)
+    else:
+        p.write_bytes(data_bytes)
     _creer_fichier(p, intermediaire=False)
     return p
 
