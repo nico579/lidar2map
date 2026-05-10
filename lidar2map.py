@@ -416,6 +416,8 @@ import os
 import re
 import sys
 import queue
+import shutil
+import argparse
 import threading
 import json
 import gzip
@@ -429,6 +431,7 @@ import subprocess
 import unicodedata
 import urllib.request
 import urllib.parse
+import urllib.error
 import platform
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
@@ -444,41 +447,23 @@ if sys.version_info < (3, 8):
 # INSTALLATION AUTOMATIQUE DES DÉPENDANCES
 # ============================================================
 
-def _bootstrap_venv_si_besoin():
-    """Bootstrap automatique d'un environnement Python isolé.
+def _resoudre_mode_bootstrap():
+    """Détermine le mode de bootstrap (auto|pip|none) et nettoie sys.argv.
 
-    Comportement par défaut : crée un venv dans ``~/.lidar2map/`` (Mac/Linux)
-    ou ``%USERPROFILE%\\.lidar2map\\`` (Windows) au 1er lancement, y installe
-    les dépendances, et y relance le script. Comportement uniforme sur les 3 OS.
+    Source de vérité unique pour le mode — appelée par _bootstrap_environnement
+    avant tout autre travail d'init. Avant ce refactor le mode était résolu
+    en interne dans _bootstrap_venv_si_besoin, ce qui empêchait l'orchestrateur
+    de conditionner les autres appels (pip, install_deps) sur ce mode.
 
-    Avantages du venv par défaut sur toutes plateformes :
-      - Isolation : zéro pollution du Python système
-      - Désinstallation propre : suppression d'un dossier suffit
-      - Cohérent avec la bonne pratique Python (un venv par projet)
-      - Évite les conflits de versions de modules avec d'autres outils
-      - Contourne PEP 668 sur Mac/Linux récents nativement
+    Priorité (du plus faible au plus fort) :
+      1. Défaut          : "auto"
+      2. Variable d'env  : LIDAR2MAP_BOOTSTRAP={auto|pip|none}
+      3. Argument CLI    : --bootstrap={auto|pip|none}
+      4. Aliases legacy  : --no-bootstrap → none, --venv → auto, --no-venv → pip
 
-    Flags utilisateur (lus directement depuis sys.argv pour bypasser argparse
-    qui n'est pas encore initialisé à ce stade du démarrage) :
-
-      --bootstrap=auto    : venv automatique (défaut, recommandé)
-      --bootstrap=pip     : install directe dans l'env Python courant
-                            (utilise --break-system-packages si PEP 668)
-      --bootstrap=none    : pas d'install — vérifie les imports et plante
-                            avec un message clair si manquants. Utile pour
-                            ceux qui gèrent leur propre env (conda, venv
-                            manuel, install système contrôlée).
-      --help-bootstrap    : affiche cette aide et quitte
-
-    Variables d'environnement équivalentes :
-      LIDAR2MAP_BOOTSTRAP=auto|pip|none
-
-    Suppression du venv à tout moment :
-      rm -rf ~/.lidar2map                       (Mac/Linux)
-      rmdir /s /q %USERPROFILE%\\.lidar2map     (Windows)
-    Le script en recréera un au prochain lancement si besoin.
+    Effet de bord : retire de sys.argv tous les flags consommés (pour qu'ils
+    n'arrivent pas à argparse plus loin).
     """
-    # ── Lecture du mode bootstrap depuis sys.argv ou env var ──────────────
     mode = "auto"   # défaut
 
     # Variable d'env (priorité basse)
@@ -522,6 +507,45 @@ def _bootstrap_venv_si_besoin():
     for i in sorted(args_to_remove, reverse=True):
         if i < len(sys.argv):
             del sys.argv[i]
+
+    return mode
+
+
+def _bootstrap_venv_si_besoin():
+    """Bootstrap automatique d'un environnement Python isolé.
+
+    Comportement par défaut : crée un venv dans ``~/.lidar2map/`` (Mac/Linux)
+    ou ``%USERPROFILE%\\.lidar2map\\`` (Windows) au 1er lancement, y installe
+    les dépendances, et y relance le script. Comportement uniforme sur les 3 OS.
+
+    Avantages du venv par défaut sur toutes plateformes :
+      - Isolation : zéro pollution du Python système
+      - Désinstallation propre : suppression d'un dossier suffit
+      - Cohérent avec la bonne pratique Python (un venv par projet)
+      - Évite les conflits de versions de modules avec d'autres outils
+      - Contourne PEP 668 sur Mac/Linux récents nativement
+
+    Flags utilisateur (lus directement depuis sys.argv pour bypasser argparse
+    qui n'est pas encore initialisé à ce stade du démarrage) :
+
+      --bootstrap=auto    : venv automatique (défaut, recommandé)
+      --bootstrap=pip     : install directe dans l'env Python courant
+                            (utilise --break-system-packages si PEP 668)
+      --bootstrap=none    : pas d'install — vérifie les imports et plante
+                            avec un message clair si manquants. Utile pour
+                            ceux qui gèrent leur propre env (conda, venv
+                            manuel, install système contrôlée).
+      --help-bootstrap    : affiche cette aide et quitte
+
+    Variables d'environnement équivalentes :
+      LIDAR2MAP_BOOTSTRAP=auto|pip|none
+
+    Suppression du venv à tout moment :
+      rm -rf ~/.lidar2map                       (Mac/Linux)
+      rmdir /s /q %USERPROFILE%\\.lidar2map     (Windows)
+    Le script en recréera un au prochain lancement si besoin.
+    """
+    mode = _resoudre_mode_bootstrap()
 
     # Deps réellement critiques pour le pipeline LiDAR principal.
     # numba et osmium sont optionnelles (numba accélère SVF, osmium pour
@@ -628,7 +652,7 @@ def _bootstrap_venv_si_besoin():
                 check=True)
         except subprocess.CalledProcessError as e:
             print(f"  ERREUR création venv : {e}")
-            print("  Installez Python 3.10+ avec module venv.")
+            print("  Installez Python 3.8+ avec module venv.")
             sys.exit(1)
 
     # Déps installées dans le venv. numba est inclus systématiquement :
@@ -700,19 +724,28 @@ def _relancer_dans_venv(venv_python, is_windows):
               child. Pour éviter cette confusion d'affichage, on utilise
               subprocess.run + sys.exit : on attend la fin du child et on
               propage son code retour avant de rendre la main au shell.
+
+              IMPORTANT : on passe explicitement stdout=sys.stdout et
+              stderr=sys.stderr au child, sinon quand le parent est lancé
+              par la GUI avec stdout=PIPE, le pipe ne se propage pas au
+              child venv, et la GUI ne voit jamais rien des messages que
+              le child écrit. Sans ce flush du parent au préalable, les
+              traces "[trace]" et "[init]" du parent se mélangent avec
+              celles du child à cause du buffering.
     """
     if is_windows:
         try:
-            r = subprocess.run([str(venv_python)] + sys.argv)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            r = subprocess.run([str(venv_python)] + sys.argv,
+                               stdout=sys.stdout, stderr=sys.stderr,
+                               stdin=sys.stdin)
             sys.exit(r.returncode)
         except KeyboardInterrupt:
             sys.exit(130)
     else:
         os.execv(str(venv_python),
                  [str(venv_python)] + sys.argv)
-
-
-_bootstrap_venv_si_besoin()
 
 
 def _bootstrap_pip():
@@ -731,7 +764,6 @@ def _bootstrap_pip():
         print("  Installez pip manuellement : https://pip.pypa.io/en/stable/installation/")
         sys.exit(1)
 
-_bootstrap_pip()
 
 def _installer_deps():
     """Vérifie et installe les dépendances Python requises au démarrage.
@@ -896,7 +928,60 @@ def _installer_deps():
     sys.exit(1)
 
 
-_installer_deps()
+def _bootstrap_environnement():
+    """Orchestrateur unique du démarrage : mode → venv → pip → install deps.
+
+    Avant ce refactor, trois appels top-level se succédaient sans qu'aucun
+    point du code ne décide globalement de la stratégie. Résultat :
+    `_bootstrap_pip()` était systématiquement exécuté même en mode `auto`
+    où il est inutile (le venv post-re-exec garantit pip), et même en mode
+    `none` où c'est en contradiction avec l'intention de l'utilisateur ("je
+    gère mes deps moi-même").
+
+    Maintenant : un seul point d'entrée, qui décide en fonction du mode :
+      - "auto" : crée un venv si nécessaire (re-exec) puis install deps via
+                 le pip du venv (forcément présent, _bootstrap_pip inutile).
+      - "pip"  : pas de venv, mais on n'a pas la garantie que pip soit
+                 dispo (Python système nu, distrib exotique) → bootstrap pip
+                 via ensurepip puis install deps.
+      - "none" : ni venv ni install. _bootstrap_venv_si_besoin se charge
+                 lui-même de vérifier les imports critiques et d'avorter
+                 proprement avec un message si manquants. Pas d'appel à
+                 _installer_deps qui forcerait une install non voulue.
+
+    Quand cette fonction retourne, les imports critiques sont garantis pour
+    les modes auto et pip. Pour none, soit les imports marchent, soit on a
+    déjà sys.exit(1) avec un message clair.
+    """
+    mode = _resoudre_mode_bootstrap()
+    _bootstrap_venv_si_besoin_avec_mode(mode)
+    if mode == "pip":
+        _bootstrap_pip()
+    if mode != "none":
+        _installer_deps()
+
+
+# Petit wrapper pour conserver _bootstrap_venv_si_besoin sans paramètre côté
+# usage (notamment l'aide accessible via __doc__) tout en évitant la double
+# résolution du mode quand il est appelé depuis l'orchestrateur.
+def _bootstrap_venv_si_besoin_avec_mode(mode):
+    """Appelle _bootstrap_venv_si_besoin avec un mode pré-résolu.
+
+    On stocke le mode dans une variable d'environnement temporaire que la
+    fonction lira en priorité, court-circuitant sa propre résolution.
+    Solution moins invasive que de modifier la signature publique de
+    _bootstrap_venv_si_besoin (qui est documentée et stable).
+    """
+    os.environ["LIDAR2MAP_BOOTSTRAP"] = mode
+    try:
+        _bootstrap_venv_si_besoin()
+    finally:
+        # Nettoyer pour ne pas laisser fuir le mode dans les sub-processes
+        # ou le venv post-re-exec qui ferait sa propre résolution.
+        os.environ.pop("LIDAR2MAP_BOOTSTRAP", None)
+
+
+_bootstrap_environnement()
 
 # ============================================================
 # LOGGING
@@ -945,7 +1030,12 @@ class _TeeLogger:
         except Exception:
             pass
         try:
-            if "\r" in msg:
+            # Flush sur \r ET \n. Sans flush sur \n, les lignes restent
+            # bufferisées dans le pipe quand stdout est redirigé (cas de la
+            # GUI qui lance le script comme subprocess). Conséquence : les
+            # messages n'arrivent au parent qu'au moment du wait() final,
+            # ce qui rend le panneau de log inutile en temps réel.
+            if "\r" in msg or "\n" in msg:
                 self._terminal.flush()
         except Exception:
             pass
@@ -1092,7 +1182,7 @@ MACOS   = platform.system() == "Darwin"
 
 # ── Manifest de fichiers créés (découpage à priori) ───────────────────────────
 # Classe Manifeste : JSON local au projet, universel LiDAR/WMTS.
-# _enregistrer_fichier() fonctionne via un context manager thread-local —
+# _creer_fichier() fonctionne via un context manager thread-local —
 # silencieux en dehors d'un contexte actif.
 
 import threading as _threading
@@ -1116,8 +1206,14 @@ class Manifeste:
                     d.setdefault("morceaux", {})
                     d.setdefault("fichiers", {})
                     return d
-            except Exception:
-                pass
+                print(f"  ⚠ Manifeste {self.path.name} : structure inattendue "
+                      f"(type={type(d).__name__}) — réinitialisation")
+            except (OSError, json.JSONDecodeError) as e:
+                # Manifeste corrompu (crash disque, écriture interrompue) : on
+                # repart d'un état vierge mais on prévient l'utilisateur — la
+                # progression précédente sera perdue, pas réinitialisée silencieusement.
+                print(f"  ⚠ Manifeste {self.path.name} illisible ({type(e).__name__}: {e}) "
+                      f"— réinitialisation (progression antérieure perdue)")
         return {"morceaux": {}, "fichiers": {}}
 
     def deja_traite(self, cle: str) -> bool:
@@ -1165,31 +1261,24 @@ def _contexte_manifeste(manifeste, cle: str):
         _manifest_ctx.cle = None
 
 
-def _creer_fichier(path, intermediaire=True):
+def _creer_fichier(path):
     """
-    Déclare un fichier créé dans le pipeline.
+    Déclare un fichier intermédiaire créé dans le pipeline.
 
-    intermediaire=True  (défaut) : fichier intermédiaire — enregistré dans le
-        manifest du morceau courant → supprimé par --nettoyage après le morceau.
-        Ex: dalles, TIF ombrages, TIF warpé, VRT, data.bin, tuiles WMTS...
+    Enregistré dans le manifest du morceau courant → supprimé par --nettoyage
+    après le morceau (dalles, TIF ombrages, TIF warpé, VRT, data.bin, tuiles
+    WMTS, etc.).
 
-    intermediaire=False : fichier de sortie final — NON enregistré → conservé.
-        Ex: .mbtiles, .rmap, .sqlitedb, .geojson(.gz)
+    Les sorties finales (.mbtiles, .rmap, .sqlitedb, .geojson(.gz)) NE doivent
+    PAS être déclarées via cette fonction — elles sont conservées d'office.
 
     Silencieux si aucun contexte manifeste n'est actif (hors boucle à priori).
     """
-    if not intermediaire:
-        return  # sortie finale : jamais supprimée par --nettoyage
     m = getattr(_manifest_ctx, "manifeste", None)
     if m is None:
         return
     cle = getattr(_manifest_ctx, "cle", "global")
     m.enregistrer_fichier(path, cle)
-
-
-def _enregistrer_fichier(path):
-    """Alias de compatibilité → _creer_fichier(path, intermediaire=True)."""
-    _creer_fichier(path, intermediaire=True)
 
 
 def _supprimer_fichiers(fichiers: list):
@@ -1202,15 +1291,16 @@ def _supprimer_fichiers(fichiers: list):
     chaque morceau libère son espace avant que le suivant démarre.
 
     Seuls les fichiers créés/téléchargés PAR ce morceau (enregistrés dans le
-    manifest via _enregistrer_fichier) sont supprimés. Les fichiers déjà
+    manifest via _creer_fichier) sont supprimés. Les fichiers déjà
     présents avant le début du morceau ne sont pas touchés.
     """
     suppr = 0
     dirs_a_verifier = set()
     for chemin in fichiers:
         p = Path(chemin)
-        # Tous les fichiers du manifest sont intermédiaires (intermediaire=True).
-        # Les sorties finales ne sont jamais enregistrées → jamais ici.
+        # Tous les fichiers du manifest sont intermédiaires.
+        # Les sorties finales (.mbtiles, .rmap…) ne sont jamais enregistrées
+        # via _creer_fichier → elles ne se retrouvent jamais ici.
         if p.exists():
             try:
                 p.unlink()
@@ -1465,6 +1555,51 @@ def _ecrire_json_atomique(path, data, indent=None):
         raise
 
 
+def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
+    """Décompresse src_gz → dst_raw en streaming (1 Mo à la fois).
+
+    Remplace le pattern `fout.write(fin.read())` qui charge intégralement
+    en RAM. Sur un GeoJSON dept-scale (1-3 Go en clair), la version naïve
+    fait peser 1-3 Go de RAM Python pour zéro raison ; la version streamée
+    travaille avec ~1 Mo en pic.
+
+    Écriture atomique via .tmp + replace : si la décompression est interrompue,
+    le fichier final n'est jamais en état partiel.
+    """
+    src_gz  = Path(src_gz)
+    dst_raw = Path(dst_raw)
+    dst_raw.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst_raw.with_suffix(dst_raw.suffix + ".tmp")
+    try:
+        with gzip.open(src_gz, "rb") as fin, open(tmp, "wb") as fout:
+            shutil.copyfileobj(fin, fout, length=chunk)
+        tmp.replace(dst_raw)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _gzip_depuis_fichier(src_raw, dst_gz, compresslevel=6, chunk=1 << 20):
+    """Compresse src_raw → dst_gz en streaming (1 Mo à la fois).
+
+    Pendant écrite, le contenu va dans dst_gz.tmp puis replace : un Ctrl+C
+    en cours de compression ne laisse pas un .gz tronqué à la place de
+    l'ancien fichier valide.
+    """
+    src_raw = Path(src_raw)
+    dst_gz  = Path(dst_gz)
+    dst_gz.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst_gz.with_suffix(dst_gz.suffix + ".tmp")
+    try:
+        with open(src_raw, "rb") as fin, \
+             gzip.open(tmp, "wb", compresslevel=compresslevel) as fout:
+            shutil.copyfileobj(fin, fout, length=chunk)
+        tmp.replace(dst_gz)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 # Événement d'arrêt propre — positionné par Ctrl+C en mode CLI.
 # Vérifié dans les boucles longues (pagination WFS, WMTS, etc.)
 # pour interrompre entre deux requêtes sans laisser de thread zombie.
@@ -1568,7 +1703,7 @@ def geocoder_ville_wgs84(nom_ville):
         f"?q={urllib.parse.quote(nom_ville + ', France')}"
         "&format=json&limit=1&addressdetails=1"
     )
-    req = urllib.request.Request(url, headers={"User-Agent": "lidar-mnt-downloader/1.0 (outil SIG personnel)"})
+    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
     _log_req(url, "Nominatim")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1680,7 +1815,7 @@ def geocoder_departement(num_dep):
         f'out bb;'
     )
     url = "https://overpass-api.de/api/interpreter?data=" + urllib.parse.quote(query)
-    req = urllib.request.Request(url, headers={"User-Agent": "lidar-mnt-downloader/1.0 (outil SIG personnel)"})
+    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
 
     nom = None
     lat_min = lat_max = lon_min = lon_max = None
@@ -1869,12 +2004,12 @@ def construire_url_wms(x_km, y_km):
 
 
 def _lon_lat_to_tile(lon, lat, z):
-    """Convertit lon/lat WGS84 en coordonnées tuile TMS (x, y) au zoom z."""
-    n = 2 ** z
-    x = int((lon + 180) / 360 * n)
-    lat_r = math.radians(lat)
-    y = int((1 - math.log(math.tan(lat_r) + 1 / math.cos(lat_r)) / math.pi) / 2 * n)
-    return x, y
+    """Convertit lon/lat WGS84 en coordonnées tuile XYZ (x, y) au zoom z.
+
+    Convention Google/OSM : y=0 en haut. Alias historique de deg_to_tile
+    (ordre des arguments : lon, lat).
+    """
+    return deg_to_tile(lat, lon, z)
 
 
 def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
@@ -1938,7 +2073,7 @@ def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
         url = f"{TMS_URL}/{ZOOM}/{tx}/{ty}.pbf"
         _log_req(url, "TMS")
         req = urllib.request.Request(
-            url, headers={"User-Agent": "lidar-mnt-downloader/1.0 (outil SIG personnel)"})
+            url, headers={"User-Agent": _HTTP_UA})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 pbf_data = resp.read()
@@ -2062,7 +2197,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 chemin_tmp.unlink(missing_ok=True)
                 return "absent"
             chemin_tmp.replace(chemin)
-            _enregistrer_fichier(chemin)
+            _creer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
             chemin_tmp.unlink(missing_ok=True)
@@ -2122,7 +2257,7 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
             else:
                 chemin_tmp.replace(chemin)
 
-            _enregistrer_fichier(chemin)
+            _creer_fichier(chemin)
             return "ok"
 
         except KeyboardInterrupt:
@@ -2581,6 +2716,91 @@ def _slope_numpy(dem, z_factor=1.0, dx=0.5, dy=0.5, scale=1.0, nodata=None):
     return slope_u8
 
 
+def _build_vrt_xml(cogs, vrt_path, target_res):
+    """
+    Construit un VRT GDAL (XML) référençant N dalles GeoTIFF, sans matérialiser
+    de mosaïque physique. Le fichier produit est de l'ordre de quelques 100 Ko
+    (≈ 200 octets/dalle) et la construction prend < 1 s même pour 10 000 dalles.
+
+    Rasterio lit le VRT transparemment : pour chaque fenêtre demandée, libgdal
+    dispatche les reads aux dalles concernées. Les calculs chunked en aval
+    (_hillshade_chunked, _svf_chunked) fonctionnent à l'identique.
+
+    Hypothèses : toutes les dalles partagent le même CRS, dtype, nodata, et
+    sont alignées sur une grille (cas standard des dalles IGN LiDAR HD).
+    """
+    import rasterio as _rio
+
+    if not cogs:
+        raise ValueError("Aucune dalle source pour la construction du VRT")
+
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    crs_wkt = None
+    nodata  = None
+    dtype   = None
+    src_info = []
+
+    for src_path in cogs:
+        with _rio.open(str(src_path)) as ds:
+            b = ds.bounds
+            src_info.append({
+                "path":   str(src_path),
+                "bounds": (b.left, b.bottom, b.right, b.top),
+                "width":  ds.width,
+                "height": ds.height,
+            })
+            if b.left   < xmin: xmin = b.left
+            if b.right  > xmax: xmax = b.right
+            if b.bottom < ymin: ymin = b.bottom
+            if b.top    > ymax: ymax = b.top
+            if crs_wkt is None:
+                crs_wkt = ds.crs.to_wkt() if ds.crs else ""
+                nodata  = ds.nodata
+                dtype   = str(ds.dtypes[0])
+
+    vrt_w = int(round((xmax - xmin) / target_res))
+    vrt_h = int(round((ymax - ymin) / target_res))
+
+    DTYPE_MAP = {
+        "uint8":   "Byte",    "uint16": "UInt16",  "int16":  "Int16",
+        "uint32":  "UInt32",  "int32":  "Int32",
+        "float32": "Float32", "float64": "Float64",
+    }
+    gdal_dtype = DTYPE_MAP.get(dtype, "Float32")
+
+    def _esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+                       .replace(">", "&gt;"))
+
+    lines = []
+    lines.append(f'<VRTDataset rasterXSize="{vrt_w}" rasterYSize="{vrt_h}">')
+    if crs_wkt:
+        lines.append(f'  <SRS>{_esc(crs_wkt)}</SRS>')
+    lines.append(f'  <GeoTransform>{xmin}, {target_res}, 0.0, {ymax}, 0.0, {-target_res}</GeoTransform>')
+    lines.append(f'  <VRTRasterBand dataType="{gdal_dtype}" band="1">')
+    if nodata is not None:
+        lines.append(f'    <NoDataValue>{nodata}</NoDataValue>')
+
+    for info in src_info:
+        sb = info["bounds"]
+        x_dest = int(round((sb[0] - xmin) / target_res))
+        y_dest = int(round((ymax - sb[3]) / target_res))
+        w_dest = int(round((sb[2] - sb[0]) / target_res))
+        h_dest = int(round((sb[3] - sb[1]) / target_res))
+        lines.append(f'    <SimpleSource>')
+        lines.append(f'      <SourceFilename relativeToVRT="0">{_esc(info["path"])}</SourceFilename>')
+        lines.append(f'      <SourceBand>1</SourceBand>')
+        lines.append(f'      <SrcRect xOff="0" yOff="0" xSize="{info["width"]}" ySize="{info["height"]}"/>')
+        lines.append(f'      <DstRect xOff="{x_dest}" yOff="{y_dest}" xSize="{w_dest}" ySize="{h_dest}"/>')
+        lines.append(f'    </SimpleSource>')
+
+    lines.append(f'  </VRTRasterBand>')
+    lines.append(f'</VRTDataset>')
+
+    Path(vrt_path).write_text("\n".join(lines), encoding="utf-8")
+
+
 def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
     """
     Local Relief Model calculé par blocs avec overlap pour éviter les artefacts
@@ -2638,7 +2858,10 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
 
     # ── Profil de sortie ────────────────────────────────────────────────────
     out_profile = profile.copy()
+    for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        out_profile.pop(_k, None)
     out_profile.update(
+        driver     = "GTiff",
         dtype      = "uint8",
         count      = 1,
         compress   = "deflate",
@@ -2646,7 +2869,7 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
         tiled      = True,
         blockxsize = 512,
         blockysize = 512,
-        bigtiff    = "IF_SAFER",
+        bigtiff    = "YES",
         nodata     = None,
     )
 
@@ -2702,6 +2925,262 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
                       end="", flush=True)
 
     print(f"\r  LRM chunked : terminé ({total_chunks} blocs, σ={sigma_px} px)          ")
+    return True
+
+
+def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
+    """
+    Hillshade / hillshade-multi / slope par fenêtres avec halo = 1 px (Horn 3x3).
+
+    mode   : "hillshade" | "hillshade_multi" | "slope"
+    params : dict — clés selon le mode
+        hillshade        : {"azimuth_deg": float, "altitude_deg": float}
+        hillshade_multi  : {"altitude_deg": float}
+        slope            : {} (vide)
+
+    Borne la RAM indépendamment de la taille du raster (chunks 2048×2048 px).
+    Retourne True si succès, False si import manquant.
+    """
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+    except ImportError as _ie:
+        print(f"  Hillshade chunked : import manquant ({_ie})", flush=True)
+        return False
+
+    CHUNK = 2048
+    HALO  = 1
+
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+        nodata  = src.nodata
+
+    out_profile = profile.copy()
+    # Purger les clés héritées qui pourraient interférer :
+    #  - driver : la source peut être un VRT, on veut écrire un GeoTIFF
+    #  - BIGTIFF/bigtiff doublons : casse différente, GDAL choisirait au hasard
+    #  - NODATA/nodata : on désactive nodata sur la sortie uint8
+    for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        out_profile.pop(_k, None)
+    out_profile.update(
+        driver="GTiff",
+        dtype="uint8", count=1, compress="deflate", predictor=2,
+        tiled=True, blockxsize=512, blockysize=512,
+        bigtiff="YES", nodata=None)
+
+    total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
+    n = 0
+
+    with _rio.open(str(src_path)) as src, \
+         _rio.open(str(dst_path), "w", **out_profile) as dst:
+        for row_off in range(0, H, CHUNK):
+            for col_off in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt(f"{mode} chunked interrompu")
+                row_end = min(row_off + CHUNK, H)
+                col_end = min(col_off + CHUNK, W)
+
+                r0 = max(0, row_off - HALO)
+                c0 = max(0, col_off - HALO)
+                r1 = min(H, row_end + HALO)
+                c1 = min(W, col_end + HALO)
+
+                win_read = Window(c0, r0, c1 - c0, r1 - r0)
+                block = src.read(1, window=win_read).astype(np.float32)
+
+                if mode == "hillshade":
+                    out = _hillshade_numpy(
+                        block, params["azimuth_deg"], params["altitude_deg"],
+                        z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
+                elif mode == "hillshade_multi":
+                    out = _hillshade_multi_numpy(
+                        block, altitude_deg=params["altitude_deg"],
+                        z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
+                elif mode == "slope":
+                    out = _slope_numpy(
+                        block, z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
+                else:
+                    raise ValueError(f"Mode hillshade inconnu : {mode}")
+
+                dr0 = row_off - r0
+                dc0 = col_off - c0
+                dr1 = dr0 + (row_end - row_off)
+                dc1 = dc0 + (col_end - col_off)
+                centre = out[dr0:dr1, dc0:dc1]
+
+                win_write = Window(col_off, row_off, col_end - col_off, row_end - row_off)
+                dst.write(centre[np.newaxis, :, :], window=win_write)
+
+                n += 1
+                pct = n * 100 // total
+                print(f"\r  {mode} chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                      end="", flush=True)
+    print(f"\r  {mode} chunked : terminé ({total} blocs)                     ")
+    return True
+
+
+def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
+                 resolution=0.5, gamma=2.0):
+    """
+    Sky-View Factor par fenêtres avec halo = max_dist_px (rayons SVF).
+
+    Stratégie 2 passes :
+      1. Échantillon central → percentiles p2/p98 globaux
+      2. Traitement bloc par bloc → stretch + gamma + uint8
+
+    Borne la RAM à ~(2048+2*max_dist_px)² × 4 octets ≈ 25 MB pour SVF100.
+    Retourne True si succès, False si import manquant.
+    """
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+    except ImportError as _ie:
+        print(f"  SVF chunked : import manquant ({_ie})", flush=True)
+        return False
+
+    CHUNK = 2048
+    HALO  = max_dist_px
+
+    # Compilation Numba (kernel défini une fois, réutilisé pour tous les blocs)
+    _kernel = None
+    try:
+        import numba as _nb
+        import math as _math
+
+        @_nb.njit(parallel=True, cache=True, fastmath=True)
+        def _kernel_impl(dem, h, w, n_dir, max_r, res):
+            PI2 = 2.0 * _math.pi
+            out = np.zeros((h, w), dtype=np.float32)
+            for row in _nb.prange(h):
+                for col in range(w):
+                    z0 = dem[row, col]
+                    svf_sum = 0.0
+                    for k in range(n_dir):
+                        angle  = k * PI2 / n_dir
+                        ddx    =  _math.sin(angle)
+                        ddy    = -_math.cos(angle)
+                        max_tan = -1e38
+                        for r in range(1, max_r + 1):
+                            rr = row + ddy * r
+                            cc = col + ddx * r
+                            r0i = int(_math.floor(rr))
+                            c0i = int(_math.floor(cc))
+                            r1i = r0i + 1
+                            c1i = c0i + 1
+                            r0i = max(0, min(h - 1, r0i))
+                            r1i = max(0, min(h - 1, r1i))
+                            c0i = max(0, min(w - 1, c0i))
+                            c1i = max(0, min(w - 1, c1i))
+                            fr = rr - _math.floor(rr)
+                            fc = cc - _math.floor(cc)
+                            zn = (dem[r0i, c0i] * (1 - fr) * (1 - fc) +
+                                  dem[r0i, c1i] * (1 - fr) *      fc  +
+                                  dem[r1i, c0i] *      fr  * (1 - fc) +
+                                  dem[r1i, c1i] *      fr  *      fc)
+                            dist_m = r * res
+                            tan_a  = (zn - z0) / dist_m
+                            if tan_a > max_tan:
+                                max_tan = tan_a
+                        mt = max_tan if max_tan > 0.0 else 0.0
+                        svf_sum += 1.0 / (1.0 + mt * mt)
+                    out[row, col] = svf_sum / n_dir
+            return out
+        _kernel = _kernel_impl
+    except ImportError:
+        print("  numba absent — SVF chunked indisponible", flush=True)
+        return False
+
+    def _svf_block(block):
+        h, w = block.shape
+        nd_mask = (block < -9000) | (block > 9000)
+        block_f = block.astype(np.float32, copy=True)
+        if nd_mask.any():
+            mean_val = float(np.nanmean(block_f[~nd_mask])) if (~nd_mask).any() else 0.0
+            block_f[nd_mask] = mean_val
+        svf = _kernel(block_f, h, w, n_directions, max_dist_px, resolution)
+        svf[nd_mask] = 0.0
+        return svf
+
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+
+    # ── Passe 1 : compilation Numba + percentiles globaux sur échantillon ──
+    print("  SVF chunked — compilation Numba + percentiles (sample)...", flush=True)
+    cy = H // 2
+    cx = W // 2
+    s_half = CHUNK // 2
+    s_r0 = max(0, cy - s_half - HALO)
+    s_c0 = max(0, cx - s_half - HALO)
+    s_r1 = min(H, cy + s_half + HALO)
+    s_c1 = min(W, cx + s_half + HALO)
+    with _rio.open(str(src_path)) as src:
+        sample = src.read(1, window=Window(s_c0, s_r0, s_c1 - s_c0, s_r1 - s_r0)).astype(np.float32)
+    svf_sample = _svf_block(sample)
+    valid = svf_sample[svf_sample >= 0]
+    if len(valid) < 100:
+        return False
+    p2_g  = float(np.percentile(valid,  2))
+    p98_g = float(np.percentile(valid, 98))
+    if p98_g <= p2_g:
+        p2_g, p98_g = 0.0, 1.0
+    del sample, svf_sample, valid
+    print(f"  SVF chunked — p2={p2_g:.3f}  p98={p98_g:.3f}", flush=True)
+
+    out_profile = profile.copy()
+    # Purger les clés héritées qui pourraient interférer :
+    #  - driver : la source peut être un VRT, on veut écrire un GeoTIFF
+    #  - BIGTIFF/bigtiff doublons : casse différente, GDAL choisirait au hasard
+    #  - NODATA/nodata : on désactive nodata sur la sortie uint8
+    for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        out_profile.pop(_k, None)
+    out_profile.update(
+        driver="GTiff",
+        dtype="uint8", count=1, compress="deflate", predictor=2,
+        tiled=True, blockxsize=512, blockysize=512,
+        bigtiff="YES", nodata=None)
+
+    # ── Passe 2 : traitement bloc par bloc ──────────────────────────────────
+    total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
+    n = 0
+    with _rio.open(str(src_path)) as src, \
+         _rio.open(str(dst_path), "w", **out_profile) as dst:
+        for row_off in range(0, H, CHUNK):
+            for col_off in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("SVF chunked interrompu")
+                row_end = min(row_off + CHUNK, H)
+                col_end = min(col_off + CHUNK, W)
+
+                r0 = max(0, row_off - HALO)
+                c0 = max(0, col_off - HALO)
+                r1 = min(H, row_end + HALO)
+                c1 = min(W, col_end + HALO)
+
+                win_read = Window(c0, r0, c1 - c0, r1 - r0)
+                block = src.read(1, window=win_read).astype(np.float32)
+                svf   = _svf_block(block)
+
+                svf_stretched = np.clip((svf - p2_g) / (p98_g - p2_g), 0.0, 1.0)
+                arr_u8 = (svf_stretched ** gamma * 255.0).astype(np.uint8)
+
+                dr0 = row_off - r0
+                dc0 = col_off - c0
+                dr1 = dr0 + (row_end - row_off)
+                dc1 = dc0 + (col_end - col_off)
+                centre = arr_u8[dr0:dr1, dc0:dc1]
+
+                win_write = Window(col_off, row_off, col_end - col_off, row_end - row_off)
+                dst.write(centre[np.newaxis, :, :], window=win_write)
+
+                n += 1
+                pct = n * 100 // total
+                print(f"\r  SVF chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                      end="", flush=True)
+    print(f"\r  SVF chunked : terminé ({total} blocs, halo={HALO} px)        ")
     return True
 
 
@@ -2976,60 +3455,31 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     if len(cogs) > 1:
         _vrt_tmpdir = dossier_ville / "_tmp"
         _vrt_tmpdir.mkdir(parents=True, exist_ok=True)
-        # On garde l'extension .vrt dans le nom pour préserver la logique en aval
-        # (le code ligne 3017 teste source.suffix.lower() == ".vrt" pour décider
-        #  s'il faut convertir en GeoTIFF — avec rasterio.merge on a déjà fait la
-        #  conversion, mais on garde le suffixe pour rester cohérent visuellement).
-        # En réalité on produit un GeoTIFF, donc on utilise .tif.
-        vrt_path      = _vrt_tmpdir / "_mnt_complet.tif"
+        # VRT XML : vue logique sur les dalles, ~200 o/dalle, construction <1 s.
+        # Évite la matérialisation d'une mosaïque physique multi-Go (le merge
+        # rasterio sur 2000+ dalles avec compression deflate est pathologique).
+        # rasterio lit le VRT transparemment via libgdal — les calculs chunked
+        # en aval reçoivent leurs fenêtres comme depuis un raster ordinaire.
+        vrt_path      = _vrt_tmpdir / "_mnt_complet.vrt"
         filelist_path = _vrt_tmpdir / "_dalles.txt"
-        # Conserver la liste des dalles pour debug / traçabilité
         filelist_path.write_text(
             "\n".join(str(c) for c in cogs), encoding="utf-8")
         _creer_fichier(filelist_path)
-        print(f"  Construction GeoTIFF mergé ({len(cogs)} dalles, rasterio)...",
-              flush=True)
+        print(f"  Construction VRT ({len(cogs)} dalles)...", flush=True)
         _t0_vrt = time.time()
         try:
-            import rasterio
-            from rasterio.merge import merge as _rio_merge
-            # Ouvrir tous les datasets sources
-            srcs = [rasterio.open(str(c)) for c in cogs]
-            try:
-                # res=(RES, RES) reproduit -tr du gdalbuildvrt
-                # bounds=None : auto-détecté depuis les dalles
-                # nodata : préserver la valeur nodata des sources
-                merged_arr, merged_transform = _rio_merge(
-                    srcs, res=(RESOLUTION_M, RESOLUTION_M),
-                    resampling=rasterio.enums.Resampling.nearest)
-                # Dériver les métadonnées de sortie
-                profile = srcs[0].profile.copy()
-                profile.update({
-                    "driver":      "GTiff",
-                    "height":      merged_arr.shape[1],
-                    "width":       merged_arr.shape[2],
-                    "transform":   merged_transform,
-                    "compress":    "deflate",
-                    "tiled":       True,
-                    "blockxsize":  512,
-                    "blockysize":  512,
-                    "BIGTIFF":     "IF_SAFER",
-                })
-                # Suppression d'overviews potentiellement présents — on les rebuilde
-                # à l'étape de tuilage MBTiles plus tard
-                with rasterio.open(vrt_path, "w", **profile) as dst:
-                    dst.write(merged_arr)
-                _creer_fichier(vrt_path)
-                print(f"  GeoTIFF mergé OK  ({_hms(time.time()-_t0_vrt)})", flush=True)
-                sources = [vrt_path]
-            finally:
-                for s in srcs:
-                    try: s.close()
-                    except Exception: pass
+            _build_vrt_xml(cogs, vrt_path, RESOLUTION_M)
+            _creer_fichier(vrt_path)
+            print(f"  VRT OK  ({_hms(time.time()-_t0_vrt)}, "
+                  f"{vrt_path.stat().st_size // 1024} Ko)", flush=True)
+            sources = [vrt_path]
         except Exception as e:
-            print(f"  ERREUR merge rasterio : {e}")
-            print("  Repli sur dalles individuelles.")
-            sources = cogs
+            # Hard-fail au lieu du fallback `sources = cogs` : sources[0] ne
+            # garderait que la 1ère dalle, produisant un MBTiles vide.
+            raise RuntimeError(
+                f"Construction VRT échouée : {e}\n"
+                f"  → vérifier l'accès disque sur {_vrt_tmpdir}"
+            ) from e
     else:
         sources = cogs
 
@@ -3037,42 +3487,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
 
     try:
-        # ── Hillshades numpy (remplace gdaldem CLI — étape 4 du refactor) ───
-        # Lecture unique du DEM source via rasterio, puis calcul des
-        # différents hillshades en mémoire. Plus rapide que gdaldem CLI sur
-        # de petites zones (pas d'overhead subprocess), légèrement plus lent
-        # sur très grandes (gdaldem streame en blocs). Pour LiDAR à 0.5 m sur
-        # quelques km², la version numpy est de toute façon adéquate.
-
-        # Cache du DEM lu une seule fois pour tous les hillshades demandés
-        _dem_cache = {"arr": None, "nodata": None, "profile": None}
-
-        def _charger_dem_si_besoin():
-            if _dem_cache["arr"] is None:
-                import rasterio as _rio
-                with _rio.open(str(source)) as ds:
-                    _dem_cache["arr"]     = ds.read(1).astype("float32")
-                    _dem_cache["nodata"]  = ds.nodata
-                    _dem_cache["profile"] = ds.profile.copy()
-
-        def _ecrire_uint8_georef(arr_u8, chemin_out):
-            """Écrit un array uint8 (1 bande) en GeoTIFF avec geo de la source."""
-            import rasterio as _rio
-            prof = _dem_cache["profile"].copy()
-            prof.update({
-                "dtype":      "uint8",
-                "count":      1,
-                "compress":   "deflate",
-                "predictor":  2,
-                "tiled":      True,
-                "blockxsize": 512,
-                "blockysize": 512,
-                "BIGTIFF":    "YES",
-            })
-            for k in ("nodata",):
-                prof.pop(k, None)
-            with _rio.open(str(chemin_out), "w", **prof) as dst:
-                dst.write(arr_u8, 1)
+        # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked) ─
+        # Traitement par fenêtres 2048×2048 px avec halo 1 px (Horn 3x3).
+        # Le DEM source n'est plus chargé en entier en RAM : permet le
+        # traitement de zones LiDAR de taille arbitraire (département entier).
 
         def _generer_un_hillshade(cle):
             suffix, args_dem = CATALOGUE_GDAL[cle]
@@ -3085,46 +3503,38 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 chemin_out.unlink()
 
             try:
-                _charger_dem_si_besoin()
-                dem    = _dem_cache["arr"]
-                nodata = _dem_cache["nodata"]
-                # Décoder args_dem pour extraire mode + paramètres
-                # Format args_dem : ["hillshade", "-b", "1", "-z", "1.0", "-s", "1.0",
-                #                    "-az", "315", "-alt", "25"] ou ["hillshade", ..., "-multidirectional"]
-                #              ou : ["slope", "-b", "1", "-s", "1.0"]
                 mode = args_dem[0]
                 if mode == "hillshade":
                     if "-multidirectional" in args_dem:
-                        # Multidirectional : altitude unique, pas d'azimuth
-                        alt = float(elevation_soleil)
-                        out = _hillshade_multi_numpy(
-                            dem, altitude_deg=alt, z_factor=1.0,
-                            dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                        params = {"altitude_deg": float(elevation_soleil)}
+                        ok = _hillshade_chunked(
+                            Path(str(source)), chemin_out, "hillshade_multi",
+                            params, dx=RESOLUTION_M, dy=RESOLUTION_M)
                     else:
-                        # Directionnel : -az X -alt Y
                         i_az  = args_dem.index("-az")
                         i_alt = args_dem.index("-alt")
-                        az    = float(args_dem[i_az + 1])
-                        alt   = float(args_dem[i_alt + 1])
-                        out = _hillshade_numpy(
-                            dem, azimuth_deg=az, altitude_deg=alt, z_factor=1.0,
-                            dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                        params = {"azimuth_deg":  float(args_dem[i_az + 1]),
+                                  "altitude_deg": float(args_dem[i_alt + 1])}
+                        ok = _hillshade_chunked(
+                            Path(str(source)), chemin_out, "hillshade",
+                            params, dx=RESOLUTION_M, dy=RESOLUTION_M)
                 elif mode == "slope":
-                    out = _slope_numpy(
-                        dem, z_factor=1.0,
-                        dx=RESOLUTION_M, dy=RESOLUTION_M, nodata=nodata)
+                    ok = _hillshade_chunked(
+                        Path(str(source)), chemin_out, "slope", {},
+                        dx=RESOLUTION_M, dy=RESOLUTION_M)
                 else:
                     return cle, nom_fichier, "erreur", 0, [f"mode inconnu : {mode}"]
 
-                _ecrire_uint8_georef(out, chemin_out)
-                _enregistrer_fichier(chemin_out)
+                if not ok:
+                    return cle, nom_fichier, "erreur", 0, ["chunked failed (rasterio absent ?)"]
+
+                _creer_fichier(chemin_out)
                 return cle, nom_fichier, "ok", chemin_out.stat().st_size / 1e6, []
             except Exception as e:
                 return cle, nom_fichier, "erreur", 0, [str(e)]
 
         if choix_gdal:
             if len(choix_gdal) == 1:
-                # Un seul type : appel direct avec barre de progression
                 cle, nom_fichier, statut, taille, errs = \
                     _generer_un_hillshade(choix_gdal[0])
                 if statut == "skip":
@@ -3134,25 +3544,21 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     for e in errs[:10]:
                         print(f"    {e}")
             else:
-                # Plusieurs types : parallèle (un thread par type)
-                # Le DEM est chargé une seule fois en mémoire avant le parallèle
-                # pour éviter une race condition sur le cache au premier appel.
-                # Numpy libère le GIL pour les opérations vectorisées, donc le
-                # parallélisme par threads donne un vrai speedup.
-                _charger_dem_si_besoin()
-                print(f"  Hillshades numpy ({len(choix_gdal)} types)...",
+                # Plusieurs types : séquentiel (chaque chunked itère ses
+                # propres windows ; paralléliser ici multiplierait la pression
+                # I/O sur le DEM source sans bénéfice — le bottleneck devient
+                # le disque, pas le CPU).
+                print(f"  Hillshades chunked ({len(choix_gdal)} types)...",
                       flush=True)
-                with ThreadPoolExecutor(max_workers=len(choix_gdal)) as pool:
-                    futures = {pool.submit(_generer_un_hillshade, cle): cle
-                               for cle in choix_gdal}
-                    for fut in as_completed(futures):
-                        cle, nom_fichier, statut, taille, errs = fut.result()
-                        if statut == "skip":
-                            print("  " + nom_fichier.ljust(56) + " -> déjà présent")
-                        elif statut == "erreur":
-                            print(f"\n  ERREUR hillshade {nom_fichier}")
-                            for e in errs[:10]:
-                                print(f"    {e}")
+                for cle_h in choix_gdal:
+                    cle, nom_fichier, statut, taille, errs = \
+                        _generer_un_hillshade(cle_h)
+                    if statut == "skip":
+                        print("  " + nom_fichier.ljust(56) + " -> déjà présent")
+                    elif statut == "erreur":
+                        print(f"\n  ERREUR hillshade {nom_fichier}")
+                        for e in errs[:10]:
+                            print(f"    {e}")
 
         # ── SVF, LRM, RRIM — numpy/scipy (pas de WBT pour SVF) ──────────────
         if not choix_numpy:
@@ -3186,34 +3592,46 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             t0_numpy = time.time()
 
             if cle in ("svf", "svf100"):
-                # ── Sky-View Factor numpy (sans WhiteboxTools) ───────────────
+                # ── Sky-View Factor chunked (RAM bornée) ─────────────────────
+                # Traitement par fenêtres 2048×2048 avec halo = max_dist_px.
+                # Permet de traiter des zones de département entier sans OOM.
                 max_dist_px  = params_numpy["max_dist_px"]
                 n_directions = params_numpy["n_directions"]
                 dist_m = max_dist_px * RESOLUTION_M
-                print(f"  SVF numpy ({n_directions} dir, rayon {dist_m:.0f} m"
+                print(f"  SVF chunked ({n_directions} dir, rayon {dist_m:.0f} m"
                       f" = {max_dist_px} px)...", flush=True)
                 try:
-                    import numpy as np
-                    dem_arr, _nd = _lire_dem_rasterio(src_str)
-                    arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                         RESOLUTION_M)
-                    # Normalisation percentile p2–p98 + gamma > 1 pour assombrir
-                    # les hautes valeurs (SVF ≈ 1.0 sur terrain ouvert Var)
-                    svf_valid = arr_svf[arr_svf >= 0]
-                    p2  = float(np.percentile(svf_valid, 2))
-                    p98 = float(np.percentile(svf_valid, 98))
-                    if p98 > p2:
-                        arr_stretched = np.clip((arr_svf - p2) / (p98 - p2), 0, 1)
-                    else:
-                        arr_stretched = np.clip(arr_svf, 0, 1)
-                    # gamma 2.0 : assombrit les mi-tons, accentue les creux (SVF faible)
-                    arr_u8 = (arr_stretched ** 2.0 * 255).astype(np.uint8)
-                    # rasterio est désormais une dépendance obligatoire :
-                    # _sauver_array_georef préserve le géoréférencement,
-                    # PIL.fromarray ne saurait pas le faire.
-                    _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
+                    ok = _svf_chunked(
+                        src_path     = Path(src_str),
+                        dst_path     = chemin_out,
+                        max_dist_px  = max_dist_px,
+                        n_directions = n_directions,
+                        resolution   = RESOLUTION_M,
+                        gamma        = 2.0,
+                    )
+                    if not ok:
+                        # Repli pleine mémoire (numba absent ou échantillon
+                        # trop petit) — limité aux zones modestes.
+                        import numpy as np
+                        print("  SVF chunked KO → repli pleine mémoire", flush=True)
+                        dem_arr, _nd = _lire_dem_rasterio(src_str)
+                        arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
+                                             RESOLUTION_M)
+                        svf_valid = arr_svf[arr_svf >= 0]
+                        p2  = float(np.percentile(svf_valid, 2))
+                        p98 = float(np.percentile(svf_valid, 98))
+                        if p98 > p2:
+                            arr_stretched = np.clip((arr_svf - p2) / (p98 - p2), 0, 1)
+                        else:
+                            arr_stretched = np.clip(arr_svf, 0, 1)
+                        arr_u8 = (arr_stretched ** 2.0 * 255).astype(np.uint8)
+                        _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
-                    print(f"  ERREUR SVF numpy : {e_svf}")
+                    import traceback as _tb
+                    print(f"  ERREUR SVF : {e_svf}")
+                    print("  --- traceback complète ---")
+                    _tb.print_exc()
+                    print("  ---------------------------")
                     continue
 
             elif cle == "lrm":
@@ -3375,7 +3793,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         slope_tmp_path.unlink(missing_ok=True)
 
             if chemin_out.exists():
-                _enregistrer_fichier(chemin_out)
+                _creer_fichier(chemin_out)
                 taille = chemin_out.stat().st_size / 1e6
                 elap_numpy = int(time.time() - t0_numpy)
                 print(f"  {nom_fichier.ljust(56)}  {_hms(elap_numpy)}  {taille:.0f} Mo")
@@ -3689,7 +4107,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
                                 num_threads   = 0)  # 0 = tous les CPUs
-                _enregistrer_fichier(warped)
+                _creer_fichier(warped)
                 taille_w = warped.stat().st_size / 1e6
                 elap = time.time() - t0_warp
                 print("  " + lbl.ljust(36) + " [" + "█"*30 +
@@ -3909,7 +4327,6 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     if nb_echecs_tr > 0:
         print(f"  ⚠ {nb_echecs_tr} rangées rasterio échouées (tuiles manquantes)")
     print(f"  {mbtiles.name} : {total_insere} tuiles  ({taille_mb:.0f} Mo)")
-    _creer_fichier(mbtiles, intermediaire=False)
     return mbtiles
 
 
@@ -4006,7 +4423,7 @@ def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
         url += f"&apikey={apikey}"
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "lidar2map/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
         with urllib.request.urlopen(req, timeout=15) as r:
             xml_bytes = r.read()
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as e:
@@ -4115,7 +4532,6 @@ def construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis):
 # TÉLÉCHARGEMENT D'UNE TUILE
 # ============================================================
 
-HEADERS = {"User-Agent": "Mozilla/5.0 Gecko/20100101 Firefox/49.0"}
 
 
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
@@ -4221,7 +4637,14 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     batch       = []
     done        = 0
     ok          = 0
-    absentes    = 0
+    absentes    = 0    # 204 No Content (tuile hors couverture) — état IGN normal
+    erreurs     = 0    # exceptions worker (timeout, 401, 5xx, parsing) — diagnostic
+    err_consec  = 0    # erreurs consécutives — utile pour détection panne globale
+    abort_msg   = None # set si on abort à mi-parcours (clé expirée, etc.)
+    # Seuil d'abandon : au-delà de 30 erreurs consécutives, on assume une panne
+    # systémique (clé API expirée, IGN down, réseau coupé) et on n'écrit pas un
+    # MBTiles tronqué qui aurait l'apparence d'un succès partiel.
+    SEUIL_ERR_CONSEC = 30
     largeur     = 30
     t0          = time.time()
 
@@ -4231,12 +4654,26 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 
     _fmt_out = "jpeg" if _convert_png else fmt_ext   # format réel inséré
 
+    # Quand on re-encode PNG→JPEG avec une qualité explicite, le binaire stocké
+    # dépend de jpeg_quality. Sans versionner, un changement de --qualite-image
+    # réutiliserait silencieusement les tuiles de l'ancienne qualité.
+    # Si img_fmt est nativement JPEG (pas de re-encode), le cache ne dépend
+    # pas de jpeg_quality (data IGN brute).
+    _cache_qual_seg = (f"q{int(jpeg_quality)}"
+                       if _convert_png and jpeg_quality is not None else "")
+
+    def _cache_path(z, x, y):
+        base = dossier_cache / str(z) / str(x)
+        if _cache_qual_seg:
+            base = base / _cache_qual_seg
+        return base / f"{y}.{_fmt_out}"
+
     def _dl(args_t):
         z, x, y = args_t
         data = None
         # Lire depuis le cache si disponible
         if dossier_cache is not None and not ecraser_dalles:
-            _cache_file = dossier_cache / str(z) / str(x) / f"{y}.{_fmt_out}"
+            _cache_file = _cache_path(z, x, y)
             if _cache_file.exists():
                 data = _cache_file.read_bytes()
         if data is None:
@@ -4253,104 +4690,132 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     pass  # fallback : garder le PNG original
             # Écrire dans le cache
             if data and dossier_cache is not None:
-                _cache_file = dossier_cache / str(z) / str(x) / f"{y}.{_fmt_out}"
+                _cache_file = _cache_path(z, x, y)
                 _cache_file.parent.mkdir(parents=True, exist_ok=True)
                 _cache_file.write_bytes(data)
-                _enregistrer_fichier(_cache_file)
+                _creer_fichier(_cache_file)
         return z, x, y, data
 
-    def _afficher(done, total, ok, absentes, z_courant, t0):
+    def _afficher(done, total, ok, absentes, erreurs, z_courant, t0):
         pct     = done * 100 // max(total, 1)
         bars    = pct * largeur // 100
         elapsed = int(time.time() - t0)
         eta_s   = int(elapsed * (total - done) / max(done, 1))
         eta_str = f"  ETA {_hms(eta_s)}" if done > 10 and eta_s > 5 else ""
+        err_str = f"  err:{erreurs}" if erreurs else ""
         print(f"\r  z{z_courant} [{'#'*bars}{'-'*(largeur-bars)}]"
-              f" {pct:3d}%  {done:,}/{total:,}  ok:{ok:,}  abs:{absentes}"
+              f" {pct:3d}%  {done:,}/{total:,}  ok:{ok:,}  abs:{absentes}{err_str}"
               f"  {_hms(elapsed)}{eta_str}",
               end="", flush=True)
 
     tuiles_list = list(tuiles_iter)   # déjà une liste, mais on s'assure
     z_courant   = tuiles_list[0][0] if tuiles_list else zoom_min
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        # Soumission par fenêtre glissante : on ne soumet FENETRE tâches à la fois
-        # → la barre démarre immédiatement, RAM bornée même sur 100k tuiles
-        pending = {}
-        idx     = 0
-        n       = len(tuiles_list)
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            # Soumission par fenêtre glissante : on ne soumet FENETRE tâches à la fois
+            # → la barre démarre immédiatement, RAM bornée même sur 100k tuiles
+            pending = {}
+            idx     = 0
+            n       = len(tuiles_list)
 
-        # Remplir la fenêtre initiale
-        while idx < n and len(pending) < FENETRE:
-            t = tuiles_list[idx]
-            pending[pool.submit(_dl, t)] = t
-            idx += 1
+            # Remplir la fenêtre initiale
+            while idx < n and len(pending) < FENETRE:
+                t = tuiles_list[idx]
+                pending[pool.submit(_dl, t)] = t
+                idx += 1
 
-        # Boucle principale : on attend qu'au moins une future termine, puis
-        # on draine TOUTES les futures terminées avant de re-remplir la fenêtre.
-        # Performance : wait() enregistre ses callbacks UNE fois par appel,
-        # contrairement à next(as_completed(pending)) en boucle qui réenregistre
-        # des callbacks sur toutes les futures à chaque itération
-        # (complexité O(N × FENETRE) → O(N) en surcharge bookkeeping).
-        # Sur 100k tuiles dept-scale : gagne plusieurs minutes de CPU pur overhead.
-        while pending:
-            if _stop_event.is_set():
-                # Cancellation propre : annuler les futures non démarrées,
-                # laisser les actives finir leur HTTP courant.
-                for f in list(pending.keys()):
-                    f.cancel()
-                break
+            # Boucle principale : on attend qu'au moins une future termine, puis
+            # on draine TOUTES les futures terminées avant de re-remplir la fenêtre.
+            # Performance : wait() enregistre ses callbacks UNE fois par appel,
+            # contrairement à next(as_completed(pending)) en boucle qui réenregistre
+            # des callbacks sur toutes les futures à chaque itération
+            # (complexité O(N × FENETRE) → O(N) en surcharge bookkeeping).
+            # Sur 100k tuiles dept-scale : gagne plusieurs minutes de CPU pur overhead.
+            while pending:
+                if _stop_event.is_set() or abort_msg is not None:
+                    # Cancellation propre : annuler les futures non démarrées,
+                    # laisser les actives finir leur HTTP courant.
+                    for f in list(pending.keys()):
+                        f.cancel()
+                    break
 
-            done_set, _ = wait(pending, return_when=FIRST_COMPLETED)
+                done_set, _ = wait(pending, return_when=FIRST_COMPLETED)
 
-            # Drainer tout ce qui est terminé (peut être plusieurs en concurrent)
-            for done_future in done_set:
-                del pending[done_future]
+                # Drainer tout ce qui est terminé (peut être plusieurs en concurrent)
+                for done_future in done_set:
+                    del pending[done_future]
 
-                try:
-                    z, x, y, data = done_future.result()
-                except Exception:
-                    # Worker raise propagé : on traite comme tuile absente plutôt
-                    # que de tuer toute la boucle (fail-soft sur timeout réseau).
-                    done     += 1
-                    absentes += 1
-                    _afficher(done, total, ok, absentes, z_courant, t0)
+                    try:
+                        z, x, y, data = done_future.result()
+                    except Exception as _exc_dl:
+                        # Une exception worker n'est PAS une absence (204 IGN normal).
+                        # On la compte distinctement pour diagnostiquer panne réseau,
+                        # 401/403 (clé expirée), 5xx persistants, etc. Si trop d'erreurs
+                        # consécutives, on assume une panne systémique et on abort.
+                        done       += 1
+                        erreurs    += 1
+                        err_consec += 1
+                        if err_consec >= SEUIL_ERR_CONSEC and abort_msg is None:
+                            abort_msg = (f"{err_consec} erreurs consécutives "
+                                         f"(dernière : {type(_exc_dl).__name__}: {_exc_dl}). "
+                                         f"Probable panne réseau / clé API / IGN. "
+                                         f"MBTiles non finalisé pour éviter un fichier tronqué.")
+                        _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
+                        if idx < n:
+                            t = tuiles_list[idx]
+                            pending[pool.submit(_dl, t)] = t
+                            idx += 1
+                        continue
+
+                    done      += 1
+                    z_courant  = z
+
+                    if data:
+                        y_tms = (1 << z) - 1 - y
+                        batch.append((z, x, y_tms, data))
+                        ok += 1
+                        err_consec = 0   # succès : reset
+                    else:
+                        absentes += 1
+                        # 204 No Content (data=None) — pas une erreur réseau, pas
+                        # de reset du compteur consécutif (on ne veut pas que
+                        # 100 tuiles hors couverture entrecoupées masquent une
+                        # panne transitoire qui revient).
+
+                    if len(batch) >= BATCH:
+                        cur.executemany(
+                            "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
+                        con.commit()
+                        batch.clear()
+
+                    _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
+
+                    # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
                     if idx < n:
                         t = tuiles_list[idx]
                         pending[pool.submit(_dl, t)] = t
                         idx += 1
-                    continue
 
-                done      += 1
-                z_courant  = z
+        if batch:
+            cur.executemany(
+                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
+            con.commit()
+    finally:
+        # Toujours fermer la connexion, même sur exception non capturée
+        # (KeyboardInterrupt, MemoryError, OSError disque plein…).
+        # Sans ça la WAL reste ouverte, le .mbtiles-wal/-shm traîne.
+        try: con.close()
+        except Exception: pass
 
-                if data:
-                    y_tms = (1 << z) - 1 - y
-                    batch.append((z, x, y_tms, data))
-                    ok += 1
-                else:
-                    absentes += 1
-
-                if len(batch) >= BATCH:
-                    cur.executemany(
-                        "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-                    con.commit()
-                    batch.clear()
-
-                _afficher(done, total, ok, absentes, z_courant, t0)
-
-                # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
-                if idx < n:
-                    t = tuiles_list[idx]
-                    pending[pool.submit(_dl, t)] = t
-                    idx += 1
-
-    if batch:
-        cur.executemany(
-            "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-        con.commit()
-
-    con.close()
+    if abort_msg is not None:
+        # MBTiles supprimé : un fichier vide-presque ferait croire à un succès.
+        # Si l'utilisateur veut analyser le partiel, il rejouera et verra les
+        # logs.
+        try: chemin.unlink(missing_ok=True)
+        except Exception: pass
+        print(f"\n  ✗ ABANDON : {abort_msg}")
+        raise RuntimeError(f"WMTS abort : {abort_msg}")
 
     if _stop_event.is_set():
         # Manifeste partiel : signaler à l'utilisateur que l'écriture est incomplète
@@ -4361,7 +4826,8 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 
     elapsed = int(time.time() - t0)
     taille_mo = chemin.stat().st_size / 1e6
-    print(f"\n  100%  {ok} tuiles  ({absentes} absentes)  {_hms(elapsed)}")
+    err_str = f"  ({erreurs} erreurs)" if erreurs else ""
+    print(f"\n  100%  {ok} tuiles  ({absentes} absentes){err_str}  {_hms(elapsed)}")
     print(f"  {chemin.name} : {ok} tuiles  ({taille_mo:.0f} Mo)")
     return chemin
 
@@ -4600,7 +5066,6 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
     elapsed   = int(time.time() - t0)
     taille_mo = rmap.stat().st_size / 1e6
     print(f"\n  {rmap.name} : {taille_mo:.0f} Mo  {_hms(elapsed)}")
-    _creer_fichier(rmap, intermediaire=False)
     return rmap
 
 
@@ -4693,7 +5158,6 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     taille_mo = sqlitedb.stat().st_size / 1e6
     print(f"\n  {sqlitedb.name} : {done:,} tuiles  ({taille_mo:.0f} Mo)"
           f"  {_hms(elapsed)}          ")
-    _creer_fichier(sqlitedb, intermediaire=False)
     return sqlitedb
 
 
@@ -4901,10 +5365,15 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     # Nettoyer un éventuel .map.tmp laissé par une exécution précédente interrompue
     chemin_map_tmp.unlink(missing_ok=True)
 
-    # Le GeoJSON est produit en .geojson.gz — vérifier les deux extensions
+    # Vérifier la présence des GeoJSON selon les formats DEMANDÉS, pas
+    # selon le premier qu'on trouve. Si on demande "gz geojson" et qu'on
+    # n'a que le .gz, il faut quand même regénérer le .geojson manquant.
     chemin_geojson_gz  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
     chemin_geojson_raw = dossier_ville / f"{nom_zone}_osm.geojson"
-    geojson_present = chemin_geojson_gz.exists() or chemin_geojson_raw.exists()
+    _need_gz   = "gz"      in geojson_formats
+    _need_raw  = "geojson" in geojson_formats
+    geojson_present = ((not _need_gz  or chemin_geojson_gz.exists())
+                       and (not _need_raw or chemin_geojson_raw.exists()))
 
     if chemin_map.exists() and ecraser_tuiles:
         chemin_map.unlink()
@@ -5070,22 +5539,14 @@ Exemples :
                             help="Supprimer dalles + TIF intermédiaires après chaque morceau. "
                                  "Indispensable pour les grandes zones (département entier).")
 
-    # Localisation
-    loc = parser.add_mutually_exclusive_group()
-    loc.add_argument("--zone-ville",  metavar="NOM",
-                     help="Nom de la ville (géocodage Nominatim)")
-    loc.add_argument("--zone-gps",    metavar="LAT,LON",
-                     help="Coordonnées GPS ex: 43.3156,6.0423")
-    loc.add_argument("--zone-bbox",   metavar="X1,Y1,X2,Y2",
-                     help="BBox Lambert 93 en mètres ex: 880000,6210000,1080000,6360000")
-    loc.add_argument("--zone-departement", metavar="NUM",
-                     help="Numéro de département ex: 83, 2A, 971. "
-                          "Récupère automatiquement la bbox depuis geo.api.gouv.fr. "
-                          "Le nom du dossier est défini automatiquement (ex: var_83).")
-
-    # Zone
-    parser.add_argument("--zone-rayon",    type=float, default=None, metavar="KM",
-                        help="Rayon en km (défaut: 10)")
+    # Localisation + zone
+    _ajouter_args_zone(
+        parser,
+        rayon_default=None,
+        bbox_metavar="X1,Y1,X2,Y2",
+        bbox_help="BBox Lambert 93 en mètres ex: 880000,6210000,1080000,6360000",
+        avec_help_full=True,
+    )
 
     # Chemins
     parser.add_argument("--dossier", metavar="CHEMIN", default=None,
@@ -5094,10 +5555,6 @@ Exemples :
     parser.add_argument("--dossier-dalles", metavar="CHEMIN", default=None,
                         help="Dossier cache des dalles IGN (défaut: <dossier>/dalles/). "
                              "Utile pour séparer cache et sorties sur disques différents.")
-    parser.add_argument("--zone-nom", metavar="NOM", default=None,
-                        help="Nom du dossier de sortie pour la zone traitée. "
-                             "Obligatoire pour --gps et --bbox. "
-                             "Ex: --nom plancherine  → ign_lidar/plancherine/")
 
     # Téléchargement
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
@@ -5721,8 +6178,14 @@ Exemples :
                     print(f"\n  ATTENTION : {len(dalles_existantes)} dalle(s) dans le cache,")
                     print(f"              mais AUCUNE ne couvre la zone demandée.")
                     print(f"  Cache global : {dossier_dalles}")
+                    # Affiche le nom de ville original (avec accents) quand on
+                    # vient de --zone-ville, sinon retombe sur nom_zone normalisé.
+                    # Les autres branches (bbox, gps, dept) n'ont pas de label
+                    # humain distinct du nom_zone, et le mode interactif est
+                    # marginal (--oui recommandé pour scripts).
+                    libelle_zone = args.zone_ville or nom_zone
                     print(f"  Zone demandée : grille de {len(dalles)} dalle(s) autour de "
-                          f"{nom_zone if 'nom_zone' in dir() else '(zone)'}")
+                          f"{libelle_zone}")
                     print(f"  Ajoutez --telechargement pour télécharger les dalles manquantes.")
                     sys.exit(1)
                 print(f"\n  Téléchargement ignoré "
@@ -5947,10 +6410,7 @@ Exemples :
     # 2. Seulement les fichiers valides (≥ 50 Mo)
     # Le dossier dalles est global — sans filtrage par zone, le VRT couvrirait
     # tous les départements présents et le hillshade serait énorme ou en erreur.
-    if getattr(args, 'tif', None):
-        # Mode --tif : pas besoin des dalles ni des ombrages
-        dalles_ombrages = []
-    elif dossier_dalles.exists():
+    if dossier_dalles.exists():
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
         noms_zone = set()  # initialisé ici — peut rester vide en mode OSM seul
         if dalles_zone_txt.exists():
@@ -6168,7 +6628,7 @@ Exemples :
             elif _mbt_path.exists():
                 print(f"  MBTiles existant : {_mbt_path.name} — découpage/conversion directe")
                 _mbt_out = _mbt_path
-            _convertir_formats(_mbt_out, args)
+            _convertir_formats(_mbt_out, args, mbtiles_neuf=_mbt_requis)
         else:
             # Ombrages présents dans dossier_ville
             # Exclure les fichiers de cache de tuilage (`<nom>_tuilage_z<N>.tif`)
@@ -6206,7 +6666,7 @@ Exemples :
                     _ecraser_l = args.tuiles_ecraser
                     if _mbt_path2.exists() and not _ecraser_l:
                         print(f"  MBTiles existant : {_mbt_path2.name} — découpage/conversion directe")
-                        _convertir_formats(_mbt_path2, args)
+                        _convertir_formats(_mbt_path2, args, mbtiles_neuf=False)
                         continue
                     _mbt_out = generer_mbtiles_lidar(tif, dossier_ville, nom_base,
                                                zoom_min=args.zoom_min, zoom_max=args.zoom_max,
@@ -6214,11 +6674,12 @@ Exemples :
                                                jpeg_quality=args.qualite_image,
                                                bbox_l93=bbox,
                                                ecraser_tuiles=_ecraser_l)
-                    _convertir_formats(_mbt_out, args)
+                    _convertir_formats(_mbt_out, args, mbtiles_neuf=True)
             else:
                 print("  Aucun ombrage trouvé pour MBTiles (générez d'abord --ombrages)")
 
     # ── Carte OSM vectorielle de superposition ───────────────────────────────
+    dossier_osm = None   # défini si on arrive jusqu'au generer_carte_osm
     if args.osm:
         print_etape("Carte OSM vectorielle")
 
@@ -6243,10 +6704,9 @@ Exemples :
                     url_rev = (f"https://geo.api.gouv.fr/communes"
                                f"?lon={clon:.5f}&lat={clat:.5f}"
                                f"&fields=codeDepartement&format=json")
-                    import urllib.request as _urr
                     req_rev = urllib.request.Request(
                         url_rev,
-                        headers={"User-Agent": "lidar-mnt-downloader/1.0 (outil SIG personnel)"})
+                        headers={"User-Agent": _HTTP_UA})
                     with urllib.request.urlopen(req_rev, timeout=10) as resp_rev:
                         data_rev = json.loads(resp_rev.read())
                     if data_rev:
@@ -6282,12 +6742,10 @@ Exemples :
                 print(f"  Téléchargement {url_pbf}...")
                 print(f"  Destination : {pbf}", flush=True)
                 try:
-                    import urllib.request as _ur
                     taille_dl = 0
                     t0_dl = time.time()
                     req = urllib.request.Request(url_pbf,
-                                      headers={"User-Agent":
-                                               "lidar-mnt-downloader/1.0"})
+                                      headers={"User-Agent": _HTTP_UA})
                     _pct_last = -1
                     with urllib.request.urlopen(req) as resp, \
                          open(pbf, "wb") as f_out:
@@ -6359,9 +6817,9 @@ Exemples :
         print(f"  ✓ Étape {etape_cur[0]} terminée en {_hms(elap)}  (cumul {_hms(cumul)})")
     total = int(time.time() - t_debut)
     m, s  = divmod(total, 60)
-    print(f"\n  Terminé ! Dossier : {dossier_osm if (_osm_seul and 'dossier_osm' in dir()) else dossier_ville}")
+    print(f"\n  Terminé ! Dossier : {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
     print(f"  Durée totale : {m}m{s:02d}s")
-    dossier_res = str(dossier_osm if (_osm_seul and "dossier_osm" in dir()) else dossier_ville)
+    dossier_res = str(dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville)
     _historique_depuis_argv(total, dossier_res)
 
 
@@ -6399,7 +6857,7 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=Tr
         dx = largeur / n_cols
         dy = hauteur / n_rows
         mode_desc = f"{n_morceaux} morceaux ({n_rows}×{n_cols})"
-    else:
+    elif rayon_km > 0:
         if unite_m:
             dy = dx = rayon_km * 1000
         else:
@@ -6409,6 +6867,11 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=Tr
         n_rows = max(1, int(math.ceil(hauteur / dy)))
         n_cols = max(1, int(math.ceil(largeur / dx)))
         mode_desc = f"~{rayon_km:.0f} km/morceau ({n_rows}×{n_cols})"
+    else:
+        n_rows = n_cols = 1
+        dx = largeur
+        dy = hauteur
+        mode_desc = "1 morceau (zone entière)"
 
     sous_zones = []
     for i_lat in range(n_rows):
@@ -6620,7 +7083,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                     nom_base = f"{nom_z}_{suffix}"
                     mbt_path = (dossier_ville
                                 / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles")
-                    if not mbt_path.exists() or args.tuiles_ecraser:
+                    _mbt_neuf = not mbt_path.exists() or args.tuiles_ecraser
+                    if _mbt_neuf:
                         mbt_out = generer_mbtiles_lidar(
                             tif, dossier_ville, nom_base,
                             zoom_min=args.zoom_min, zoom_max=args.zoom_max,
@@ -6630,7 +7094,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                             ecraser_tuiles=args.tuiles_ecraser)
                     else:
                         mbt_out = mbt_path
-                    _convertir_formats(mbt_out, args, decoupe_sortie=False)
+                    _convertir_formats(mbt_out, args, decoupe_sortie=False,
+                                       mbtiles_neuf=_mbt_neuf)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
@@ -6663,7 +7128,8 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             dossier_cache.mkdir(parents=True, exist_ok=True)
             _jpeg_q = (args.qualite_image
                        if img_fmt.lower() in ("image/png", "png") else None)
-            if not chemin_mbtiles.exists() or args.tuiles_ecraser:
+            _mbt_neuf = not chemin_mbtiles.exists() or args.tuiles_ecraser
+            if _mbt_neuf:
                 generer_mbtiles_wmts(
                     chemin=chemin_mbtiles,
                     tuiles_iter=tuiles,
@@ -6684,7 +7150,8 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
                     ecraser_tuiles=args.tuiles_ecraser,
                     ecraser_dalles=args.telechargement_ecraser)
             if chemin_mbtiles.exists():
-                _convertir_formats(chemin_mbtiles, args, decoupe_sortie=False)
+                _convertir_formats(chemin_mbtiles, args, decoupe_sortie=False,
+                                   mbtiles_neuf=_mbt_neuf)
     finally:
         args.zone_nom = _nom_orig
 
@@ -6868,20 +7335,29 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
     return sorties
 
 
-def _convertir_un_mbtiles(sf, args):
-    """Génère RMAP/SQLiteDB depuis un MBTiles et le supprime si non conservé."""
+def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
+    """Génère RMAP/SQLiteDB depuis un MBTiles.
+
+    mbtiles_neuf=True : MBTiles fraîchement généré dans cette exécution.
+        S'il n'a pas été demandé via --formats-fichier, il est traité comme
+        intermédiaire et supprimé après conversion.
+    mbtiles_neuf=False : MBTiles préexistant sur disque (run précédent ou
+        copié manuellement). JAMAIS supprimé — on respecte le travail de
+        l'utilisateur, même si seul --rmap/--sqlitedb a été demandé.
+    """
     if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
     if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
-    if not args.mbtiles and sf.exists():
+    if mbtiles_neuf and not args.mbtiles and sf.exists():
         sf.unlink()
         print(f"  MBTiles supprimé : {sf.name}")
 
 
-def _convertir_formats(mbt_out, args, decoupe_sortie=True):
+def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
     """
     Applique le découpage (grille cols×rows ou rayon_decoupe) puis génère
     RMAP/SQLiteDB pour chaque fichier résultant.
-    Supprime le MBTiles source si non demandé.
+    Supprime le MBTiles source uniquement s'il a été généré dans cette
+    exécution (mbtiles_neuf=True) ET non demandé via --formats-fichier.
     decoupe_sortie=False → saute le découpage (mode morceau à priori).
     """
     if not mbt_out:
@@ -6893,7 +7369,7 @@ def _convertir_formats(mbt_out, args, decoupe_sortie=True):
 
     # En mode morceau à priori : pas de re-découpage
     if not decoupe_sortie:
-        _convertir_un_mbtiles(mbt_out, args)
+        _convertir_un_mbtiles(mbt_out, args, mbtiles_neuf=mbtiles_neuf)
         return
 
     if n_cols > 0 and n_rows > 0:
@@ -6901,24 +7377,79 @@ def _convertir_formats(mbt_out, args, decoupe_sortie=True):
                                          dossier=mbt_out.parent,
                                          ecraser=args.tuiles_ecraser)
         if mbt_out.exists() and sous_fichiers and sous_fichiers != [mbt_out]:
-            if not args.mbtiles:
+            # Découpage effectif : la source globale n'est gardée que si l'utilisateur
+            # l'a demandée OU si elle préexistait. Les sous-fichiers, eux, sont
+            # toujours frais (sortie du découpage).
+            if mbtiles_neuf and not args.mbtiles:
                 mbt_out.unlink()
                 print(f"  MBTiles source supprimé : {mbt_out.name}")
         for sf in sous_fichiers:
-            _convertir_un_mbtiles(sf, args)
+            _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
     elif r_dec > 0:
         sous_fichiers = decouper_mbtiles(mbt_out, rayon_km=r_dec,
                                          dossier=mbt_out.parent,
                                          ecraser=args.tuiles_ecraser)
         if mbt_out.exists() and sous_fichiers and sous_fichiers != [mbt_out]:
-            if not args.mbtiles:
+            if mbtiles_neuf and not args.mbtiles:
                 mbt_out.unlink()
                 print(f"  MBTiles source supprimé : {mbt_out.name}")
         for sf in sous_fichiers:
-            _convertir_un_mbtiles(sf, args)
+            _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
     else:
-        # Pas de découpage
-        _convertir_un_mbtiles(mbt_out, args)
+        # Pas de découpage : on convertit directement le fichier passé
+        _convertir_un_mbtiles(mbt_out, args, mbtiles_neuf=mbtiles_neuf)
+
+
+def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
+                        avec_dossier=False, avec_help_full=False):
+    """Ajoute les flags --zone-{ville,gps,bbox,departement,rayon,nom}
+    au parser fourni, en factorisant la duplication entre main(),
+    main_wmts(), main_wfs(). Les divergences réelles sont :
+
+    - rayon_default : main() utilisait None (résolu en 10 plus tard),
+      main_wmts/wfs utilisent 10.0 dès le parser.
+    - bbox_metavar  : main() = "X1,Y1,X2,Y2" Lambert 93 en mètres ;
+      main_wmts/wfs = "W,S,E,N" WGS84 en degrés.
+    - bbox_help     : help textuel propre à chaque mode.
+    - avec_dossier  : si True, ajoute aussi --dossier (uniquement pour main()
+      qui le mélange avec --dossier-dalles ; les autres l'ajoutent à part).
+    - avec_help_full : si True, help détaillé (mode CLI top-level main()).
+
+    Retourne le mutually exclusive group, au cas où l'appelant veut y ajouter
+    d'autres flags.
+    """
+    loc = parser.add_mutually_exclusive_group()
+    if avec_help_full:
+        loc.add_argument("--zone-ville",  metavar="NOM",
+                         help="Nom de la ville (géocodage Nominatim)")
+        loc.add_argument("--zone-gps",    metavar="LAT,LON",
+                         help="Coordonnées GPS ex: 43.3156,6.0423")
+        loc.add_argument("--zone-bbox",   metavar=bbox_metavar,
+                         help=bbox_help or "")
+        loc.add_argument("--zone-departement", metavar="NUM",
+                         help="Numéro de département ex: 83, 2A, 971. "
+                              "Récupère automatiquement la bbox depuis geo.api.gouv.fr. "
+                              "Le nom du dossier est défini automatiquement (ex: var_83).")
+    else:
+        loc.add_argument("--zone-ville",       metavar="NOM")
+        loc.add_argument("--zone-gps",         metavar="LAT,LON")
+        if bbox_help:
+            loc.add_argument("--zone-bbox",    metavar=bbox_metavar, help=bbox_help)
+        else:
+            loc.add_argument("--zone-bbox",    metavar=bbox_metavar)
+        loc.add_argument("--zone-departement", metavar="NUM")
+
+    parser.add_argument("--zone-rayon", type=float, default=rayon_default,
+                        metavar="KM",
+                        help=f"Rayon en km autour du point "
+                             f"(défaut: {rayon_default if rayon_default is not None else 10})")
+    parser.add_argument("--zone-nom", metavar="NOM", default=None,
+                        help="Nom du dossier de sortie pour la zone traitée. "
+                             "Obligatoire pour --zone-gps et --zone-bbox.")
+    if avec_dossier:
+        parser.add_argument("--dossier", metavar="CHEMIN", default=None,
+                            help="Dossier racine de sortie.")
+    return loc
 
 
 def _resoudre_zone_wgs84(args):
@@ -7120,14 +7651,12 @@ Exemples :
                                  "Indispensable pour les grandes zones (département entier).")
 
     # Zone
-    zone = parser.add_mutually_exclusive_group()
-    zone.add_argument("--zone-ville",       metavar="NOM")
-    zone.add_argument("--zone-gps",         metavar="LAT,LON")
-    zone.add_argument("--zone-bbox",        metavar="W,S,E,N",
-                      help="BBox WGS84 : lon_min,lat_min,lon_max,lat_max")
-    zone.add_argument("--zone-departement", metavar="NUM")
-    parser.add_argument("--zone-rayon",  type=float, default=10.0, metavar="KM")
-    parser.add_argument("--zone-nom",    metavar="NOM", default=None)
+    _ajouter_args_zone(
+        parser,
+        rayon_default=10.0,
+        bbox_metavar="W,S,E,N",
+        bbox_help="BBox WGS84 : lon_min,lat_min,lon_max,lat_max",
+    )
 
     # Couche + clé
     parser.add_argument("--couche",  default="planign",
@@ -7382,7 +7911,7 @@ Exemples :
 
     # ── Découpage + RMAP + SQLiteDB ───────────────────────────────────────────
     if chemin_mbtiles.exists():
-        _convertir_formats(chemin_mbtiles, args)
+        _convertir_formats(chemin_mbtiles, args, mbtiles_neuf=_mbtiles_requis)
 
     # ── Résumé ────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
@@ -7446,40 +7975,75 @@ COUCHES_WFS = {
                         "Registre Parcellaire Graphique (cultures)"),
 }
 
-WFS_URL  = "https://data.geopf.fr/wfs/ows"
-WFS_PAGE = 1000   # features par requête (limite serveur IGN)
+WFS_PAGE = 1000   # features par requête (limite serveur IGN — WFS_URL défini ligne ~1274)
 
 
 def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
-                    nom_zone, dossier_sortie, ecraser_telechargement=False):
+                    nom_zone, dossier_sortie, ecraser_telechargement=False,
+                    formats=None):
     """Télécharge des features WFS IGN sur une bbox WGS84 → fichier .geojson.
 
     Pagination automatique (COUNT + STARTINDEX) jusqu'à épuisement.
-    Retourne le Path du fichier créé, ou None en cas d'erreur.
+    formats : liste parmi ("gz", "geojson") — formats à produire (défaut ["gz"]).
+              Si plusieurs sont demandés, le téléchargement n'a lieu que si au
+              moins un est manquant ; les fichiers manquants sont reconstruits
+              à partir du premier disponible (sans re-télécharger).
+    Retourne le Path du fichier principal créé (gz si présent, sinon geojson),
+    ou None en cas d'erreur.
     """
 
     dossier_sortie = Path(dossier_sortie)
     dossier_sortie.mkdir(parents=True, exist_ok=True)
 
+    if formats is None:
+        formats = ["gz"]
+    formats = [f.lower() for f in formats if f.lower() in ("gz", "geojson")]
+    if not formats:
+        formats = ["gz"]
+    ecrire_gz      = "gz"      in formats
+    ecrire_geojson = "geojson" in formats
+
     layer_short = typename.split(":")[-1].lower()
-    sortie = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
+    sortie    = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
     sortie_gz = Path(str(sortie) + ".gz")
 
-    # Vérifier .geojson.gz existant
-    _existing = sortie_gz if sortie_gz.exists() else (sortie if sortie.exists() else None)
-    if _existing and not ecraser_telechargement:
-        print(f"  {_existing.name} -> déjà présent")
-        return _existing
-    if _existing and ecraser_telechargement:
-        _existing.unlink()
-        print(f"  {_existing.name} -> écrasement")
+    # Écrasement explicite : supprimer toutes les sorties existantes pour
+    # repartir clean.
+    if ecraser_telechargement:
+        for p in (sortie_gz, sortie):
+            if p.exists():
+                p.unlink()
+                print(f"  {p.name} -> écrasement")
+
+    # Vérification par format demandé : on ne skip que si TOUS sont présents.
+    # Sinon, si l'un est présent, on reconstruit les manquants à partir de
+    # lui (lecture/écriture locale, pas de re-téléchargement WFS).
+    if not ecraser_telechargement:
+        manque_gz  = ecrire_gz      and not sortie_gz.exists()
+        manque_raw = ecrire_geojson and not sortie.exists()
+        if not manque_gz and not manque_raw:
+            present = sortie_gz if sortie_gz.exists() else sortie
+            print(f"  {present.name} -> déjà présent")
+            return present
+        # Reconstruction locale si une source existe
+        if (sortie_gz.exists() or sortie.exists()):
+            try:
+                if manque_raw and sortie_gz.exists():
+                    _gunzip_vers_fichier(sortie_gz, sortie)
+                    print(f"  {sortie.name} -> reconstruit depuis {sortie_gz.name}")
+                if manque_gz and sortie.exists():
+                    _gzip_depuis_fichier(sortie, sortie_gz)
+                    print(f"  {sortie_gz.name} -> reconstruit depuis {sortie.name}")
+                return sortie_gz if sortie_gz.exists() else sortie
+            except OSError as e:
+                print(f"  ⚠ Reconstruction locale échouée ({e}) — re-téléchargement WFS")
 
     print(f"  WFS {typename}...", flush=True)
     _log_req(f"{WFS_URL}?SERVICE=WFS&TYPENAMES={typename}&...", "WFS IGN")
 
-    features      = []
     startindex    = 0
-    total_attendu = None   # numberMatched capturé à la 1re page (ou via hits)
+    n_features    = 0   # compteur — pas d'accumulation Python
+    total_attendu = None
     t0 = time.time()
 
     # ── Pré-requête RESULTTYPE=hits : total sans télécharger les données ──────
@@ -7495,7 +8059,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     try:
         _url_hits = WFS_URL + "?" + urllib.parse.urlencode(_params_hits)
         _req_hits = urllib.request.Request(
-            _url_hits, headers={"User-Agent": "lidar2map/1.0"})
+            _url_hits, headers={"User-Agent": _HTTP_UA})
         with urllib.request.urlopen(_req_hits, timeout=15) as _r:
             _d = json.loads(_r.read())
         _nm = _d.get("numberMatched", _d.get("totalFeatures"))
@@ -7507,90 +8071,140 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     except Exception:
         pass  # hits non critique — on continuera sans total connu
 
-    while True:
-        if _stop_event.is_set():
-            if features:
-                print(f"  WFS interrompu — {len(features)} features récupérées")
-            return None
+    # ── Écriture streamée : on ouvre le .gz et on écrit les features au fil
+    # de la pagination, sans jamais accumuler en RAM. Sur un dept-scale (>1M
+    # features), la version précédente faisait peser plusieurs Go en RAM.
+    sortie_gz_tmp = sortie_gz.with_suffix(sortie_gz.suffix + ".tmp")
+    sortie_gz_tmp.parent.mkdir(parents=True, exist_ok=True)
+    crs_obj = {"type": "name",
+               "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
+    header = (
+        '{"type":"FeatureCollection","name":'
+        + json.dumps(layer_short, ensure_ascii=False)
+        + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
+        + ',"features":['
+    ).encode("utf-8")
 
-        params = {
-            "SERVICE":      "WFS",
-            "VERSION":      "2.0.0",
-            "REQUEST":      "GetFeature",
-            "TYPENAMES":    typename,
-            "OUTPUTFORMAT": "application/json",
-            "SRSNAME":      "EPSG:4326",
-            "BBOX":         f"{lon_min},{lat_min},{lon_max},{lat_max},EPSG:4326",
-            "COUNT":        str(WFS_PAGE),
-            "STARTINDEX":   str(startindex),
-        }
-        url = WFS_URL + "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "lidar2map/1.0"})
+    out_fh = None
+    try:
+        out_fh = gzip.open(sortie_gz_tmp, "wb", compresslevel=6)
+        out_fh.write(header)
+        first_feat = True
 
-        data = None
-        for tentative in range(3):
-            try:
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read())
-                break
-            except (urllib.error.URLError, urllib.error.HTTPError,
-                    json.JSONDecodeError, TimeoutError, OSError) as e:
-                if tentative < 2:
-                    time.sleep(3)
-                else:
-                    print(f"\n  ERREUR WFS ({typename}) : {type(e).__name__}: {e}")
-                    data = None
+        while True:
+            if _stop_event.is_set():
+                if n_features:
+                    print(f"  WFS interrompu — {n_features} features récupérées (sortie .gz partielle)")
+                # Pas de finalisation : on supprime le tmp pour ne pas garder
+                # un .gz tronqué qui aurait l'air valide.
+                raise KeyboardInterrupt(f"WFS {typename} interrompu")
 
-        if data is None:
-            if features:
-                print(f"  Résultat partiel : {len(features)} features")
-            else:
-                return None
-            break
+            params = {
+                "SERVICE":      "WFS",
+                "VERSION":      "2.0.0",
+                "REQUEST":      "GetFeature",
+                "TYPENAMES":    typename,
+                "OUTPUTFORMAT": "application/json",
+                "SRSNAME":      "EPSG:4326",
+                "BBOX":         f"{lon_min},{lat_min},{lon_max},{lat_max},EPSG:4326",
+                "COUNT":        str(WFS_PAGE),
+                "STARTINDEX":   str(startindex),
+            }
+            url = WFS_URL + "?" + urllib.parse.urlencode(params)
+            req = urllib.request.Request(
+                url, headers={"User-Agent": _HTTP_UA})
 
-        page = data.get("features", [])
-        features.extend(page)
-
-        # Fallback si hits a échoué : capturer numberMatched à la 1re page
-        if total_attendu is None:
-            _nm = data.get("numberMatched", data.get("totalFeatures"))
-            if _nm is not None:
+            data = None
+            for tentative in range(3):
                 try:
-                    total_attendu = int(_nm)
-                except (ValueError, TypeError):
-                    pass
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        data = json.loads(resp.read())
+                    break
+                except (urllib.error.URLError, urllib.error.HTTPError,
+                        json.JSONDecodeError, TimeoutError, OSError) as e:
+                    if tentative < 2:
+                        time.sleep(3)
+                    else:
+                        print(f"\n  ERREUR WFS ({typename}) : {type(e).__name__}: {e}")
+                        data = None
 
-        elapsed = int(time.time() - t0)
-        n_page  = startindex // WFS_PAGE + 1
-        if total_attendu:
-            pct = min(len(features) * 100 // total_attendu, 99)
-            bar = ("█" * (pct // 5)).ljust(20)
-            print(f"  WFS  [{bar}] {pct:3d}%  "
-                  f"{len(features)}/{total_attendu}  "
-                  f"page {n_page}  {_hms(elapsed)}", flush=True)
-        else:
-            print(f"  WFS  page {n_page}  {len(features)} features  {_hms(elapsed)}",
-                  flush=True)
+            if data is None:
+                if n_features:
+                    print(f"  Résultat partiel : {n_features} features")
+                    # On finalise avec ce qu'on a (le client a écrit n_features
+                    # valides, on les conserve plutôt que de tout perdre).
+                    break
+                else:
+                    raise OSError(f"WFS {typename} : aucune page récupérée")
 
-        if len(page) < WFS_PAGE:
-            break
-        startindex += WFS_PAGE
-        time.sleep(0.2)
+            page = data.get("features", [])
 
-    geojson = {
-        "type":     "FeatureCollection",
-        "name":     layer_short,
-        "crs":      {"type": "name",
-                     "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
-        "features": features,
-    }
-    sortie_gz = _ecrire_geojson_gz(geojson, sortie)
-    taille_ko = sortie_gz.stat().st_size // 1024
-    print(f"\r  {sortie_gz.name} : {len(features)} features  ({taille_ko} Ko)"
-          f"  {_hms(int(time.time()-t0))}          ")
-    _creer_fichier(sortie_gz, intermediaire=False)
-    return sortie_gz
+            # Fallback si hits a échoué : capturer numberMatched à la 1re page
+            if total_attendu is None:
+                _nm = data.get("numberMatched", data.get("totalFeatures"))
+                if _nm is not None:
+                    try:
+                        total_attendu = int(_nm)
+                    except (ValueError, TypeError):
+                        pass
+
+            # Écriture streamée des features de cette page
+            for feat in page:
+                if not first_feat:
+                    out_fh.write(b",")
+                first_feat = False
+                out_fh.write(json.dumps(feat, ensure_ascii=False,
+                                         separators=(",", ":")).encode("utf-8"))
+                n_features += 1
+
+            elapsed = int(time.time() - t0)
+            n_page  = startindex // WFS_PAGE + 1
+            if total_attendu:
+                pct = min(n_features * 100 // total_attendu, 99)
+                bar = ("█" * (pct // 5)).ljust(20)
+                print(f"  WFS  [{bar}] {pct:3d}%  "
+                      f"{n_features}/{total_attendu}  "
+                      f"page {n_page}  {_hms(elapsed)}", flush=True)
+            else:
+                print(f"  WFS  page {n_page}  {n_features} features  {_hms(elapsed)}",
+                      flush=True)
+
+            if len(page) < WFS_PAGE:
+                break
+            startindex += WFS_PAGE
+            time.sleep(0.2)
+
+        out_fh.write(b"]}")
+        out_fh.close()
+        out_fh = None
+    except BaseException:
+        # Toute exception (KeyboardInterrupt, OSError, etc.) → cleanup tmp
+        if out_fh is not None:
+            try: out_fh.close()
+            except Exception: pass
+        sortie_gz_tmp.unlink(missing_ok=True)
+        raise
+
+    # Promotion atomique du .gz
+    sortie_gz_tmp.replace(sortie_gz)
+
+    chemin_principal = None
+    if ecrire_gz:
+        taille_ko = sortie_gz.stat().st_size // 1024
+        print(f"  {sortie_gz.name} : {n_features} features  ({taille_ko} Ko)"
+              f"  {_hms(int(time.time()-t0))}")
+        chemin_principal = sortie_gz
+    if ecrire_geojson:
+        # Décompresser en streaming vers le .geojson raw
+        _gunzip_vers_fichier(sortie_gz, sortie)
+        taille_ko = sortie.stat().st_size // 1024
+        print(f"  {sortie.name} : {n_features} features  ({taille_ko} Ko)")
+        if chemin_principal is None:
+            chemin_principal = sortie
+    if not ecrire_gz and sortie_gz.exists():
+        # On a écrit le .gz comme intermédiaire — utilisateur ne le voulait pas
+        sortie_gz.unlink()
+    return chemin_principal
 
 
 # ============================================================
@@ -7812,7 +8426,8 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     state = {"node_id": -1, "way_id": -1, "nb_nodes": 0, "nb_ways": 0,
              "lon_min":  float("inf"),  "lon_max": float("-inf"),
              "lat_min":  float("inf"),  "lat_max": float("-inf"),
-             "bounds_valid": False}
+             "bounds_valid": False,
+             "nb_inner_skipped": 0}   # rings intérieurs (trous) non émis
 
     def _track_bounds(lon, lat):
         if lon < state["lon_min"]: state["lon_min"] = lon
@@ -7907,10 +8522,12 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
             elif gtype == "Polygon":
                 if coords:
                     _emit_ring(out_nodes, out_ways, coords[0], osm_tags)
+                    state["nb_inner_skipped"] += max(0, len(coords) - 1)
             elif gtype == "MultiPolygon":
                 for poly in coords:
                     if poly:
                         _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
+                        state["nb_inner_skipped"] += max(0, len(poly) - 1)
             elif gtype == "GeometryCollection":
                 for sub in geom.get("geometries", []):
                     sub_coords = sub.get("coordinates", [])
@@ -7925,10 +8542,12 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
                             _emit_linestring(out_nodes, out_ways, line, osm_tags)
                     elif sub_type == "Polygon" and sub_coords:
                         _emit_ring(out_nodes, out_ways, sub_coords[0], osm_tags)
+                        state["nb_inner_skipped"] += max(0, len(sub_coords) - 1)
                     elif sub_type == "MultiPolygon":
                         for poly in sub_coords:
                             if poly:
                                 _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
+                                state["nb_inner_skipped"] += max(0, len(poly) - 1)
         out_nodes.close(); out_nodes = None
         out_ways.close();  out_ways  = None
     except KeyboardInterrupt:
@@ -7983,6 +8602,12 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     sz = osm_xml_path.stat().st_size / 1e6
     print(f"  OSM XML : {state['nb_nodes']} nœuds, {state['nb_ways']} ways "
           f"→ {osm_xml_path.name} ({sz:.1f} Mo)")
+    if state["nb_inner_skipped"]:
+        # Mapsforge mapwriter ne supporte pas les multi-polygones avec trous via
+        # OSM XML (il faut des relations type=multipolygon, hors scope ici).
+        # On documente la perte plutôt que de la cacher.
+        print(f"  ⚠ {state['nb_inner_skipped']} ring(s) intérieur(s) ignoré(s) "
+              f"(trous de polygones — non supportés en sortie .map)")
     return True
 
 def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
@@ -8082,7 +8707,6 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
 # Pipeline : API discovery → GPKG streamé (cache) → ogr2ogr par couche → GeoJSON.gz
 # ──────────────────────────────────────────────────────────────────────────────
 
-BDTOPO_BULK_SEUIL = 50_000      # features — au-delà, basculer sur bulk
 BDTOPO_API_URL    = "https://data.geopf.fr/telechargement/resource/BDTOPO"
 BDTOPO_DL_BASE    = "https://data.geopf.fr/telechargement/download/BDTOPO"
 
@@ -8118,7 +8742,7 @@ def _decouvrir_url_bdtopo_gpkg(num_dep):
         api_url = (f"{BDTOPO_API_URL}?zone={zone}&format=GPKG"
                    f"&crs=LAMB93&page=1&limit=5")
         req = urllib.request.Request(api_url,
-                                     headers={"User-Agent": "lidar2map/1.0"})
+                                     headers={"User-Agent": _HTTP_UA})
         with urllib.request.urlopen(req, timeout=15) as r:
             xml_bytes = r.read()
         # Parser le XML Atom pour extraire les noms de ressources
@@ -8138,8 +8762,20 @@ def _decouvrir_url_bdtopo_gpkg(num_dep):
                             noms.append(p.replace(".7z", "").replace(".gpkg", ""))
                             break
         if noms:
-            # Trier par date (dernier segment du nom) pour prendre le plus récent
-            noms.sort(reverse=True)
+            # Trier par (date, version_tuple) pour prendre le plus récent.
+            # Les noms ont la forme :
+            #   BDTOPO_3-5_TOUSTHEMES_GPKG_LAMB93_D083_2024-12-15
+            # Un sort lexicographique simple est trompeur dès que la version
+            # mineure passe à 2 chiffres ('3-10' < '3-5' en lex).
+            _re_meta = re.compile(
+                r"BDTOPO_(\d+)-(\d+)_.*_(\d{4}-\d{2}-\d{2})$")
+            def _key(nom):
+                m = _re_meta.search(nom)
+                if not m:
+                    return (("",), (0, 0))   # noms non-standard en queue
+                maj, mineur, date = m.groups()
+                return (date, (int(maj), int(mineur)))
+            noms.sort(key=_key, reverse=True)
             nom = noms[0]
             url = f"{BDTOPO_DL_BASE}/{nom}/{nom}.7z"
             print(f"  BD TOPO {zone} GPKG : {nom}", flush=True)
@@ -8157,14 +8793,22 @@ def _decouvrir_url_bdtopo_gpkg(num_dep):
             q += 4; y -= 1
         candidates.append(f"{y}-{[3, 6, 9, 12][q % 4]:02d}-15")
 
-    # Versions par ordre décroissant (les plus récentes en premier)
-    for version in ("3-5", "3-4", "3-3"):
+    # Versions IGN à tester. Tuples (major, minor) — le tri par tuple gère
+    # correctement les versions mineures à plusieurs chiffres (3-10 > 3-9 > 3-5),
+    # contrairement à un tri lex sur la chaîne "3-X". Ajouter une nouvelle
+    # version IGN ici en cas de release.
+    _versions = sorted(
+        [(3, 5), (3, 4), (3, 3)],
+        reverse=True,
+    )
+    for maj, mineur in _versions:
+        version = f"{maj}-{mineur}"
         for date_str in candidates:
             nom = f"BDTOPO_{version}_TOUSTHEMES_GPKG_LAMB93_{zone}_{date_str}"
             url = f"{BDTOPO_DL_BASE}/{nom}/{nom}.7z"
             try:
                 req_h = urllib.request.Request(url, method="HEAD",
-                                               headers={"User-Agent": "lidar2map/1.0"})
+                                               headers={"User-Agent": _HTTP_UA})
                 with urllib.request.urlopen(req_h, timeout=10):
                     print(f"  BD TOPO {zone} : {nom}", flush=True)
                     return url, nom
@@ -8214,6 +8858,9 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             return None
         total = int(resp.headers.get("content-length") or 0)
         done = 0
+        # Throttle d'affichage : on actualise au max toutes les 0.5s pour
+        # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 Mo.
+        _last_print = 0.0
         with open(tmp, "wb") as f:
             while True:
                 if _stop_event.is_set():
@@ -8222,15 +8869,22 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
                 if not chunk:
                     break
                 f.write(chunk); done += len(chunk)
-                elapsed = int(time.time() - t0)
+                now = time.time()
+                if now - _last_print < 0.5:
+                    continue
+                _last_print = now
+                elapsed = int(now - t0)
                 if total:
                     pct = min(done * 100 // total, 99)
                     bar = ("█" * (pct // 5)).ljust(20)
-                    print(f"  [{bar}] {pct:3d}%  "
-                          f"{done/1e6:.0f}/{total/1e6:.0f} Mo  {_hms(elapsed)}",
-                          flush=True)
+                    sys.stdout.write(
+                        f"\r  [{bar}] {pct:3d}%  "
+                        f"{done/1e6:.0f}/{total/1e6:.0f} Mo  {_hms(elapsed)}   ")
                 else:
-                    print(f"  {done/1e6:.0f} Mo  {_hms(elapsed)}", flush=True)
+                    sys.stdout.write(
+                        f"\r  {done/1e6:.0f} Mo  {_hms(elapsed)}   ")
+                sys.stdout.flush()
+        sys.stdout.write("\r" + " " * 70 + "\r"); sys.stdout.flush()
         tmp.replace(sz_path)
         print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} Mo)  "
               f"{_hms(int(time.time()-t0))}", flush=True)
@@ -8252,21 +8906,22 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             # Extraire uniquement le .gpkg (peut être dans un sous-dossier)
             z.extract(targets=gpkg_names, path=cache_dir)
 
-        # Trouver le fichier extrait (peut être dans un sous-dossier)
-        extracted = None
-        for p in cache_dir.rglob("*.gpkg"):
-            if p.name not in (gpkg_path.name,):  # ignorer le cache déjà présent
-                extracted = p
-                break
-        if not extracted:
-            # Peut être déjà nommé correctement
-            extracted = next(cache_dir.glob("**/*.gpkg"), None)
-
-        if extracted and extracted != gpkg_path:
-            extracted.replace(gpkg_path)
-        elif not extracted:
+        # Trouver le fichier extrait (py7zr peut placer le .gpkg dans un sous-dossier
+        # du cache_dir selon la structure interne de l'archive 7z).
+        # gpkg_path lui-même n'existe pas à ce stade (return early plus haut),
+        # donc tout .gpkg trouvé est forcément le résultat de l'extraction.
+        extracted = next(cache_dir.rglob("*.gpkg"), None)
+        if extracted is None:
             print("  ERREUR : .gpkg introuvable après extraction")
             return None
+        if extracted != gpkg_path:
+            extracted.replace(gpkg_path)
+            # Nettoyer le sous-dossier laissé par py7zr s'il est devenu vide
+            try:
+                if extracted.parent != cache_dir and not any(extracted.parent.iterdir()):
+                    extracted.parent.rmdir()
+            except OSError:
+                pass
 
         sz_path.unlink(missing_ok=True)   # libérer l'espace du .7z
         print(f"  ✓ GPKG extrait : {gpkg_path.name} "
@@ -8355,20 +9010,53 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
 
 
 def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
-                             bbox_l93=None, ecraser=False):
+                             bbox_l93=None, ecraser=False, formats=None):
     """
-    Extrait une couche GPKG → GeoJSON.gz via fiona (streaming, reprojection WGS84).
+    Extrait une couche GPKG → GeoJSON(.gz) via fiona (streaming, reprojection WGS84).
     bbox_l93 : (xmin, ymin, xmax, ymax) pour clipper, ou None = département entier.
+    formats  : liste parmi ("gz","geojson") — formats à produire (défaut ["gz"]).
 
     Étape 7 du refactor : remplace ogr2ogr CLI par fiona+pyproj.
     Streaming feature par feature pour borner la RAM (un département entier
     peut faire 200-800 Mo en JSON, soit 1-3 Go pic RAM avec json.load()).
     """
-    sortie_gz = Path(sortie_gz)
-    if sortie_gz.exists() and not ecraser:
-        print(f"  {sortie_gz.name} → déjà présent"); return sortie_gz
-    if sortie_gz.exists() and ecraser:
-        sortie_gz.unlink()
+    sortie_gz  = Path(sortie_gz)
+    sortie_raw = Path(str(sortie_gz)[:-3]) if str(sortie_gz).endswith(".gz") \
+                 else Path(str(sortie_gz) + ".geojson")  # fallback inattendu
+
+    if formats is None:
+        formats = ["gz"]
+    formats = [f.lower() for f in formats if f.lower() in ("gz", "geojson")]
+    if not formats:
+        formats = ["gz"]
+    ecrire_gz      = "gz"      in formats
+    ecrire_geojson = "geojson" in formats
+
+    if ecraser:
+        for p in (sortie_gz, sortie_raw):
+            if p.exists():
+                p.unlink()
+                print(f"  {p.name} -> écrasement")
+
+    if not ecraser:
+        manque_gz  = ecrire_gz      and not sortie_gz.exists()
+        manque_raw = ecrire_geojson and not sortie_raw.exists()
+        if not manque_gz and not manque_raw:
+            present = sortie_gz if sortie_gz.exists() else sortie_raw
+            print(f"  {present.name} → déjà présent")
+            return present
+        # Reconstruction locale entre formats — évite de relire le GPKG (lent).
+        if (sortie_gz.exists() or sortie_raw.exists()):
+            try:
+                if manque_raw and sortie_gz.exists():
+                    _gunzip_vers_fichier(sortie_gz, sortie_raw)
+                    print(f"  {sortie_raw.name} → reconstruit depuis {sortie_gz.name}")
+                if manque_gz and sortie_raw.exists():
+                    _gzip_depuis_fichier(sortie_raw, sortie_gz)
+                    print(f"  {sortie_gz.name} → reconstruit depuis {sortie_raw.name}")
+                return sortie_gz if sortie_gz.exists() else sortie_raw
+            except OSError as e:
+                print(f"  ⚠ Reconstruction locale échouée ({e}) — extraction GPKG")
 
     try:
         import fiona
@@ -8426,24 +9114,39 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         tmp_geojson.unlink(missing_ok=True); return None
 
     try:
+        # _streamer_geojson_ajout_source écrit toujours en .gz — on le génère
+        # systématiquement (fichier de travail), puis on dérive .geojson si demandé.
         src_name = sortie_gz.name.replace(".geojson.gz", "")
         n = _streamer_geojson_ajout_source(tmp_geojson, sortie_gz, src_name)
         if n == 0:
             print(f"  ⚠ {layer_name} : 0 features après streaming")
+            sortie_gz.unlink(missing_ok=True)
             return None
-        print(f"  {sortie_gz.name} : {n} features  ({sortie_gz.stat().st_size//1024} Ko)  "
-              f"{_hms(int(time.time()-t0))}", flush=True)
-        _creer_fichier(sortie_gz, intermediaire=False)
-        return sortie_gz
+        chemin_principal = None
+        if ecrire_gz:
+            print(f"  {sortie_gz.name} : {n} features  ({sortie_gz.stat().st_size//1024} Ko)  "
+                  f"{_hms(int(time.time()-t0))}", flush=True)
+            chemin_principal = sortie_gz
+        if ecrire_geojson:
+            _gunzip_vers_fichier(sortie_gz, sortie_raw)
+            print(f"  {sortie_raw.name} : {n} features  ({sortie_raw.stat().st_size//1024} Ko)")
+            if chemin_principal is None:
+                chemin_principal = sortie_raw
+        # Si seulement .geojson est demandé, supprimer le .gz intermédiaire
+        if not ecrire_gz and sortie_gz.exists():
+            sortie_gz.unlink()
+        return chemin_principal
     finally:
         tmp_geojson.unlink(missing_ok=True)
 
 
 def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
-                              dossier_sortie, bbox_l93=None, ecraser=False):
+                              dossier_sortie, bbox_l93=None, ecraser=False,
+                              formats=None):
     """
     Pipeline bulk BD TOPO pour un département entier.
-    Retourne list[Path] des GeoJSON.gz créés, ou None si échec critique.
+    formats : liste parmi ("gz","geojson") — propagé à _extraire_couche_bdtopo.
+    Retourne list[Path] des GeoJSON(.gz) créés, ou None si échec critique.
     """
     print(f"  Bulk BD TOPO GPKG département {num_dep} "
           f"(WFS serait trop lent à cette échelle)", flush=True)
@@ -8461,7 +9164,8 @@ def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
         sortie_gz  = Path(dossier_sortie) / f"{nom_zone}_ign_{layer_name}.geojson.gz"
         print(f"\n  [{desc}]")
         res = _extraire_couche_bdtopo(gpkg_path, gpkg_layer, sortie_gz,
-                                      bbox_l93=bbox_l93, ecraser=ecraser)
+                                      bbox_l93=bbox_l93, ecraser=ecraser,
+                                      formats=formats)
         if res:
             sorties.append(res)
     return sorties
@@ -8496,14 +9200,11 @@ def main_wfs():
                              "Plusieurs couches séparées par des espaces.")
 
     # Zone — même logique que --ignraster
-    zone = parser.add_mutually_exclusive_group()
-    zone.add_argument("--zone-ville",       metavar="NOM")
-    zone.add_argument("--zone-gps",         metavar="LAT,LON")
-    zone.add_argument("--zone-bbox",        metavar="W,S,E,N")
-    zone.add_argument("--zone-departement", metavar="NUM")
-    parser.add_argument("--zone-rayon",  type=float, default=10.0, metavar="KM",
-                        help="Rayon en km autour du point (défaut: 10)")
-    parser.add_argument("--zone-nom",    metavar="NOM", default=None)
+    _ajouter_args_zone(
+        parser,
+        rayon_default=10.0,
+        bbox_metavar="W,S,E,N",
+    )
     parser.add_argument("--dossier",     metavar="CHEMIN", default=None,
                         help="Dossier de sortie (défaut: ./ign_vecteur/)")
     parser.add_argument("--workers",  type=int, default=4, metavar="N",
@@ -8526,9 +9227,9 @@ def main_wfs():
                         help="Mode non-interactif")
 
     args = parser.parse_args()
-    # Shim : --formats-fichier → args.no_gz
     _ff = getattr(args, "formats_fichier", ["gz"])
-    args.no_gz = "geojson" in _ff and "gz" not in _ff
+    # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
+    _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
 
     # ── Résolution des couches ────────────────────────────────────────────────
     couches_resolues = []
@@ -8539,7 +9240,6 @@ def main_wfs():
             # typename complet passé directement
             couches_resolues.append((c, c))
 
-    # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
 
@@ -8577,6 +9277,7 @@ def main_wfs():
             dossier_sortie   = dossier,
             bbox_l93         = None,   # département entier — pas de clip bbox
             ecraser          = args.telechargement_ecraser,
+            formats          = _gj_formats,
         )
         if sorties_bulk is not None:
             sorties = sorties_bulk
@@ -8590,7 +9291,8 @@ def main_wfs():
             print(f"\n  [{desc}]")
             return telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                                    nom_zone, dossier,
-                                   ecraser_telechargement=args.telechargement_ecraser)
+                                   ecraser_telechargement=args.telechargement_ecraser,
+                                   formats=_gj_formats)
 
         if args.workers > 1 and len(couches_resolues) > 1:
             with ThreadPoolExecutor(max_workers=min(args.workers,
@@ -8606,7 +9308,9 @@ def main_wfs():
     _geojson_fusionne = None
     if len(sorties) > 1:
         sortie_fusion = dossier / f"{nom_zone}_ign.geojson"
-        _geojson_fusionne = fusionner_geojson(sorties, sortie_fusion)
+        # main_wfs connaît déjà la bbox (lon_min/lat_min/...) — pas besoin
+        # du retour bbox du fusionner_geojson, on prend le compat wrapper.
+        _geojson_fusionne = _fusionner_geojson_compat(sorties, sortie_fusion)
 
     # ── Génération Mapsforge .map si demandé ──────────────────────────────────
     _ff = getattr(args, "formats_fichier", ["gz"])
@@ -8695,16 +9399,35 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         # Cas dégradé : aucun format reconnu, on tombe sur .gz
         ecrire_gz = True
 
-    chemin_geojson = dossier_ville / f"{nom_zone}_osm.geojson.gz"
-    # Compatibilité : vérifier aussi sans .gz
-    _old = dossier_ville / f"{nom_zone}_osm.geojson"
-    _existing_geo = chemin_geojson if chemin_geojson.exists() else (_old if _old.exists() else None)
-    if _existing_geo and not ecraser_tuiles:
-        print(f"  GeoJSON OSM deja present : {_existing_geo.name} — ignore")
-        return _existing_geo
-    if _existing_geo and ecraser_tuiles:
-        _existing_geo.unlink()
-        print(f"  GeoJSON OSM : écrasement {_existing_geo.name}")
+    # Cache check : on ne court-circuite que si TOUS les formats demandés
+    # sont déjà présents. Si l'utilisateur demande à la fois .gz et .geojson,
+    # et qu'on n'a que le .gz, il faut quand même regénérer le .geojson.
+    chemin_gz_attendu  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
+    chemin_raw_attendu = dossier_ville / f"{nom_zone}_osm.geojson"
+    formats_manquants = []
+    if ecrire_gz and not chemin_gz_attendu.exists():
+        formats_manquants.append("gz")
+    if ecrire_geojson and not chemin_raw_attendu.exists():
+        formats_manquants.append("geojson")
+
+    if not formats_manquants and not ecraser_tuiles:
+        # Tous les formats demandés sont déjà là
+        present = chemin_gz_attendu if chemin_gz_attendu.exists() else chemin_raw_attendu
+        print(f"  GeoJSON OSM deja present : {present.name} — ignore")
+        return present
+
+    if ecraser_tuiles:
+        # Mode écrasement : supprimer les sorties existantes pour repartir clean
+        for p in (chemin_gz_attendu, chemin_raw_attendu):
+            if p.exists():
+                p.unlink()
+                print(f"  GeoJSON OSM : écrasement {p.name}")
+        # Aussi supprimer les fichiers thématiques existants (per-clé)
+        for p in dossier_ville.glob(f"{nom_zone}_osm_*.geojson*"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
     try:
         import osmium as _osm
@@ -8715,7 +9438,8 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     t0 = time.time()
-    print(f"  PyOsmium → {chemin_geojson.name}...", flush=True)
+    chemin_principal = chemin_gz_attendu if ecrire_gz else chemin_raw_attendu
+    print(f"  PyOsmium → {chemin_principal.name}...", flush=True)
 
     # Clés thématiques demandées par l'utilisateur (osm_tags="highway=*,waterway=*"
     # → ["highway","waterway"]). Si rien : ensemble par défaut adapté outdoor.
@@ -8774,10 +9498,46 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         except Exception:
             return False
 
-    # Conteneurs pour les features par clé thématique
-    _par_cle = {k: [] for k in _cles}
-    nb_total = [0]   # mutable pour le print de progression
+    # Streaming : on ouvre un .gz temporaire par clé thématique et on y écrit
+    # les features au fil de la passe PyOsmium. Pas d'accumulation en RAM —
+    # un département peut produire plusieurs millions de features.
+    _streams       = {}   # cle → file handle gzip ouvert
+    _streams_paths = {}   # cle → (path_tmp_gz, path_final_gz, path_final_raw)
+    _first_feat    = {}   # cle → bool (1ère feature non encore écrite)
+    _counts_par_cle = {}  # cle → nombre de features écrites
+    nb_total = [0]
     nb_kept  = [0]
+
+    def _ouvrir_stream_cle(cle):
+        """Ouvre paresseusement le .gz tmp pour cette clé (1ère feature)."""
+        if cle in _streams:
+            return _streams[cle]
+        base = dossier_ville / f"{nom_zone}_osm_{cle}.geojson"
+        path_gz = Path(str(base) + ".gz")
+        path_tmp = path_gz.with_suffix(path_gz.suffix + ".tmp")
+        path_tmp.parent.mkdir(parents=True, exist_ok=True)
+        fh = gzip.open(path_tmp, "wb", compresslevel=6)
+        header = (
+            '{"type":"FeatureCollection","name":'
+            + json.dumps(f"{nom_zone}_osm_{cle}", ensure_ascii=False)
+            + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
+            + ',"features":['
+        ).encode("utf-8")
+        fh.write(header)
+        _streams[cle]       = fh
+        _streams_paths[cle] = (path_tmp, path_gz, base)
+        _first_feat[cle]    = True
+        _counts_par_cle[cle] = 0
+        return fh
+
+    def _fermer_streams_partiels():
+        """Cleanup en cas d'exception : fermer + supprimer les tmp."""
+        for fh in _streams.values():
+            try: fh.close()
+            except Exception: pass
+        for path_tmp, _, _ in _streams_paths.values():
+            try: path_tmp.unlink(missing_ok=True)
+            except Exception: pass
 
     # Itération via FileProcessor moderne (PyOsmium 4.x)
     # - with_locations() : nécessaire pour reconstruire les linestrings (ways)
@@ -8818,53 +9578,152 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             if not _geom_intersect_bbox(geom):
                 continue
 
-            # Construction de la feature GeoJSON
+            # Construction de la feature GeoJSON, écriture incrémentale
             tags["source"] = "OSM"
             tags["_cle"]   = cle
             feat = {"type": "Feature", "geometry": geom, "properties": tags}
-            _par_cle[cle].append(feat)
+
+            fh = _ouvrir_stream_cle(cle)
+            if not _first_feat[cle]:
+                fh.write(b",")
+            _first_feat[cle] = False
+            fh.write(json.dumps(feat, ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8"))
+            _counts_par_cle[cle] += 1
             nb_kept[0] += 1
-    except Exception as e_proc:
+    except BaseException as e_proc:
+        _fermer_streams_partiels()
+        if isinstance(e_proc, KeyboardInterrupt):
+            raise
         print(f"  ERREUR PyOsmium : {type(e_proc).__name__} : {e_proc}")
         return None
 
+    # Finaliser chaque stream par-clé : footer ']}' puis close puis replace atomique
+    for cle, fh in list(_streams.items()):
+        try:
+            fh.write(b"]}")
+            fh.close()
+        except Exception:
+            try: fh.close()
+            except Exception: pass
+            _streams_paths[cle][0].unlink(missing_ok=True)
+            continue
+        path_tmp, path_gz, _ = _streams_paths[cle]
+        path_tmp.replace(path_gz)
+
     print(f"  PyOsmium : {nb_total[0]} objets parcourus, {nb_kept[0]} dans la bbox", flush=True)
 
-    features_total = []
-    for _k, _feats in _par_cle.items():
-        if _feats:
-            gc = {"type": "FeatureCollection", "name": f"{nom_zone}_osm_{_k}",
-                  "crs": _crs, "features": _feats}
-            base_path = dossier_ville / f"{nom_zone}_osm_{_k}.geojson"
-            if ecrire_gz:
-                gz = _ecrire_geojson_gz(gc, base_path, compresser=True)
-                print(f"  {gz.name} : {len(_feats)} features")
-            if ecrire_geojson:
-                gj = _ecrire_geojson_gz(gc, base_path, compresser=False)
-                print(f"  {gj.name} : {len(_feats)} features")
-            features_total.extend(_feats)
-
-    if not features_total:
+    if nb_kept[0] == 0:
+        # Aucune feature retenue — nettoyer les .gz vides éventuels et sortir
+        for _, path_gz, _ in _streams_paths.values():
+            try: path_gz.unlink(missing_ok=True)
+            except Exception: pass
         print("  Aucun feature OSM exporté")
         return None
 
-    # Fichier fusionné global (toutes clés)
-    geojson = {"type": "FeatureCollection", "name": f"{nom_zone}_osm",
-               "crs": _crs, "features": features_total}
+    # Dériver les .geojson raw par-clé si demandé (depuis le .gz, en streaming)
+    for cle, (_, path_gz, base) in _streams_paths.items():
+        n_cle = _counts_par_cle.get(cle, 0)
+        if ecrire_gz:
+            print(f"  {path_gz.name} : {n_cle} features")
+        if ecrire_geojson:
+            _gunzip_vers_fichier(path_gz, base)
+            print(f"  {base.name} : {n_cle} features")
+        if not ecrire_gz:
+            try: path_gz.unlink()
+            except Exception: pass
+
+    # Fichier fusionné global : concaténer en streaming les fichiers par-clé
     base_global = dossier_ville / f"{nom_zone}_osm.geojson"
+    chemin_global_gz  = Path(str(base_global) + ".gz")
+    chemin_global_raw = base_global
+
     chemin_principal = None
-    if ecrire_gz:
-        chemin_principal = _ecrire_geojson_gz(geojson, base_global, compresser=True)
-        taille = chemin_principal.stat().st_size // 1024
-        print(f"  {chemin_principal.name} : {len(features_total)} features"
-              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-    if ecrire_geojson:
-        chemin_geo = _ecrire_geojson_gz(geojson, base_global, compresser=False)
-        taille = chemin_geo.stat().st_size // 1024
-        print(f"  {chemin_geo.name} : {len(features_total)} features"
-              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-        if chemin_principal is None:
-            chemin_principal = chemin_geo
+    # On reconstruit le .gz global à partir des .gz par-clé. Pas via
+    # `_par_cle` qui n'existe plus — on ré-ouvre chaque fichier par-clé en
+    # ijson pour itérer ses features et les ré-injecter dans le global.
+    # Si ijson absent, fallback : json.load() — accepté en dégradé sur cas
+    # extrêmes (le département entier OSM tient < 2 Go en JSON typiquement).
+    try:
+        import ijson as _ijson_g
+        _has_ijson_g = True
+    except ImportError:
+        _has_ijson_g = False
+
+    def _iter_feats_par_cle():
+        for cle, (_, path_gz, base) in _streams_paths.items():
+            src = path_gz if path_gz.exists() else base
+            if not src.exists():
+                continue
+            opener = ((lambda s=src: gzip.open(s, "rb"))
+                      if str(src).endswith(".gz")
+                      else (lambda s=src: open(s, "rb")))
+            if _has_ijson_g:
+                try:
+                    with opener() as fh:
+                        for feat in _ijson_g.items(fh, "features.item"):
+                            yield feat
+                    continue
+                except (OSError, ValueError):
+                    pass
+            # Fallback non-streaming (cas ijson cassé / absent)
+            try:
+                with opener() as fh:
+                    payload = fh.read()
+                if isinstance(payload, bytes):
+                    payload = payload.decode("utf-8", errors="replace")
+                gj = json.loads(payload)
+            except Exception:
+                continue
+            for feat in gj.get("features", []):
+                yield feat
+
+    if ecrire_gz or ecrire_geojson:
+        chemin_global_gz_tmp = chemin_global_gz.with_suffix(
+            chemin_global_gz.suffix + ".tmp")
+        try:
+            with gzip.open(chemin_global_gz_tmp, "wb", compresslevel=6) as out_g:
+                header_g = (
+                    '{"type":"FeatureCollection","name":'
+                    + json.dumps(f"{nom_zone}_osm", ensure_ascii=False)
+                    + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
+                    + ',"features":['
+                ).encode("utf-8")
+                out_g.write(header_g)
+                first_g = True
+                import decimal as _dec_g
+                def _enc_def(o):
+                    if isinstance(o, _dec_g.Decimal): return float(o)
+                    raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
+                for feat in _iter_feats_par_cle():
+                    if not first_g:
+                        out_g.write(b",")
+                    first_g = False
+                    out_g.write(json.dumps(feat, ensure_ascii=False,
+                                            separators=(",", ":"),
+                                            default=_enc_def).encode("utf-8"))
+                out_g.write(b"]}")
+            chemin_global_gz_tmp.replace(chemin_global_gz)
+        except BaseException:
+            chemin_global_gz_tmp.unlink(missing_ok=True)
+            raise
+
+        if ecrire_gz:
+            taille = chemin_global_gz.stat().st_size // 1024
+            print(f"  {chemin_global_gz.name} : {nb_kept[0]} features"
+                  f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
+            chemin_principal = chemin_global_gz
+        if ecrire_geojson:
+            _gunzip_vers_fichier(chemin_global_gz, chemin_global_raw)
+            taille = chemin_global_raw.stat().st_size // 1024
+            print(f"  {chemin_global_raw.name} : {nb_kept[0]} features"
+                  f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
+            if chemin_principal is None:
+                chemin_principal = chemin_global_raw
+        if not ecrire_gz:
+            try: chemin_global_gz.unlink()
+            except Exception: pass
+
     return chemin_principal
 
 
@@ -8898,7 +9757,6 @@ def _ecrire_geojson_gz(data_dict, chemin, compresser=True):
             f.write(data_bytes)
     else:
         p.write_bytes(data_bytes)
-    _creer_fichier(p, intermediaire=False)
     return p
 
 
@@ -8913,52 +9771,191 @@ def _lire_geojson(chemin):
 
 def fusionner_geojson(fichiers, sortie):
     """
-    Fusionne plusieurs GeoJSON en un seul FeatureCollection.
-    Ajoute 'source' depuis le nom de fichier si absent.
+    Fusionne plusieurs GeoJSON en un seul FeatureCollection — STREAMING.
+
+    Lecture incrémentale via ijson (fallback json.load si ijson absent),
+    écriture incrémentale dans le .gz au fil de l'eau. La bbox WGS84 est
+    calculée pendant la passe d'écriture (pas de re-lecture nécessaire).
+
     fichiers : liste de Path ou str
     sortie   : Path de sortie
-    Retourne le Path du fichier créé, ou None.
+    Retourne (Path créé, bbox|None) — bbox = (lon_min, lat_min, lon_max, lat_max),
+    ou (None, None) si aucune feature à fusionner.
     """
+    import decimal as _dec
+    try:
+        import ijson
+        _has_ijson = True
+    except ImportError:
+        _has_ijson = False
 
-    features = []
-    for f in fichiers:
-        p = Path(f)
-        # Accepter .geojson et .geojson.gz
-        if not p.exists() and not str(p).endswith(".gz"):
-            p_gz = Path(str(p) + ".gz")
-            if p_gz.exists():
-                p = p_gz
-        if not p.exists():
-            print(f"  AVERTISSEMENT : {p.name} introuvable — ignoré")
-            continue
+    sortie = Path(sortie)
+    # Sortie .gz si l'extension dit .gz, sinon raw. _ecrire_geojson_gz
+    # respectait déjà cette convention ; on la conserve ici.
+    compresser = str(sortie).endswith(".gz")
+    if compresser and not str(sortie).endswith(".geojson.gz"):
+        # Cas .gz pur : rajouter .geojson au-dessus
+        if not str(sortie).endswith(".gz"):
+            sortie = Path(str(sortie) + ".gz")
+
+    sortie.parent.mkdir(parents=True, exist_ok=True)
+    tmp = sortie.with_suffix(sortie.suffix + ".tmp")
+
+    def _enc_default(o):
+        if isinstance(o, _dec.Decimal):
+            return float(o)
+        raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
+
+    # Header GeoJSON
+    name_out = sortie.name.replace(".geojson.gz", "").replace(".geojson", "")
+    header = (
+        '{"type":"FeatureCollection","name":'
+        + json.dumps(name_out, ensure_ascii=False)
+        + ',"crs":{"type":"name","properties":'
+          '{"name":"urn:ogc:def:crs:OGC:1.3:CRS84"}}'
+        + ',"features":['
+    ).encode("utf-8")
+
+    # Bounds calculés au passage. On évite _coords_flat (récursif Python pour
+    # chaque feature) au profit d'une boucle inline plus rapide.
+    state = {
+        "lon_min": float("inf"),  "lon_max": float("-inf"),
+        "lat_min": float("inf"),  "lat_max": float("-inf"),
+        "valid":   False,
+    }
+    def _track(lon, lat):
+        if lon < state["lon_min"]: state["lon_min"] = lon
+        if lon > state["lon_max"]: state["lon_max"] = lon
+        if lat < state["lat_min"]: state["lat_min"] = lat
+        if lat > state["lat_max"]: state["lat_max"] = lat
+        state["valid"] = True
+
+    def _track_geom(geom):
+        if not geom:
+            return
+        gt = geom.get("type", "")
+        c = geom.get("coordinates", [])
+        if gt == "Point" and c:
+            _track(float(c[0]), float(c[1]))
+        elif gt in ("MultiPoint", "LineString"):
+            for pt in c: _track(float(pt[0]), float(pt[1]))
+        elif gt in ("MultiLineString", "Polygon"):
+            for ring in c:
+                for pt in ring: _track(float(pt[0]), float(pt[1]))
+        elif gt == "MultiPolygon":
+            for poly in c:
+                for ring in poly:
+                    for pt in ring: _track(float(pt[0]), float(pt[1]))
+        elif gt == "GeometryCollection":
+            for sub in geom.get("geometries", []):
+                _track_geom(sub)
+
+    def _iter_features_streame(p):
+        """Yield (source, feat) pour chaque feature de p."""
+        source = p.stem.replace(".geojson", "")
+        if _has_ijson:
+            opener = ((lambda: gzip.open(p, "rb")) if str(p).endswith(".gz")
+                      else (lambda: open(p, "rb")))
+            try:
+                with opener() as fh:
+                    for feat in ijson.items(fh, "features.item"):
+                        yield source, feat
+                return
+            except (OSError, ValueError) as e:
+                print(f"  AVERTISSEMENT : {p.name} streaming échoué ({e}) — fallback RAM")
+        # Fallback non-streaming
         try:
             data = _lire_geojson(p)
         except Exception as e:
             print(f"  AVERTISSEMENT : {p.name} illisible ({e}) — ignoré")
-            continue
-        source = p.stem.replace(".geojson", "")
+            return
         for feat in data.get("features", []):
-            feat.setdefault("properties", {})
-            feat["properties"].setdefault("source", source)
-            features.append(feat)
-        print(f"  {p.name} : {len(data.get('features', []))} features")
+            yield source, feat
 
-    if not features:
+    n_total = 0
+    n_par_fichier = {}
+    out_fh = None
+    try:
+        if compresser:
+            out_fh = gzip.open(tmp, "wb", compresslevel=6)
+        else:
+            out_fh = open(tmp, "wb")
+        out_fh.write(header)
+        first_feat = True
+
+        for f in fichiers:
+            p = Path(f)
+            if not p.exists() and not str(p).endswith(".gz"):
+                p_gz = Path(str(p) + ".gz")
+                if p_gz.exists():
+                    p = p_gz
+            if not p.exists():
+                print(f"  AVERTISSEMENT : {p.name} introuvable — ignoré")
+                continue
+
+            n_fichier = 0
+            for source, feat in _iter_features_streame(p):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("Fusion interrompue")
+                # Convertir Decimal éventuels (ijson)
+                props = feat.get("properties") or {}
+                if not isinstance(props, dict):
+                    props = {}
+                props.setdefault("source", source)
+                feat["properties"] = props
+                geom = feat.get("geometry")
+                _track_geom(geom)
+
+                if not first_feat:
+                    out_fh.write(b",")
+                first_feat = False
+                out_fh.write(json.dumps(feat, ensure_ascii=False,
+                                         separators=(",", ":"),
+                                         default=_enc_default).encode("utf-8"))
+                n_fichier += 1
+            n_total += n_fichier
+            n_par_fichier[p.name] = n_fichier
+            print(f"  {p.name} : {n_fichier} features")
+
+        out_fh.write(b"]}")
+        out_fh.close()
+        out_fh = None
+    except BaseException:
+        # Fermer + nettoyer le tmp en cas d'interruption ou d'erreur
+        if out_fh is not None:
+            try: out_fh.close()
+            except Exception: pass
+        tmp.unlink(missing_ok=True)
+        raise
+
+    if n_total == 0:
+        tmp.unlink(missing_ok=True)
         print("  Aucun feature à fusionner")
-        return None
+        return None, None
 
-    geojson = {
-        "type": "FeatureCollection",
-        "name": Path(sortie).stem.replace(".geojson", ""),
-        "crs": {"type": "name",
-                "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
-        "features": features,
-    }
-    sortie_gz = _ecrire_geojson_gz(geojson, sortie)
-    taille = sortie_gz.stat().st_size // 1024
-    print(f"  → {sortie_gz.name} : {len(features)} features  ({taille} Ko)")
-    _creer_fichier(sortie_gz, intermediaire=False)
-    return sortie_gz
+    tmp.replace(sortie)
+    taille = sortie.stat().st_size // 1024
+    print(f"  → {sortie.name} : {n_total} features  ({taille} Ko)")
+
+    bbox = None
+    if state["valid"]:
+        bbox = (state["lon_min"], state["lat_min"],
+                state["lon_max"], state["lat_max"])
+    return sortie, bbox
+
+
+def _fusionner_geojson_compat(fichiers, sortie):
+    """Compat avec l'ancienne signature : retourne juste le Path (pas la bbox).
+
+    Conservé pour les sites qui n'ont pas besoin de la bbox (ex.
+    main_wfs/main_decouper). Préférer fusionner_geojson() directement quand
+    on veut éviter une 2e passe pour calculer la bbox.
+    """
+    res = fusionner_geojson(fichiers, sortie)
+    if res is None or res == (None, None):
+        return None
+    chemin, _bbox = res
+    return chemin
 
 
 def main_fusionner():
@@ -9039,23 +10036,16 @@ Exemples :
         if rep == "n":
             sys.exit(0)
 
-    result = fusionner_geojson(fichiers, sortie)
-    if result:
+    fusion_result = fusionner_geojson(fichiers, sortie)
+    if fusion_result and fusion_result[0] is not None:
+        result, bbox = fusion_result
         fmts = [f.lower() for f in args.formats_fichier]
         # Générer le .map Mapsforge si demandé
         if "map" in fmts:
             nom_zone = sortie.stem.split(".")[0]
             dossier_sortie = sortie.parent
             try:
-                data = _lire_geojson(result)
-                lons, lats = [], []
-                for feat in data.get("features", []):
-                    for coord in _coords_flat(feat.get("geometry", {})):
-                        lons.append(coord[0]); lats.append(coord[1])
-                if lons:
-                    bbox = (min(lons), min(lats), max(lons), max(lats))
-                else:
-                    bbox = None
+                # bbox arrive déjà calculée par fusionner_geojson — pas de relecture.
                 if getattr(args, 'simplification_vecteur', None):
                     _eps_deg = args.simplification_vecteur / 111_000.0
                     print(f"  Simplification vecteur : epsilon={args.simplification_vecteur:.1f} m (forcé)")
@@ -9358,6 +10348,32 @@ def lancer_gui():
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
+        # ── Autocomplétion ville (proxy BAN) ─────────────────────────────
+        # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
+        # WebView2 traite mal vis-à-vis du CORS — on relaie ici en Python.
+        def autocomplete_ville(self, prefix):
+            try:
+                p = (prefix or "").strip()
+                if len(p) < 3:   # Geoplateforme rejette < 3 caractères
+                    return []
+                url = ("https://data.geopf.fr/geocodage/search/"
+                       f"?q={urllib.parse.quote(p)}"
+                       "&type=municipality&autocomplete=1&limit=8")
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": _HTTP_UA})
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    data = json.load(r)
+                out = []
+                for f in data.get("features", []):
+                    props = f.get("properties", {}) or {}
+                    label = props.get("name") or props.get("label") or ""
+                    if label:
+                        out.append({"label":   label,
+                                    "context": props.get("context", "")})
+                return out
+            except Exception:
+                return []
+
         # ── Dialogs fichiers ─────────────────────────────────────────────
         def _get_window(self):
             if self.window is None and webview.windows:
@@ -9395,8 +10411,7 @@ def lancer_gui():
             cmd = [sys.executable, str(SCRIPT)]
             t = cfg.get("type", "lidar")
 
-            # Zone
-            # Zone (pas pour fusion)
+            # Zone (pas pour fusion / découpe)
             if t != "fusion" and t != "decoupe":
                 mode = cfg.get("mode", "ville")
                 if mode == "ville"  and cfg.get("ville"):
@@ -9546,9 +10561,9 @@ def lancer_gui():
                 cmd.append("--decouper")
                 src_d = cfg.get("source_decoupe", "")
                 if src_d: cmd += ["--source", src_d]
-                if cfg.get("cols_decoupe", 0) > 0 and cfg.get("rows_decoupe", 0) > 0:
-                    cmd += ["--cols", str(cfg["cols_decoupe"]),
-                            "--rows", str(cfg["rows_decoupe"])]
+                if cfg.get("cols_decoupe_d", 0) > 0 and cfg.get("rows_decoupe_d", 0) > 0:
+                    cmd += ["--cols", str(cfg["cols_decoupe_d"]),
+                            "--rows", str(cfg["rows_decoupe_d"])]
                 elif cfg.get("rayon_decoupe_d", 0) > 0:
                     cmd += ["--rayon-decoupe", str(cfg["rayon_decoupe_d"])]
                 fmts_d = []
@@ -9601,10 +10616,15 @@ def lancer_gui():
                     env["PYTHONIOENCODING"] = "utf-8"
                     # Créer un nouveau groupe de processus pour pouvoir tuer toute la hiérarchie
                     if WINDOWS:
+                        # Note : CREATE_NEW_PROCESS_GROUP est nécessaire pour que
+                        # Ctrl+C puisse tuer le child et ses descendants. Mais
+                        # sur certaines configurations Windows + WebView2, cette
+                        # flag semble causer un blocage du pipe stdout — les
+                        # données restent dans le buffer du child et n'arrivent
+                        # jamais au parent. Test sans la flag :
                         self._process = subprocess.Popen(
                             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            bufsize=0, env=env,
-                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+                            bufsize=0, env=env)
                     else:
                         self._process = subprocess.Popen(
                             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -9621,11 +10641,20 @@ def lancer_gui():
                     for chunk in iter(lambda: self._process.stdout.read(64), b""):
                         for ch in chunk.decode("utf-8", errors="replace"):
                             if ch == "\r":
+                                # Sur Windows, les print() Python terminent les
+                                # lignes par \r\n. Ne traiter le \r comme une
+                                # mise à jour de barre de progression QUE si
+                                # le buffer contient un pourcentage. Sinon,
+                                # c'est juste un CR avant un LF — on l'ignore
+                                # et le \n qui suit déclenchera l'envoi normal
+                                # de la ligne (path "elif ch == '\\n'").
                                 m = pct_re.search(buf)
-                                pct = int(m.group(1)) if m else -1
-                                if buf.strip():
-                                    self._log_queue.put({"pct": pct, "label": buf.strip()})
-                                buf = ""
+                                if m:
+                                    pct = int(m.group(1))
+                                    if buf.strip():
+                                        self._log_queue.put({"pct": pct, "label": buf.strip()})
+                                    buf = ""
+                                # Sinon : ignorer ce \r (CRLF Windows), garder buf intact
                             elif ch == "\n":
                                 if buf.strip():
                                     # Détection élargie : argparse "error:" en minuscules,
@@ -9676,6 +10705,40 @@ def lancer_gui():
                         buf = ""
                     self._process.wait()
                     self._retcode = self._process.returncode
+
+                    # Drain final post-wait : sur Windows, le pipe peut contenir
+                    # encore des données après que le child ait exit. Sans ce
+                    # drain, les dernières lignes (souvent les plus importantes :
+                    # message d'erreur final + sys.exit(1)) sont perdues.
+                    try:
+                        remaining = self._process.stdout.read()
+                        if remaining:
+                            text = remaining.decode("utf-8", errors="replace")
+                            for line in text.split("\n"):
+                                line = line.rstrip("\r")
+                                if not line.strip():
+                                    continue
+                                upbuf = line.upper()
+                                is_err = (
+                                    any(w in upbuf for w in
+                                        ["ERREUR", "ERROR", "TRACEBACK"])
+                                    or line.strip().startswith("usage:")
+                                    or ": error:" in line
+                                )
+                                if is_err and len(self._err_lines) < 20:
+                                    self._err_lines.append(line.strip())
+                                self._tail_lines.append(line.strip())
+                                if len(self._tail_lines) > 10:
+                                    self._tail_lines.pop(0)
+                                self._log_queue.put({
+                                    "line": line + "\n",
+                                    "tag": "err" if is_err else "ok",
+                                })
+                    except Exception:
+                        # En cas d'erreur de lecture finale (pipe déjà fermé),
+                        # on continue silencieusement avec ce qu'on a.
+                        pass
+
                     sym = "✓" if self._retcode == 0 else "✗"
                     self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
                                          "tag": "ok" if self._retcode == 0 else "err"})
@@ -9689,14 +10752,24 @@ def lancer_gui():
                     # certaines versions de pywebview/WebView2.
                     self._modal_error_msg = ""
                     if self._retcode != 0:
-                        modal_lines = self._err_lines[-10:] if self._err_lines \
-                                      else self._tail_lines[-10:]
-                        if modal_lines:
-                            self._modal_error_msg = "\n".join(modal_lines)
-                            self._log_queue.put({
-                                "modal_error": self._modal_error_msg,
-                                "retcode": self._retcode,
-                            })
+                        # Priorité 1 : lignes marquées "ERREUR" capturées
+                        # Priorité 2 : 10 dernières lignes non vides
+                        # Priorité 3 : message générique si tout est vide
+                        if self._err_lines:
+                            modal_lines = self._err_lines[-10:]
+                        elif self._tail_lines:
+                            modal_lines = self._tail_lines[-10:]
+                        else:
+                            modal_lines = [
+                                f"Le traitement a échoué (code {self._retcode})",
+                                "Aucun message d'erreur n'a été capturé.",
+                                "Vérifiez le panneau de log pour les détails.",
+                            ]
+                        self._modal_error_msg = "\n".join(modal_lines)
+                        self._log_queue.put({
+                            "modal_error": self._modal_error_msg,
+                            "retcode": self._retcode,
+                        })
                     if self._retcode == 0:
                         # Marquer la durée — sauvegarde historique faite dans poll_log
                         self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
@@ -9753,7 +10826,8 @@ def lancer_gui():
                 while True:
                     items.append(self._log_queue.get_nowait())
             except queue.Empty:
-                pass            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
+                pass
+            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
             if self._done and self._retcode == 0 and not getattr(self, "_hist_saved", False):
                 self._hist_saved = True
                 try:
@@ -9800,10 +10874,6 @@ def lancer_gui():
 *{box-sizing:border-box;margin:0;padding:0}
 .hidden{display:none!important}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:13px var(--fnt)}
-header{background:var(--bg3);border-bottom:1px solid var(--bd);
-  padding:8px 16px;display:flex;align-items:center;gap:12px}
-header h1{font-size:14px;font-weight:600;color:#fff;letter-spacing:.5px}
-header .ver{font-size:10px;color:var(--dim)}
 #main{padding:10px 24px}
 #form-inner{max-width:900px;width:100%;margin:0 auto;
   display:flex;flex-direction:column;gap:8px}
@@ -9900,20 +10970,118 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
 #fusion-list div{padding:2px 4px;border-radius:3px;cursor:pointer}
 #fusion-list div:hover{background:var(--bd)}
 #fusion-list div.sel{background:var(--ac);color:#fff}
+/* ═══ PANNEAU DE LOG ═══ */
+#panneau-log{
+  position:fixed;left:0;right:0;bottom:0;
+  height:200px; min-height:60px; max-height:85vh;
+  background:var(--bg2);border-top:2px solid var(--bd);
+  display:flex;flex-direction:column;z-index:50;
+  /* Pas de transition .15s sur height : ça lutte avec le drag de la
+     poignée et provoque un effet d'inertie/saccade pendant le mousemove.
+     Conservé seulement pour le toggle ouvert/fermé via JS qui ajoute la
+     classe `animating` le temps de la transition. */
+}
+#panneau-log.animating{ transition:height .15s ease; }
+/* Poignée de redimensionnement vertical : 6 px sur le bord supérieur,
+   débordant 3 px au-dessus pour faciliter le clic (zone de hit plus
+   généreuse que la bordure visible). Cursor ns-resize est explicite. */
+#log-resize-handle{
+  position:absolute; left:0; right:0; top:-3px;
+  height:6px;
+  cursor:ns-resize;
+  z-index:51;
+  background:transparent;
+}
+#log-resize-handle:hover,
+#log-resize-handle.dragging{
+  background:var(--ac);
+  opacity:.6;
+}
+/* Pendant le drag : désactiver toute sélection de texte sur la page
+   pour éviter de surligner le contenu en bougeant la souris. */
+body.log-resizing,
+body.log-resizing *{
+  user-select:none !important;
+  cursor:ns-resize !important;
+}
+/* Caché par défaut, ouvert au clic sur le bouton Logs */
+#panneau-log.hidden{display:none}
+#log-header{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;background:var(--bg3);
+  border-bottom:1px solid var(--bd);
+  user-select:none;
+  font-size:12px;
+}
+#log-header strong{color:var(--ac);font-weight:600}
+#log-header .log-actions{margin-left:auto;display:flex;gap:6px}
+#log-header button{
+  background:transparent;border:1px solid var(--bd);color:var(--dim);
+  padding:2px 8px;border-radius:3px;cursor:pointer;font-size:11px;
+}
+#log-header button:hover{background:var(--bd);color:var(--fg)}
+#log-content{
+  flex:1;overflow-y:auto;overflow-x:auto;
+  padding:6px 12px;
+  font-family:Consolas,"Courier New",monospace;
+  font-size:11px;line-height:1.4;
+  color:var(--fg);background:#0a0a14;
+  white-space:pre-wrap;word-wrap:break-word;
+}
+#log-content .log-ok  {color:#c8c8d4}
+#log-content .log-err {color:#ff7060;font-weight:500}
+#log-content .log-dim {color:#7575a0;font-style:italic}
+#log-content .log-cmd {color:#80a0d0;font-style:italic;border-bottom:1px dashed var(--bd);
+                       padding-bottom:4px;margin-bottom:6px}
+/* Compenser la hauteur du panneau dans le main quand il est visible */
+#main.log-visible{padding-bottom:210px}
+/* Bouton Logs actif (panneau visible) — bordure plus claire */
+#btn-log.active{background:var(--ac)!important;color:#fff!important}
+/* Barre de progression */
+#log-progress{
+  height:3px;background:var(--bg3);position:relative;
+}
+#log-progress-bar{
+  position:absolute;top:0;left:0;height:100%;
+  background:var(--ac);transition:width .2s;
+  width:0%;
+}
+#log-progress-bar.err{background:var(--red)}
+#log-progress-bar.ok{background:var(--green)}
+/* ── Autocomplete ville (API BAN data.gouv.fr) ─────────────────────────── */
+/* La section zone doit laisser dépasser le dropdown — sinon clipping par
+   .section { overflow:hidden } (ligne ~9945) qui sert aux coins arrondis. */
+.section.sec-zone{overflow:visible}
+.section.sec-zone .section-hd{border-radius:6px 6px 0 0}
+.ac-wrap{position:relative;display:inline-flex;flex:1;min-width:0;max-width:180px}
+.ac-wrap > input[type=text]{width:100%}
+.ac-dropdown{
+  position:absolute;top:calc(100% + 2px);left:0;
+  min-width:100%;width:max-content;max-width:380px;
+  background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+  box-shadow:0 4px 12px rgba(0,0,0,.4);
+  z-index:1000;max-height:240px;overflow-y:auto;
+}
+.ac-item{
+  padding:5px 8px;cursor:pointer;font-size:12px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border-bottom:1px solid var(--bd);
+}
+.ac-item:last-child{border-bottom:none}
+.ac-item:hover,.ac-item.active{background:var(--bg2);color:var(--ac)}
+.ac-item .ac-meta{color:var(--dim);font-size:11px;margin-left:6px}
 </style>
 </head>
 <!-- ═══════════════════════════════ HTML ═══════════════════════════════════ -->
 <body>
-<header>
-  <h1>⛰ lidar2map</h1>
-  <span class="ver">Prospection LiDAR archéologique</span>
-</header>
 <div id="main">
 <div id="btn-bar">
  <button class="btn btn-run" id="btn-run" onclick="lancer()">▶ Lancer</button>
  <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled>■ Arrêter</button>
  <button class="btn" id="btn-hist" onclick="toggleHistorique()"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
+ <button class="btn" id="btn-log" onclick="toggleLogPanel()"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📋 Logs</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
 </div>
 <div id="form-inner">
@@ -9949,7 +11117,10 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
      </div>
     </div>
     <div class="row z-zone" id="z-ville"><label>Ville</label>
-     <input type="text" id="f-ville" placeholder="ex: gareoult" style="max-width:180px">
+     <div class="ac-wrap">
+       <input type="text" id="f-ville" placeholder="ex: Garéoult" autocomplete="off">
+       <div id="f-ville-ac" class="ac-dropdown hidden" role="listbox"></div>
+     </div>
      <label style="min-width:auto;margin-left:8px">Rayon km</label>
      <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short"></div>
     <div class="row hidden z-zone" id="z-gps"><label>GPS lat,lon</label>
@@ -10333,7 +11504,23 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
   </div>
  </div>
  <div id="hist-list"></div>
-<!-- panneau-hist end --
+<!-- panneau-hist end -->
+</div>
+
+<!-- ═══ PANNEAU DE LOG ═══ -->
+<div id="panneau-log" class="hidden">
+  <div id="log-resize-handle" title="Redimensionner verticalement"></div>
+  <div id="log-header">
+    <strong>📋 Log</strong>
+    <span id="log-status" style="color:var(--dim)"></span>
+    <div class="log-actions">
+      <button onclick="copierLog()" title="Copier le log dans le presse-papier">⎘ Copier</button>
+      <button onclick="viderLog()" title="Effacer le contenu du log">🗑 Vider</button>
+      <button onclick="toggleLogPanel()" title="Masquer le panneau (ré-affichable via le bouton Logs en haut)">✕</button>
+    </div>
+  </div>
+  <div id="log-progress"><div id="log-progress-bar"></div></div>
+  <div id="log-content"></div>
 </div>
 
 <!-- ═══════════════════════════════ JS ═════════════════════════════════════ -->
@@ -10344,12 +11531,231 @@ let fusionSel = -1;
 let polling = null;
 let _initialized = false;
 
+// ── Panneau de log ───────────────────────────────────────────────────────────
+function ajouterLigneLog(text, tag) {
+  const c = document.getElementById('log-content');
+  if (!c) return;
+  const span = document.createElement('span');
+  span.className = 'log-' + (tag || 'ok');
+  span.textContent = text;
+  c.appendChild(span);
+  // Auto-scroll si l'utilisateur est déjà en bas (à 30 px près)
+  const isAtBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 30;
+  if (isAtBottom) c.scrollTop = c.scrollHeight;
+  // Limiter à ~5000 lignes pour éviter de saturer le DOM sur les longs runs
+  while (c.children.length > 5000) c.removeChild(c.firstChild);
+}
+
+function viderLog() {
+  const c = document.getElementById('log-content');
+  if (c) c.innerHTML = '';
+  document.getElementById('log-status').textContent = '';
+  setLogProgress(0, '');
+}
+
+function copierLog() {
+  // navigator.clipboard.writeText ne fonctionne pas dans WebView2/pywebview
+  // hors contexte sécurisé (pas de HTTPS) : la méthode existe mais throw
+  // silencieusement « NotAllowedError » ou ne fait rien selon les versions.
+  // On essaie d'abord l'API moderne puis on retombe sur execCommand qui,
+  // bien que déprécié, reste fonctionnel partout — y compris dans WebView2.
+  const c = document.getElementById('log-content');
+  if (!c) return;
+  const text = c.textContent || '';
+
+  function _flash() {
+    const st = document.getElementById('log-status');
+    if (!st) return;
+    const orig = st.textContent;
+    st.textContent = '✓ copié dans le presse-papier';
+    setTimeout(() => { st.textContent = orig; }, 1500);
+  }
+
+  function _flashErr() {
+    const st = document.getElementById('log-status');
+    if (!st) return;
+    const orig = st.textContent;
+    st.textContent = '✗ copie échouée';
+    setTimeout(() => { st.textContent = orig; }, 2500);
+  }
+
+  function _fallback() {
+    // Méthode universelle : textarea hors-écran + execCommand('copy').
+    // Doit être attaché au DOM et sélectionné AVANT execCommand.
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // Position fixed visible 1×1 px : execCommand exige que l'élément soit
+    // dans le viewport (sinon il refuse silencieusement sur certains
+    // chromiums embarqués). Opacité 0 plutôt que display:none.
+    ta.style.position  = 'fixed';
+    ta.style.top       = '0';
+    ta.style.left      = '0';
+    ta.style.width     = '1px';
+    ta.style.height    = '1px';
+    ta.style.padding   = '0';
+    ta.style.border    = 'none';
+    ta.style.outline   = 'none';
+    ta.style.boxShadow = 'none';
+    ta.style.background = 'transparent';
+    ta.style.opacity   = '0';
+    document.body.appendChild(ta);
+
+    // Mémoriser la sélection courante pour la restaurer après
+    const sel = document.getSelection();
+    const ranges = [];
+    if (sel) {
+      for (let i = 0; i < sel.rangeCount; i++) ranges.push(sel.getRangeAt(i));
+    }
+
+    let ok = false;
+    try {
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      ok = document.execCommand('copy');
+    } catch (e) {
+      console.error('execCommand copy:', e);
+    }
+    document.body.removeChild(ta);
+
+    // Restaurer la sélection que l'utilisateur avait avant
+    if (sel && ranges.length) {
+      sel.removeAllRanges();
+      ranges.forEach(r => sel.addRange(r));
+    }
+    return ok;
+  }
+
+  // Tentative API moderne, fallback synchrone si KO/absente
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(_flash).catch(e => {
+      console.warn('clipboard API failed, fallback execCommand:', e);
+      if (_fallback()) _flash(); else _flashErr();
+    });
+  } else {
+    if (_fallback()) _flash(); else _flashErr();
+  }
+}
+
+function toggleLogPanel() {
+  const p = document.getElementById('panneau-log');
+  const m = document.getElementById('main');
+  const b = document.getElementById('btn-log');
+  if (!p) return;
+  // On active la transition CSS uniquement pour le toggle, pas pour le
+  // drag de redimensionnement (sinon effet d'inertie pendant le mousemove).
+  p.classList.add('animating');
+  setTimeout(() => p.classList.remove('animating'), 200);
+  p.classList.toggle('hidden');
+  const visible = !p.classList.contains('hidden');
+  if (m) m.classList.toggle('log-visible', visible);
+  if (b) b.classList.toggle('active', visible);
+}
+
+// ── Drag de la poignée de redimensionnement du panneau de log ─────────────
+// Pattern classique : mousedown sur la poignée → on enregistre Y de départ
+// + hauteur de départ ; mousemove document → recalcule height ; mouseup
+// document → cleanup. Le clamp respecte min-height (60) et 85vh.
+// Persistance de la hauteur en localStorage : `log-h-px` — stable entre
+// sessions sans nécessiter d'aller-retour Python.
+(function _initLogResize(){
+  const HANDLE_ID = 'log-resize-handle';
+  const PANEL_ID  = 'panneau-log';
+  const KEY       = 'lidar2map.log-height';
+  const MIN_PX    = 60;
+  const MAX_FRAC  = 0.85;   // 85vh
+
+  function _maxPx(){ return Math.floor(window.innerHeight * MAX_FRAC); }
+  function _clamp(h){ return Math.max(MIN_PX, Math.min(_maxPx(), h)); }
+
+  function _appliquerHauteur(h){
+    const p = document.getElementById(PANEL_ID);
+    if (!p) return;
+    p.style.height = _clamp(h) + 'px';
+  }
+
+  // Restaurer la hauteur au chargement (si persistée)
+  try {
+    const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+    if (!isNaN(saved) && saved >= MIN_PX) _appliquerHauteur(saved);
+  } catch(e) { /* localStorage indispo (privacy mode) — non critique */ }
+
+  function _attacher(){
+    const handle = document.getElementById(HANDLE_ID);
+    const panel  = document.getElementById(PANEL_ID);
+    if (!handle || !panel) return;
+    if (handle.dataset.bound === '1') return;   // idempotent
+    handle.dataset.bound = '1';
+
+    let dragStartY = 0;
+    let dragStartH = 0;
+    let dragging   = false;
+
+    function onMouseMove(ev){
+      if (!dragging) return;
+      // dY positif quand on descend ; le panneau est ancré en bas, donc
+      // descendre la souris RÉDUIT la hauteur. Inverser.
+      const dy = ev.clientY - dragStartY;
+      _appliquerHauteur(dragStartH - dy);
+      ev.preventDefault();
+    }
+    function onMouseUp(){
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.classList.remove('log-resizing');
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Persister la hauteur finale
+      try {
+        const h = parseInt(panel.style.height, 10);
+        if (!isNaN(h)) localStorage.setItem(KEY, String(h));
+      } catch(e) {}
+    }
+    handle.addEventListener('mousedown', function(ev){
+      if (ev.button !== 0) return;   // bouton gauche uniquement
+      dragging   = true;
+      dragStartY = ev.clientY;
+      dragStartH = panel.getBoundingClientRect().height;
+      handle.classList.add('dragging');
+      document.body.classList.add('log-resizing');
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup',   onMouseUp);
+      ev.preventDefault();
+    });
+
+    // Re-clamp si la fenêtre rétrécit (max passe sous la hauteur courante)
+    window.addEventListener('resize', function(){
+      const h = parseInt(panel.style.height, 10);
+      if (!isNaN(h)) _appliquerHauteur(h);
+    });
+  }
+
+  // Le panneau-log est dans le DOM dès le départ (pas créé dynamiquement),
+  // mais on attend DOMContentLoaded pour être robuste si l'ordre change.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _attacher);
+  } else {
+    _attacher();
+  }
+})();
+
+function setLogProgress(pct, cls) {
+  const bar = document.getElementById('log-progress-bar');
+  if (!bar) return;
+  bar.style.width = (pct >= 0 && pct <= 100 ? pct : 0) + '%';
+  bar.className = '';
+  if (cls) bar.classList.add(cls);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 // bindAll() est appelé immédiatement au DOMContentLoaded pour l'état initial
 // (sections visibles/cachées selon checkboxes). L'init async (couches, config)
 // est lancée séparément dès que pywebview.api est disponible.
 document.addEventListener('DOMContentLoaded', () => {
   bindAll();
+  _acInstaller();
   waitForApi();
 });
 
@@ -10500,7 +11906,142 @@ function buildOsmTags(tags) {
   });
 }
 
-// ── Bindings dynamiques ───────────────────────────────────────────────────────
+// ── Autocomplete ville (API Adresse data.gouv.fr / BAN, via proxy Python) ───
+// On passe par pywebview.api.autocomplete_ville plutôt qu'un fetch() direct :
+// la page est chargée via NavigateToString → origin "null" → WebView2 bloque
+// le CORS de la BAN. Le proxy Python n'a pas ce problème.
+// Échec silencieux : si l'API tombe, le champ reste un input texte normal.
+const _AC_DEBOUNCE = 250;
+const _AC_MINLEN  = 3;   // Geoplateforme exige >= 3 caractères (HTTP 400 sinon)
+let _acTimer   = null;
+let _acReqId   = 0;          // sérialise les réponses async (annule les vieilles)
+let _acResults = [];
+let _acIndex   = -1;
+const _acCache = new Map();   // prefix.toLowerCase() -> array of items
+
+function _acEsc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+function _acFermer() {
+  const dd = document.getElementById('f-ville-ac');
+  if (dd) dd.classList.add('hidden');
+  _acIndex = -1;
+}
+
+function _acRendre(items) {
+  const dd = document.getElementById('f-ville-ac');
+  if (!dd) return;
+  if (!items || items.length === 0) { _acFermer(); return; }
+  _acResults = items;
+  _acIndex   = -1;
+  dd.innerHTML = '';
+  items.forEach((it, i) => {
+    const div = document.createElement('div');
+    div.className = 'ac-item';
+    div.setAttribute('role', 'option');
+    div.dataset.idx = i;
+    div.innerHTML = _acEsc(it.label) +
+      (it.context ? ' <span class="ac-meta">' + _acEsc(it.context) + '</span>' : '');
+    // mousedown plutôt que click : se déclenche AVANT le blur de l'input,
+    // évitant la fermeture prématurée du dropdown.
+    div.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      _acChoisir(i);
+    });
+    dd.appendChild(div);
+  });
+  dd.classList.remove('hidden');
+}
+
+function _acChoisir(idx) {
+  if (idx < 0 || idx >= _acResults.length) return;
+  const it = _acResults[idx];
+  const inp = document.getElementById('f-ville');
+  if (inp) inp.value = it.label;
+  _acFermer();
+}
+
+function _acSurleve(delta) {
+  if (!_acResults.length) return;
+  _acIndex = (_acIndex + delta + _acResults.length) % _acResults.length;
+  const dd = document.getElementById('f-ville-ac');
+  if (!dd) return;
+  Array.from(dd.children).forEach((el, i) => {
+    el.classList.toggle('active', i === _acIndex);
+  });
+  const cur = dd.children[_acIndex];
+  if (cur) cur.scrollIntoView({block:'nearest'});
+}
+
+async function _acRequete(prefix) {
+  const key = prefix.toLowerCase();
+  if (_acCache.has(key)) { _acRendre(_acCache.get(key)); return; }
+  const myId = ++_acReqId;
+  try {
+    if (!(window.pywebview && window.pywebview.api &&
+          typeof window.pywebview.api.autocomplete_ville === 'function')) {
+      _acFermer();
+      return;
+    }
+    const items = await pywebview.api.autocomplete_ville(prefix);
+    if (myId !== _acReqId) return;
+    const list = Array.isArray(items) ? items : [];
+    _acCache.set(key, list);
+    if (_acCache.size > 50) {
+      _acCache.delete(_acCache.keys().next().value);
+    }
+    _acRendre(list);
+  } catch(e) {
+    if (myId === _acReqId) _acFermer();
+  }
+}
+
+function _acDeclencher() {
+  const inp = document.getElementById('f-ville');
+  if (!inp) return;
+  const v = inp.value.trim();
+  if (v.length < _AC_MINLEN) { _acFermer(); return; }
+  _acRequete(v);
+}
+
+function _acInstaller() {
+  const inp = document.getElementById('f-ville');
+  if (!inp) return;
+  inp.addEventListener('input', () => {
+    if (_acTimer) clearTimeout(_acTimer);
+    _acTimer = setTimeout(_acDeclencher, _AC_DEBOUNCE);
+  });
+  inp.addEventListener('keydown', (e) => {
+    const dd = document.getElementById('f-ville-ac');
+    const visible = dd && !dd.classList.contains('hidden');
+    if (e.key === 'ArrowDown') {
+      if (!visible) _acDeclencher();
+      else { _acSurleve(1); e.preventDefault(); }
+    } else if (e.key === 'ArrowUp') {
+      if (visible) { _acSurleve(-1); e.preventDefault(); }
+    } else if (e.key === 'Enter') {
+      if (visible && _acIndex >= 0) {
+        _acChoisir(_acIndex);
+        e.preventDefault();
+      }
+    } else if (e.key === 'Escape') {
+      if (visible) { _acFermer(); e.preventDefault(); }
+    } else if (e.key === 'Tab') {
+      if (visible && _acIndex >= 0) _acChoisir(_acIndex);
+      else _acFermer();
+    }
+  });
+  // Délai sur blur pour laisser le mousedown sur un item passer
+  inp.addEventListener('blur', () => setTimeout(_acFermer, 150));
+  inp.addEventListener('focus', () => {
+    const v = inp.value.trim();
+    if (v.length >= _AC_MINLEN) _acDeclencher();
+  });
+}
+
 function bindAll() {
   // Mode zone — appliquer l'état initial immédiatement
   // Même problème que pour 'type' : sr() coche le radio sans tirer 'change',
@@ -10656,8 +12197,8 @@ function getConfig() {
     simplif_fusion:parseFloat(g('f-simplif-fusion')?.value) || null,
     // Découpage raster (à posteriori)
     source_decoupe:  g('f-source-decoupe')?.value.trim(),
-    cols_decoupe:    parseInt(g('f-cols-decoupe')?.value) || 1,
-    rows_decoupe:    parseInt(g('f-rows-decoupe')?.value) || 1,
+    cols_decoupe_d:  parseInt(g('f-cols-decoupe')?.value) || 1,
+    rows_decoupe_d:  parseInt(g('f-rows-decoupe')?.value) || 1,
     rayon_decoupe_d: parseFloat(g('f-rayon-decoupe-d')?.value) || 0,
     mbtiles_d:       g('f-mbtiles-d')?.checked,
     rmap_d:          g('f-rmap-d')?.checked,
@@ -10810,8 +12351,8 @@ function loadConfig(cfg) {
 
   // Découpage raster
   s('f-source-decoupe',  cfg.source_decoupe);
-  s('f-cols-decoupe',  cfg.cols_decoupe);
-  s('f-rows-decoupe',  cfg.rows_decoupe);
+  s('f-cols-decoupe',  cfg.cols_decoupe_d);
+  s('f-rows-decoupe',  cfg.rows_decoupe_d);
   s('f-rayon-decoupe-d', cfg.rayon_decoupe_d);
   s('f-mbtiles-d',       cfg.mbtiles_d !== undefined ? cfg.mbtiles_d : true);
   s('f-rmap-d',          cfg.rmap_d);
@@ -10874,7 +12415,7 @@ function fusionSelect(i) { fusionSel = i; renderFusionList(); }
 // ── Lancement ─────────────────────────────────────────────────────────────────
 function setFormLocked(locked) {
   const els = document.getElementById('main')
-    .querySelectorAll('input,select,button:not(#btn-stop)');
+    .querySelectorAll('input,select,button:not(#btn-stop):not(#btn-log)');
   els.forEach(el => { el.disabled = locked; });
 }
 
@@ -10904,19 +12445,36 @@ async function lancer() {
   document.getElementById('footer-status').textContent = 'En cours...';
   setFormLocked(true);
 
+  // Vider le panneau de log et préparer la barre de progression
+  viderLog();
+  document.getElementById('log-status').textContent = 'En cours...';
+  setLogProgress(0, '');
+
   const res = await pywebview.api.launch(cfg);
   if (res && res.error) { alert(res.error); btnReset(); return; }
 
-  // Afficher la commande lancée
+  // Afficher la commande lancée dans le footer
+  // (elle est aussi mise dans la log queue côté Python, ne pas dupliquer ici)
   document.getElementById('footer-status').textContent = '▶ ' + (res.cmd || '').split(' ').slice(-3).join(' ') + '…';
 
   polling = setInterval(async () => {
     const r = await pywebview.api.poll_log();
     if (r.items) {
       r.items.forEach(item => {
+        // Lignes de texte → panneau de log avec colorisation par tag
+        if (item.line !== undefined) {
+          ajouterLigneLog(item.line, item.tag || 'ok');
+        }
+        // Pourcentage (carriage return du child) → barre de progression + footer
         if (item.pct !== undefined && item.pct >= 0) {
+          setLogProgress(item.pct, '');
           document.getElementById('footer-status').textContent =
             item.pct + '%  ' + (item.label || '').substring(0, 80);
+        }
+        // Label seul (action en cours sans pct) → footer
+        if (item.pct === -1 && item.label) {
+          document.getElementById('footer-status').textContent =
+            item.label.substring(0, 100);
         }
       });
     }
@@ -10924,22 +12482,34 @@ async function lancer() {
       clearInterval(polling); polling = null;
       document.getElementById('footer-status').textContent =
         r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
+      document.getElementById('log-status').textContent =
+        r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
+      setLogProgress(100, r.code === 0 ? 'ok' : 'err');
       // Récap d'erreur en fin de run via API dédiée (plus fiable que
       // le passage par poll_log : pywebview/WebView2 peut perdre des
       // clés non-standard dans les dicts complexes sérialisés).
       if (r.code !== 0) {
-        alert("DEBUG 1 : on entre dans la branche r.code != 0, code=" + r.code);
+        // Erreur → ouvrir automatiquement le panneau de log s'il est caché,
+        // sinon le message "voir le panneau" est inutile.
+        const p = document.getElementById('panneau-log');
+        if (p && p.classList.contains('hidden')) {
+          toggleLogPanel();
+        }
         try {
           const err = await pywebview.api.get_last_error();
-          alert("DEBUG 2 : get_last_error retourne : " + JSON.stringify(err));
           if (err && err.msg) {
             alert(`Le traitement a échoué (code ${err.retcode}).\n\n`
                 + err.msg
-                + `\n\n(détails complets dans le panneau de log)`);
+                + `\n\n(détails complets dans le panneau de log ci-dessous)`);
+          } else {
+            // Fallback générique si _modal_error_msg n'a pas été rempli
+            alert(`Le traitement a échoué (code ${r.code}).\n\n`
+                + `Voir le panneau de log ci-dessous pour les détails.`);
           }
         } catch (e) {
-          alert("DEBUG ERREUR catch : " + e);
           console.error('get_last_error:', e);
+          alert(`Le traitement a échoué (code ${r.code}).\n\n`
+              + `Voir le panneau de log ci-dessous pour les détails.`);
         }
       }
       if (r.code === 0) {
@@ -10995,6 +12565,38 @@ if __name__ == "__main__":
         if len(sys.argv) == 1:
             lancer_gui()
         else:
+            # ── Détection du mode via un PRÉ-PARSER argparse ──────────────────
+            # Au lieu de `if "--decouper" in sys.argv: ...` (grep, susceptible
+            # de matcher dans la valeur d'un autre argument), on utilise un
+            # parser dédié à 1 seul argument actif à la fois. Les flags d'origine
+            # sont préservés tels quels (compat ascendante des commandes
+            # partagées sur les forums).
+            #
+            # Note : `argparse` avec parse_known_args() consomme uniquement le
+            # mode et laisse intact le reste de sys.argv pour le sub-main.
+            _DISPATCH = {
+                "decouper":   main_decouper,
+                "ignraster":  main_wmts,
+                "ignvecteur": main_wfs,
+                "fusionner":  main_fusionner,
+                # Tous les autres modes (--ignlidar, --osm, ou cumulés) tombent
+                # sur main() qui sait les gérer.
+            }
+            _pre = argparse.ArgumentParser(add_help=False)
+            for _flag in _DISPATCH:
+                _pre.add_argument(f"--{_flag}", action="store_true",
+                                  dest=f"_mode_{_flag}")
+            _ns_pre, _ = _pre.parse_known_args()
+
+            def _dispatch():
+                # Priorité ordonnée : on prend le 1er mode trouvé dans la liste.
+                # Cet ordre matche celui de l'ancien dispatcher (decouper avant
+                # ignraster, etc.) pour préserver le comportement.
+                for _flag, _fn in _DISPATCH.items():
+                    if getattr(_ns_pre, f"_mode_{_flag}", False):
+                        return _fn()
+                return main()    # --ignlidar / --osm / par défaut
+
             # ── Résolution multi-département ─────────────────────────────────
             # --zone-departement accepte : 83 | 30,35,75 | 1-10 | 1-3,75,83
             _dep_idx = None
@@ -11004,13 +12606,6 @@ if __name__ == "__main__":
                     break
 
             _deps = _parser_departements(sys.argv[_dep_idx]) if _dep_idx else None
-
-            def _dispatch():
-                if "--decouper"  in sys.argv: main_decouper()   # MBTiles a posteriori
-                elif "--ignraster"  in sys.argv: main_wmts()    # WMTS IGN raster
-                elif "--ignvecteur" in sys.argv: main_wfs()     # WFS IGN vectoriel
-                elif "--fusionner"  in sys.argv: main_fusionner()  # fusion GeoJSON
-                else:                             main()          # --ignlidar ou --osm
 
             if _deps and len(_deps) > 1:
                 _argv_base = sys.argv[:]
