@@ -415,6 +415,91 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 import os
 import re
 import sys
+
+# Forcer stdout/stderr en UTF-8 dès le démarrage. Sur Windows la code page
+# console est cp1252 par défaut ; sans cette reconfigure, les caractères
+# accentués et symboles (é, ✓, →) sont écrits en cp1252 et apparaissent en
+# mojibake quand la sortie est capturée par un pipe parent qui décode en UTF-8
+# (cas du mode frozen GUI → CLI subprocess). PYTHONIOENCODING=utf-8 ne suffit
+# pas toujours dans un exe PyInstaller. Doit s'exécuter AVANT le premier print.
+for _std in ("stdout", "stderr"):
+    _s = getattr(sys, _std, None)
+    if _s is not None and getattr(_s, "encoding", "").lower() != "utf-8":
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODE LAUNCHER (build onefile)
+# ─────────────────────────────────────────────────────────────────────────────
+# Le même lidar2map.py est buildé en DEUX versions :
+#   1) onedir (lidar2map.spec)        : la vraie app, ~617 Mo, lente à packager
+#      mais rapide à lancer. C'est ce qui tourne au final.
+#   2) onefile (launcher.spec)        : un petit launcher qui contient le onedir
+#      zippé en ressource. À l'exécution il extrait dans %LOCALAPPDATA%\lidar2map
+#      (avec contrôle SHA pour détecter les mises à jour), puis spawn le vrai exe
+#      onedir avec une sentinelle pour qu'il saute ce bloc.
+#
+# Le launcher se distingue à l'exécution :
+#   - PyInstaller onefile : sys._MEIPASS contient lidar2map_bundle.zip
+#   - L'inner spawné a la sentinelle _INNER_FLAG dans sys.argv
+_INNER_FLAG = "--__lidar2map_inner__"
+if getattr(sys, "frozen", False):
+    if _INNER_FLAG in sys.argv:
+        # On est l'exe interne : retirer la sentinelle puis continuer normalement
+        sys.argv.remove(_INNER_FLAG)
+    else:
+        # On est peut-être le launcher : vérifier la présence du bundle
+        import hashlib, zipfile
+        from pathlib import Path as _Path
+        _meipass = _Path(getattr(sys, "_MEIPASS", ""))
+        _bundle  = _meipass / "lidar2map_bundle.zip"
+        if _bundle.exists():
+            _app_dir = _Path(os.environ.get("LOCALAPPDATA",
+                            str(_Path.home() / "AppData" / "Local"))) / "lidar2map"
+            _inner_exe = _app_dir / "lidar2map.exe"
+            _sha_file  = _app_dir / ".bundle_sha"
+
+            def _bundle_sha():
+                h = hashlib.sha256()
+                with open(_bundle, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+                return h.hexdigest()
+
+            _expected_sha = _bundle_sha()
+            _need_extract = (not _inner_exe.exists()
+                             or not _sha_file.exists()
+                             or _sha_file.read_text(encoding="utf-8").strip() != _expected_sha)
+
+            if _need_extract:
+                # Nettoyer l'install précédente (version différente)
+                if _app_dir.exists():
+                    import shutil as _sh
+                    _sh.rmtree(_app_dir, ignore_errors=True)
+                _app_dir.mkdir(parents=True, exist_ok=True)
+                print("Premier lancement — installation dans " + str(_app_dir) + " ...",
+                      flush=True)
+                with zipfile.ZipFile(_bundle) as _z:
+                    _z.extractall(_app_dir)
+                _sha_file.write_text(_expected_sha, encoding="utf-8")
+                print("Installation terminée.", flush=True)
+
+            # Spawn l'exe interne avec la sentinelle et les args utilisateur.
+            # subprocess.call propage stdin/stdout/stderr du parent — la console
+            # voit la sortie du child comme s'il était lancé directement.
+            # On transmet aussi le dossier du LAUNCHER à l'inner via env var pour
+            # que Projets/, cache/, logs/ soient créés à côté du launcher (là où
+            # l'utilisateur a posé l'exe) et non dans %LOCALAPPDATA%\lidar2map.
+            import subprocess as _sp
+            _env = os.environ.copy()
+            _env["LIDAR2MAP_WORK_DIR"] = str(_Path(sys.executable).resolve().parent)
+            _rc = _sp.call([str(_inner_exe), _INNER_FLAG] + sys.argv[1:], env=_env)
+            sys.exit(_rc)
+        # Pas de bundle.zip dans _MEIPASS → on est l'exe onedir lancé directement
+        # (ou un build dev) → continuer normalement.
+
 import queue
 import shutil
 import argparse
@@ -953,6 +1038,10 @@ def _bootstrap_environnement():
     les modes auto et pip. Pour none, soit les imports marchent, soit on a
     déjà sys.exit(1) avec un message clair.
     """
+    # En mode frozen (PyInstaller), toutes les deps Python sont déjà embarquées
+    # dans le bundle — pas de venv ni de pip à exécuter.
+    if getattr(sys, "frozen", False):
+        return
     mode = _resoudre_mode_bootstrap()
     _bootstrap_venv_si_besoin_avec_mode(mode)
     if mode == "pip":
@@ -1092,7 +1181,16 @@ class _TeeLogger:
 
 def _activer_log():
     import atexit
-    log_dir = Path(__file__).resolve().parent / "logs"
+    # En mode frozen, __file__ est dans le bundle temporaire — on veut les
+    # logs à côté de l'exe (dossier utilisateur, persistant).
+    # LIDAR2MAP_WORK_DIR : transmis par le launcher onefile pour pointer sur
+    # le dossier du launcher au lieu de l'inner (%LOCALAPPDATA%\lidar2map).
+    if getattr(sys, "frozen", False):
+        _base = Path(os.environ.get("LIDAR2MAP_WORK_DIR")
+                     or Path(sys.executable).resolve().parent)
+    else:
+        _base = Path(__file__).resolve().parent
+    log_dir = _base / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         _probe = log_dir / ".write_test"
@@ -1322,7 +1420,21 @@ def _supprimer_fichiers(fichiers: list):
 # ============================================================
 
 # ── Chemins ─────────────────────────────────────────────────────────────────
-DOSSIER_TRAVAIL = Path(__file__).resolve().parent
+# En mode frozen (PyInstaller) : __file__ pointe dans le bundle temporaire
+# (sys._MEIPASS sous --onefile). On utilise sys.executable pour que les
+# Projets/, cache/, logs/ etc. soient créés à côté de l'exe (cwd utilisateur).
+# _MEIPASS reste utilisable séparément pour retrouver les ressources bundlées
+# (tagmapping-min.xml).
+if getattr(sys, "frozen", False):
+    # LIDAR2MAP_WORK_DIR transmis par le launcher onefile : pointe vers le
+    # dossier où l'utilisateur a posé l'exe. Sinon, fallback sur le dossier
+    # de l'exe courant (cas exe onedir lancé directement).
+    DOSSIER_TRAVAIL = Path(os.environ.get("LIDAR2MAP_WORK_DIR")
+                           or Path(sys.executable).resolve().parent)
+    BUNDLE_DIR      = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+else:
+    DOSSIER_TRAVAIL = Path(__file__).resolve().parent
+    BUNDLE_DIR      = DOSSIER_TRAVAIL
 
 # ~/.lidar2map/ : dossier de runtime partagé entre tous les dossiers de travail.
 # Contient venv/, jre/, osmosis/. Permet de ne télécharger qu'une fois ces
@@ -1681,6 +1793,20 @@ def lamb93_to_wgs84_approx(x, y):
         e_sin = e * math.sin(phi)
         phi = math.pi/2 - 2*math.atan(t * ((1-e_sin)/(1+e_sin))**(e/2))
     return math.degrees(lam), math.degrees(phi)
+
+
+def _lamb93_to_wgs84_safe(x, y):
+    """Lambert 93 → WGS84 avec pyproj si dispo, fallback sur l'approximation.
+
+    Retourne (lon, lat) en degrés. Utilisée partout où pyproj peut manquer
+    (ex: bootstrap, environnement minimal) pour garantir un résultat même
+    sans proj.db. Précision pyproj < 1 m, approximation < 50 m.
+    """
+    try:
+        _t = _get_transformer("EPSG:2154", "EPSG:4326")
+        return _t.transform(x, y)
+    except Exception:
+        return lamb93_to_wgs84_approx(x, y)
 
 # ============================================================
 # GÉOCODAGE
@@ -2429,16 +2555,24 @@ def _trouver_java():
     """
     Retourne le chemin vers le binaire java local (~/.lidar2map/jre/).
     Télécharge le JRE Temurin si absent. Jamais le Java système.
+
+    Mode frozen : cherche d'abord dans BUNDLE_DIR/jre/ (JRE embarqué).
     """
 
     java_bin = "java.exe" if WINDOWS else "java"
 
-    # Chercher le binaire dans l'installation locale ~/.lidar2map/jre/
+    # 1) Mode frozen : JRE bundlé dans l'exe
+    if getattr(sys, "frozen", False):
+        for candidate in sorted((BUNDLE_DIR / "jre").rglob(java_bin)):
+            if candidate.exists():
+                return str(candidate)
+
+    # 2) Installation locale persistante (~/.lidar2map/jre/)
     for candidate in sorted((LIDAR2MAP_HOME / "jre").rglob(java_bin)):
         if candidate.exists():
             return str(candidate)
 
-    # Absent : téléchargement automatique
+    # 3) Absent : téléchargement automatique
     java = _telecharger_jre_local()
     if not java:
         print("  ERREUR : impossible d'obtenir un JRE.")
@@ -2449,7 +2583,18 @@ def _trouver_java():
 def _trouver_osmosis():
     """Retourne le chemin vers osmosis (installation locale ou téléchargement).
     Même logique que GDAL : pas de fallback PATH système.
-    Prérequis : appeler _trouver_java() avant (responsabilité de l'appelant)."""
+    Prérequis : appeler _trouver_java() avant (responsabilité de l'appelant).
+
+    Mode frozen : cherche d'abord dans BUNDLE_DIR/osmosis/ (osmosis embarqué,
+    avec le plugin mapwriter pré-installé dans son lib/)."""
+    # 1) Mode frozen : osmosis bundlé dans l'exe
+    if getattr(sys, "frozen", False):
+        pattern = "osmosis.bat" if WINDOWS else "osmosis"
+        for candidate in sorted((BUNDLE_DIR / "osmosis").rglob(pattern)):
+            if candidate.is_file() and "bin" in candidate.parts:
+                return str(candidate)
+
+    # 2) Installation locale persistante (~/.lidar2map/osmosis/)
     local_bat = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis.bat"
     local_sh  = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis"
     if WINDOWS and local_bat.exists():
@@ -2457,7 +2602,7 @@ def _trouver_osmosis():
     if not WINDOWS and local_sh.exists():
         return str(local_sh)
 
-    # Absent : téléchargement automatique
+    # 3) Absent : téléchargement automatique
     return _telecharger_osmosis_local()
 
 
@@ -2571,6 +2716,481 @@ def _lire_dem_rasterio(src_path):
 
 # ── Hillshade et slope numpy (remplacent gdaldem CLI) ─────────────────────────
 
+# Cache des kernels Numba (compilation paresseuse au 1er appel, partagée entre
+# tous les modes — évite la double compilation entre _svf_numpy et _svf_chunked,
+# et entre les variantes hillshade/multi/slope).
+_NUMBA_KERNELS_CACHE = {}
+
+
+def _get_numba_horn_kernels():
+    """Compile et cache les kernels Numba pour Horn (hillshade, multi, slope).
+
+    Une seule passe sur le DEM par kernel : gradient Horn 3x3 + projection
+    solaire + écriture uint8 directement, sans buffers intermédiaires float32
+    (slope, aspect, dz_dx, dz_dy, pad). Edge replication via clamp d'indices.
+
+    Retourne (hillshade_kernel, multi_kernel, slope_kernel) ou None si numba
+    indisponible.
+    """
+    if "horn" in _NUMBA_KERNELS_CACHE:
+        return _NUMBA_KERNELS_CACHE["horn"]
+    try:
+        import numba as _nb
+        import numpy as _np
+        import math as _math
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _hillshade_kernel(dem, dx, dy, az_math_rad, zen_rad, nodata, has_nodata):
+            h, w = dem.shape
+            out = _np.empty((h, w), dtype=_np.uint8)
+            cos_z = _math.cos(zen_rad)
+            sin_z = _math.sin(zen_rad)
+            cos_a = _math.cos(az_math_rad)
+            sin_a = _math.sin(az_math_rad)
+            inv_8dx = 1.0 / (8.0 * dx)
+            inv_8dy = 1.0 / (8.0 * dy)
+            for row in _nb.prange(h):
+                rm = row - 1 if row > 0 else 0
+                rp = row + 1 if row < h - 1 else h - 1
+                for col in range(w):
+                    cm = col - 1 if col > 0 else 0
+                    cp = col + 1 if col < w - 1 else w - 1
+                    a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
+                    d = dem[row, cm];                  f = dem[row, cp]
+                    g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
+                    dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
+                    g2 = dz_dx * dz_dx + dz_dy * dz_dy
+                    # Forme analytique évitant atan/atan2 :
+                    # cos(slope)=1/sqrt(1+g²), sin(slope)*cos(aspect)=-dz_dx/sqrt(1+g²),
+                    # sin(slope)*sin(aspect)=dz_dy/sqrt(1+g²)
+                    # → hs = (cos_z + sin_z * (-cos_a * dz_dx + sin_a * dz_dy)) / sqrt(1+g²)
+                    inv_sqrt = 1.0 / _math.sqrt(1.0 + g2)
+                    hs = (cos_z + sin_z * (-cos_a * dz_dx + sin_a * dz_dy)) * inv_sqrt
+                    if hs < 0.0:
+                        hs = 0.0
+                    elif hs > 1.0:
+                        hs = 1.0
+                    v = int(hs * 254.0 + 1.0)
+                    if has_nodata and dem[row, col] == nodata:
+                        v = 0
+                    out[row, col] = v
+            return out
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _multi_kernel(dem, dx, dy, zen_rad, nodata, has_nodata):
+            h, w = dem.shape
+            out = _np.empty((h, w), dtype=_np.uint8)
+            cos_z = _math.cos(zen_rad)
+            sin_z = _math.sin(zen_rad)
+            inv_8dx = 1.0 / (8.0 * dx)
+            inv_8dy = 1.0 / (8.0 * dy)
+            # Azimuts GDAL : 225, 270, 315, 360 → az_math = 360 - az + 90
+            # → 225, 180, 135, 90
+            az0_c = _math.cos(_math.radians(225.0)); az0_s = _math.sin(_math.radians(225.0))
+            az1_c = _math.cos(_math.radians(180.0)); az1_s = _math.sin(_math.radians(180.0))
+            az2_c = _math.cos(_math.radians(135.0)); az2_s = _math.sin(_math.radians(135.0))
+            az3_c = _math.cos(_math.radians( 90.0)); az3_s = _math.sin(_math.radians( 90.0))
+            for row in _nb.prange(h):
+                rm = row - 1 if row > 0 else 0
+                rp = row + 1 if row < h - 1 else h - 1
+                for col in range(w):
+                    cm = col - 1 if col > 0 else 0
+                    cp = col + 1 if col < w - 1 else w - 1
+                    a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
+                    d = dem[row, cm];                  f = dem[row, cp]
+                    g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
+                    dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
+                    g2 = dz_dx * dz_dx + dz_dy * dz_dy
+                    g_len = _math.sqrt(g2)
+                    inv_sqrt = 1.0 / _math.sqrt(1.0 + g2)
+                    cos_s = inv_sqrt
+                    sin_s = g_len * inv_sqrt
+                    if g_len > 1e-12:
+                        cos_asp = -dz_dx / g_len
+                        sin_asp =  dz_dy / g_len
+                    else:
+                        cos_asp = 1.0
+                        sin_asp = 0.0
+                    hs_sum = 0.0
+                    w_sum  = 0.0
+                    # 4 azimuts déroulés
+                    for k in range(4):
+                        if k == 0:
+                            cAz = az0_c; sAz = az0_s
+                        elif k == 1:
+                            cAz = az1_c; sAz = az1_s
+                        elif k == 2:
+                            cAz = az2_c; sAz = az2_s
+                        else:
+                            cAz = az3_c; sAz = az3_s
+                        cos_d = cAz * cos_asp + sAz * sin_asp
+                        sin_d = sAz * cos_asp - cAz * sin_asp
+                        hs = cos_z * cos_s + sin_z * sin_s * cos_d
+                        if hs < 0.0:
+                            hs = 0.0
+                        elif hs > 1.0:
+                            hs = 1.0
+                        wi = sin_d * sin_d
+                        hs_sum += hs * wi
+                        w_sum  += wi
+                    if w_sum < 1e-6:
+                        w_sum = 1e-6
+                    hs_avg = hs_sum / w_sum
+                    if hs_avg < 0.0:
+                        hs_avg = 0.0
+                    elif hs_avg > 1.0:
+                        hs_avg = 1.0
+                    v = int(hs_avg * 254.0 + 1.0)
+                    if has_nodata and dem[row, col] == nodata:
+                        v = 0
+                    out[row, col] = v
+            return out
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _slope_kernel(dem, dx, dy, nodata, has_nodata):
+            h, w = dem.shape
+            out = _np.empty((h, w), dtype=_np.uint8)
+            inv_8dx = 1.0 / (8.0 * dx)
+            inv_8dy = 1.0 / (8.0 * dy)
+            for row in _nb.prange(h):
+                rm = row - 1 if row > 0 else 0
+                rp = row + 1 if row < h - 1 else h - 1
+                for col in range(w):
+                    cm = col - 1 if col > 0 else 0
+                    cp = col + 1 if col < w - 1 else w - 1
+                    a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
+                    d = dem[row, cm];                  f = dem[row, cp]
+                    g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
+                    dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
+                    slope_deg = _math.degrees(_math.atan(_math.sqrt(dz_dx * dz_dx + dz_dy * dz_dy)))
+                    if slope_deg < 0.0:
+                        slope_deg = 0.0
+                    elif slope_deg > 90.0:
+                        slope_deg = 90.0
+                    v = int(slope_deg)
+                    if has_nodata and dem[row, col] == nodata:
+                        v = 0
+                    out[row, col] = v
+            return out
+
+        kernels = (_hillshade_kernel, _multi_kernel, _slope_kernel)
+        _NUMBA_KERNELS_CACHE["horn"] = kernels
+        return kernels
+    except ImportError:
+        _NUMBA_KERNELS_CACHE["horn"] = None
+        return None
+    except Exception as _e:
+        print(f"  Numba kernels Horn : erreur compilation ({_e}) — fallback numpy", flush=True)
+        _NUMBA_KERNELS_CACHE["horn"] = None
+        return None
+
+
+def _get_numba_svf_kernel():
+    """Compile et cache le kernel Numba SVF (ray-casting horizon avec interp
+    bilinéaire). Réutilisé par _svf_numpy et _svf_chunked — évite la double
+    compilation initiale (~20 s × 2).
+    """
+    if "svf" in _NUMBA_KERNELS_CACHE:
+        return _NUMBA_KERNELS_CACHE["svf"]
+    try:
+        import numba as _nb
+        import numpy as _np
+        import math as _math
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _svf_kernel(dem, n_dir, max_r, res):
+            h, w = dem.shape
+            PI2 = 2.0 * _math.pi
+            out = _np.zeros((h, w), dtype=_np.float32)
+            for row in _nb.prange(h):
+                for col in range(w):
+                    z0 = dem[row, col]
+                    svf_sum = 0.0
+                    for k in range(n_dir):
+                        angle = k * PI2 / n_dir
+                        ddx =  _math.sin(angle)
+                        ddy = -_math.cos(angle)
+                        max_tan = -1e38
+                        for r in range(1, max_r + 1):
+                            rr = row + ddy * r
+                            cc = col + ddx * r
+                            r0i = int(_math.floor(rr))
+                            c0i = int(_math.floor(cc))
+                            r1i = r0i + 1
+                            c1i = c0i + 1
+                            if r0i < 0:       r0i = 0
+                            elif r0i > h - 1: r0i = h - 1
+                            if r1i < 0:       r1i = 0
+                            elif r1i > h - 1: r1i = h - 1
+                            if c0i < 0:       c0i = 0
+                            elif c0i > w - 1: c0i = w - 1
+                            if c1i < 0:       c1i = 0
+                            elif c1i > w - 1: c1i = w - 1
+                            fr = rr - _math.floor(rr)
+                            fc = cc - _math.floor(cc)
+                            zn = (dem[r0i, c0i] * (1 - fr) * (1 - fc) +
+                                  dem[r0i, c1i] * (1 - fr) *      fc  +
+                                  dem[r1i, c0i] *      fr  * (1 - fc) +
+                                  dem[r1i, c1i] *      fr  *      fc)
+                            dist_m = r * res
+                            tan_a  = (zn - z0) / dist_m
+                            if tan_a > max_tan:
+                                max_tan = tan_a
+                        mt = max_tan if max_tan > 0.0 else 0.0
+                        svf_sum += 1.0 / (1.0 + mt * mt)
+                    out[row, col] = svf_sum / n_dir
+            return out
+
+        _NUMBA_KERNELS_CACHE["svf"] = _svf_kernel
+        return _svf_kernel
+    except ImportError:
+        _NUMBA_KERNELS_CACHE["svf"] = None
+        return None
+    except Exception as _e:
+        print(f"  Numba kernel SVF : erreur compilation ({_e}) — fallback numpy", flush=True)
+        _NUMBA_KERNELS_CACHE["svf"] = None
+        return None
+
+
+def _get_numba_svf_sweep_kernel():
+    """Sweep-horizon SVF avec running max sur deque (upper convex hull).
+
+    Algorithme :
+    - Pour chaque direction θ, balayage de lignes parallèles grid-aligned
+      à travers la grille
+    - Chaque pixel visité exactement une fois par direction
+    - Maintient une deque des points "skyline" passés (upper convex hull)
+    - Pop arrière les points dominés à l'ajout (préserve la propriété de hull)
+    - Pop avant les points hors fenêtre max_r (cap distance)
+    - Horizon angle = scan du hull, query en O(hull_size) amorti
+
+    Complexité : O(W·H·N + W·H·hull_size_moyen)
+    au lieu de O(W·H·N·max_r) du ray-cast classique.
+
+    Pour terrain naturel (hull_size ~5-10), speedup vs ray-cast bilinéaire :
+        max_r=40    (SVF 20m)   → ~×5-15
+        max_r=200   (SVF 100m)  → ~×30-50
+        max_r=40000 (SVF 20km)  → ~×500+
+
+    Trade-off : nearest-neighbor pixel access le long de la scan-line (pas
+    d'interp bilinéaire sub-pixel). Aliasing négligeable pour structures
+    > 1-2 px sur DEM 0.5 m/px.
+
+    ⚠ Sémantique des directions : ce kernel balaie en direction (ddx, ddy) et
+    accumule l'horizon depuis les pixels passés sur la scan-line, qui sont
+    donc en direction -θ par rapport au pixel courant. Pour SVF la somme sur
+    N directions équi-réparties est invariante par cette permutation (-θ_k
+    ≡ θ_{N-k} mod 2π) — résultat numérique correct. À NE PAS réutiliser tel
+    quel pour un calcul asymétrique single-direction (ex: horizon à un
+    azimut donné, ombre solaire) : inverser le sens du balayage ou
+    réinterpréter k.
+    """
+    if "svf_sweep" in _NUMBA_KERNELS_CACHE:
+        return _NUMBA_KERNELS_CACHE["svf_sweep"]
+    try:
+        import numba as _nb
+        import numpy as _np
+        import math as _math
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _svf_sweep_kernel(dem, n_dir, max_r, res):
+            h, w = dem.shape
+            PI2 = 2.0 * _math.pi
+            out = _np.zeros((h, w), dtype=_np.float32)
+            # Capacité deque : max_r + petite marge pour gérer push avant pop
+            DEQ_CAP = max_r + 8
+
+            for k_dir in range(n_dir):
+                angle = k_dir * PI2 / n_dir
+                ddx =  _math.sin(angle)
+                ddy = -_math.cos(angle)
+                abs_dx = abs(ddx)
+                abs_dy = abs(ddy)
+
+                if abs_dx >= abs_dy:
+                    # ── Direction x-dominante : scan-lines balaient en x ──────
+                    sx = 1 if ddx > 0 else -1
+                    slope_y = ddy / abs_dx  # |slope_y| <= 1
+                    step_dist = res * _math.sqrt(1.0 + slope_y * slope_y)
+                    # max_steps = nombre max de steps scan-line correspondant à max_r px le long du rayon
+                    max_steps_back = int(max_r / _math.sqrt(1.0 + slope_y * slope_y) + 0.5)
+                    if max_steps_back < 1:
+                        max_steps_back = 1
+                    # slope appliqué dans le sens du balayage
+                    slope_y_signed = slope_y if sx > 0 else -slope_y
+                    # Couverture des seed_y0 : chaque pixel (r, c) est sur seed_y0 = round(r - c_progress * slope)
+                    # où c_progress = c si sx>0 sinon (w-1-c). Etendre la plage pour couvrir tout.
+                    extra = int(_math.ceil(abs(slope_y) * w)) + 2
+                    y0_min = -extra
+                    y0_max = h + extra
+
+                    for seed_y0 in _nb.prange(y0_min, y0_max + 1):
+                        # Buffers deque (per-scan-line, alloués par numba dans la prange)
+                        deque_step = _np.empty(DEQ_CAP, dtype=_np.int32)
+                        deque_z    = _np.empty(DEQ_CAP, dtype=_np.float32)
+                        head = 0
+                        tail = 0
+
+                        # Itération en x dans le sens sx
+                        if sx > 0:
+                            c_start = 0
+                            c_step = 1
+                            c_n = w
+                        else:
+                            c_start = w - 1
+                            c_step = -1
+                            c_n = w
+
+                        for step_idx in range(c_n):
+                            c = c_start + step_idx * c_step
+                            y_real = seed_y0 + step_idx * slope_y_signed
+                            r = int(y_real + 0.5) if y_real >= 0.0 else int(y_real - 0.5)
+
+                            if r < 0 or r >= h:
+                                continue
+                            z_curr = dem[r, c]
+
+                            # Pop avant : points hors fenêtre max_r
+                            while head != tail and (step_idx - deque_step[head]) > max_steps_back:
+                                head = (head + 1) % DEQ_CAP
+
+                            # Query : max slope du hull vers (step_idx, z_curr)
+                            max_tan = 0.0
+                            idx = head
+                            while idx != tail:
+                                past_step = deque_step[idx]
+                                past_z    = deque_z[idx]
+                                dist = (step_idx - past_step) * step_dist
+                                if dist > 0.0:
+                                    tan_a = (past_z - z_curr) / dist
+                                    if tan_a > max_tan:
+                                        max_tan = tan_a
+                                idx = (idx + 1) % DEQ_CAP
+
+                            # Pop arrière : maintien upper convex hull
+                            # Tant qu'on a >= 2 points en queue, vérifier si l'avant-dernier
+                            # est sous la droite (avant-avant-dernier → new). Si oui, pop.
+                            while True:
+                                # Taille deque
+                                sz = (tail - head + DEQ_CAP) % DEQ_CAP
+                                if sz < 2:
+                                    break
+                                tm1 = (tail - 1) % DEQ_CAP
+                                tm2 = (tail - 2) % DEQ_CAP
+                                s2 = deque_step[tm1]; z2 = deque_z[tm1]
+                                s1 = deque_step[tm2]; z1 = deque_z[tm2]
+                                # Upper hull : s2 doit être au-DESSUS de la droite (s1,z1)→(step_idx,z_curr)
+                                # i.e. (z2 - z1) * (step_idx - s1) > (s2 - s1) * (z_curr - z1)
+                                lhs = (z2 - z1) * (step_idx - s1)
+                                rhs = (s2 - s1) * (z_curr - z1)
+                                if lhs <= rhs:
+                                    # s2 sous la droite → dominé, pop
+                                    tail = tm1
+                                else:
+                                    break
+
+                            # Push (step_idx, z_curr)
+                            deque_step[tail] = step_idx
+                            deque_z[tail]    = z_curr
+                            tail = (tail + 1) % DEQ_CAP
+
+                            # Accumulation SVF
+                            out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+                else:
+                    # ── Direction y-dominante : scan-lines balaient en y ──────
+                    sy = 1 if ddy > 0 else -1
+                    slope_x = ddx / abs_dy  # |slope_x| <= 1
+                    step_dist = res * _math.sqrt(1.0 + slope_x * slope_x)
+                    max_steps_back = int(max_r / _math.sqrt(1.0 + slope_x * slope_x) + 0.5)
+                    if max_steps_back < 1:
+                        max_steps_back = 1
+                    slope_x_signed = slope_x if sy > 0 else -slope_x
+
+                    extra = int(_math.ceil(abs(slope_x) * h)) + 2
+                    x0_min = -extra
+                    x0_max = w + extra
+
+                    for seed_x0 in _nb.prange(x0_min, x0_max + 1):
+                        deque_step = _np.empty(DEQ_CAP, dtype=_np.int32)
+                        deque_z    = _np.empty(DEQ_CAP, dtype=_np.float32)
+                        head = 0
+                        tail = 0
+
+                        if sy > 0:
+                            r_start = 0
+                            r_step = 1
+                            r_n = h
+                        else:
+                            r_start = h - 1
+                            r_step = -1
+                            r_n = h
+
+                        for step_idx in range(r_n):
+                            r = r_start + step_idx * r_step
+                            x_real = seed_x0 + step_idx * slope_x_signed
+                            c = int(x_real + 0.5) if x_real >= 0.0 else int(x_real - 0.5)
+
+                            if c < 0 or c >= w:
+                                continue
+                            z_curr = dem[r, c]
+
+                            while head != tail and (step_idx - deque_step[head]) > max_steps_back:
+                                head = (head + 1) % DEQ_CAP
+
+                            max_tan = 0.0
+                            idx = head
+                            while idx != tail:
+                                past_step = deque_step[idx]
+                                past_z    = deque_z[idx]
+                                dist = (step_idx - past_step) * step_dist
+                                if dist > 0.0:
+                                    tan_a = (past_z - z_curr) / dist
+                                    if tan_a > max_tan:
+                                        max_tan = tan_a
+                                idx = (idx + 1) % DEQ_CAP
+
+                            while True:
+                                sz = (tail - head + DEQ_CAP) % DEQ_CAP
+                                if sz < 2:
+                                    break
+                                tm1 = (tail - 1) % DEQ_CAP
+                                tm2 = (tail - 2) % DEQ_CAP
+                                s2 = deque_step[tm1]; z2 = deque_z[tm1]
+                                s1 = deque_step[tm2]; z1 = deque_z[tm2]
+                                lhs = (z2 - z1) * (step_idx - s1)
+                                rhs = (s2 - s1) * (z_curr - z1)
+                                if lhs <= rhs:
+                                    tail = tm1
+                                else:
+                                    break
+
+                            deque_step[tail] = step_idx
+                            deque_z[tail]    = z_curr
+                            tail = (tail + 1) % DEQ_CAP
+
+                            out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+
+            # Normalisation : moyenne sur n_dir
+            inv_n = 1.0 / n_dir
+            for r in range(h):
+                for c in range(w):
+                    out[r, c] *= inv_n
+            return out
+
+        _NUMBA_KERNELS_CACHE["svf_sweep"] = _svf_sweep_kernel
+        return _svf_sweep_kernel
+    except ImportError:
+        _NUMBA_KERNELS_CACHE["svf_sweep"] = None
+        return None
+    except Exception as _e:
+        print(f"  Numba kernel SVF sweep : erreur compilation ({_e})", flush=True)
+        _NUMBA_KERNELS_CACHE["svf_sweep"] = None
+        return None
+
+
 def _calc_slope_aspect(dem, dx=0.5, dy=0.5):
     """Calcule slope (radians) et aspect (radians) d'un DEM via la formule Horn 1981.
 
@@ -2621,28 +3241,33 @@ def _hillshade_numpy(dem, azimuth_deg, altitude_deg, z_factor=1.0, dx=0.5, dy=0.
     altitude_deg : hauteur du soleil au-dessus de l'horizon, en degrés
     z_factor : multiplicateur d'exagération verticale (1.0 = pas d'exagération)
 
+    Moteur Numba (1 passe, uint8 direct) si dispo, sinon fallback numpy.
     Retourne un array uint8 (0-255) même shape que dem.
     """
     import numpy as np
 
+    dem_f = dem.astype(np.float32, copy=False)
     if z_factor != 1.0:
-        dem = dem * float(z_factor)
-    slope, aspect = _calc_slope_aspect(dem, dx, dy)
+        dem_f = dem_f * np.float32(z_factor)
 
-    zenith_rad  = np.radians(90.0 - altitude_deg)
-    # GDAL convention : azimuth -90 pour aligner avec atan2 standard
-    az_math_rad = np.radians(360.0 - azimuth_deg + 90.0)
+    zenith_rad  = math.radians(90.0 - altitude_deg)
+    az_math_rad = math.radians(360.0 - azimuth_deg + 90.0)
 
+    kernels = _get_numba_horn_kernels()
+    if kernels is not None:
+        hs_kernel, _, _ = kernels
+        nd_val = float(nodata) if nodata is not None else 0.0
+        return hs_kernel(dem_f, float(dx), float(dy),
+                         az_math_rad, zenith_rad, nd_val, nodata is not None)
+
+    # ── Fallback numpy ───────────────────────────────────────────────────────
+    slope, aspect = _calc_slope_aspect(dem_f, dx, dy)
     hs = (np.cos(zenith_rad) * np.cos(slope)
           + np.sin(zenith_rad) * np.sin(slope) * np.cos(az_math_rad - aspect))
-    # Clamp à [0, 1] avant scaling : GDAL met les zones en ombre à 0
     hs = np.clip(hs, 0.0, 1.0)
-    hs_u8 = (hs * 254.0 + 1.0).astype(np.uint8)  # GDAL : output dans [1, 255]
-
-    # Nodata : préserver les zones sans donnée à 0
+    hs_u8 = (hs * 254.0 + 1.0).astype(np.uint8)
     if nodata is not None:
-        hs_u8[dem == nodata] = 0
-
+        hs_u8[dem_f == nodata] = 0
     return hs_u8
 
 
@@ -2651,47 +3276,49 @@ def _hillshade_multi_numpy(dem, altitude_deg=45.0, z_factor=1.0, dx=0.5, dy=0.5,
     """Hillshade multidirectionnel — formule GDAL `-multidirectional`.
 
     Calcule 4 hillshades à 225°, 270°, 315°, 360° et combine via une moyenne
-    pondérée par sin(2*aspect) pour éviter les "stripes" du hillshade simple.
+    pondérée par sin²(diff) pour éviter les "stripes" du hillshade simple.
 
     C'est la méthode "Multidirectional Hillshade" de Mark 1992 / Tait 2010
     qu'utilise GDAL avec --multidirectional.
+
+    Moteur Numba (1 passe, 4 azimuts déroulés) si dispo, sinon fallback numpy.
     """
     import numpy as np
 
+    dem_f = dem.astype(np.float32, copy=False)
     if z_factor != 1.0:
-        dem = dem * float(z_factor)
-    slope, aspect = _calc_slope_aspect(dem, dx, dy)
+        dem_f = dem_f * np.float32(z_factor)
 
-    zenith_rad = np.radians(90.0 - altitude_deg)
+    zenith_rad = math.radians(90.0 - altitude_deg)
+
+    kernels = _get_numba_horn_kernels()
+    if kernels is not None:
+        _, multi_kernel, _ = kernels
+        nd_val = float(nodata) if nodata is not None else 0.0
+        return multi_kernel(dem_f, float(dx), float(dy),
+                            zenith_rad, nd_val, nodata is not None)
+
+    # ── Fallback numpy ───────────────────────────────────────────────────────
+    slope, aspect = _calc_slope_aspect(dem_f, dx, dy)
     cos_z = np.cos(zenith_rad)
     sin_z = np.sin(zenith_rad)
-
-    # 4 azimuths : 225°, 270°, 315°, 360°
-    # Pondération : weight_i = sin² ou cos² de (aspect - az_i) pour atténuer les
-    # azimuths perpendiculaires à l'aspect local (méthode GDAL)
-    # Implémentation simplifiée : moyenne pondérée par sin/cos² des diffs
     azimuths = [225.0, 270.0, 315.0, 360.0]
     hs_sum     = np.zeros_like(slope)
     weight_sum = np.zeros_like(slope)
     for az in azimuths:
         az_math_rad = np.radians(360.0 - az + 90.0)
         diff = az_math_rad - aspect
-        # Pondération : sin²(diff) — favorise les azimuths perpendiculaires à
-        # l'aspect (qui révèlent mieux les structures)
         w = np.sin(diff) ** 2
         hs = (cos_z * np.cos(slope)
               + sin_z * np.sin(slope) * np.cos(diff))
         hs = np.clip(hs, 0.0, 1.0)
         hs_sum     += hs * w
         weight_sum += w
-    # Évite division par zéro
     weight_sum = np.where(weight_sum < 1e-6, 1e-6, weight_sum)
     hs_avg = hs_sum / weight_sum
     hs_u8  = (hs_avg * 254.0 + 1.0).astype(np.uint8)
-
     if nodata is not None:
-        hs_u8[dem == nodata] = 0
-
+        hs_u8[dem_f == nodata] = 0
     return hs_u8
 
 
@@ -2700,19 +3327,28 @@ def _slope_numpy(dem, z_factor=1.0, dx=0.5, dy=0.5, scale=1.0, nodata=None):
 
     Renvoie un array uint8 où chaque pixel est l'angle de pente en degrés
     (0-90), clampé à 90.
+
+    Moteur Numba (1 passe, uint8 direct) si dispo, sinon fallback numpy.
     """
     import numpy as np
 
+    dem_f = dem.astype(np.float32, copy=False)
     if z_factor != 1.0:
-        dem = dem * float(z_factor)
-    slope, _ = _calc_slope_aspect(dem, dx, dy)
+        dem_f = dem_f * np.float32(z_factor)
+
+    kernels = _get_numba_horn_kernels()
+    if kernels is not None:
+        _, _, slope_kernel = kernels
+        nd_val = float(nodata) if nodata is not None else 0.0
+        return slope_kernel(dem_f, float(dx), float(dy),
+                            nd_val, nodata is not None)
+
+    # ── Fallback numpy ───────────────────────────────────────────────────────
+    slope, _ = _calc_slope_aspect(dem_f, dx, dy)
     slope_deg = np.degrees(slope)
-    # GDAL clamp à [0, 90] et convertit en uint8
     slope_u8 = np.clip(slope_deg, 0.0, 90.0).astype(np.uint8)
-
     if nodata is not None:
-        slope_u8[dem == nodata] = 0
-
+        slope_u8[dem_f == nodata] = 0
     return slope_u8
 
 
@@ -3022,9 +3658,12 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
 
 
 def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
-                 resolution=0.5, gamma=2.0):
+                 resolution=0.5, gamma=2.0, use_sweep=False):
     """
     Sky-View Factor par fenêtres avec halo = max_dist_px (rayons SVF).
+
+    use_sweep=True : utilise le kernel sweep (nearest-neighbor, ~2-3× plus
+    rapide, léger aliasing aux faibles gradients).
 
     Stratégie 2 passes :
       1. Échantillon central → percentiles p2/p98 globaux
@@ -3044,63 +3683,23 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     CHUNK = 2048
     HALO  = max_dist_px
 
-    # Compilation Numba (kernel défini une fois, réutilisé pour tous les blocs)
-    _kernel = None
-    try:
-        import numba as _nb
-        import math as _math
-
-        @_nb.njit(parallel=True, cache=True, fastmath=True)
-        def _kernel_impl(dem, h, w, n_dir, max_r, res):
-            PI2 = 2.0 * _math.pi
-            out = np.zeros((h, w), dtype=np.float32)
-            for row in _nb.prange(h):
-                for col in range(w):
-                    z0 = dem[row, col]
-                    svf_sum = 0.0
-                    for k in range(n_dir):
-                        angle  = k * PI2 / n_dir
-                        ddx    =  _math.sin(angle)
-                        ddy    = -_math.cos(angle)
-                        max_tan = -1e38
-                        for r in range(1, max_r + 1):
-                            rr = row + ddy * r
-                            cc = col + ddx * r
-                            r0i = int(_math.floor(rr))
-                            c0i = int(_math.floor(cc))
-                            r1i = r0i + 1
-                            c1i = c0i + 1
-                            r0i = max(0, min(h - 1, r0i))
-                            r1i = max(0, min(h - 1, r1i))
-                            c0i = max(0, min(w - 1, c0i))
-                            c1i = max(0, min(w - 1, c1i))
-                            fr = rr - _math.floor(rr)
-                            fc = cc - _math.floor(cc)
-                            zn = (dem[r0i, c0i] * (1 - fr) * (1 - fc) +
-                                  dem[r0i, c1i] * (1 - fr) *      fc  +
-                                  dem[r1i, c0i] *      fr  * (1 - fc) +
-                                  dem[r1i, c1i] *      fr  *      fc)
-                            dist_m = r * res
-                            tan_a  = (zn - z0) / dist_m
-                            if tan_a > max_tan:
-                                max_tan = tan_a
-                        mt = max_tan if max_tan > 0.0 else 0.0
-                        svf_sum += 1.0 / (1.0 + mt * mt)
-                    out[row, col] = svf_sum / n_dir
-            return out
-        _kernel = _kernel_impl
-    except ImportError:
+    # Kernel SVF mutualisé entre _svf_numpy et _svf_chunked (factory + cache).
+    # Évite la double compilation Numba (~20 s × 2 au premier appel).
+    # Si use_sweep : variante nearest-neighbor sans bilinéaire (~×2-3 plus rapide).
+    _kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
+    if _kernel is None:
         print("  numba absent — SVF chunked indisponible", flush=True)
         return False
+    if use_sweep:
+        print("  SVF chunked : kernel sweep-horizon (deque/upper-hull)", flush=True)
 
     def _svf_block(block):
-        h, w = block.shape
         nd_mask = (block < -9000) | (block > 9000)
         block_f = block.astype(np.float32, copy=True)
         if nd_mask.any():
             mean_val = float(np.nanmean(block_f[~nd_mask])) if (~nd_mask).any() else 0.0
             block_f[nd_mask] = mean_val
-        svf = _kernel(block_f, h, w, n_directions, max_dist_px, resolution)
+        svf = _kernel(block_f, n_directions, max_dist_px, resolution)
         svf[nd_mask] = 0.0
         return svf
 
@@ -3109,10 +3708,15 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
         profile = src.profile.copy()
 
     # ── Passe 1 : compilation Numba + percentiles globaux sur échantillon ──
+    # Sample réduit à 256×256 (+ halo) : suffit largement pour estimer p2/p98
+    # de manière stable (~65k pixels valides au centre). Avant on calculait un
+    # bloc complet (CHUNK²) qui coûtait ~7% du temps total — pure perte puisque
+    # le résultat ne sert qu'aux deux percentiles.
     print("  SVF chunked — compilation Numba + percentiles (sample)...", flush=True)
+    SAMPLE = 256
     cy = H // 2
     cx = W // 2
-    s_half = CHUNK // 2
+    s_half = SAMPLE // 2
     s_r0 = max(0, cy - s_half - HALO)
     s_c0 = max(0, cx - s_half - HALO)
     s_r1 = min(H, cy + s_half + HALO)
@@ -3184,7 +3788,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     return True
 
 
-def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
+def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=False):
     """
     Sky-View Factor — pixel-level ray casting.
 
@@ -3193,6 +3797,9 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
     Moteurs disponibles par ordre de préférence :
       1. Numba njit + prange  → ×15-50 vs numpy pur, compilation ~20s au 1er appel
       2. numpy vectorisé      → fallback si numba absent
+
+    use_sweep=True : utilise le kernel sweep (nearest-neighbor, ~×2-3 plus rapide,
+    léger aliasing aux faibles gradients).
 
     SVF faible (sombre) = creux (fossé, fond de vallée)
     SVF élevé (clair)   = ouvert (sommet, plateau)
@@ -3207,80 +3814,20 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
         dem_f[nodata_mask] = mean_val
 
     # ── Tentative Numba ──────────────────────────────────────────────────────
+    # Kernel mutualisé via _get_numba_svf_kernel() — partagé avec _svf_chunked
+    # pour éviter la double compilation (~20 s × 2 au premier appel).
     _numba_ok = False
-    try:
-        import numba as _nb
-
-        @_nb.njit(parallel=True, cache=True, fastmath=True)
-        def _svf_kernel(dem, h, w, n_dir, max_r, res):
-            """
-            Kernel Numba : pour chaque pixel, scan N rayons → SVF.
-            prange parallélise automatiquement sur tous les cœurs.
-            Interpolation bilinéaire sub-pixel sur la position exacte du rayon.
-            """
-            PI2 = 2.0 * math.pi
-            out = np.zeros((h, w), dtype=np.float32)
-
-            for row in _nb.prange(h):                   # parallèle
-                for col in range(w):
-                    z0 = dem[row, col]
-                    svf_sum = 0.0
-
-                    for k in range(n_dir):
-                        angle  = k * PI2 / n_dir
-                        dx     =  math.sin(angle)       # décalage colonne/px
-                        dy     = -math.cos(angle)       # décalage ligne/px
-                        max_tan = -1e38
-
-                        for r in range(1, max_r + 1):
-                            # Position réelle du voisin
-                            rr = row + dy * r
-                            cc = col + dx * r
-
-                            # Interpolation bilinéaire
-                            r0 = int(math.floor(rr))
-                            c0 = int(math.floor(cc))
-                            r1 = r0 + 1
-                            c1 = c0 + 1
-
-                            # Clamp aux bords
-                            r0 = max(0, min(h - 1, r0))
-                            r1 = max(0, min(h - 1, r1))
-                            c0 = max(0, min(w - 1, c0))
-                            c1 = max(0, min(w - 1, c1))
-
-                            fr = rr - math.floor(rr)
-                            fc = cc - math.floor(cc)
-
-                            z_neighbor = (
-                                dem[r0, c0] * (1 - fr) * (1 - fc) +
-                                dem[r0, c1] * (1 - fr) *      fc  +
-                                dem[r1, c0] *      fr  * (1 - fc) +
-                                dem[r1, c1] *      fr  *      fc
-                            )
-
-                            dist_m = r * res
-                            tan_a  = (z_neighbor - z0) / dist_m
-                            if tan_a > max_tan:
-                                max_tan = tan_a
-
-                        # cos²(arctan(max_tan)) = 1/(1+max_tan²) si max_tan>0
-                        mt = max_tan if max_tan > 0.0 else 0.0
-                        svf_sum += 1.0 / (1.0 + mt * mt)
-
-                    out[row, col] = svf_sum / n_dir
-
-            return out
-
-        print("  SVF Numba JIT — compilation au 1er appel (~20s)...", flush=True)
-        svf = _svf_kernel(dem_f, h, w, n_directions, max_dist_px, resolution)
-        _numba_ok = True
-        print(f"\r  SVF Numba JIT — terminé{' ' * 30}")
-
-    except ImportError:
+    _svf_kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
+    if _svf_kernel is not None:
+        try:
+            print("  SVF Numba JIT — compilation au 1er appel (~20s)...", flush=True)
+            svf = _svf_kernel(dem_f, n_directions, max_dist_px, resolution)
+            _numba_ok = True
+            print(f"\r  SVF Numba JIT — terminé{' ' * 30}")
+        except Exception as e_nb:
+            print(f"  numba erreur ({e_nb}) — fallback numpy", flush=True)
+    else:
         print("  numba absent — fallback numpy vectorisé", flush=True)
-    except Exception as e_nb:
-        print(f"  numba erreur ({e_nb}) — fallback numpy", flush=True)
 
     # ── Fallback numpy ───────────────────────────────────────────────────────
     if not _numba_ok:
@@ -3374,7 +3921,7 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5):
     return svf
 
 
-def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False):
+def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False):
     """
     Génère les ombrages depuis le VRT/COG source (MNT EPSG:2154).
 
@@ -3608,6 +4155,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         n_directions = n_directions,
                         resolution   = RESOLUTION_M,
                         gamma        = 2.0,
+                        use_sweep    = use_sweep,
                     )
                     if not ok:
                         # Repli pleine mémoire (numba absent ou échantillon
@@ -3616,7 +4164,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  SVF chunked KO → repli pleine mémoire", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                             RESOLUTION_M)
+                                             RESOLUTION_M, use_sweep=use_sweep)
                         svf_valid = arr_svf[arr_svf >= 0]
                         p2  = float(np.percentile(svf_valid, 2))
                         p98 = float(np.percentile(svf_valid, 98))
@@ -3828,7 +4376,8 @@ def _bbox_depuis_gdalinfo(chemin, env=None):
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
                     jpeg_quality=85, bbox_l93=None,
-                    source_already_warped=False, ecraser_tuiles=False):
+                    source_already_warped=False, ecraser_tuiles=False,
+                    tile_workers=8):
     """
     Pipeline MBTiles — source unique, pyramide GDAL, tuilage par bandes.
 
@@ -3972,13 +4521,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # bounds : requis par la spec MBTiles et par Locus pour positionner la carte
     # "left,bottom,right,top" en degrés WGS84
     if bbox_l93 is not None:
-        try:
-            _tb = _get_transformer("EPSG:2154", "EPSG:4326")
-            _lon0, _lat0 = _tb.transform(bbox_l93[0], bbox_l93[1])
-            _lon1, _lat1 = _tb.transform(bbox_l93[2], bbox_l93[3])
-        except Exception:
-            _lon0, _lat0 = lamb93_to_wgs84_approx(bbox_l93[0], bbox_l93[1])
-            _lon1, _lat1 = lamb93_to_wgs84_approx(bbox_l93[2], bbox_l93[3])
+        _lon0, _lat0 = _lamb93_to_wgs84_safe(bbox_l93[0], bbox_l93[1])
+        _lon1, _lat1 = _lamb93_to_wgs84_safe(bbox_l93[2], bbox_l93[3])
         _bounds = f"{min(_lon0,_lon1):.6f},{min(_lat0,_lat1):.6f},{max(_lon0,_lon1):.6f},{max(_lat0,_lat1):.6f}"
         _cx = (min(_lon0,_lon1) + max(_lon0,_lon1)) / 2
         _cy = (min(_lat0,_lat1) + max(_lat0,_lat1)) / 2
@@ -3993,6 +4537,26 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # plante avant d'atteindre la phase de tuilage (cf. bloc plus bas
     # qui le décrémente puis affiche un récapitulatif).
     nb_echecs_tr = 0
+
+    # ── Pool d'encodage des tuiles ────────────────────────────────────────
+    # Pillow libère le GIL pendant JPEG/PNG save, donc un ThreadPool donne du vrai
+    # parallélisme. Le pool est créé une fois pour toute la pyramide et fermé
+    # à la fin. Sur petites bandes (<_MIN_PAR_TILES tuiles), on bypass le pool
+    # car l'overhead submit/wait l'emporte sur le gain d'encodage.
+    _MIN_PAR_TILES = 8
+    _pool = ThreadPoolExecutor(max_workers=tile_workers) if tile_workers > 1 else None
+
+    def _encode_tile(args):
+        _tile, _z, _tx, _ty = args
+        _buf = io.BytesIO()
+        if _use_jpeg:
+            _tile.convert("RGB").save(_buf, "JPEG",
+                                       quality=jpeg_quality, optimize=False)
+        else:
+            _tile.convert("RGB").save(_buf, "PNG",
+                                       optimize=False, compress_level=1)
+        _y_tms = (2 ** _z - 1) - _ty
+        return (_z, _tx, _y_tms, _buf.getvalue())
 
     for i_tr, (y0_l, y1_l, nom_tr) in enumerate(tranches):
         # Fichier warped persistant dans dossier_ville — préfixe _ pour
@@ -4272,24 +4836,26 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                               end="", flush=True)
                         continue
 
-                    # Découper en tuiles individuelles
+                    # Découper en tuiles individuelles puis encoder en parallèle
+                    # (Pillow libère le GIL pendant JPEG/PNG save → ThreadPool donne
+                    # un vrai parallélisme. Sur petites bandes le pool overhead l'emporte ;
+                    # on bascule sur séquentiel sous _MIN_PAR_TILES tuiles.)
+                    _tiles_args = []
                     for i, tx in enumerate(range(tx0, tx1 + 1)):
                         left = i * TILE_SIZE
                         tile = band_img.crop((left, 0, left + TILE_SIZE, TILE_SIZE))
                         if tile.getbbox() is None:
                             continue
-                        buf2 = io.BytesIO()
-                        if _use_jpeg:
-                            tile.convert("RGB").save(buf2, "JPEG",
-                                                     quality=jpeg_quality,
-                                                     optimize=False)
-                        else:
-                            tile.convert("RGB").save(buf2, "PNG",
-                                                     optimize=False,
-                                                     compress_level=1)
-                        y_tms = (2 ** z - 1) - ty
-                        batch.append((z, tx, y_tms, buf2.getvalue()))
-                        total_insere += 1
+                        _tiles_args.append((tile, z, tx, ty))
+
+                    if _pool is not None and len(_tiles_args) >= _MIN_PAR_TILES:
+                        for _res in _pool.map(_encode_tile, _tiles_args):
+                            batch.append(_res)
+                            total_insere += 1
+                    else:
+                        for _args in _tiles_args:
+                            batch.append(_encode_tile(_args))
+                            total_insere += 1
 
                     band_img.close()
 
@@ -4321,6 +4887,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
               f"  — supprimez-le manuellement si inutile")
 
     con.close()
+    if _pool is not None:
+        _pool.shutdown(wait=True)
     elapsed = int(time.time() - t0)
     taille_mb = mbtiles.stat().st_size / 1e6 if mbtiles.exists() else 0
     print("\n  z" + str(zoom_min) + "-" + str(zoom_max) + " 100%  " + str(total_insere) + " tuiles  " + _hms(elapsed))
@@ -4339,7 +4907,7 @@ WMTS_URL_PUB = "https://data.geopf.fr/wmts"
 # Clé API IGN — chargée depuis lidar2map.env si présent, sinon valeur par défaut.
 # Pour utiliser votre propre clé, créez lidar2map.env (non versionné) avec :
 #   IGN_APIKEY=votre_cle
-_apikey_env_path = Path(__file__).resolve().parent / "lidar2map.env"
+_apikey_env_path = DOSSIER_TRAVAIL / "lidar2map.env"
 if _apikey_env_path.exists():
     for _line in _apikey_env_path.read_text(encoding="utf-8").splitlines():
         _line = _line.strip()
@@ -5195,6 +5763,21 @@ def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_m
     return "".join(lines)
 
 
+def _java_opts_extra():
+    """Options JVM additionnelles à passer à osmosis.
+
+    Mode frozen : pointe `user.home` vers BUNDLE_DIR (sans `.openstreetmap/`)
+    pour empêcher osmosis de scanner `%USERPROFILE%\\.openstreetmap\\osmosis\\plugins\\`.
+    Sinon le plugin mapwriter serait chargé deux fois (CLASSPATH bundlé +
+    plugins dir utilisateur) → OsmosisRuntimeException "Task type already exists".
+    """
+    if not getattr(sys, "frozen", False):
+        return ""
+    fake_home = str(BUNDLE_DIR).replace("\\", "/")
+    # Quoter pour gérer les espaces dans le chemin (cmd + osmosis.bat).
+    return f' "-Duser.home={fake_home}"'
+
+
 _MAPWRITER_VERSION = "0.25.0"
 _MAPWRITER_JAR     = f"mapsforge-map-writer-{_MAPWRITER_VERSION}-jar-with-dependencies.jar"
 _MAPWRITER_URL     = (
@@ -5212,7 +5795,13 @@ def _verifier_mapwriter():
       Windows  : %USERPROFILE%\\.openstreetmap\\osmosis\\plugins\\
       Linux    : ~/.openstreetmap/osmosis/plugins/
       macOS    : ~/.openstreetmap/osmosis/plugins/
+
+    Mode frozen : le plugin est embarqué dans osmosis/lib/ (osmosis.bat
+    bundlé inclut le jar dans son CLASSPATH) — rien à vérifier ici.
     """
+    # Mode frozen : plugin déjà sur le classpath d'osmosis, court-circuit.
+    if getattr(sys, "frozen", False):
+        return True
 
     plugins_dir = Path.home() / ".openstreetmap" / "osmosis" / "plugins"
     jar_path    = plugins_dir / _MAPWRITER_JAR
@@ -5409,13 +5998,16 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     _env_osm["JAVA_HOME"] = _java_home
     # JAVA_OPTS : heap max 6g — nécessaire pour le PBF France (~5 Go)
     # JAVACMD_OPTIONS : variable lue par osmosis.bat pour passer les options JVM
-    _env_osm["JAVA_OPTS"]       = "-Xmx6g"
-    _env_osm["JAVACMD_OPTIONS"] = "-Xmx6g"
+    _java_extra = _java_opts_extra()
+    _env_osm["JAVA_OPTS"]       = "-Xmx6g" + _java_extra
+    _env_osm["JAVACMD_OPTIONS"] = "-Xmx6g" + _java_extra
 
     # tagmapping-min.xml : chercher à côté du script puis dans le dossier dalles
+    # En mode frozen, le fichier est bundlé dans sys._MEIPASS (BUNDLE_DIR).
     _tagmapping = None
     for cand in [
         DOSSIER_TRAVAIL / "tagmapping-min.xml",
+        BUNDLE_DIR      / "tagmapping-min.xml",
         Path(str(osm_pbf)).parent / "tagmapping-min.xml",
         dossier_ville / "tagmapping-min.xml",
     ]:
@@ -5603,6 +6195,13 @@ Exemples :
                         help="Écraser les dalles téléchargées existantes")
     parser.add_argument("--ombrages-ecraser", action="store_true", dest="ombrages_ecraser",
                         help="Écraser les ombrages existants")
+    parser.add_argument("--sweep-horizon", action="store_true", dest="sweep_horizon",
+                        help="Kernel SVF sweep-horizon avec running max sur deque "
+                             "(upper convex hull). Complexité O(W·H·N) au lieu de "
+                             "O(W·H·N·max_r). Speedup ~×5-15 pour SVF20m, ~×30-50 "
+                             "pour SVF100m, plusieurs centaines pour grands rayons. "
+                             "Léger aliasing NN aux faibles gradients, imperceptible "
+                             "pour structures > 1-2 px.")
     parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Écraser les tuiles/MBTiles/.map existants")
     parser.add_argument("--formats-fichier", nargs="+",
@@ -6585,7 +7184,8 @@ Exemples :
               f" (selon le type d'ombrage et la machine)", flush=True)
         generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
-                         ecraser_ombrages=args.ombrages_ecraser)
+                         ecraser_ombrages=args.ombrages_ecraser,
+                         use_sweep=args.sweep_horizon)
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     if args.mbtiles or args.rmap or args.sqlitedb:
@@ -6624,7 +7224,8 @@ Exemples :
                                            jpeg_quality=args.qualite_image,
                                            bbox_l93=bbox,
                                            source_already_warped=getattr(args, "_source_already_warped", False),
-                                           ecraser_tuiles=_ecraser_l)
+                                           ecraser_tuiles=_ecraser_l,
+                                           tile_workers=args.workers)
             elif _mbt_path.exists():
                 print(f"  MBTiles existant : {_mbt_path.name} — découpage/conversion directe")
                 _mbt_out = _mbt_path
@@ -6673,7 +7274,8 @@ Exemples :
                                                format_tuiles=args.formats_image,
                                                jpeg_quality=args.qualite_image,
                                                bbox_l93=bbox,
-                                               ecraser_tuiles=_ecraser_l)
+                                               ecraser_tuiles=_ecraser_l,
+                                               tile_workers=args.workers)
                     _convertir_formats(_mbt_out, args, mbtiles_neuf=True)
             else:
                 print("  Aucun ombrage trouvé pour MBTiles (générez d'abord --ombrages)")
@@ -7066,7 +7668,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                             else ELEVATION_SOLEIL)
                     generer_ombrages(dalles_ombrages, dossier_ville, choix,
                                      elevation_soleil=elev, nom_zone=nom_z,
-                                     ecraser_ombrages=args.ombrages_ecraser)
+                                     ecraser_ombrages=args.ombrages_ecraser,
+                                     use_sweep=args.sweep_horizon)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Filtre identique à la fonction main : exclure les caches de
@@ -7091,7 +7694,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                             format_tuiles=args.formats_image,
                             jpeg_quality=args.qualite_image,
                             bbox_l93=bbox,
-                            ecraser_tuiles=args.tuiles_ecraser)
+                            ecraser_tuiles=args.tuiles_ecraser,
+                            tile_workers=args.workers)
                     else:
                         mbt_out = mbt_path
                     _convertir_formats(mbt_out, args, decoupe_sortie=False,
@@ -7473,13 +8077,8 @@ def _resoudre_zone_wgs84(args):
         if not nom_zone:
             nom_zone = normaliser_nom(nom_dep) + "_" + num_dep.lower()
         # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84 pour le WFS
-        try:
-            _t_dep = _get_transformer("EPSG:2154", "EPSG:4326")
-            lon_min, lat_min = _t_dep.transform(bx1, by1)
-            lon_max, lat_max = _t_dep.transform(bx2, by2)
-        except ImportError:
-            lon_min, lat_min = lamb93_to_wgs84_approx(bx1, by1)
-            lon_max, lat_max = lamb93_to_wgs84_approx(bx2, by2)
+        lon_min, lat_min = _lamb93_to_wgs84_safe(bx1, by1)
+        lon_max, lat_max = _lamb93_to_wgs84_safe(bx2, by2)
 
     elif args.zone_bbox:
         try:
@@ -7860,7 +8459,7 @@ Exemples :
 
     # ── Dossier de sortie ─────────────────────────────────────────────────────
     racine  = Path(args.dossier).resolve() if args.dossier \
-              else Path(__file__).resolve().parent / "Projets" / nom_zone / "ign_raster"
+              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster"
     dossier = racine
     dossier.mkdir(parents=True, exist_ok=True)
 
@@ -8647,7 +9246,7 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     _env_map = os.environ.copy()
     _env_map["JAVA_HOME"] = _java_home
     if "JAVA_OPTS" not in _env_map:
-        _env_map["JAVA_OPTS"] = "-Xmx4g"
+        _env_map["JAVA_OPTS"] = "-Xmx4g" + _java_opts_extra()
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     t0 = time.time()
@@ -9244,7 +9843,7 @@ def main_wfs():
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
 
     racine  = (Path(args.dossier).resolve() if args.dossier
-               else Path(__file__).resolve().parent / "Projets" / nom_zone / "ign_vecteur")
+               else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_vecteur")
     dossier = racine
     dossier.mkdir(parents=True, exist_ok=True)
 
@@ -10133,6 +10732,7 @@ def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
         "no_omb":        bool(ombs) or _flag("--ombrages"),
         "ombrages":      ombs,
         "elevation":     _arg_int("--ombrages-elevation", 25),
+        "sweep_horizon": _flag("--sweep-horizon"),
         "ecraser_omb":   _flag("--ombrages-ecraser"),
         "mbtiles_l":     "mbtiles" in fmts,
         "rmap":          "rmap"    in fmts,
@@ -10271,7 +10871,10 @@ def lancer_gui():
         _lg.handlers.clear()
         _lg.propagate = False
 
-    SCRIPT  = Path(__file__).resolve()
+    # En mode frozen, l'exe est son propre lanceur (pas de python + .py).
+    SCRIPT  = (Path(sys.executable).resolve()
+               if getattr(sys, "frozen", False)
+               else Path(__file__).resolve())
 
     # ── Table zooms pour la sélection de couche ───────────────────────────────
     # NB : _lire_zoom_limites_wmts() interroge GetCapabilities au runtime et
@@ -10408,7 +11011,9 @@ def lancer_gui():
 
         # ── Construction de la commande CLI ──────────────────────────────
         def _build_cmd(self, cfg):
-            cmd = [sys.executable, str(SCRIPT)]
+            # Frozen : l'exe est self-launching, on n'y prépose pas sys.executable.
+            cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
+                   else [sys.executable, str(SCRIPT)])
             t = cfg.get("type", "lidar")
 
             # Zone (pas pour fusion / découpe)
@@ -10445,6 +11050,7 @@ def lancer_gui():
                     if cfg.get("elevation"):
                         cmd += ["--ombrages-elevation", str(cfg["elevation"])]
                     if cfg.get("ecraser_omb"): cmd.append("--ombrages-ecraser")
+                    if cfg.get("sweep_horizon"): cmd.append("--sweep-horizon")
                 fmts = []
                 if cfg.get("mbtiles_l"): fmts.append("mbtiles")
                 if cfg.get("rmap"):      fmts.append("rmap")
@@ -10589,13 +11195,17 @@ def lancer_gui():
             # Calculer le dossier résultat attendu
             t    = cfg.get("type", "lidar")
             nom  = cfg.get("nom", "")
+            # Le pipeline CLI normalise le nom (slug ASCII minuscule) pour le
+            # nom de dossier : "Garéoult" → "gareoult". Sans cette normalisation
+            # ici, open_folder() pointerait vers un chemin inexistant.
+            nom_slug = normaliser_nom(nom) if nom else ""
             base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
             _type_dir = {"lidar":"ign_lidar","scan":"ign_raster","osm":"osm_vecteur",
                          "vecteur":"ign_vecteur","fusion":"fusion","decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)
             else:
-                self._result_dir = str(base / nom / _type_dir.get(t, t)) if nom else str(base)
+                self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
             while not self._log_queue.empty():
                 try: self._log_queue.get_nowait()
                 except queue.Empty: break
@@ -11229,6 +11839,9 @@ body.log-resizing *{
       <span style="margin-left:12px;color:var(--dim)">☀</span>
       <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short">
       <span style="color:var(--dim)">°</span>
+      <label style="margin-left:16px" title="Kernel SVF sweep-horizon avec running max sur deque (upper convex hull). Speedup ×2-3 pour SVF20m, ×15+ pour SVF100m. Léger aliasing NN aux faibles gradients, imperceptible pour structures > 1-2 px. Recommandé pour SVF100m et RRIM.">
+       <input type="checkbox" id="f-sweep-horizon"> sweep-horizon (×15 pour SVF100m)
+      </label>
      </div>
     </div>
    </div>
@@ -11245,12 +11858,13 @@ body.log-resizing *{
       <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
       <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
-       <input type="radio" name="fmt-l" id="fl-auto" value="auto" checked><label for="fl-auto">Auto</label>
-       <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg"><label for="fl-jpeg">JPEG</label>
+       <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg" checked><label for="fl-jpeg">JPEG</label>
        <input type="radio" name="fmt-l" id="fl-png"  value="png"><label for="fl-png">PNG</label>
       </div>
-      <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
-      <input type="number" id="f-qualite-l" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      <span id="wrap-qualite-l">
+       <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
+       <input type="number" id="f-qualite-l" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      </span>
      </div>
      <div class="row">
       <label>Format du fichier :</label>
@@ -11325,12 +11939,13 @@ body.log-resizing *{
       <input type="number" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
       <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
-       <input type="radio" name="fmt-s" id="fs-auto" value="auto" checked><label for="fs-auto">Auto</label>
-       <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg"><label for="fs-jpeg">JPEG</label>
+       <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg" checked><label for="fs-jpeg">JPEG</label>
        <input type="radio" name="fmt-s" id="fs-png"  value="png"><label for="fs-png">PNG</label>
       </div>
-      <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
-      <input type="number" id="f-qualite-s" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      <span id="wrap-qualite-s">
+       <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
+       <input type="number" id="f-qualite-s" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      </span>
      </div>
      <div class="row">
       <label>Format du fichier :</label>
@@ -12110,6 +12725,25 @@ function bindAll() {
     cb.addEventListener('change', window.applyToggles);
   });
   window.applyToggles();
+  // Format image LiDAR / IGN raster : masque "Qualité Jpeg" quand PNG est sélectionné.
+  window.applyFmtL = function() {
+    const cur = document.querySelector('input[name=fmt-l]:checked')?.value || 'jpeg';
+    const wrap = document.getElementById('wrap-qualite-l');
+    if (wrap) wrap.classList.toggle('hidden', cur !== 'jpeg');
+  };
+  document.querySelectorAll('input[name=fmt-l]').forEach(r => {
+    r.addEventListener('change', window.applyFmtL);
+  });
+  window.applyFmtL();
+  window.applyFmtS = function() {
+    const cur = document.querySelector('input[name=fmt-s]:checked')?.value || 'jpeg';
+    const wrap = document.getElementById('wrap-qualite-s');
+    if (wrap) wrap.classList.toggle('hidden', cur !== 'jpeg');
+  };
+  document.querySelectorAll('input[name=fmt-s]').forEach(r => {
+    r.addEventListener('change', window.applyFmtS);
+  });
+  window.applyFmtS();
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -12137,13 +12771,14 @@ function getConfig() {
     no_omb:        g('f-no-omb')?.checked,
     ombrages:      [...document.querySelectorAll('input[name=omb]:checked')].map(c=>c.value),
     elevation:     parseInt(g('f-elevation')?.value) || 25,
+    sweep_horizon: g('f-sweep-horizon')?.checked,
     ecraser_omb:   g('f-ecraser-omb')?.checked,
     mbtiles_l:     g('f-mbtiles-l')?.checked && g('f-mbtiles')?.checked,
     rmap:          g('f-mbtiles-l')?.checked && g('f-rmap')?.checked,
     sqlitedb:      g('f-mbtiles-l')?.checked && g('f-sqlitedb')?.checked,
     zoom_min_l:    parseInt(g('f-zoom-min-l')?.value) || 8,
     zoom_max_l:    parseInt(g('f-zoom-max-l')?.value) || 18,
-    fmt_l:         document.querySelector('input[name=fmt-l]:checked')?.value || 'auto',
+    fmt_l:         document.querySelector('input[name=fmt-l]:checked')?.value || 'jpeg',
     qualite_l:     parseInt(g('f-qualite-l')?.value) || 85,
     ecraser_mbt:   g('f-ecraser-mbt')?.checked,
     cols_decoupe:  parseInt(g('f-priori-cols')?.value)   || 0,
@@ -12166,7 +12801,7 @@ function getConfig() {
     mbtiles_s:     g('f-mbtiles-s')?.checked,
     rmap_s:        g('f-rmap-s')?.checked,
     sqlitedb_s:    g('f-sqlitedb-s')?.checked,
-    fmt_s:         document.querySelector('input[name=fmt-s]:checked')?.value || 'auto',
+    fmt_s:         document.querySelector('input[name=fmt-s]:checked')?.value || 'jpeg',
     qualite_s:     parseInt(g('f-qualite-s')?.value) || 85,
     ecraser_tuil_s:g('f-ecraser-tuil-s')?.checked,
     // OSM
@@ -12266,6 +12901,7 @@ function loadConfig(cfg) {
   s('f-dossier-dalles', cfg.dossier_dalles);
   s('f-no-omb',         cfg.no_omb);
   s('f-elevation',      cfg.elevation);
+  s('f-sweep-horizon',  cfg.sweep_horizon);
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
@@ -12375,6 +13011,8 @@ function loadConfig(cfg) {
   if (typeof window.applyMode    === 'function') window.applyMode();
   if (typeof window.applyType    === 'function') window.applyType();
   if (typeof window.applyToggles === 'function') window.applyToggles();
+  if (typeof window.applyFmtL    === 'function') window.applyFmtL();
+  if (typeof window.applyFmtS    === 'function') window.applyFmtS();
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
