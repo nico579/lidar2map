@@ -1,4 +1,4 @@
-# lidar2map_build.ps1 — Build complet du launcher lidar2map.exe
+# lidar2map_win_build.ps1 — Build complet du launcher lidar2map.exe
 #
 # 3 étapes :
 #   1. PyInstaller onedir         -> dist_onedir/lidar2map/    (la vraie app)
@@ -10,7 +10,7 @@
 #   Ouvrir lidar2map_bundle.zip -> _internal/ -> remplacer lidar2map.py
 #
 # Usage :
-#   PowerShell -ExecutionPolicy Bypass -File lidar2map_build.ps1
+#   PowerShell -ExecutionPolicy Bypass -File lidar2map_win_build.ps1
 
 $root  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $venv  = Join-Path $env:USERPROFILE ".lidar2map\venv"
@@ -26,8 +26,8 @@ $finalZip    = "$finalOut\lidar2map_bundle.zip"   # zip à côté du .exe
 # 1. PyInstaller onedir (la vraie app)
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "[1/3] PyInstaller onedir (lidar2map.spec)..." -ForegroundColor Cyan
-$out = & $pyi "$root\lidar2map.spec" `
+Write-Host "[1/3] PyInstaller onedir (lidar2map_win.spec)..." -ForegroundColor Cyan
+$out = & $pyi "$root\lidar2map_win.spec" `
     --noconfirm --clean `
     --distpath $onedirOut `
     --workpath "$root\build" 2>&1 | Out-String
@@ -58,8 +58,8 @@ Write-Host ("    Bundle : {0:N1} Mo en {1:N1}s" -f $bundleSize, $sw.Elapsed.Tota
 # 3. PyInstaller launcher (léger — sans bundle embarqué)
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "[3/3] PyInstaller launcher (lidar2map_launcher.spec)..." -ForegroundColor Cyan
-$out = & $pyi "$root\lidar2map_launcher.spec" `
+Write-Host "[3/3] PyInstaller launcher (lidar2map_win_launcher.spec)..." -ForegroundColor Cyan
+$out = & $pyi "$root\lidar2map_win_launcher.spec" `
     --noconfirm --clean `
     --distpath $finalOut `
     --workpath "$root\build" 2>&1 | Out-String

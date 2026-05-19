@@ -6,17 +6,17 @@ Construit la même source lidar2map.py en mode onefile minimal, en excluant
 toutes les deps lourdes (le launcher n'utilise que stdlib).
 
 Le bundle lidar2map_bundle.zip N'EST PAS embarqué dans le binaire : il est
-copié à côté du .exe par lidar2map_build.ps1, ce qui le rend remplaçable
+copié à côté du .exe par lidar2map_win_build.ps1, ce qui le rend remplaçable
 sans rebuilder (cf. update_app.py / 7-Zip).
 
 Au runtime, le bloc launcher en tête de lidar2map.py cherche le bundle
 à côté de l'exe, puis spawn l'exe interne avec la sentinelle
 --__lidar2map_inner__ qui désactive ce même bloc côté inner.
 
-Prérequis (orchestré par lidar2map_build.ps1) :
-  1. pyinstaller lidar2map.spec          -> dist_onedir/lidar2map/...
+Prérequis (orchestré par lidar2map_win_build.ps1) :
+  1. pyinstaller lidar2map_win.spec          -> dist_onedir/lidar2map/...
   2. zip dist_onedir/lidar2map           -> build/lidar2map_bundle.zip
-  3. pyinstaller lidar2map_launcher.spec -> dist/lidar2map.exe  (livrable final)
+  3. pyinstaller lidar2map_win_launcher.spec -> dist/lidar2map.exe  (livrable final)
   4. copie  lidar2map_bundle.zip         -> dist/  (à côté du .exe)
 """
 
@@ -25,14 +25,14 @@ from pathlib import Path
 BUNDLE_ZIP = Path(SPECPATH) / "build" / "lidar2map_bundle.zip"
 if not BUNDLE_ZIP.exists():
     raise SystemExit(
-        f"[lidar2map_launcher.spec] Bundle introuvable : {BUNDLE_ZIP}\n"
+        f"[lidar2map_win_launcher.spec] Bundle introuvable : {BUNDLE_ZIP}\n"
         "Exécute d'abord :\n"
-        "  pyinstaller lidar2map.spec --clean --noconfirm\n"
+        "  pyinstaller lidar2map_win.spec --clean --noconfirm\n"
         "  Compress-Archive dist_onedir\\lidar2map\\* build\\lidar2map_bundle.zip\n"
     )
 
 # Le zip N'EST PAS embarqué dans le binaire launcher.
-# Il sera copié à côté du .exe par lidar2map_build.ps1.
+# Il sera copié à côté du .exe par lidar2map_win_build.ps1.
 # → Remplaçable depuis Windows sans rebuilder : ouvrir le zip, remplacer _internal/lidar2map.py
 datas         = []
 hiddenimports = []

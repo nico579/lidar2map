@@ -473,9 +473,9 @@ for _std in ("stdout", "stderr"):
 # MODE LAUNCHER (build onefile)
 # ─────────────────────────────────────────────────────────────────────────────
 # Le même lidar2map.py est buildé en DEUX versions :
-#   1) onedir (lidar2map.spec)        : la vraie app, ~617 Mo, lente à packager
+#   1) onedir (lidar2map_win.spec)        : la vraie app, ~617 Mo, lente à packager
 #      mais rapide à lancer. C'est ce qui tourne au final.
-#   2) onefile (lidar2map_launcher.spec) : un petit launcher qui contient le onedir
+#   2) onefile (lidar2map_win_launcher.spec) : un petit launcher qui contient le onedir
 #      zippé en ressource. À l'exécution il extrait dans %LOCALAPPDATA%\lidar2map
 #      (avec contrôle SHA pour détecter les mises à jour), puis spawn le vrai exe
 #      onedir avec une sentinelle pour qu'il saute ce bloc.

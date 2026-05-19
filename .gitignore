@@ -8,6 +8,7 @@ __pycache__/
 .eggs/
 build/
 dist/
+dist_onedir/
 .venv/
 venv/
 env/
@@ -31,10 +32,11 @@ ENV/
 *.pbf
 *.gpkg
 
-# Archives téléchargées
+# Archives téléchargées (sauf les bundles distribués via Releases)
 *.7z
-*.zip
 *.tar.gz
+*.zip
+!screenshots/**/*.zip
 
 # ─── lidar2map : binaires et caches (téléchargés à la demande) ──────
 bin/
@@ -51,6 +53,7 @@ sortie/
 historique.json
 dep_bbox_cache.json
 ville_bbox_cache.json
+lidar_config.json
 manifeste.json
 *_manifeste.json
 
@@ -59,6 +62,7 @@ test_*.py.bak
 *.bak
 *.tmp
 *.swp
+*.log
 
 # ─── Éditeurs / IDE ─────────────────────────────────────────────────
 .vscode/
@@ -67,6 +71,16 @@ test_*.py.bak
 *.sublime-workspace
 .spyderproject
 .spyproject
+
+# ─── Outils IA / config locale ──────────────────────────────────────
+.claude/
+.qwen/
+QWEN.MD
+qwen.md
+
+# ─── Utilitaires perso (non distribués) ─────────────────────────────
+_tools/
+push_github.ps1
 
 # ─── OS ─────────────────────────────────────────────────────────────
 .DS_Store

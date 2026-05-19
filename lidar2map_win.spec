@@ -3,7 +3,7 @@
 Spec PyInstaller pour lidar2map — Windows, onedir, JRE+osmosis+mapwriter bundlés.
 
 Usage :
-    %USERPROFILE%\.lidar2map\venv\Scripts\pyinstaller.exe lidar2map.spec --clean --noconfirm
+    %USERPROFILE%\.lidar2map\venv\Scripts\pyinstaller.exe lidar2map_win.spec --clean --noconfirm
 
 Résultat :
     dist_onedir/lidar2map/lidar2map.exe
