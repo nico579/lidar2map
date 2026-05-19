@@ -17,7 +17,7 @@ Le plugin mapsforge-map-writer est copié dans osmosis/lib/ et osmosis.bat
 est patché pour l'inclure dans son CLASSPATH.
 """
 
-import os, shutil
+import os, shutil, sys
 from pathlib import Path
 from PyInstaller.utils.hooks import (
     collect_data_files,
@@ -25,6 +25,11 @@ from PyInstaller.utils.hooks import (
     collect_dynamic_libs,
     collect_all,           # ajout vs version originale
 )
+
+# Cette spec sert AUSSI pour Linux (cf. lidar2map_linux_build.sh).
+# Windows  : pywebview -> WinForms / Edge WebView2 (pas de Qt)
+# Linux    : pywebview -> PyQt6 + WebEngine (seul backend pip viable)
+IS_LINUX = sys.platform.startswith("linux")
 
 ONEFILE = False
 CONSOLE = True
@@ -157,15 +162,31 @@ try:
 except Exception:
     pass
 
-# ── pywebview (backend Windows = WinForms / Edge WebView2) ───────────────────
+# ── pywebview (backend dépendant de la plateforme) ───────────────────────────
 datas         += collect_data_files("webview")
 hiddenimports += collect_submodules("webview")
-hiddenimports += [
-    "webview.platforms.winforms",
-    "clr_loader",
-    "clr_loader.netfx",
-    "pythonnet",
-]
+if IS_LINUX:
+    # Linux : PyQt6 + WebEngine + qtpy (auto-installés par le bootstrap)
+    for _lib in ("PyQt6", "qtpy"):
+        try:
+            d, b, h = collect_all(_lib)
+            datas += d; binaries += b; hiddenimports += h
+        except Exception as _e:
+            print(f"  [WARN] collect_all({_lib}) a échoué : {_e}")
+    hiddenimports += [
+        "webview.platforms.qt",
+        "PyQt6.QtWebEngineWidgets",
+        "PyQt6.QtWebEngineCore",
+        "PyQt6.QtWebChannel",
+    ]
+else:
+    # Windows : WinForms / Edge WebView2 (Win10+)
+    hiddenimports += [
+        "webview.platforms.winforms",
+        "clr_loader",
+        "clr_loader.netfx",
+        "pythonnet",
+    ]
 
 # ── PIL ───────────────────────────────────────────────────────────────────────
 hiddenimports += [
@@ -245,17 +266,56 @@ hiddenimports += ["urllib3", "charset_normalizer", "idna", "certifi"]
 # → erreur "too many values to unpack". La fusion se fait après.
 _excludes = [
     "tkinter", "matplotlib",
-    "PyQt5", "PyQt6", "PySide2", "PySide6",
+    "PyQt5", "PySide2", "PySide6",
     "test", "unittest", "pydoc_data",
     "IPython", "jupyter",
 ]
+if IS_LINUX:
+    # Linux : on garde PyQt6 (sinon pywebview ne trouve aucun backend)
+    # et on exclut les backends non-utilisables
+    _excludes += ["webview.platforms.winforms", "webview.platforms.cocoa",
+                  "clr_loader", "pythonnet"]
+else:
+    # Windows : exclut PyQt6 (backend WinForms utilisé à la place)
+    _excludes += ["PyQt6"]
+
+# ── Runtime hook (Linux uniquement) : forcer PYWEBVIEW_GUI=qt + chemins Qt ──
+_runtime_hooks = []
+if IS_LINUX:
+    _hook = SRC / "build" / "_runtime_hook_linux.py"
+    _hook.parent.mkdir(parents=True, exist_ok=True)
+    _hook.write_text("""\
+import os, sys
+_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
+os.environ.setdefault('PYWEBVIEW_GUI', 'qt')
+# Qt plugins (xcb platform plugin etc.)
+_plugins = os.path.join(_base, 'PyQt6', 'Qt6', 'plugins')
+if os.path.isdir(_plugins):
+    os.environ.setdefault('QT_PLUGIN_PATH', _plugins)
+# QtWebEngineProcess
+for _cand in (
+    os.path.join(_base, 'PyQt6', 'Qt6', 'libexec', 'QtWebEngineProcess'),
+    os.path.join(_base, 'PyQt6', 'QtWebEngineProcess'),
+):
+    if os.path.isfile(_cand):
+        os.environ.setdefault('QTWEBENGINEPROCESS_PATH', _cand)
+        break
+_res = os.path.join(_base, 'PyQt6', 'Qt6', 'resources')
+if os.path.isdir(_res):
+    os.environ.setdefault('QTWEBENGINE_RESOURCES_PATH', _res)
+_loc = os.path.join(_base, 'PyQt6', 'Qt6', 'translations')
+if os.path.isdir(_loc):
+    os.environ.setdefault('QTWEBENGINE_LOCALES_PATH',
+                          os.path.join(_loc, 'qtwebengine_locales'))
+""")
+    _runtime_hooks = [str(_hook)]
 
 # Passe 1 : analyse de lidar2map.py pour la détection des imports
 a_detect = Analysis(
     ["lidar2map.py"],
     pathex=[], binaries=binaries, datas=datas,
     hiddenimports=hiddenimports, hookspath=[], hooksconfig={},
-    runtime_hooks=[], excludes=_excludes, noarchive=False, optimize=0,
+    runtime_hooks=_runtime_hooks, excludes=_excludes, noarchive=False, optimize=0,
 )
 
 # Passe 2 : build réel depuis _loader.py (même entrées 2-tuples)
@@ -264,7 +324,7 @@ a = Analysis(
     pathex=[], binaries=binaries,
     datas=datas + [("lidar2map.py", ".")],  # lidar2map.py en clair dans _internal/
     hiddenimports=hiddenimports, hookspath=[], hooksconfig={},
-    runtime_hooks=[], excludes=_excludes, noarchive=False, optimize=0,
+    runtime_hooks=_runtime_hooks, excludes=_excludes, noarchive=False, optimize=0,
 )
 
 # Fusion des TOC de sortie (3-tuples) — après les deux analyses
