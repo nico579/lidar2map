@@ -119,16 +119,16 @@ bash lidar2map_mac_build.sh   # 2. Build -> dist/LIDAR2MAP.app
 
 ##### Linux (Ubuntu / Debian)
 
-Linux réutilise les specs Windows. Pas de script de build dédié — étape manuelle après le setup :
+Linux réutilise les specs Windows (`_win.spec` produit un ELF sous Linux, le nom est trompeur).
 
 ```bash
 git clone https://github.com/nico579/lidar2map
 cd lidar2map
-bash setup_build_linux.sh
-$HOME/.lidar2map/venv/bin/pyinstaller lidar2map_win.spec --clean --noconfirm
-cd dist_onedir/lidar2map && zip -r ../../lidar2map_bundle.zip . && cd ../..
-$HOME/.lidar2map/venv/bin/pyinstaller lidar2map_win_launcher.spec --clean --noconfirm
+bash setup_build_linux.sh       # 1. Setup
+bash lidar2map_linux_build.sh   # 2. Build -> dist/lidar2map + dist/lidar2map_bundle.zip
 ```
+
+Prérequis : `sudo apt install zip` si absent. Le binaire produit dépend de la libc de la machine de build (build sur Ubuntu 22.04 → tourne sur Ubuntu ≥ 22.04 / Debian 12+).
 
 Documentation complète du build (architecture du bundle, mise à jour sans rebuild, dépannage) : **[BUILD.md](BUILD.md)**.
 

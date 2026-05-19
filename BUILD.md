@@ -92,6 +92,7 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 | `lidar2map_win.spec` | Build interne onedir Windows (+ Linux) |
 | `lidar2map_win_launcher.spec` | Launcher `.exe` Windows (+ Linux) |
 | `lidar2map_win_build.ps1` | Script de build Windows (3 étapes) |
+| `lidar2map_linux_build.sh` | Script de build Linux (3 étapes, miroir bash) |
 | `setup_build_mac.sh` | Setup machine de build macOS vierge (4 étapes) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
