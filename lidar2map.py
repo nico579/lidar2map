@@ -687,15 +687,28 @@ if getattr(sys, "frozen", False):
                                             f"Bundle suspect : {_mem.filename!r}")
                                 for _i, _m in enumerate(_members, 1):
                                     _z.extract(_m, _app_dir)
+                                    # zipfile ne restaure PAS les permissions
+                                    # POSIX. zip -r (Unix) les stocke dans
+                                    # external_attr (16 bits hauts). On les
+                                    # réapplique → préserve +x sur tous les
+                                    # binaires bundlés (QtWebEngineProcess,
+                                    # JRE java, osmosis, …).
+                                    _mode = (_m.external_attr >> 16) & 0xFFFF
+                                    if _mode and _sys != "Windows":
+                                        try:
+                                            (_Path(_app_dir) / _m.filename).chmod(_mode & 0o777)
+                                        except Exception:
+                                            pass
                                     if _i % max(1, _n // 20) == 0:
                                         print(f"  {_i * 100 // _n}%",
                                               end="\r", flush=True)
                             print("  100%", flush=True)
                             _used_zipfile = True
 
-                        # Restaurer le bit +x si on est passé par zipfile
-                        # (Linux toujours, Darwin uniquement quand ditto a
-                        # échoué). Sur Windows, pas de bit exécutable POSIX.
+                        # Filet de sécurité : si le zip a été créé sans
+                        # permissions POSIX (external_attr == 0, ex: Windows),
+                        # forcer au moins +x sur l'exe interne pour qu'il
+                        # puisse être spawné.
                         if _used_zipfile and _sys != "Windows":
                             import stat as _stat
                             _inner_exe_resolved = _resolve_exe(_inner_exe)
