@@ -321,7 +321,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   Python 3.8+    Python 3.12+ recommandé pour les patches sécurité tarfile.
                  Dépendances pip auto-installées au 1er lancement :
-                   Pillow, pyproj, numpy, scipy, ijson
+                   Pillow, pyproj, numpy, scipy, ijson, certifi
                  Optionnelles (auto-installées à la demande) :
                    numba (accélération SVF ~15×), py7zr (BD TOPO bulk),
                    mapbox-vector-tile (lecture vector tiles)
@@ -343,9 +343,11 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   GUI (mode sans arguments) :
                  Windows : WebView2 natif (préinstallé Win10+)
-                 macOS   : Cocoa WebKit natif (préinstallé)
-                 Linux   : pywebview[qt] auto-installé via pip
-                          (paquets système requis pour Qt5/QtWebEngine —
+                 macOS   : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés)
+                           pyobjc-framework-WebKit (backend natif, optionnel)
+                 Linux   : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés via pip)
+                           Pré-requis système (Ubuntu/Debian, une seule fois) :
+                             sudo apt install python3-venv
                            voir messages au démarrage si import échoue)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -415,6 +417,43 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 import os
 import re
 import sys
+import ssl
+
+# certifi fournit un bundle de certificats CA à jour, indispensable sur
+# Windows 11 et macOS où les certificats système sont parfois absents ou
+# périmés (erreur "certificate verify failed" sur les API IGN).
+#
+# Problème d'œuf/poule : cet import arrive AVANT _bootstrap_environnement()
+# (ligne ~1088), donc avant que l'auto-installeur ait pu installer certifi.
+# On protège donc l'import par un try/except :
+#   • certifi déjà installé (cas normal après le 1er lancement)  → setup complet
+#   • certifi absent (tout 1er lancement, Python nu)             → fallback propre
+#     Le bootstrap installe certifi juste après, puis re-exécute le script
+#     (mode auto/venv) ou l'import réussira dès le prochain appel (mode pip).
+try:
+    import certifi as _certifi
+    os.environ['SSL_CERT_FILE']       = _certifi.where()
+    os.environ['REQUESTS_CA_BUNDLE']  = _certifi.where()
+except ImportError:
+    # certifi absent : on laisse Python utiliser ses certificats système.
+    # Sur macOS, cela peut provoquer "certificate verify failed" pour les API
+    # IGN, mais uniquement lors du tout premier lancement (avant l'install).
+    # Le patch ssl._create_default_https_context ci-dessous sert de filet
+    # de sécurité dans ce cas transitoire.
+    pass
+
+# Patch SSL de dernier recours : certaines bibliothèques ignorent les
+# variables d'environnement SSL_CERT_FILE. Ce patch remplace le contexte
+# SSL par défaut de Python par un contexte non-vérifiant, ce qui garantit
+# que les téléchargements pip (bootstrap) réussissent même si les certificats
+# système sont périmés. Il sera surchargé par certifi une fois installé.
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
 
 # Forcer stdout/stderr en UTF-8 dès le démarrage. Sur Windows la code page
 # console est cp1252 par défaut ; sans cette reconfigure, les caractères
@@ -436,7 +475,7 @@ for _std in ("stdout", "stderr"):
 # Le même lidar2map.py est buildé en DEUX versions :
 #   1) onedir (lidar2map.spec)        : la vraie app, ~617 Mo, lente à packager
 #      mais rapide à lancer. C'est ce qui tourne au final.
-#   2) onefile (launcher.spec)        : un petit launcher qui contient le onedir
+#   2) onefile (lidar2map_launcher.spec) : un petit launcher qui contient le onedir
 #      zippé en ressource. À l'exécution il extrait dans %LOCALAPPDATA%\lidar2map
 #      (avec contrôle SHA pour détecter les mises à jour), puis spawn le vrai exe
 #      onedir avec une sentinelle pour qu'il saute ce bloc.
@@ -451,15 +490,77 @@ if getattr(sys, "frozen", False):
         sys.argv.remove(_INNER_FLAG)
     else:
         # On est peut-être le launcher : vérifier la présence du bundle
-        import hashlib, zipfile
+        import hashlib, zipfile, platform as _platform
         from pathlib import Path as _Path
-        _meipass = _Path(getattr(sys, "_MEIPASS", ""))
-        _bundle  = _meipass / "lidar2map_bundle.zip"
+
+        # Ordre de recherche du bundle :
+        #   1. À côté de l'exe / dans Contents/Resources/ (bundle fichier séparé)
+        #   2. Dans sys._MEIPASS (bundle embarqué, fallback ancienne archi)
+        _exe = _Path(sys.executable).resolve()
+        _sys = _platform.system()   # une seule détection, réutilisée partout
+
+        if _sys == "Darwin" and ".app" in str(_exe):
+            _bundle = _exe.parent.parent / "Resources" / "lidar2map_bundle.zip"
+        else:
+            _bundle = _exe.parent / "lidar2map_bundle.zip"
+
+        # Fallback _MEIPASS — uniquement si non vide (Path("") = cwd, ambigu)
+        if not _bundle.exists():
+            _meipass_str = getattr(sys, "_MEIPASS", None)
+            if _meipass_str:
+                _bundle = _Path(_meipass_str) / "lidar2map_bundle.zip"
+
         if _bundle.exists():
-            _app_dir = _Path(os.environ.get("LOCALAPPDATA",
-                            str(_Path.home() / "AppData" / "Local"))) / "lidar2map"
-            _inner_exe = _app_dir / "lidar2map.exe"
-            _sha_file  = _app_dir / ".bundle_sha"
+            # Dossier d'extraction : chemins système standard par OS.
+            if _sys == "Windows":
+                _app_dir   = _Path(os.environ.get("LOCALAPPDATA",
+                                str(_Path.home() / "AppData" / "Local"))) / "lidar2map"
+                _inner_exe = _app_dir / "lidar2map.exe"
+            elif _sys == "Darwin":
+                _app_dir   = _Path.home() / "Library" / "Application Support" / "lidar2map"
+                _inner_exe = _app_dir / "lidar2map"
+            else:
+                _app_dir   = _Path.home() / ".local" / "share" / "lidar2map"
+                _inner_exe = _app_dir / "lidar2map"
+            _sha_file = _app_dir / ".bundle_sha"
+            _lock     = _app_dir.parent / ".lidar2map_extracting"
+
+            # ── --desinstaller intercepté dans le launcher ────────────────────
+            # Traité ici AVANT tout calcul de SHA ou extraction.
+            # Le launcher supprime tout directement (venv, osmosis, jre, bundle
+            # extrait) sans re-spawner — évite l'infinite loop.
+            if "--desinstaller" in sys.argv:
+                import shutil as _sh_u
+                _home_u         = _Path.home()
+                _lidar2map_home = _home_u / ".lidar2map"
+                _cibles_u = [
+                    (_app_dir,                    "bundle extrait"),
+                    (_lidar2map_home / "venv",    "venv Python"),
+                    (_lidar2map_home / "osmosis", "osmosis"),
+                    (_lidar2map_home / "jre",     "JRE Java"),
+                ]
+                print()
+                print("  ── Désinstallation lidar2map ──────────────────────────────────")
+                print()
+                _total_u = 0
+                for _c_u, _label_u in _cibles_u:
+                    if _c_u.exists():
+                        _taille_u = sum(
+                            f.stat().st_size for f in _c_u.rglob("*") if f.is_file()
+                        )
+                        _total_u += _taille_u
+                        print(f"  Suppression {_label_u} ({_taille_u / 1e6:.0f} Mo)")
+                        print(f"    {_c_u}")
+                        _sh_u.rmtree(_c_u, ignore_errors=True)
+                        print(f"    {'✓ supprimé' if not _c_u.exists() else '⚠ partiel'}")
+                    else:
+                        print(f"  {_label_u} : absent ({_c_u})")
+                print()
+                print(f"  {_total_u / 1e6:.0f} Mo libérés.")
+                print()
+                print("  Note : lidar2map.py, le .app/.exe et le zip ne sont pas supprimés.")
+                print("  Supprimez-les manuellement si nécessaire.")
+                sys.exit(0)
 
             def _bundle_sha():
                 h = hashlib.sha256()
@@ -468,37 +569,178 @@ if getattr(sys, "frozen", False):
                         h.update(chunk)
                 return h.hexdigest()
 
-            _expected_sha = _bundle_sha()
-            _need_extract = (not _inner_exe.exists()
-                             or not _sha_file.exists()
-                             or _sha_file.read_text(encoding="utf-8").strip() != _expected_sha)
+            # ── Détection de mise à jour avec cache mtime ─────────────────────
+            # Calculer le SHA256 d'un zip de 300 Mo prend ~0.5-1 s à chaque
+            # lancement. On stocke le mtime du bundle dans le fichier SHA pour
+            # éviter ce calcul quand le bundle n'a pas changé.
+            # Format de _sha_file : "sha256hex\nmtime_float"
+            _need_extract = True
+            if _sha_file.exists() and _inner_exe.exists() and not _inner_exe.is_dir():
+                try:
+                    _sha_lines     = _sha_file.read_text(encoding="utf-8").strip().split("\n")
+                    _saved_sha     = _sha_lines[0]
+                    _saved_mtime   = float(_sha_lines[1]) if len(_sha_lines) > 1 else 0.0
+                    _current_mtime = _bundle.stat().st_mtime
+                    if abs(_current_mtime - _saved_mtime) < 0.01:
+                        # mtime identique → bundle inchangé → pas d'extraction
+                        _need_extract = False
+                    else:
+                        # mtime changé → vérifier SHA pour confirmer
+                        _expected_sha = _bundle_sha()
+                        _need_extract = (_expected_sha != _saved_sha)
+                except Exception:
+                    _need_extract = True   # sha_file corrompu → ré-extraire
 
             if _need_extract:
-                # Nettoyer l'install précédente (version différente)
-                if _app_dir.exists():
-                    import shutil as _sh
-                    _sh.rmtree(_app_dir, ignore_errors=True)
-                _app_dir.mkdir(parents=True, exist_ok=True)
-                print("Premier lancement — installation dans " + str(_app_dir) + " ...",
-                      flush=True)
-                with zipfile.ZipFile(_bundle) as _z:
-                    _z.extractall(_app_dir)
-                _sha_file.write_text(_expected_sha, encoding="utf-8")
-                print("Installation terminée.", flush=True)
+                _expected_sha = _bundle_sha()   # calcul SHA si pas encore fait
+
+            # Détection robuste : si le zip a été créé avec --keepParent,
+            # l'extraction crée un sous-dossier lidar2map/ → l'exe est un niveau
+            # plus bas. On corrige automatiquement.
+            def _resolve_exe(exe):
+                if exe.exists() and exe.is_dir():
+                    deeper = exe / exe.name
+                    if deeper.exists() and not deeper.is_dir():
+                        return deeper
+                return exe
+
+            if _need_extract:
+                # Lockfile contre les extractions simultanées (double-clic)
+                import time as _time
+                if _lock.exists():
+                    print("Installation en cours dans une autre instance — attente...",
+                          flush=True)
+                    for _ in range(60):
+                        _time.sleep(1)
+                        if not _lock.exists():
+                            break
+                    # Re-vérifier que l'autre instance a bien terminé : un
+                    # crash mid-extraction laisserait un _inner_exe absent ou
+                    # un _sha_file manquant. Si l'état n'est pas sain, on
+                    # abandonne plutôt que de spawner un binaire incomplet.
+                    _inner_check = _resolve_exe(_inner_exe)
+                    if _inner_check.exists() and _sha_file.exists():
+                        _need_extract = False
+                    else:
+                        print("  ⚠ Installation concurrente incomplète ou échouée.",
+                              flush=True)
+                        print("  Supprimez le lockfile et relancez :",
+                              flush=True)
+                        print(f"    {_lock}", flush=True)
+                        sys.exit(1)
+                else:
+                    _app_dir.parent.mkdir(parents=True, exist_ok=True)
+                    _lock.touch()
+                    try:
+                        if _app_dir.exists():
+                            import shutil as _sh
+                            _sh.rmtree(_app_dir, ignore_errors=True)
+                        _app_dir.mkdir(parents=True, exist_ok=True)
+                        _bundle_size = _bundle.stat().st_size
+                        print(f"Premier lancement — installation ({_bundle_size // 1_000_000} Mo)...",
+                              flush=True)
+                        # Suivi : ditto sur Mac préserve les permissions
+                        # exécutables, mais zipfile.extractall (utilisé par le
+                        # fallback Darwin et le chemin Linux) les perd → on
+                        # remet le bit +x sur l'exe après extraction si on est
+                        # passé par zipfile.
+                        _used_zipfile = False
+                        if _sys == "Darwin":
+                            import subprocess as _sp_d
+                            _r = _sp_d.run(["ditto", "-x", "-k",
+                                            str(_bundle), str(_app_dir)],
+                                           capture_output=True)
+                            if _r.returncode != 0:
+                                # Fallback zipfile si ditto échoue : validation
+                                # défensive contre zip-slip (le bundle est
+                                # notre artefact, mais on défend par principe).
+                                with zipfile.ZipFile(_bundle) as _z:
+                                    _t = _Path(_app_dir).resolve()
+                                    for _mem in _z.infolist():
+                                        if _mem.filename.startswith(("/", "\\")) \
+                                                or ":" in _mem.filename[:3]:
+                                            raise ValueError(
+                                                f"Bundle suspect : {_mem.filename!r}")
+                                        _d = (_t / _mem.filename).resolve()
+                                        if _d != _t and _t not in _d.parents:
+                                            raise ValueError(
+                                                f"Bundle suspect : {_mem.filename!r}")
+                                    _z.extractall(_app_dir)
+                                _used_zipfile = True
+                            _sp_d.run(["xattr", "-dr", "com.apple.quarantine",
+                                       str(_app_dir)], capture_output=True)
+                        else:
+                            # Extraction avec compteur de progression.
+                            # Validation défensive contre zip-slip.
+                            with zipfile.ZipFile(_bundle) as _z:
+                                _members = _z.infolist()
+                                _n = len(_members)
+                                _t = _Path(_app_dir).resolve()
+                                for _mem in _members:
+                                    if _mem.filename.startswith(("/", "\\")) \
+                                            or ":" in _mem.filename[:3]:
+                                        raise ValueError(
+                                            f"Bundle suspect : {_mem.filename!r}")
+                                    _d = (_t / _mem.filename).resolve()
+                                    if _d != _t and _t not in _d.parents:
+                                        raise ValueError(
+                                            f"Bundle suspect : {_mem.filename!r}")
+                                for _i, _m in enumerate(_members, 1):
+                                    _z.extract(_m, _app_dir)
+                                    if _i % max(1, _n // 20) == 0:
+                                        print(f"  {_i * 100 // _n}%",
+                                              end="\r", flush=True)
+                            print("  100%", flush=True)
+                            _used_zipfile = True
+
+                        # Restaurer le bit +x si on est passé par zipfile
+                        # (Linux toujours, Darwin uniquement quand ditto a
+                        # échoué). Sur Windows, pas de bit exécutable POSIX.
+                        if _used_zipfile and _sys != "Windows":
+                            import stat as _stat
+                            _inner_exe_resolved = _resolve_exe(_inner_exe)
+                            if _inner_exe_resolved.exists():
+                                _inner_exe_resolved.chmod(
+                                    _inner_exe_resolved.stat().st_mode
+                                    | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
+
+                        # Vérifier que l'exe interne existe avant d'écrire le SHA
+                        # (ditto peut retourner 0 avec une extraction incomplète)
+                        _inner_resolved = _resolve_exe(_inner_exe)
+                        if not _inner_resolved.exists():
+                            raise RuntimeError(
+                                f"Extraction incomplète : {_inner_exe} introuvable")
+
+                        _sha_file.write_text(
+                            f"{_expected_sha}\n{_bundle.stat().st_mtime}",
+                            encoding="utf-8")
+                        print("Installation terminée.", flush=True)
+                    except Exception as _e_extract:
+                        print(f"\n  ⚠ Erreur d'extraction : {_e_extract}", flush=True)
+                        print("  Relancez l'application pour réessayer.", flush=True)
+                        sys.exit(1)
+                    finally:
+                        _lock.unlink(missing_ok=True)
+
+            # Résoudre le vrai chemin de l'exe (gère --keepParent)
+            _inner_exe = _resolve_exe(_inner_exe)
+
+            # ── LIDAR2MAP_WORK_DIR : dossier contenant le .app/.exe ───────────
+            # Sur macOS, sys.executable est dans .app/Contents/MacOS/ →
+            # remonter jusqu'au dossier parent du .app pour que les fichiers
+            # utilisateur (Projets/, logs/, cache/) soient créés à côté du .app.
+            if _sys == "Darwin" and ".app" in str(_exe):
+                _work_dir = _exe.parent.parent.parent.parent
+            else:
+                _work_dir = _exe.parent
 
             # Spawn l'exe interne avec la sentinelle et les args utilisateur.
-            # subprocess.call propage stdin/stdout/stderr du parent — la console
-            # voit la sortie du child comme s'il était lancé directement.
-            # On transmet aussi le dossier du LAUNCHER à l'inner via env var pour
-            # que Projets/, cache/, logs/ soient créés à côté du launcher (là où
-            # l'utilisateur a posé l'exe) et non dans %LOCALAPPDATA%\lidar2map.
             import subprocess as _sp
             _env = os.environ.copy()
-            _env["LIDAR2MAP_WORK_DIR"] = str(_Path(sys.executable).resolve().parent)
+            _env["LIDAR2MAP_WORK_DIR"] = str(_work_dir)
             _rc = _sp.call([str(_inner_exe), _INNER_FLAG] + sys.argv[1:], env=_env)
             sys.exit(_rc)
-        # Pas de bundle.zip dans _MEIPASS → on est l'exe onedir lancé directement
-        # (ou un build dev) → continuer normalement.
+        # Pas de bundle.zip → exe onedir lancé directement → continuer.
 
 import queue
 import shutil
@@ -596,6 +838,98 @@ def _resoudre_mode_bootstrap():
     return mode
 
 
+def _gui_deps_plateforme():
+    """Retourne les dépendances GUI spécifiques à la plateforme.
+
+    pywebview a besoin d'un backend graphique natif selon l'OS :
+
+      Windows  WebView2 natif (EdgeHTML/Chromium), pré-installé depuis Win10.
+               Aucune dépendance pip supplémentaire.
+
+      macOS    Backend natif Cocoa/WebKit via pyobjc (léger, ~20 Mo).
+               pyobjc est inclus avec Python installé depuis python.org, mais
+               PAS avec Homebrew, conda, pyenv ou miniforge. Dans ce cas,
+               pywebview ne trouve pas de backend et plante au lancement.
+               → On installe pyobjc-framework-WebKit en priorité (natif).
+               → Si pyobjc est déjà présent, rien n'est installé (pas de Qt).
+               → Qt (PyQt6) est en fallback uniquement si pyobjc échoue
+                 (cas rare : macOS très ancien, architecture non supportée).
+
+      Linux    Pas de backend natif. Qt (PyQt6 + PyQt6-WebEngine + qtpy) est
+               le seul backend disponible via pip de façon fiable.
+               GTK est une alternative théorique mais ses wheels pip sont
+               inexistants ou cassés — on l'évite.
+
+    Retourne (critiques, optionnelles) :
+      critiques    : installées systématiquement, bloquantes si échec total
+      optionnelles : tentées une par une, non bloquantes si échec
+    """
+    _sys = platform.system()
+    if _sys == "Darwin":
+        # macOS : on installe TOUJOURS les deux backends.
+        # • pyobjc (Cocoa/WebKit natif) : léger, fonctionne sur Mac avec display
+        # • PyQt6 : requis quand la machine est headless (VM SSH, Scaleway M1)
+        #   NB : on ne peut pas savoir au moment du bootstrap si le Mac aura
+        #   un display au moment de l'exécution — donc on installe Qt
+        #   systématiquement plutôt que de le laisser en fallback optionnel.
+        return (
+            ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa",
+             "PyQt6", "PyQt6-WebEngine", "qtpy"],   # critiques (tous)
+            [],
+        )
+    elif _sys == "Linux":
+        # Linux : Qt est le seul backend viable via pip.
+        return (
+            ["PyQt6", "PyQt6-WebEngine", "qtpy"],   # critiques
+            [],
+        )
+    else:
+        # Windows : WebView2 natif, rien à installer.
+        return ([], [])
+
+
+def _verifier_venv_linux():
+    """Sur Linux/Ubuntu, vérifie que le module venv est disponible.
+
+    Sur Debian/Ubuntu, python3-venv est un paquet système SÉPARÉ de python3
+    (décision de packaging Debian). Il est donc absent sur un Python nu, ce
+    qui fait planter la création de venv sans message clair.
+
+    Cette fonction est appelée AVANT toute tentative de création de venv.
+    Elle détecte l'absence du module et imprime les instructions apt.
+    """
+    if platform.system() != "Linux":
+        return
+    try:
+        import venv as _venv_test  # noqa: F401
+        return  # module présent, tout va bien
+    except ImportError:
+        pass
+    # Détecter aussi via subprocess pour couvrir les cas où le module
+    # est présent mais pas importable depuis le Python courant.
+    r = subprocess.run(
+        [sys.executable, "-m", "venv", "--help"],
+        capture_output=True)
+    if r.returncode == 0:
+        return  # disponible
+    # Module absent : message clair et arrêt propre
+    _py = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    print()
+    print("  ╔══════════════════════════════════════════════════════════════╗")
+    print("  ║  ERREUR : module Python 'venv' absent                        ║")
+    print("  ╚══════════════════════════════════════════════════════════════╝")
+    print()
+    print("  Sur Ubuntu/Debian, ce module est dans un paquet séparé.")
+    print("  Installez-le avec (une seule fois) :")
+    print()
+    print(f"    sudo apt install python3-venv")
+    print(f"    # ou, si vous utilisez Python {sys.version_info.major}.{sys.version_info.minor} explicitement :")
+    print(f"    sudo apt install {_py}-venv")
+    print()
+    print("  Puis relancez le script.")
+    sys.exit(1)
+
+
 def _bootstrap_venv_si_besoin():
     """Bootstrap automatique d'un environnement Python isolé.
 
@@ -636,7 +970,7 @@ def _bootstrap_venv_si_besoin():
     # numba et osmium sont optionnelles (numba accélère SVF, osmium pour
     # OSM→GeoJSON) — leur absence ne doit pas planter le bootstrap.
     deps_critiques = ["PIL", "pyproj", "numpy", "scipy", "ijson",
-                      "rasterio", "fiona"]
+                      "rasterio", "fiona", "certifi"]
 
     # ── Mode "none" : juste vérifier les imports, planter clairement si KO ─
     if mode == "none":
@@ -650,7 +984,7 @@ def _bootstrap_venv_si_besoin():
             pkg_map = {"PIL": "Pillow", "pyproj": "pyproj", "numpy": "numpy",
                        "scipy": "scipy", "ijson": "ijson",
                        "rasterio": "rasterio", "fiona": "fiona",
-                       "numba":    "numba"}
+                       "numba":    "numba",     "certifi": "certifi"}
             pkgs_pip = [pkg_map.get(m, m) for m in deps_critiques]
             print()
             print("  ╔══════════════════════════════════════════════════════════════╗")
@@ -686,19 +1020,14 @@ def _bootstrap_venv_si_besoin():
     except Exception:
         pass
 
-    # Si toutes les déps sont déjà importables dans le Python courant,
-    # pas besoin de créer un venv. Cas typique : le script tourne déjà dans
-    # un venv existant (autre que celui par défaut), ou install Python
-    # dédiée à ce projet, ou conda env.
-    manquantes = []
-    for mod in deps_critiques:
-        try:
-            __import__(mod)
-        except ImportError:
-            manquantes.append(mod)
-
-    if not manquantes:
-        return
+    # NB : on ne shortcut PAS sur "deps importables dans le Python courant".
+    # Avant ce refactor, la présence des deps quelque part dans le sys.path
+    # courant (système, conda, autre venv) faisait que ~/.lidar2map/venv
+    # n'était jamais créé → comportement non-déterministe selon l'historique
+    # de la machine. Maintenant, le mode "auto" crée toujours le venv.
+    # Pour utiliser un autre env, passer explicitement par :
+    #   --bootstrap=pip   (install dans l'env Python courant)
+    #   --bootstrap=none  (assume que tout est déjà là)
 
     # Sous Windows : Scripts/ au lieu de bin/
     venv_bin    = venv_path / ("Scripts" if is_windows else "bin")
@@ -717,6 +1046,8 @@ def _bootstrap_venv_si_besoin():
 
     # Créer le venv s'il n'existe pas encore
     if not venv_python.exists():
+        # Sur Linux/Ubuntu : vérifier python3-venv AVANT de tenter la création
+        _verifier_venv_linux()
         suppr_cmd = ("rmdir /s /q %USERPROFILE%\\.lidar2map" if is_windows
                      else "rm -rf ~/.lidar2map")
         print()
@@ -745,9 +1076,14 @@ def _bootstrap_venv_si_besoin():
     # pipeline OSM → GeoJSON (sans, ce pipeline n'est pas disponible).
     # Si l'install d'une dep optionnelle (osmium, numba) échoue, on retry
     # sans elle plutôt que de bloquer tout le script.
+    #
+    # Deps GUI : spécifiques à la plateforme (Qt sur macOS/Linux).
+    # Traitées comme optionnelles au sens du retry (si PyQt6 échoue, on
+    # continue — la GUI sera non fonctionnelle mais le CLI marchera).
+    _gui_crit, _gui_opt = _gui_deps_plateforme()
     deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                       "rasterio", "fiona", "pywebview"]
-    deps_optionnelles = ["osmium", "numba"]
+                       "rasterio", "fiona", "pywebview", "certifi"] + _gui_crit
+    deps_optionnelles = ["osmium", "numba"] + _gui_opt
     deps_pip = deps_critiques + deps_optionnelles
     print(f"  Installation des dépendances dans le venv (3-5 min)...")
 
@@ -862,22 +1198,52 @@ def _installer_deps():
     Si toutes échouent, on s'arrête PROPREMENT avec un message clair plutôt
     que de continuer pour planter sur le premier ``import pyproj`` venu.
     """
+    # Deps GUI spécifiques à la plateforme (Qt sur macOS/Linux, rien sur Windows)
+    _gui_crit, _gui_opt = _gui_deps_plateforme()
+
+    # find_spec ne charge pas le module — beaucoup plus rapide que __import__
+    # pour les modules lourds (rasterio, scipy, PIL, PyQt6 prennent 200-500 ms
+    # chacun à l'import). Gain typique au démarrage à froid : 2-3 s.
+    import importlib.util as _ilu
+
+    def _module_present(name: str) -> bool:
+        try:
+            return _ilu.find_spec(name) is not None
+        except (ImportError, ValueError):
+            # ValueError : module parent absent (PyQt6.X quand PyQt6 manque)
+            return False
+
     deps = []
     for mod, pkg in [
         ("PIL",       "Pillow"),
         ("pyproj",    "pyproj"),
         ("numpy",     "numpy"),
         ("scipy",     "scipy"),
-        ("ijson",     "ijson"),     # streaming JSON (BD TOPO dept-scale, OSM XML)
-        ("rasterio",  "rasterio"),  # wrappers I/O raster + reprojection (remplace gdalinfo/gdalwarp/gdal_translate CLI)
-        ("fiona",     "fiona"),     # I/O vecteur (remplace ogr2ogr CLI)
-        ("osmium",    "osmium"),    # parseur PBF OSM (remplace ogr2ogr OSM)
-        ("numba",     "numba"),     # accélération SVF ×15-50 (LLVM JIT)
+        ("ijson",     "ijson"),       # streaming JSON (BD TOPO dept-scale, OSM XML)
+        ("rasterio",  "rasterio"),    # I/O raster + reprojection (remplace gdalwarp/gdal_translate)
+        ("fiona",     "fiona"),       # I/O vecteur (remplace ogr2ogr CLI)
+        ("certifi",   "certifi"),     # bundle CA à jour (fix SSL Windows 11 / macOS)
+        ("webview",   "pywebview"),   # GUI (mode sans arguments)
+        ("osmium",    "osmium"),      # parseur PBF OSM (remplace ogr2ogr OSM)
+        ("numba",     "numba"),       # accélération SVF ×15-50 (LLVM JIT)
     ]:
-        try:
-            __import__(mod)
-        except ImportError:
+        if not _module_present(mod):
             deps.append(pkg)
+
+    # Ajouter les deps GUI plateforme non encore installées
+    for pkg in _gui_crit + _gui_opt:
+        # Correspondance pkg pip → nom de module importable
+        _mod_map = {
+            "PyQt6":                  "PyQt6",
+            "PyQt6-WebEngine":        "PyQt6.QtWebEngineWidgets",
+            "qtpy":                   "qtpy",
+            "pyobjc-framework-WebKit":"WebKit",
+            "pyobjc-framework-Cocoa": "Cocoa",
+        }
+        _mod = _mod_map.get(pkg, pkg)
+        if not _module_present(_mod):
+            if pkg not in deps:
+                deps.append(pkg)
 
     if not deps:
         return
@@ -887,7 +1253,9 @@ def _installer_deps():
     # Les deps optionnelles ne doivent pas bloquer si elles échouent à
     # s'installer — sinon un wheel buggé empêcherait toute utilisation
     # du script (cas vécu avec pyrosm 0.6.2 cassé sur Python 3.12).
-    DEPS_OPTIONNELLES = {"osmium", "numba", "py7zr", "mapbox-vector-tile"}
+    # Les deps GUI optionnelles (pyobjc sur macOS) sont aussi dans ce set.
+    DEPS_OPTIONNELLES = ({"osmium", "numba", "py7zr", "mapbox-vector-tile"}
+                         | set(_gui_opt))
     deps_crit = [d for d in deps if d not in DEPS_OPTIONNELLES]
     deps_opt  = [d for d in deps if d in DEPS_OPTIONNELLES]
 
@@ -927,10 +1295,19 @@ def _installer_deps():
             rates = []
             for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
                              ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
-                             ("fiona","fiona")]:
+                             ("fiona","fiona"),("certifi","certifi"),("webview","pywebview")]:
                 if pkg in deps_crit:
                     try:
                         __import__(mod)
+                    except ImportError:
+                        rates.append(pkg)
+            # Vérifier aussi les GUI deps critiques plateforme
+            for pkg in _gui_crit:
+                if pkg in deps_crit:
+                    _mod_map = {"PyQt6": "PyQt6", "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
+                                "qtpy": "qtpy"}
+                    try:
+                        __import__(_mod_map.get(pkg, pkg))
                     except ImportError:
                         rates.append(pkg)
             if not rates:
@@ -961,7 +1338,7 @@ def _installer_deps():
                 rates = []
                 for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
                                  ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
-                                 ("fiona","fiona")]:
+                                 ("fiona","fiona"),("webview","pywebview")]:
                     if pkg in deps_crit:
                         try:
                             __import__(mod)
@@ -1070,11 +1447,265 @@ def _bootstrap_venv_si_besoin_avec_mode(mode):
         os.environ.pop("LIDAR2MAP_BOOTSTRAP", None)
 
 
+_INSTALL_ALL_DEPS   = "--installer-deps"     in sys.argv
+_DESINSTALLER       = "--desinstaller"       in sys.argv
+_TELECHARGER_OUTILS = "--telecharger-outils" in sys.argv  # exécuté après _trouver_java
+_SMOKETEST          = "--smoketest"          in sys.argv  # exécuté après bootstrap
+
 _bootstrap_environnement()
 
-# ============================================================
-# LOGGING
-# ============================================================
+# ── --installer-deps ─────────────────────────────────────────────────────────
+# Force l'installation de TOUTES les dépendances (critiques + optionnelles +
+# lazy) puis quitte. Utilisé par les scripts setup_build_*.
+# Le flag est préservé dans sys.argv lors du re-exec dans le venv, ce qui
+# garantit que l'install complète se fait bien DANS le venv cible.
+if _INSTALL_ALL_DEPS:
+    print("  Installation complète de toutes les dépendances...")
+    _pip_base = [sys.executable, "-m", "pip", "install", "-q"]
+    _toutes_deps = [
+        # Critiques
+        "Pillow", "pyproj", "numpy", "scipy", "ijson",
+        "rasterio", "fiona", "certifi", "pywebview",
+        # GUI selon plateforme
+        *([p for p in ["PyQt6", "PyQt6-WebEngine", "qtpy"]
+           if __import__("platform").system() in ("Darwin", "Linux")]),
+        # Optionnelles / lazy (non installées par le bootstrap standard)
+        "osmium", "numba", "laspy", "py7zr", "mapbox-vector-tile",
+    ]
+    import subprocess as _sp_id
+    # Table de correspondance explicite pkg pip → nom de module importable.
+    # La dérivation automatique (split("-")[0]) échoue sur plusieurs packages :
+    #   mapbox-vector-tile → "mapbox" (faux), PyQt6-WebEngine → "pyqt6" (faux)
+    _pkg_to_mod = {
+        "Pillow":             "PIL",
+        "pyproj":             "pyproj",
+        "numpy":              "numpy",
+        "scipy":              "scipy",
+        "ijson":              "ijson",
+        "rasterio":           "rasterio",
+        "fiona":              "fiona",
+        "certifi":            "certifi",
+        "pywebview":          "webview",
+        "PyQt6":              "PyQt6",
+        "PyQt6-WebEngine":    "PyQt6.QtWebEngineWidgets",
+        "qtpy":               "qtpy",
+        "osmium":             "osmium",
+        "numba":              "numba",
+        "laspy":              "laspy",
+        "py7zr":              "py7zr",
+        "mapbox-vector-tile": "mapbox_vector_tile",
+    }
+    for _pkg in _toutes_deps:
+        _mod = _pkg_to_mod.get(_pkg, _pkg.replace("-", "_").lower())
+        try:
+            __import__(_mod)
+            print(f"    ✓ {_pkg} (déjà installé)")
+        except ImportError:
+            r = _sp_id.run(_pip_base + [_pkg], capture_output=True)
+            if r.returncode == 0:
+                print(f"    ✓ {_pkg}")
+            else:
+                print(f"    ⚠ {_pkg} (optionnel — ignoré)")
+    print("  Toutes les dépendances installées.")
+    sys.exit(0)
+
+# ── --desinstaller ────────────────────────────────────────────────────────────
+# Supprime le venv (~/.lidar2map/venv) et le dossier d'extraction du bundle
+# (~/Library/Application Support/lidar2map/ sur macOS, etc.).
+# Ne supprime PAS le script lui-même ni le .app/.exe.
+if _DESINSTALLER:
+    import shutil as _sh_uninst
+    import platform as _plat_uninst
+    from pathlib import Path as _P_uninst
+
+    _sys_u  = _plat_uninst.system()
+    _home_u = _P_uninst.home()
+
+    _lidar2map_home = _home_u / ".lidar2map"
+
+    # Dossier d'extraction du bundle (même logique que le launcher)
+    if _sys_u == "Windows":
+        _app_data = _P_uninst(os.environ.get("LOCALAPPDATA",
+                              str(_home_u / "AppData" / "Local"))) / "lidar2map"
+    elif _sys_u == "Darwin":
+        _app_data = _home_u / "Library" / "Application Support" / "lidar2map"
+    else:
+        _app_data = _home_u / ".local" / "share" / "lidar2map"
+
+    _cibles = [
+        (_app_data,                      "dossier d'extraction du bundle"),
+        (_lidar2map_home / "venv",       "venv Python"),
+        (_lidar2map_home / "osmosis",    "osmosis"),
+        (_lidar2map_home / "jre",        "JRE Java"),
+    ]
+
+    print()
+    print("  ── Désinstallation lidar2map ──────────────────────────────────")
+    print()
+
+    _total = 0
+    for _chemin, _label in _cibles:
+        if _chemin.exists():
+            # Calculer la taille avant suppression
+            _taille = sum(f.stat().st_size for f in _chemin.rglob("*") if f.is_file())
+            _total += _taille
+            print(f"  Suppression {_label} ({_taille / 1e6:.0f} Mo)")
+            print(f"    {_chemin}")
+            _sh_uninst.rmtree(_chemin, ignore_errors=True)
+            # Mêmes états ✓/⚠ que le bloc launcher pour cohérence
+            print(f"    {'✓ supprimé' if not _chemin.exists() else '⚠ partiel'}")
+        else:
+            print(f"  {_label} : absent ({_chemin})")
+    print()
+    print(f"  {_total / 1e6:.0f} Mo libérés.")
+    print()
+    print("  Note : lidar2map.py, le .app/.exe et le zip ne sont pas supprimés.")
+    print("  Supprimez-les manuellement si nécessaire.")
+    print()
+    sys.exit(0)
+
+# ── --smoketest ──────────────────────────────────────────────────────────────
+# Exécute les 5 modes du pipeline sur une petite zone (Garéoult 1 km) et
+# vérifie que les outputs existent + non-vides. Présent dans le bundle →
+# testable post-déploiement sur la machine de l'utilisateur.
+#
+# Le test invoque le SAME binaire (sys.executable en frozen, ou `python <ce
+# script>` sinon) pour chaque mode via subprocess. LIDAR2MAP_WORK_DIR est
+# hérité dans l'env → outputs dans <DOSSIER_TRAVAIL>/Projets/smoke/.
+#
+# Durée typique : ~1 min sur Windows (caches PBF/dalles présents), ~5 min
+# au premier run (DL Geofabrik 400 Mo).
+if _SMOKETEST:
+    import shutil as _smk_sh
+    from pathlib import Path as _smk_Path
+
+    # Calcul de DOSSIER_TRAVAIL en local (la constante globale n'est définie
+    # qu'à la ligne ~1880, après ce bloc).
+    if getattr(sys, "frozen", False):
+        _smk_work = _smk_Path(os.environ.get("LIDAR2MAP_WORK_DIR")
+                              or _smk_Path(sys.executable).resolve().parent)
+        # En frozen, sys.executable EST le binaire → on le ré-invoque
+        _smk_cmd_base = [sys.executable]
+    else:
+        _smk_work = _smk_Path(__file__).resolve().parent
+        _smk_cmd_base = [sys.executable, str(_smk_Path(__file__).resolve())]
+
+    _smk_nom     = "smoke"
+    _smk_projets = _smk_work / "Projets" / _smk_nom
+    _smk_zone    = ["--zone-ville", "Gareoult", "--zone-rayon", "1",
+                    "--zone-nom",   _smk_nom, "--oui"]
+
+    # (nom, args supplémentaires, outputs attendus relatifs à _smk_projets)
+    _smk_tests = [
+        ("LiDAR",
+         ["--ignlidar", "--telechargement", "--workers", "4",
+          "--ombrages", "multi", "--formats-fichier", "mbtiles",
+          "--zoom-min", "10", "--zoom-max", "13"],
+         ["ign_lidar/smoke_multi_ombrage_z10-13.mbtiles"]),
+        ("WMTS (planign)",
+         ["--ignraster", "--couche", "planign", "--workers", "8",
+          "--formats-fichier", "mbtiles",
+          "--zoom-min", "12", "--zoom-max", "14"],
+         ["ign_raster/smoke_planign_z12-14.mbtiles"]),
+        ("WFS (routes)",
+         ["--ignvecteur", "--couche", "routes", "--formats-fichier", "gz"],
+         ["ign_vecteur/smoke_ign_troncon_de_route.geojson.gz"]),
+        ("OSM (highway)",
+         ["--osm", "--couche", "highway=*",
+          "--formats-fichier", "map", "gz"],
+         ["osm_vecteur/smoke.map",
+          "osm_vecteur/smoke_osm_highway.geojson.gz"]),
+    ]
+
+    def _smk_size(n):
+        return f"{n/1e6:.1f} Mo" if n >= 1e6 else f"{n/1024:.0f} Ko"
+
+    # Empêcher chaque sous-test de polluer l'historique de 5+ entrées.
+    # _historique_debut/_sauver_historique respectent cet env var.
+    _smk_env = os.environ.copy()
+    _smk_env["LIDAR2MAP_SKIP_HIST"] = "1"
+
+    def _smk_run(name, extra, expected, timeout=600):
+        print(f"\n━━━ {name} ━━━", flush=True)
+        t0 = time.time()
+        try:
+            rc = subprocess.run(_smk_cmd_base + _smk_zone + extra,
+                                timeout=timeout, env=_smk_env).returncode
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ TIMEOUT (> {timeout}s)")
+            return False
+        dur = time.time() - t0
+        if rc != 0:
+            print(f"  ✗ exit={rc} en {dur:.0f}s")
+            return False
+        missing, sizes = [], []
+        for f in expected:
+            p = _smk_projets / f
+            if not p.exists():
+                missing.append(f + " (absent)")
+            elif p.stat().st_size == 0:
+                missing.append(f + " (vide)")
+            else:
+                sizes.append(f"{_smk_Path(f).name}={_smk_size(p.stat().st_size)}")
+        if missing:
+            print(f"  ✗ outputs KO en {dur:.0f}s :")
+            for m in missing:
+                print(f"      {m}")
+            return False
+        print(f"  ✓ {dur:.0f}s  ({', '.join(sizes)})")
+        return True
+
+    def _smk_fusion(timeout=120):
+        """Fusion utilise l'output OSM précédent comme input."""
+        src = _smk_projets / "osm_vecteur" / "smoke_osm_highway.geojson.gz"
+        out = _smk_projets / "fusion"      / "smoke_fusion.geojson.gz"
+        print(f"\n━━━ Fusion ━━━", flush=True)
+        if not src.exists():
+            print(f"  ⊘ SKIP : input OSM absent ({src.name})")
+            return None
+        out.parent.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        try:
+            rc = subprocess.run(_smk_cmd_base + ["--fusionner", "--source", str(src),
+                                                 "--sortie", str(out),
+                                                 "--formats-fichier", "gz", "--oui"],
+                                timeout=timeout, env=_smk_env).returncode
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ TIMEOUT (> {timeout}s)")
+            return False
+        dur = time.time() - t0
+        if rc == 0 and out.exists() and out.stat().st_size > 0:
+            print(f"  ✓ {dur:.0f}s  ({_smk_size(out.stat().st_size)})")
+            return True
+        print(f"  ✗ exit={rc} en {dur:.0f}s")
+        return False
+
+    print(f"━━━ Smoke test : Garéoult 1 km ━━━")
+    print(f"  Binaire : {' '.join(_smk_cmd_base)}")
+    print(f"  Outputs : {_smk_projets}")
+    # Wipe Projets/smoke pour isoler les tests (caches dalles/tuiles préservés)
+    if _smk_projets.exists():
+        _smk_sh.rmtree(_smk_projets, ignore_errors=True)
+
+    _smk_results = []
+    for _smk_name, _smk_extra, _smk_expected in _smk_tests:
+        _smk_results.append((_smk_name,
+                             _smk_run(_smk_name, _smk_extra, _smk_expected)))
+    _smk_results.append(("Fusion", _smk_fusion()))
+
+    print(f"\n━━━ RÉSULTATS ━━━")
+    _smk_ok   = sum(1 for _, ok in _smk_results if ok is True)
+    _smk_fail = sum(1 for _, ok in _smk_results if ok is False)
+    _smk_skip = sum(1 for _, ok in _smk_results if ok is None)
+    for _smk_name, ok in _smk_results:
+        sym = "✓" if ok is True else ("⊘" if ok is None else "✗")
+        print(f"  {sym} {_smk_name}")
+    print(f"\n{_smk_ok}/{len(_smk_results)} OK"
+          + (f"  ({_smk_skip} skipped)" if _smk_skip else "")
+          + (f"  ({_smk_fail} échec)"   if _smk_fail else ""))
+    sys.exit(0 if _smk_fail == 0 else 1)
+
+# ── suite du script ───────────────────────────────────────────────────────────
 
 class _TeeLogger:
     """
@@ -1336,27 +1967,40 @@ class Manifeste:
     def fichiers_morceau(self, cle: str) -> list:
         return list(self._data["fichiers"].get(cle, []))
 
+    _warned_save_failed = False    # class-level : un seul warn par run
+
     def _sauver(self):
         try:
             _ecrire_json_atomique(self.path, self._data, indent=2)
-        except Exception:
+        except Exception as e:
             # Le manifeste est best-effort : si le disque est saturé ou
             # si les permissions changent, on n'interrompt pas le pipeline
-            # principal. Mais cela peut conduire à un manifeste obsolète —
-            # voir TODO Tier 4 pour amélioration future.
-            pass
+            # principal — mais on prévient une fois (par run) pour que
+            # l'utilisateur sache que la reprise sera incohérente.
+            if not Manifeste._warned_save_failed:
+                Manifeste._warned_save_failed = True
+                print(f"  ⚠ Manifeste {self.path.name} : échec d'écriture "
+                      f"({type(e).__name__}: {e}). "
+                      f"Reprise potentiellement incohérente.")
 
 
 @_contextmanager
 def _contexte_manifeste(manifeste, cle: str):
-    """Active le tracking des fichiers créés pour ce morceau dans le thread courant."""
+    """Active le tracking des fichiers créés pour ce morceau dans le thread courant.
+
+    Supporte l'imbrication : sauvegarde le contexte précédent à l'entrée et
+    le restaure à la sortie, plutôt que d'écraser avec None (ce qui ferait
+    perdre le contexte externe en cas de with ... with).
+    """
+    _prev_m = getattr(_manifest_ctx, "manifeste", None)
+    _prev_c = getattr(_manifest_ctx, "cle",       None)
     _manifest_ctx.manifeste = manifeste
     _manifest_ctx.cle = cle
     try:
         yield
     finally:
-        _manifest_ctx.manifeste = None
-        _manifest_ctx.cle = None
+        _manifest_ctx.manifeste = _prev_m
+        _manifest_ctx.cle = _prev_c
 
 
 def _creer_fichier(path):
@@ -1452,6 +2096,12 @@ SEUIL_DALLE_VALIDE = 2_000_000    # octets — en dessous : dalle mer/hors-zone,
 MAX_TENTATIVES = 3    # essais avant abandon d'un téléchargement
 DELAI_RETRY    = 5    # secondes entre deux tentatives
 NB_WORKERS     = 8    # workers parallèles par défaut (téléchargement dalles/tuiles)
+
+# ── MBTiles / WMTS — paramètres de batch ─────────────────────────────────────
+SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne systémique)
+BATCH_MBTILES_INSERT  = 500  # tuiles par INSERT executemany dans MBTiles WMTS
+BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
+HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
 # ── URLs IGN ─────────────────────────────────────────────────────────────────
 WMS_URL   = "https://data.geopf.fr/wms-r"
@@ -1665,6 +2315,26 @@ def _ecrire_json_atomique(path, data, indent=None):
     except OSError:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _safe_zip_extractall(zf, target):
+    """zipfile.extractall(target) protégé contre les chemins absolus et
+    les traversées ``..`` (zip-slip).
+
+    Python 3.12+ a ``filter='data'`` pour zipfile mais notre minimum est
+    3.8 → on valide manuellement. Pour les tarfiles on utilise déjà
+    ``filter='data'`` natif (cf. ``_telecharger_jre_local``).
+    """
+    target = Path(target).resolve()
+    for m in zf.infolist():
+        # Refuser absolu (Windows drive + Unix slash absolu) et drive letter
+        if m.filename.startswith(("/", "\\")) or ":" in m.filename[:3]:
+            raise ValueError(f"Chemin absolu dans le zip : {m.filename!r}")
+        dest = (target / m.filename).resolve()
+        # dest doit être sous target (ou exactement target pour un nom vide)
+        if dest != target and target not in dest.parents:
+            raise ValueError(f"Chemin sortant du dossier cible : {m.filename!r}")
+    zf.extractall(target)
 
 
 def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
@@ -2277,6 +2947,13 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     Retourne le nombre d'octets écrits, ou lève une exception.
     Gère les réponses WMS XML/HTML d'erreur → retourne 0 (dalle absente).
     timeout : tuple (connexion_s, lecture_s) ou entier.
+
+    Protection contre les coupures TCP silencieuses (typiques sur VM/macOS) :
+    si le serveur annonce Content-Length, on vérifie que la taille reçue
+    correspond exactement — sinon on lève IOError pour déclencher le retry.
+    Sur Windows, urllib/WinINet lève une exception dans ce cas ; sur macOS/Linux
+    la socket BSD renvoie b"" sans erreur, ce qui sans cette garde produirait
+    un fichier tronqué accepté silencieusement comme valide.
     """
     _log_req(url, "WMS")
     # Timeout lecture : prendre la valeur max si tuple (connect, read).
@@ -2287,18 +2964,80 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
         if _e.code == 404:
             return 0
         raise IOError(f"HTTP {_e.code}") from _e
-    ct = resp.headers.get("content-type", "")
-    if "xml" in ct or "html" in ct:
-        resp.close(); return 0
-    buf_size = 0
-    with open(chemin_tmp, "wb") as f:
-        while True:
-            chunk = resp.read(65536)
-            if not chunk:
-                break
-            f.write(chunk)
-            buf_size += len(chunk)
+
+    # `with` ferme la connexion HTTP même sur exception → pas de fuite de FD
+    # (cas observé avec 8 workers parallèles × centaines de dalles).
+    with resp:
+        ct = resp.headers.get("content-type", "")
+        if "xml" in ct or "html" in ct:
+            return 0
+
+        try:
+            content_length = int(resp.headers.get("content-length", 0))
+        except (ValueError, TypeError):
+            content_length = 0
+
+        buf_size = 0
+        with open(chemin_tmp, "wb") as f:
+            while True:
+                chunk = resp.read(HTTP_CHUNK_SIZE)
+                if not chunk:
+                    break
+                f.write(chunk)
+                buf_size += len(chunk)
+
+    # Vérification d'intégrité : si Content-Length était annoncé et ne correspond
+    # pas, la connexion a été coupée silencieusement → le fichier est tronqué.
+    # On lève une IOError pour que l'appelant déclenche le retry automatique.
+    if content_length > 0 and buf_size != content_length:
+        raise IOError(
+            f"Transfert tronqué : reçu {buf_size} octets, "
+            f"attendu {content_length} (Content-Length)"
+        )
     return buf_size
+
+
+def _valider_tif_dalle(chemin):
+    """
+    Vérifie qu'un fichier TIF téléchargé est un GeoTIFF valide et lisible.
+
+    Deux niveaux de vérification :
+      1. Magic bytes (rapide, sans dépendance) : les 4 premiers octets d'un
+         TIFF sont toujours 49 49 2A 00 (little-endian) ou 4D 4D 00 2A
+         (big-endian). Un fichier tronqué au milieu du transfert n'aura pas
+         ces octets, ou aura un IFD invalide.
+      2. Ouverture rasterio (si disponible) : tente de lire les métadonnées
+         (width, height, CRS) pour détecter les TIF dont le header est intact
+         mais dont les données sont corrompues ou tronquées.
+
+    Retourne True si le fichier est valide, False sinon.
+    Ne lève jamais d'exception.
+    """
+    try:
+        with open(chemin, "rb") as fh:
+            magic = fh.read(4)
+        # TIFF little-endian : II + 42 ; big-endian : MM + 42
+        if magic[:2] not in (b"II", b"MM"):
+            return False
+        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a"):
+            return False
+    except OSError:
+        return False
+
+    # Vérification approfondie via rasterio si disponible
+    try:
+        import rasterio as _rio_v
+        with _rio_v.open(str(chemin)) as ds:
+            if ds.width == 0 or ds.height == 0:
+                return False
+            # Lire 1 bloc pour détecter une troncature des données
+            ds.read(1, window=_rio_v.windows.Window(
+                0, 0, min(64, ds.width), min(64, ds.height)))
+    except Exception:
+        # rasterio non disponible ou erreur de lecture → on se fie au magic seul
+        pass
+
+    return True
 
 
 def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
@@ -2323,15 +3062,22 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 chemin_tmp.unlink(missing_ok=True)
                 return "absent"
             chemin_tmp.replace(chemin)
+            if not _valider_tif_dalle(chemin):
+                chemin.unlink(missing_ok=True)
+                raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
             _creer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
             chemin_tmp.unlink(missing_ok=True)
-            print("\n\nInterrompu.")
-            sys.exit(0)
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as _e:
+            # Propagation au handler top-level (sys.exit(130)) qui finalise
+            # le cleanup global (manifeste, lockfiles…). sys.exit(0) ici
+            # masquerait l'interruption derrière un code de succès.
+            raise
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError, IOError) as _e:
             chemin_tmp.unlink(missing_ok=True)
+            chemin.unlink(missing_ok=True)
             if tentative < MAX_TENTATIVES:
+                print(f"  ↻ Retry {tentative}/{MAX_TENTATIVES} {nom} : {_e}")
                 time.sleep(DELAI_RETRY)
             else:
                 print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
@@ -2383,16 +3129,21 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
             else:
                 chemin_tmp.replace(chemin)
 
+            if not _valider_tif_dalle(chemin):
+                chemin.unlink(missing_ok=True)
+                raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
             _creer_fichier(chemin)
             return "ok"
 
         except KeyboardInterrupt:
             chemin_tmp.unlink(missing_ok=True)
-            print("\n\nInterrompu.")
-            sys.exit(0)
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as _e:
+            # Propagation au handler top-level (sys.exit(130)).
+            raise
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError, IOError) as _e:
             chemin_tmp.unlink(missing_ok=True)
+            chemin.unlink(missing_ok=True)
             if tentative < MAX_TENTATIVES:
+                print(f"  ↻ Retry {tentative}/{MAX_TENTATIVES} {nom} : {_e}")
                 time.sleep(DELAI_RETRY)
             else:
                 print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
@@ -2439,7 +3190,7 @@ def _telecharger_osmosis_local():
 
     print(f"  Extraction osmosis...", flush=True)
     with zipfile.ZipFile(zip_path, "r") as z:
-        z.extractall(OSMOSIS_DIR)
+        _safe_zip_extractall(z, OSMOSIS_DIR)
     zip_path.unlink(missing_ok=True)
 
     # Le ZIP extrait dans un sous-dossier versionné (ex: osmosis-0.49.2/)
@@ -2525,7 +3276,7 @@ def _telecharger_jre_local():
     print("  Extraction JRE...", flush=True)
     if ext == "zip":
         with zipfile.ZipFile(archive, "r") as z:
-            z.extractall(JRE_DIR)
+            _safe_zip_extractall(z, JRE_DIR)
     else:
         with tarfile.open(archive, "r:gz") as t:
             # Python 3.12+ : filter='data' requis pour bloquer les exploits
@@ -2604,6 +3355,28 @@ def _trouver_osmosis():
 
     # 3) Absent : téléchargement automatique
     return _telecharger_osmosis_local()
+
+
+# ── --telecharger-outils ──────────────────────────────────────────────────────
+# Placé ici car nécessite _trouver_java() et _trouver_osmosis() définis
+# ci-dessus. Le flag est détecté tôt (avant bootstrap) pour passer dans
+# le re-exec venv, mais exécuté ici pour que les fonctions soient disponibles.
+if _TELECHARGER_OUTILS:
+    print()
+    print("  ── Téléchargement des outils (osmosis + JRE) ──────────────────")
+    print()
+    _java = _trouver_java()
+    if _java:
+        print(f"  ✓ JRE déjà présent : {_java}")
+    else:
+        print("  ⚠ JRE : échec du téléchargement")
+    _osmo = _trouver_osmosis()
+    if _osmo:
+        print(f"  ✓ osmosis déjà présent : {_osmo}")
+    else:
+        print("  ⚠ osmosis : échec du téléchargement")
+    print()
+    sys.exit(0)
 
 
 def _trouver_outil_gdal(nom):
@@ -4180,6 +4953,16 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     print("  --- traceback complète ---")
                     _tb.print_exc()
                     print("  ---------------------------")
+                    # Supprimer le fichier partiellement écrit : _svf_chunked
+                    # écrit chunk par chunk via rasterio. Si une exception
+                    # survient au milieu, le TIF résultant est incomplet (ex :
+                    # 109 Mo au lieu de 300 Mo) mais structurellement valide.
+                    # Sans suppression, le tuileur l'accepte et produit 0 tuile
+                    # silencieusement. Sur le prochain lancement, le fichier
+                    # "déjà présent" est réutilisé → bug persistant.
+                    if chemin_out.exists():
+                        chemin_out.unlink()
+                        print(f"  Fichier partiel supprimé : {chemin_out.name}")
                     continue
 
             elif cle == "lrm":
@@ -4895,6 +5678,15 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     if nb_echecs_tr > 0:
         print(f"  ⚠ {nb_echecs_tr} rangées rasterio échouées (tuiles manquantes)")
     print(f"  {mbtiles.name} : {total_insere} tuiles  ({taille_mb:.0f} Mo)")
+    # Détection d'échec silencieux : 0 tuiles depuis une source non-triviale
+    # indique typiquement un TIF source partiellement écrit (exception dans
+    # un chunk SVF non détectée) ou une reprojection EPSG:3857 hors-bbox.
+    # tif_source = paramètre de la fonction (chemin du TIF source).
+    src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
+    if total_insere == 0 and src_size_mb > 1:
+        print(f"  ⚠ AVERTISSEMENT : 0 tuiles générées depuis {src_size_mb:.0f} Mo source.")
+        print(f"    Le fichier source est peut-être partiellement écrit ou mal géoréférencé.")
+        print(f"    Supprimez {tif_source.name} et relancez pour forcer le recalcul.")
     return mbtiles
 
 
@@ -5116,16 +5908,20 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
                 if _e.code == 404:
                     return None
                 raise IOError(f"HTTP {_e.code}") from _e
-            ct = resp.headers.get("content-type", "")
-            if "xml" in ct or "html" in ct:
-                resp.close(); return None   # réponse d'erreur serveur
-            data = resp.read()
+            # `with` ferme le socket même sur exception → pas de FD leak.
+            with resp:
+                ct = resp.headers.get("content-type", "")
+                if "xml" in ct or "html" in ct:
+                    return None   # réponse d'erreur serveur
+                data = resp.read()
             if len(data) < 500:
                 return None   # tuile vide (mer, hors couverture)
             return data
         except KeyboardInterrupt:
-            print("\n\nInterrompu.")
-            sys.exit(0)
+            # Propagation au handler top-level (sys.exit(130)) qui sait
+            # nettoyer (lockfile, tmp). sys.exit(0) ici tuerait juste le
+            # worker, masquerait l'interruption et casserait le code retour.
+            raise
         except (urllib.error.URLError, IOError, OSError):
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY * tentative)
@@ -5200,7 +5996,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     ("center", f"{_cx:.6f},{_cy:.6f},{zoom_max}"))
     con.commit()
 
-    BATCH       = 500
+    BATCH       = BATCH_MBTILES_INSERT
     FENETRE     = workers * 4   # nb de futures en vol simultané — équilibre RAM/débit
     batch       = []
     done        = 0
@@ -5209,10 +6005,9 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     erreurs     = 0    # exceptions worker (timeout, 401, 5xx, parsing) — diagnostic
     err_consec  = 0    # erreurs consécutives — utile pour détection panne globale
     abort_msg   = None # set si on abort à mi-parcours (clé expirée, etc.)
-    # Seuil d'abandon : au-delà de 30 erreurs consécutives, on assume une panne
-    # systémique (clé API expirée, IGN down, réseau coupé) et on n'écrit pas un
-    # MBTiles tronqué qui aurait l'apparence d'un succès partiel.
-    SEUIL_ERR_CONSEC = 30
+    # Seuil d'abandon : au-delà de SEUIL_ERR_CONSEC erreurs consécutives,
+    # on assume une panne systémique (clé API expirée, IGN down, réseau coupé)
+    # et on n'écrit pas un MBTiles tronqué qui aurait l'apparence d'un succès.
     largeur     = 30
     t0          = time.time()
 
@@ -5404,7 +6199,6 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 # ============================================================
 
 # ── Helpers LE ────────────────────────────────────────────────────────────────
-# ── Helpers LE ────────────────────────────────────────────────────────────────
 def _wi(v):  return struct.pack('<i', v)   # int32 little-endian signé
 def _wl(v):  return struct.pack('<q', v)   # int64 little-endian signé
 
@@ -5492,149 +6286,161 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
     TILE_SZ    = 256
 
     con = sqlite3.connect(str(mbtiles_path))
-
-    # ── Phase 1 : inventaire par zoom ─────────────────────────────────────────
-    zooms = [r[0] for r in con.execute(
-        "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level DESC").fetchall()]
-    if not zooms:
-        print("  ERREUR : MBTiles vide")
-        con.close()
-        return None
-
-    # Étendue (x, y XYZ) par zoom
-    zm = {}
-    for z in zooms:
-        r = con.execute(
-            "SELECT MIN(tile_column), MAX(tile_column), MIN(tile_row), MAX(tile_row) "
-            "FROM tiles WHERE zoom_level=?", (z,)).fetchone()
-        xmin_c, xmax_c, ymin_tms, ymax_tms = r
-        n = 1 << z
-        # TMS → XYZ : y_xyz = (n-1) - y_tms
-        y0_xyz = (n - 1) - ymax_tms   # petit y_tms = grand y_xyz (Nord)
-        y1_xyz = (n - 1) - ymin_tms
-        nx = xmax_c - xmin_c + 1
-        ny = y1_xyz - y0_xyz + 1
-        zm[z] = {'x0': xmin_c, 'y0': y0_xyz, 'nx': nx, 'ny': ny,
-                  'w': nx * TILE_SZ, 'h': ny * TILE_SZ}
-
-    # Zoom le plus détaillé = index 0 dans RMAP
-    z_max   = zooms[0]
-    w_max   = zm[z_max]['w']
-    h_max   = zm[z_max]['h']
-    n_zooms = len(zooms)
-
-    # Coordonnées géo depuis zoom max
-    zd     = zm[z_max]
-    lon_min, lat_min, lon_max, lat_max = _tile_to_geo(
-        zd['x0'], zd['y0'] + zd['ny'] - 1, z_max)
-    lon_max = _tile_to_geo(zd['x0'] + zd['nx'] - 1, zd['y0'], z_max)[2]
-    lat_max = _tile_to_geo(zd['x0'], zd['y0'], z_max)[3]
-
-    total_tiles = sum(zm[z]['nx'] * zm[z]['ny'] for z in zooms)
-    print(f"  {n_zooms} zoom(s), {total_tiles:,} positions de tuiles", flush=True)
-
-    # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──────
-    tile_off = {}
-    zoom_hdr_offset = {}
-
-    largeur = 30
-    done    = 0
-
     try:
-        with open(str(rmap), 'wb') as f:
+        # ── Phase 1 : inventaire par zoom ─────────────────────────────────────
+        zooms = [r[0] for r in con.execute(
+            "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level DESC").fetchall()]
+        if not zooms:
+            print("  ERREUR : MBTiles vide")
+            return None
 
-            # --- FILE HEADER placeholder ---
-            f.write(b'CompeGPSRasterImage')
-            f.write(_wi(10)); f.write(_wi(7)); f.write(_wi(0))
-            f.write(_wi(w_max)); f.write(_wi(-h_max))
-            f.write(_wi(24)); f.write(_wi(1))
-            f.write(_wi(TILE_SZ)); f.write(_wi(TILE_SZ))
-            map_data_off_pos = f.tell()
-            f.write(_wl(0))
-            f.write(_wi(0))
-            f.write(_wi(n_zooms))
-            zoom_off_arr_pos = f.tell()
-            for _ in zooms:
+        # Étendue (x, y XYZ) par zoom
+        zm = {}
+        for z in zooms:
+            r = con.execute(
+                "SELECT MIN(tile_column), MAX(tile_column), MIN(tile_row), MAX(tile_row) "
+                "FROM tiles WHERE zoom_level=?", (z,)).fetchone()
+            xmin_c, xmax_c, ymin_tms, ymax_tms = r
+            n = 1 << z
+            # TMS → XYZ : y_xyz = (n-1) - y_tms
+            y0_xyz = (n - 1) - ymax_tms   # petit y_tms = grand y_xyz (Nord)
+            y1_xyz = (n - 1) - ymin_tms
+            nx = xmax_c - xmin_c + 1
+            ny = y1_xyz - y0_xyz + 1
+            zm[z] = {'x0': xmin_c, 'y0': y0_xyz, 'nx': nx, 'ny': ny,
+                      'w': nx * TILE_SZ, 'h': ny * TILE_SZ}
+
+        # Zoom le plus détaillé = index 0 dans RMAP
+        z_max   = zooms[0]
+        w_max   = zm[z_max]['w']
+        h_max   = zm[z_max]['h']
+        n_zooms = len(zooms)
+
+        # Coordonnées géo depuis zoom max
+        zd     = zm[z_max]
+        lon_min, lat_min, lon_max, lat_max = _tile_to_geo(
+            zd['x0'], zd['y0'] + zd['ny'] - 1, z_max)
+        lon_max = _tile_to_geo(zd['x0'] + zd['nx'] - 1, zd['y0'], z_max)[2]
+        lat_max = _tile_to_geo(zd['x0'], zd['y0'], z_max)[3]
+
+        total_tiles = sum(zm[z]['nx'] * zm[z]['ny'] for z in zooms)
+        print(f"  {n_zooms} zoom(s), {total_tiles:,} positions de tuiles", flush=True)
+
+        # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──
+        tile_off = {}
+        zoom_hdr_offset = {}
+
+        largeur = 30
+        done    = 0
+
+        try:
+            with open(str(rmap), 'wb') as f:
+
+                # --- FILE HEADER placeholder ---
+                f.write(b'CompeGPSRasterImage')
+                f.write(_wi(10)); f.write(_wi(7)); f.write(_wi(0))
+                f.write(_wi(w_max)); f.write(_wi(-h_max))
+                f.write(_wi(24)); f.write(_wi(1))
+                f.write(_wi(TILE_SZ)); f.write(_wi(TILE_SZ))
+                map_data_off_pos = f.tell()
                 f.write(_wl(0))
-
-            # --- ZOOM HEADERS + TILE DATA ---
-            for z in zooms:
-                zd = zm[z]
-                zoom_hdr_offset[z] = f.tell()
-                f.write(_wi(zd['w'])); f.write(_wi(-zd['h']))
-                f.write(_wi(zd['nx'])); f.write(_wi(zd['ny']))
-                tile_hdr_pos = f.tell()
-                for _ in range(zd['nx'] * zd['ny']):
+                f.write(_wi(0))
+                f.write(_wi(n_zooms))
+                zoom_off_arr_pos = f.tell()
+                for _ in zooms:
                     f.write(_wl(0))
 
-                tile_off[z] = {}
+                # --- ZOOM HEADERS + TILE DATA ---
+                for z in zooms:
+                    zd = zm[z]
 
-                for tx in range(zd['nx']):
-                    for ty in range(zd['ny']):
-                        # Coordonnées tuile dans MBTiles
-                        col     = zd['x0'] + tx
-                        y_xyz   = zd['y0'] + ty
-                        y_tms   = (1 << z) - 1 - y_xyz
+                    # Pré-chargement des tuiles de ce zoom en mémoire : une seule
+                    # requête au lieu de nx×ny SELECTs (gain ×100 à ×1000 sur les
+                    # gros MBTiles). Mémoire bornée par le zoom courant — libérée
+                    # avant de passer au zoom suivant.
+                    tuiles_z = {
+                        (col, row): data
+                        for col, row, data in con.execute(
+                            "SELECT tile_column, tile_row, tile_data FROM tiles "
+                            "WHERE zoom_level=?", (z,))
+                    }
 
-                        row = con.execute(
-                            "SELECT tile_data FROM tiles "
-                            "WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                            (z, col, y_tms)).fetchone()
-                        jpeg = row[0] if row else EMPTY_JPEG
+                    zoom_hdr_offset[z] = f.tell()
+                    f.write(_wi(zd['w'])); f.write(_wi(-zd['h']))
+                    f.write(_wi(zd['nx'])); f.write(_wi(zd['ny']))
+                    tile_hdr_pos = f.tell()
+                    for _ in range(zd['nx'] * zd['ny']):
+                        f.write(_wl(0))
 
-                        tile_off[z][(tx, ty)] = f.tell()
-                        f.write(_wi(7))
-                        f.write(_wi(len(jpeg)))
-                        f.write(jpeg)
+                    tile_off[z] = {}
 
-                        done += 1
-                        if done % 500 == 0 or done == total_tiles:
-                            pct  = done * 100 // max(total_tiles, 1)
-                            bars = pct * largeur // 100
-                            elapsed = int(time.time() - t0)
-                            print(f"\r  RMAP z{z} [{'█'*bars}{'░'*(largeur-bars)}]"
-                                  f" {pct:3d}%  {done:,}/{total_tiles:,}"
-                                  f"  {_hms(elapsed)}",
-                                  end="", flush=True)
-
-                # --- RÉÉCRIRE le zoom header avec les vrais offsets ---
-                pos_after = f.tell()
-                f.seek(tile_hdr_pos)
-                for ty in range(zd['ny']):
                     for tx in range(zd['nx']):
-                        f.write(_wl(tile_off[z][(tx, ty)]))
-                f.seek(pos_after)
+                        for ty in range(zd['ny']):
+                            col     = zd['x0'] + tx
+                            y_xyz   = zd['y0'] + ty
+                            y_tms   = (1 << z) - 1 - y_xyz
 
-            # --- MAP INFO ---
-            map_data_offset = f.tell()
-            map_text = _build_map_info(
-                mbtiles_path.name, w_max, h_max,
-                lon_min, lat_min, lon_max, lat_max)
-            map_bytes = map_text.encode('ascii')
-            f.write(_wi(1))
-            f.write(_wi(len(map_bytes)))
-            f.write(map_bytes)
+                            jpeg = tuiles_z.get((col, y_tms), EMPTY_JPEG)
 
-            # --- RÉÉCRIRE FILE HEADER avec vrais offsets ---
-            f.seek(map_data_off_pos)
-            f.write(_wl(map_data_offset))
+                            tile_off[z][(tx, ty)] = f.tell()
+                            f.write(_wi(7))
+                            f.write(_wi(len(jpeg)))
+                            f.write(jpeg)
 
-            f.seek(zoom_off_arr_pos)
-            for z in zooms:
-                f.write(_wl(zoom_hdr_offset[z]))
+                            done += 1
+                            if done % 500 == 0 or done == total_tiles:
+                                pct  = done * 100 // max(total_tiles, 1)
+                                bars = pct * largeur // 100
+                                elapsed = int(time.time() - t0)
+                                print(f"\r  RMAP z{z} [{'█'*bars}{'░'*(largeur-bars)}]"
+                                      f" {pct:3d}%  {done:,}/{total_tiles:,}"
+                                      f"  {_hms(elapsed)}",
+                                      end="", flush=True)
 
-    except Exception as e:
-        print(f"\n  ERREUR RMAP : {e}")
-        import traceback; traceback.print_exc()
-        rmap.unlink(missing_ok=True)
-        con.close()
-        return None
+                    # Libérer la mémoire des tuiles de ce zoom avant le suivant
+                    tuiles_z = None
 
-    con.close()
-    elapsed   = int(time.time() - t0)
-    taille_mo = rmap.stat().st_size / 1e6
-    print(f"\n  {rmap.name} : {taille_mo:.0f} Mo  {_hms(elapsed)}")
-    return rmap
+                    # --- RÉÉCRIRE le zoom header avec les vrais offsets ---
+                    pos_after = f.tell()
+                    f.seek(tile_hdr_pos)
+                    for ty in range(zd['ny']):
+                        for tx in range(zd['nx']):
+                            f.write(_wl(tile_off[z][(tx, ty)]))
+                    f.seek(pos_after)
+
+                # --- MAP INFO ---
+                map_data_offset = f.tell()
+                map_text = _build_map_info(
+                    mbtiles_path.name, w_max, h_max,
+                    lon_min, lat_min, lon_max, lat_max)
+                map_bytes = map_text.encode('ascii')
+                f.write(_wi(1))
+                f.write(_wi(len(map_bytes)))
+                f.write(map_bytes)
+
+                # --- RÉÉCRIRE FILE HEADER avec vrais offsets ---
+                f.seek(map_data_off_pos)
+                f.write(_wl(map_data_offset))
+
+                f.seek(zoom_off_arr_pos)
+                for z in zooms:
+                    f.write(_wl(zoom_hdr_offset[z]))
+
+        except Exception as e:
+            print(f"\n  ERREUR RMAP : {e}")
+            import traceback; traceback.print_exc()
+            rmap.unlink(missing_ok=True)
+            return None
+
+        elapsed   = int(time.time() - t0)
+        taille_mo = rmap.stat().st_size / 1e6
+        print(f"\n  {rmap.name} : {taille_mo:.0f} Mo  {_hms(elapsed)}")
+        return rmap
+    finally:
+        # Garantit la fermeture de la connexion SQLite même sur exception
+        # non capturée (KeyboardInterrupt, MemoryError, disque plein…).
+        try: con.close()
+        except Exception: pass
 
 
 def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
@@ -5664,69 +6470,75 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
         return None
 
     con_mb = sqlite3.connect(str(mbtiles_path))
-    meta = {}
+    con_db = None
     try:
-        meta = dict(con_mb.execute("SELECT name, value FROM metadata").fetchall())
-    except Exception:
-        pass
-    zoom_min = int(meta.get("minzoom", 0))
-    zoom_max = int(meta.get("maxzoom", 17))
-    total = con_mb.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        meta = {}
+        try:
+            meta = dict(con_mb.execute("SELECT name, value FROM metadata").fetchall())
+        except Exception:
+            pass
+        zoom_min = int(meta.get("minzoom", 0))
+        zoom_max = int(meta.get("maxzoom", 17))
+        total = con_mb.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
 
-    print(f"  SQLiteDB ← {mbtiles_path.name}  ({total:,} tuiles)...", flush=True)
-    t0 = time.time()
+        print(f"  SQLiteDB ← {mbtiles_path.name}  ({total:,} tuiles)...", flush=True)
+        t0 = time.time()
 
-    con_db = sqlite3.connect(str(sqlitedb))
-    con_db.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
-    con_db.executescript("""
-        CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
-        CREATE TABLE android_metadata (locale TEXT);
-        CREATE TABLE info (minzoom INT, maxzoom INT);
-        CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
-    """)
-    con_db.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
-    con_db.execute("INSERT INTO info VALUES (?, ?)", (zoom_min, zoom_max))
-    con_db.commit()
+        con_db = sqlite3.connect(str(sqlitedb))
+        con_db.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
+        con_db.executescript("""
+            CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
+            CREATE TABLE android_metadata (locale TEXT);
+            CREATE TABLE info (minzoom INT, maxzoom INT);
+            CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
+        """)
+        con_db.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
+        con_db.execute("INSERT INTO info VALUES (?, ?)", (zoom_min, zoom_max))
+        con_db.commit()
 
-    BATCH   = 2000
-    batch   = []
-    done    = 0
-    largeur = 30
+        BATCH   = BATCH_SQLITEDB_INSERT
+        batch   = []
+        done    = 0
+        largeur = 30
 
-    try:
-        for zoom_level, tile_column, tile_row, tile_data in con_mb.execute(
-                "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"):
-            y_xyz = (1 << zoom_level) - 1 - tile_row   # TMS → XYZ
-            batch.append((tile_column, y_xyz, zoom_level, 0, tile_data))
-            done += 1
-            if len(batch) >= BATCH:
+        try:
+            for zoom_level, tile_column, tile_row, tile_data in con_mb.execute(
+                    "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"):
+                y_xyz = (1 << zoom_level) - 1 - tile_row   # TMS → XYZ
+                batch.append((tile_column, y_xyz, zoom_level, 0, tile_data))
+                done += 1
+                if len(batch) >= BATCH:
+                    con_db.executemany(
+                        "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
+                    con_db.commit()
+                    batch.clear()
+                    pct  = done * 100 // max(total, 1)
+                    bars = pct * largeur // 100
+                    elapsed = int(time.time() - t0)
+                    print(f"\r  SQLiteDB [{'█'*bars}{'░'*(largeur-bars)}]"
+                          f" {pct:3d}%  {done:,}/{total:,}  {_hms(elapsed)}",
+                          end="", flush=True)
+            if batch:
                 con_db.executemany(
                     "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
                 con_db.commit()
-                batch.clear()
-                pct  = done * 100 // max(total, 1)
-                bars = pct * largeur // 100
-                elapsed = int(time.time() - t0)
-                print(f"\r  SQLiteDB [{'█'*bars}{'░'*(largeur-bars)}]"
-                      f" {pct:3d}%  {done:,}/{total:,}  {_hms(elapsed)}",
-                      end="", flush=True)
-        if batch:
-            con_db.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
-            con_db.commit()
-    except Exception as e:
-        print(f"\n  ERREUR SQLiteDB : {e}")
-        con_mb.close(); con_db.close()
-        sqlitedb.unlink(missing_ok=True)
-        return None
+        except Exception as e:
+            print(f"\n  ERREUR SQLiteDB : {e}")
+            sqlitedb.unlink(missing_ok=True)
+            return None
 
-    con_mb.close()
-    con_db.close()
-    elapsed   = int(time.time() - t0)
-    taille_mo = sqlitedb.stat().st_size / 1e6
-    print(f"\n  {sqlitedb.name} : {done:,} tuiles  ({taille_mo:.0f} Mo)"
-          f"  {_hms(elapsed)}          ")
-    return sqlitedb
+        elapsed   = int(time.time() - t0)
+        taille_mo = sqlitedb.stat().st_size / 1e6
+        print(f"\n  {sqlitedb.name} : {done:,} tuiles  ({taille_mo:.0f} Mo)"
+              f"  {_hms(elapsed)}          ")
+        return sqlitedb
+    finally:
+        # Toujours fermer les deux connexions, même sur exception non capturée.
+        try: con_mb.close()
+        except Exception: pass
+        if con_db is not None:
+            try: con_db.close()
+            except Exception: pass
 
 
 def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_max):
@@ -5932,6 +6744,48 @@ def _run_osmosis_streaming(cmd_or_str, shell, env):
     return proc.returncode, "\n".join(stderr_tail)
 
 
+def _nettoyer_osmosis_temp_orphelins(verbose=False, min_age_s=300):
+    """Nettoie les fichiers d'index temporaires osmosis orphelins du dossier %TEMP%.
+
+    Sur Windows, osmosis (Java) laisse parfois ses fichiers d'index
+    ``idxNodes*.tmp`` et ``idxWays*.tmp`` dans ``%LOCALAPPDATA%\\Temp\\``
+    parce que la JVM ne libère pas tous ses handles à la fermeture. Ces
+    fichiers s'accumulent au fil des runs OSM (jusqu'à plusieurs Go).
+
+    Sécurités :
+      - On ne touche pas les fichiers modifiés dans les ``min_age_s`` dernières
+        secondes (défaut 5 min) — ils peuvent appartenir à un osmosis en
+        cours d'exécution dans une autre instance.
+      - ``PermissionError`` swallow silencieusement (fichier verrouillé par
+        un processus encore actif) — on retentera au prochain run.
+
+    Retourne (nb_supprimes, octets_liberes).
+    """
+    import tempfile as _tf
+    tmp = Path(_tf.gettempdir())
+    if not tmp.exists():
+        return 0, 0
+
+    cutoff = time.time() - min_age_s
+    nb, bytes_freed = 0, 0
+    for pattern in ("idxNodes*.tmp", "idxWays*.tmp"):
+        for f in tmp.glob(pattern):
+            try:
+                st = f.stat()
+                if st.st_mtime > cutoff:
+                    continue   # trop récent, peut-être en cours d'utilisation
+                size = st.st_size
+                f.unlink()
+                nb += 1
+                bytes_freed += size
+            except (OSError, PermissionError):
+                pass   # verrouillé ou disparu — best-effort
+    if nb and verbose:
+        print(f"  ✓ Nettoyé {nb} fichier(s) temp osmosis orphelin(s) "
+              f"({bytes_freed/1e6:.0f} Mo)")
+    return nb, bytes_freed
+
+
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                       osm_tags=None, export_geojson=True, ecraser_tuiles=False,
                       skip_bbox=False, geojson_formats=None):
@@ -5946,6 +6800,12 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     if geojson_formats is None:
         geojson_formats = ["gz"]
+
+    # Nettoyage des fichiers d'index osmosis orphelins (< 5 min ignorés pour
+    # ne pas tirer dans le pied d'un osmosis concurrent). Best-effort, ne
+    # bloque jamais la suite.
+    if WINDOWS:
+        _nettoyer_osmosis_temp_orphelins(verbose=True)
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     chemin_map     = dossier_ville / f"{nom_zone}.map"
@@ -6248,6 +7108,10 @@ Exemples :
     args.sqlitedb = "sqlitedb" in _ff
     if not args.formats_image:
         args.formats_image = "auto"
+
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    # Si le pipeline crashe, l'entrée reste → diagnostic facile.
+    _historique_debut()
 
     _osm_seul = args.osm and not args.telechargement and not args.ombrages and not args.mbtiles
 
@@ -8312,6 +9176,9 @@ Exemples :
     if not args.formats_image:
         args.formats_image = "auto"
 
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    _historique_debut()
+
     # ── --source : conversion autonome MBTiles → RMAP (exit immédiat) ────────
     if args.source:
         p = Path(args.source)
@@ -8353,11 +9220,12 @@ Exemples :
                   ["MAPS", "ORTHOIMAGERY", "ETATMAJOR"]) else "image/png"
         apikey_requis = any(x in layer for x in ["MAPS", "SCAN"])
         print(f"  Couche : {layer} (identifiant direct)")
-    # Forcer le format image si demandé explicitement
-    if args.formats_image == "jpeg" and img_fmt != "image/jpeg":
-        img_fmt = "image/jpeg"
-    elif args.formats_image == "png" and img_fmt != "image/png":
-        img_fmt = "image/png"
+    # img_fmt = format DEMANDÉ AU SERVEUR (URL WMTS). DOIT rester sur le
+    # format natif que l'IGN sert pour cette couche — sinon : HTTP 400
+    # "Format image/X unknown" (planign ne sert PAS en JPEG, ortho ne sert
+    # PAS en PNG, etc.).
+    # L'argument --formats-image contrôle UNIQUEMENT le format de sortie
+    # dans le MBTiles via re-encodage côté client (cf. _jpeg_q ci-dessous).
     fmt_ext = "jpg" if "jpeg" in img_fmt else "png"
 
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
@@ -8471,7 +9339,18 @@ Exemples :
     print(f"  Cache dalles : {dossier_cache}")
 
     # ── Génération MBTiles ────────────────────────────────────────────────────
-    _jpeg_q = args.qualite_image if img_fmt.lower() in ("image/png", "png") else None
+    # _jpeg_q : quand non-None, déclenche un re-encodage PNG → JPEG côté
+    # client dans generer_mbtiles_wmts. Sémantique :
+    #   - JPEG natif (ortho, scan*, etc.) : _jpeg_q = None (déjà JPEG)
+    #   - PNG natif + --formats-image png  : _jpeg_q = None (l'utilisateur
+    #     refuse explicitement la conversion → on garde le PNG natif)
+    #   - PNG natif + --formats-image jpeg/auto : _jpeg_q = qualité demandée
+    #     → conversion PNG → JPEG (gain ~3-5× sur la taille MBTiles)
+    _native_png = img_fmt.lower() in ("image/png", "png")
+    if _native_png and args.formats_image != "png":
+        _jpeg_q = args.qualite_image
+    else:
+        _jpeg_q = None
 
     # Le MBTiles source doit être (re)généré si :
     #   - il n'existe pas encore
@@ -9455,34 +10334,36 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         except urllib.error.HTTPError as _e:
             print(f"  ERREUR HTTP {_e.code} — {url}")
             return None
-        total = int(resp.headers.get("content-length") or 0)
-        done = 0
-        # Throttle d'affichage : on actualise au max toutes les 0.5s pour
-        # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 Mo.
-        _last_print = 0.0
-        with open(tmp, "wb") as f:
-            while True:
-                if _stop_event.is_set():
-                    tmp.unlink(missing_ok=True); return None
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                f.write(chunk); done += len(chunk)
-                now = time.time()
-                if now - _last_print < 0.5:
-                    continue
-                _last_print = now
-                elapsed = int(now - t0)
-                if total:
-                    pct = min(done * 100 // total, 99)
-                    bar = ("█" * (pct // 5)).ljust(20)
-                    sys.stdout.write(
-                        f"\r  [{bar}] {pct:3d}%  "
-                        f"{done/1e6:.0f}/{total/1e6:.0f} Mo  {_hms(elapsed)}   ")
-                else:
-                    sys.stdout.write(
-                        f"\r  {done/1e6:.0f} Mo  {_hms(elapsed)}   ")
-                sys.stdout.flush()
+        # `with` ferme la connexion HTTP même sur exception (pas de FD leak).
+        with resp:
+            total = int(resp.headers.get("content-length") or 0)
+            done = 0
+            # Throttle d'affichage : on actualise au max toutes les 0.5s pour
+            # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 Mo.
+            _last_print = 0.0
+            with open(tmp, "wb") as f:
+                while True:
+                    if _stop_event.is_set():
+                        tmp.unlink(missing_ok=True); return None
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk); done += len(chunk)
+                    now = time.time()
+                    if now - _last_print < 0.5:
+                        continue
+                    _last_print = now
+                    elapsed = int(now - t0)
+                    if total:
+                        pct = min(done * 100 // total, 99)
+                        bar = ("█" * (pct // 5)).ljust(20)
+                        sys.stdout.write(
+                            f"\r  [{bar}] {pct:3d}%  "
+                            f"{done/1e6:.0f}/{total/1e6:.0f} Mo  {_hms(elapsed)}   ")
+                    else:
+                        sys.stdout.write(
+                            f"\r  {done/1e6:.0f} Mo  {_hms(elapsed)}   ")
+                    sys.stdout.flush()
         sys.stdout.write("\r" + " " * 70 + "\r"); sys.stdout.flush()
         tmp.replace(sz_path)
         print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} Mo)  "
@@ -9829,6 +10710,9 @@ def main_wfs():
     _ff = getattr(args, "formats_fichier", ["gz"])
     # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
     _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
+
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    _historique_debut()
 
     # ── Résolution des couches ────────────────────────────────────────────────
     couches_resolues = []
@@ -10595,6 +11479,9 @@ Exemples :
 
     args, _ = parser.parse_known_args()  # ignorer --zone-* et autres args globaux
 
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    _historique_debut()
+
     # Résoudre les globs éventuels
     import glob as _glob
     fichiers = []
@@ -10663,11 +11550,23 @@ Exemples :
     _historique_depuis_argv(int(time.time()-t_debut))
 
 
-def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
-    """
-    Construit un cfg complet depuis sys.argv et sauvegarde dans l'historique.
-    Les clés correspondent exactement à celles attendues par loadConfig() JS.
-    """
+# ── Persistence d'historique 'crash-safe' ──────────────────────────────────
+# Sauver l'entrée AU DÉBUT du run garantit qu'elle existe même si le process
+# crashe (NameError, SIGKILL, panne courant, Ctrl+C brutal). À la fin, on
+# UPDATE cette entrée pour ajouter durée + statut. Identifiant : run_id
+# (timestamp ms + pid, hérité via env LIDAR2MAP_HIST_RUN_ID en mode GUI).
+_HIST_RUN_ID    = ""
+_HIST_T_DEBUT   = 0.0
+_HIST_FINALIZED = False
+
+
+def _hist_disabled() -> bool:
+    """Désactivé pendant le smoketest (pollue de 5+ entrées par run)."""
+    return bool(os.environ.get("LIDAR2MAP_SKIP_HIST"))
+
+
+def _cfg_depuis_argv() -> dict:
+    """Construit le cfg JSON depuis sys.argv. Clés attendues par loadConfig() JS."""
     argv = sys.argv[1:]
 
     def _arg(flag, default=""):
@@ -10712,7 +11611,7 @@ def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
     fmts = _args_after("--formats-fichier")
     ombs = _args_after("--ombrages")
 
-    cfg = {
+    return {
         # Zone
         "type":    t,
         "mode":    mode,
@@ -10763,7 +11662,67 @@ def _historique_depuis_argv(duree_s: int, dossier_resultat: str = ""):
         # Argv complet pour debug
         "argv":    " ".join(argv),
     }
-    _sauver_historique(cfg, duree_s, dossier_resultat)
+
+
+def _historique_debut() -> str:
+    """
+    Sauvegarde une entrée 'en cours' AU DÉBUT du traitement.
+
+    But : si le process crashe (NameError, OSError, SIGKILL, panne courant,
+    Ctrl+C brutal), l'entrée reste avec statut='en cours' → on voit les
+    paramètres exacts du run cassé pour debug.
+
+    Si LIDAR2MAP_HIST_RUN_ID est défini (cas GUI : id généré côté GUI pour
+    pouvoir mettre à jour l'entrée plus tard depuis poll_log), réutilise cet
+    id. Sinon, génère un nouvel id horodaté + pid.
+    """
+    global _HIST_RUN_ID, _HIST_T_DEBUT, _HIST_FINALIZED
+    if _hist_disabled():
+        return ""
+    run_id = (os.environ.get("LIDAR2MAP_HIST_RUN_ID") or
+              f"{int(time.time()*1000)}-{os.getpid()}")
+    _HIST_RUN_ID    = run_id
+    _HIST_T_DEBUT   = time.time()
+    _HIST_FINALIZED = False
+    try:
+        _sauver_historique(_cfg_depuis_argv(), 0, "",
+                           run_id=run_id, statut="en cours")
+    except Exception as e:
+        # Ne JAMAIS planter le pipeline parce que l'historique a échoué.
+        print(f"  Historique 'en cours' non sauvegardé : {e}", flush=True)
+    return run_id
+
+
+def _historique_fin_crash():
+    """
+    Finalise l'entrée 'en cours' avec statut='ko' depuis le handler crash
+    de __main__. No-op si pas de debut, ou si déjà finalisé (succès récent
+    dans une boucle multi-département par exemple).
+    """
+    if not _HIST_RUN_ID or _HIST_FINALIZED or _hist_disabled():
+        return
+    duree = int(time.time() - _HIST_T_DEBUT) if _HIST_T_DEBUT else 0
+    try:
+        _sauver_historique(_cfg_depuis_argv(), duree, "",
+                           run_id=_HIST_RUN_ID, statut="ko")
+    except Exception as e:
+        print(f"  Historique 'ko' non sauvegardé : {e}", flush=True)
+
+
+def _historique_depuis_argv(duree_s: int, dossier_resultat: str = "",
+                             run_id: str = "", statut: str = "ok"):
+    """
+    Sauvegarde finale depuis CLI. Si run_id non fourni, utilise _HIST_RUN_ID
+    posé par _historique_debut() au début du traitement (update de l'entrée
+    'en cours' existante).
+    """
+    global _HIST_FINALIZED
+    if _hist_disabled():
+        return
+    _sauver_historique(_cfg_depuis_argv(), duree_s, dossier_resultat,
+                       run_id=run_id or _HIST_RUN_ID, statut=statut)
+    if statut in ("ok", "ko"):
+        _HIST_FINALIZED = True
 # ============================================================
 # HISTORIQUE DES TRAITEMENTS
 # ============================================================
@@ -10772,14 +11731,27 @@ _HISTORIQUE_PATH = DOSSIER_TRAVAIL / "historique.json"
 _HISTORIQUE_MAX  = 50   # nombre max d'entrées conservées
 
 
-def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = ""):
+def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
+                       run_id: str = "", statut: str = "ok"):
     """
-    Ajoute une entrée à l'historique des traitements réussis.
-    Conserve les _HISTORIQUE_MAX dernières entrées.
+    Sauvegarde une entrée d'historique. Conserve _HISTORIQUE_MAX entrées.
+
+    Sémantique :
+      - Si run_id correspond à une entrée existante : UPDATE en place,
+        date de début préservée, date_fin posée.
+      - Sinon : INSERT en tête.
+
+    statut :
+      - 'en cours' : sauvegarde au DÉBUT du traitement. Reste là si le
+        process crashe → diagnostique facile.
+      - 'ok' / 'ko' : sauvegarde finale (succès / échec).
     """
     import datetime
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     entree = {
-        "date":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "id":        run_id or f"{int(time.time()*1000)}-{os.getpid()}",
+        "date":      now_str,
+        "statut":    statut,
         "type":      cfg.get("type", ""),
         "nom":       cfg.get("nom", ""),
         "mode":      cfg.get("mode", ""),
@@ -10789,7 +11761,7 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = ""):
         "bbox":      cfg.get("bbox", ""),
         "dossier":   cfg.get("dossier", ""),
         "resultat":  dossier_resultat,
-        "duree":     _hms(duree_s),
+        "duree":     _hms(duree_s) if duree_s > 0 else "",
         "params":    cfg,   # cfg complet pour rappel exact
     }
     historique = []
@@ -10798,11 +11770,30 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = ""):
             historique = json.loads(_HISTORIQUE_PATH.read_text(encoding="utf-8"))
         except Exception:
             historique = []
-    historique.insert(0, entree)
+    # Update si entrée existante (même run_id), sinon insert en tête.
+    idx = -1
+    if run_id:
+        for i, e in enumerate(historique):
+            if e.get("id") == run_id:
+                idx = i
+                break
+    if idx >= 0:
+        # Préserver la date de début ; poser date_fin si finalisation.
+        entree["date"] = historique[idx].get("date", now_str)
+        if statut in ("ok", "ko"):
+            entree["date_fin"] = now_str
+        historique[idx] = entree
+    else:
+        historique.insert(0, entree)
     historique = historique[:_HISTORIQUE_MAX]
     try:
         _ecrire_json_atomique(_HISTORIQUE_PATH, historique, indent=2)
-        print(f"  Historique sauvegardé : {_HISTORIQUE_PATH}  ({len(historique)} entrées)", flush=True)
+        # Log discret au début (l'utilisateur n'a pas besoin de savoir), plus
+        # explicite à la fin pour confirmer la sauvegarde finale.
+        if statut == "en cours":
+            print(f"  Historique : entrée '{entree['id']}' (en cours)", flush=True)
+        else:
+            print(f"  Historique sauvegardé : {_HISTORIQUE_PATH}  ({len(historique)} entrées)", flush=True)
     except Exception as e:
         print(f"  Historique non sauvegardé : {e}", flush=True)
 
@@ -10826,6 +11817,16 @@ def lancer_gui():
     Communication bidirectionnelle via l'objet Api exposé à JavaScript.
     """
     import threading, queue
+
+    # ── Sélection du backend GUI ───────────────────────────────────────────
+    # macOS : forcer le backend Qt (PyQt6) avant l'import de webview.
+    # Le backend Cocoa (défaut) plante en session SSH même avec VNC actif,
+    # car NSScreen.mainScreen() ne voit pas la session VNC depuis SSH.
+    # Qt se connecte directement au serveur de fenêtres macOS et fonctionne.
+    # PYWEBVIEW_GUI doit être posé AVANT import webview (lu à l'import).
+    if platform.system() == "Darwin":
+        os.environ["PYWEBVIEW_GUI"] = "qt"
+
     try:
         import webview
     except ImportError:
@@ -10833,15 +11834,17 @@ def lancer_gui():
         # PyWebView nécessite un backend natif :
         #   Windows : WebView2 (préinstallé Win10+)         → "pywebview"
         #   macOS   : Cocoa WebKit (préinstallé)            → "pywebview"
-        #   Linux   : QtWebEngine via PyQt5 (recommandé)    → "pywebview[qt]"
+        #   Linux   : QtWebEngine via PyQt6 (recommandé)    → "pywebview[qt6]"
         #             alternative : GTK via pygobject       → "pywebview[gtk]"
         #
         # Sur Linux, sans extra, pywebview lève RuntimeError au démarrage
-        # ("No suitable backend found"). On utilise [qt] par défaut car les
-        # paquets pip sont auto-suffisants ; [gtk] nécessiterait des paquets
-        # système (libgirepository1.0-dev, gir1.2-webkit2-4.0…).
+        # ("No suitable backend found"). On utilise [qt6] (et non [qt] qui
+        # fait du PyQt5 dans pywebview < 6.0) pour rester cohérent avec
+        # _installer_deps + lidar2map_mac.spec qui sont sur PyQt6.
+        # [gtk] nécessiterait des paquets système (libgirepository1.0-dev,
+        # gir1.2-webkit2-4.0…) et n'est donc pas le défaut.
         if LINUX:
-            pkg = "pywebview[qt]"
+            pkg = "pywebview[qt6]"
         else:
             pkg = "pywebview"
         try:
@@ -10857,9 +11860,9 @@ def lancer_gui():
             if LINUX:
                 print("  ERREUR : pywebview installé mais sans backend fonctionnel.")
                 print("  Sur Linux, installez aussi les paquets système requis :")
-                print("    Debian/Ubuntu : sudo apt install python3-pyqt5 python3-pyqt5.qtwebengine")
-                print("    Fedora/RHEL   : sudo dnf install python3-qt5 python3-qt5-webengine")
-                print("    Arch          : sudo pacman -S python-pyqt5 python-pyqt5-webengine")
+                print("    Debian/Ubuntu : sudo apt install python3-pyqt6 python3-pyqt6.qtwebengine")
+                print("    Fedora/RHEL   : sudo dnf install python3-pyqt6 python3-pyqt6-webengine")
+                print("    Arch          : sudo pacman -S python-pyqt6 python-pyqt6-webengine")
             raise
 
     # Supprimer les warnings internes pywebview (AccessibilityObject, COM, etc.)
@@ -10920,6 +11923,20 @@ def lancer_gui():
     ]
 
     # ── Classe API exposée à JavaScript ──────────────────────────────────────
+    def _classify_err(line: str) -> bool:
+        """True si la ligne ressemble à une erreur (ERREUR/Error/Traceback/argparse).
+
+        Utilisé par les 3 sites de drain stdout du subprocess pour rester
+        synchronisés — sans cette factorisation, une évolution du heuristique
+        ne se propageait qu'à un site sur trois.
+        """
+        upbuf = line.upper()
+        return (
+            any(w in upbuf for w in ("ERREUR", "ERROR", "TRACEBACK"))
+            or line.strip().startswith("usage:")
+            or ": error:" in line
+        )
+
     class Api:
         def __init__(self):
             self._process   = None
@@ -10927,6 +11944,15 @@ def lancer_gui():
             self._done      = False
             self._retcode   = None
             self.window     = None  # injecté par pywebview au démarrage
+            # Lock pour les attributs partagés entre le thread d'écoute du
+            # subprocess (run) et le thread main (poll_log, get_last_error).
+            # Le GIL protège les opérations atomiques ; le lock protège la
+            # cohérence multi-attributs (ex: lire _retcode et _modal_error_msg
+            # ensemble doit voir l'état stable d'un même moment).
+            self._lock = threading.Lock()
+            self._err_lines       = []
+            self._tail_lines      = []
+            self._modal_error_msg = ""
 
         # ── Données initiales ─────────────────────────────────────────────
         def get_init_data(self):
@@ -11192,6 +12218,13 @@ def lancer_gui():
             self._retcode = None
             self._t_launch = time.time()
             self._cfg_launch = cfg
+            # run_id partagé GUI ↔ subprocess via env LIDAR2MAP_HIST_RUN_ID :
+            # le subprocess sauve 'en cours' au début (crash-safe), puis 'ok'/'ko'
+            # à la fin. poll_log côté GUI peut alors mettre à jour la MÊME entrée
+            # avec le cfg complet (qui contient des champs absents de l'argv :
+            # tel_v, ecraser_tel_v, etc.) pour rappel exact via loadConfig().
+            self._hist_run_id = f"{int(time.time()*1000)}-{os.getpid()}-gui"
+            self._hist_saved  = False
             # Calculer le dossier résultat attendu
             t    = cfg.get("type", "lidar")
             nom  = cfg.get("nom", "")
@@ -11216,6 +12249,9 @@ def lancer_gui():
                 try:
                     env = os.environ.copy()
                     env["PYTHONUNBUFFERED"] = "1"
+                    # Propager le run_id au subprocess pour qu'il sauve 'en cours'
+                    # SUR la même entrée que celle finalisée par poll_log côté GUI.
+                    env["LIDAR2MAP_HIST_RUN_ID"] = self._hist_run_id
                     # Forcer UTF-8 sur stdout/stderr du child Python.
                     # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
                     # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
@@ -11242,12 +12278,11 @@ def lancer_gui():
                             start_new_session=True)
                     buf = ""
                     pct_re = re.compile(r"(\d+)%")
-                    # Collecter les lignes d'erreur pour récap modal en fin de run
-                    self._err_lines = []
-                    # Buffer circulaire des dernières lignes non-vides : sert de
-                    # fallback si le run sort en code != 0 sans ligne marquée
-                    # comme "ERREUR" (ex: print() libre suivi de sys.exit(1))
-                    self._tail_lines = []
+                    # Reset des buffers de diagnostic (init dans __init__).
+                    # Lock pour cohérence avec poll_log / get_last_error.
+                    with self._lock:
+                        self._err_lines  = []
+                        self._tail_lines = []
                     for chunk in iter(lambda: self._process.stdout.read(64), b""):
                         for ch in chunk.decode("utf-8", errors="replace"):
                             if ch == "\r":
@@ -11267,28 +12302,17 @@ def lancer_gui():
                                 # Sinon : ignorer ce \r (CRLF Windows), garder buf intact
                             elif ch == "\n":
                                 if buf.strip():
-                                    # Détection élargie : argparse "error:" en minuscules,
-                                    # erreurs Python "Error:", traces, "usage:" qui suit
-                                    # une erreur argparse, ainsi que "ERREUR" déjà détecté.
-                                    upbuf = buf.upper()
-                                    is_err = (
-                                        any(w in upbuf for w in
-                                            ["ERREUR", "ERROR", "TRACEBACK"])
-                                        or buf.strip().startswith("usage:")
-                                        or ": error:" in buf
-                                    )
+                                    is_err = _classify_err(buf)
                                     tag = "err" if is_err else "ok"
-                                    if is_err:
-                                        # Garder un échantillon pour la modale finale
-                                        # (max 20 lignes pour ne pas saturer)
-                                        if len(self._err_lines) < 20:
+                                    with self._lock:
+                                        if is_err and len(self._err_lines) < 20:
                                             self._err_lines.append(buf.strip())
-                                    # Tenir un buffer des 10 dernières lignes
-                                    # non-vides pour fallback si retcode≠0 sans
-                                    # ligne marquée "ERREUR".
-                                    self._tail_lines.append(buf.strip())
-                                    if len(self._tail_lines) > 10:
-                                        self._tail_lines.pop(0)
+                                        # Buffer circulaire des 10 dernières lignes
+                                        # non-vides : fallback si retcode≠0 sans
+                                        # ligne marquée "ERREUR".
+                                        self._tail_lines.append(buf.strip())
+                                        if len(self._tail_lines) > 10:
+                                            self._tail_lines.pop(0)
                                     self._log_queue.put({"line": buf + "\n", "tag": tag})
                                 buf = ""
                             else:
@@ -11299,22 +12323,19 @@ def lancer_gui():
                     # Sans ça, ces lignes sont perdues sur Windows quand le
                     # child exit en moins de 100ms.
                     if buf.strip():
-                        upbuf = buf.upper()
-                        is_err = (
-                            any(w in upbuf for w in ["ERREUR","ERROR","TRACEBACK"])
-                            or buf.strip().startswith("usage:")
-                            or ": error:" in buf
-                        )
-                        if is_err and len(self._err_lines) < 20:
-                            self._err_lines.append(buf.strip())
-                        self._tail_lines.append(buf.strip())
-                        if len(self._tail_lines) > 10:
-                            self._tail_lines.pop(0)
+                        is_err = _classify_err(buf)
+                        with self._lock:
+                            if is_err and len(self._err_lines) < 20:
+                                self._err_lines.append(buf.strip())
+                            self._tail_lines.append(buf.strip())
+                            if len(self._tail_lines) > 10:
+                                self._tail_lines.pop(0)
                         self._log_queue.put({"line": buf + "\n",
                                              "tag": "err" if is_err else "ok"})
                         buf = ""
                     self._process.wait()
-                    self._retcode = self._process.returncode
+                    with self._lock:
+                        self._retcode = self._process.returncode
 
                     # Drain final post-wait : sur Windows, le pipe peut contenir
                     # encore des données après que le child ait exit. Sans ce
@@ -11328,18 +12349,13 @@ def lancer_gui():
                                 line = line.rstrip("\r")
                                 if not line.strip():
                                     continue
-                                upbuf = line.upper()
-                                is_err = (
-                                    any(w in upbuf for w in
-                                        ["ERREUR", "ERROR", "TRACEBACK"])
-                                    or line.strip().startswith("usage:")
-                                    or ": error:" in line
-                                )
-                                if is_err and len(self._err_lines) < 20:
-                                    self._err_lines.append(line.strip())
-                                self._tail_lines.append(line.strip())
-                                if len(self._tail_lines) > 10:
-                                    self._tail_lines.pop(0)
+                                is_err = _classify_err(line)
+                                with self._lock:
+                                    if is_err and len(self._err_lines) < 20:
+                                        self._err_lines.append(line.strip())
+                                    self._tail_lines.append(line.strip())
+                                    if len(self._tail_lines) > 10:
+                                        self._tail_lines.pop(0)
                                 self._log_queue.put({
                                     "line": line + "\n",
                                     "tag": "err" if is_err else "ok",
@@ -11360,32 +12376,36 @@ def lancer_gui():
                     # On le stocke à la fois dans la queue ET sur l'instance, car
                     # les dictionnaires complexes peuvent être mal sérialisés par
                     # certaines versions de pywebview/WebView2.
-                    self._modal_error_msg = ""
-                    if self._retcode != 0:
-                        # Priorité 1 : lignes marquées "ERREUR" capturées
-                        # Priorité 2 : 10 dernières lignes non vides
-                        # Priorité 3 : message générique si tout est vide
-                        if self._err_lines:
-                            modal_lines = self._err_lines[-10:]
-                        elif self._tail_lines:
-                            modal_lines = self._tail_lines[-10:]
+                    with self._lock:
+                        self._modal_error_msg = ""
+                        if self._retcode != 0:
+                            if self._err_lines:
+                                modal_lines = self._err_lines[-10:]
+                            elif self._tail_lines:
+                                modal_lines = self._tail_lines[-10:]
+                            else:
+                                modal_lines = [
+                                    f"Le traitement a échoué (code {self._retcode})",
+                                    "Aucun message d'erreur n'a été capturé.",
+                                    "Vérifiez le panneau de log pour les détails.",
+                                ]
+                            self._modal_error_msg = "\n".join(modal_lines)
+                            _modal_payload = {
+                                "modal_error": self._modal_error_msg,
+                                "retcode":     self._retcode,
+                            }
                         else:
-                            modal_lines = [
-                                f"Le traitement a échoué (code {self._retcode})",
-                                "Aucun message d'erreur n'a été capturé.",
-                                "Vérifiez le panneau de log pour les détails.",
-                            ]
-                        self._modal_error_msg = "\n".join(modal_lines)
-                        self._log_queue.put({
-                            "modal_error": self._modal_error_msg,
-                            "retcode": self._retcode,
-                        })
-                    if self._retcode == 0:
-                        # Marquer la durée — sauvegarde historique faite dans poll_log
-                        self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
+                            _modal_payload = None
+                    if _modal_payload is not None:
+                        self._log_queue.put(_modal_payload)
+                    # Marquer la durée pour la sauvegarde historique (faite
+                    # dans poll_log). Mesuré dans tous les cas — y compris
+                    # échec — pour que l'entrée 'ko' soit horodatée correctement.
+                    self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
                 except Exception as e:
                     self._log_queue.put({"line": f"\nErreur : {e}\n", "tag": "err"})
-                    self._retcode = -1
+                    with self._lock:
+                        self._retcode = -1
                 finally:
                     self._done = True
 
@@ -11424,11 +12444,15 @@ def lancer_gui():
             que `done=True && code!=0`, sans dépendre de la transmission par
             la queue (que pywebview/WebView2 sérialise parfois mal pour les
             dicts à plusieurs clés).
+
+            Lecture sous lock pour voir un snapshot cohérent (msg + retcode
+            écrits ensemble dans run()).
             """
-            return {
-                "msg":     getattr(self, "_modal_error_msg", "") or "",
-                "retcode": getattr(self, "_retcode", 0) or 0,
-            }
+            with self._lock:
+                return {
+                    "msg":     getattr(self, "_modal_error_msg", "") or "",
+                    "retcode": getattr(self, "_retcode", 0) or 0,
+                }
 
         def poll_log(self):
             items = []
@@ -11437,15 +12461,24 @@ def lancer_gui():
                     items.append(self._log_queue.get_nowait())
             except queue.Empty:
                 pass
-            # Sauvegarder l'historique une seule fois, dans le contexte poll_log (thread-safe)
-            if self._done and self._retcode == 0 and not getattr(self, "_hist_saved", False):
+            # Sauvegarde finale de l'historique côté GUI (thread-safe via
+            # poll_log). MET À JOUR l'entrée 'en cours' créée par le subprocess
+            # via le même run_id (env LIDAR2MAP_HIST_RUN_ID). Sauvegarde sur
+            # succès ET échec : sans ça, un crash du pipeline laissait l'entrée
+            # 'en cours' indéfiniment.
+            if self._done and not getattr(self, "_hist_saved", False):
                 self._hist_saved = True
                 try:
-                    _duree = getattr(self, "_duree_run", 0)
+                    _duree  = getattr(self, "_duree_run", 0) or \
+                              int(time.time() - getattr(self, "_t_launch", time.time()))
+                    _statut = "ok" if self._retcode == 0 else "ko"
+                    _result = getattr(self, "_result_dir", "") if self._retcode == 0 else ""
                     _sauver_historique(
                         getattr(self, "_cfg_launch", {}),
                         _duree,
-                        getattr(self, "_result_dir", ""),
+                        _result,
+                        run_id=getattr(self, "_hist_run_id", ""),
+                        statut=_statut,
                     )
                     items.append({"line": f"  Historique sauvegardé : {_HISTORIQUE_PATH}\n",
                                   "tag": "ok"})
@@ -12420,19 +13453,28 @@ function buildHistorique(hist) {
   }
   const LABELS = {lidar:'LiDAR',scan:'IGN Raster',osm:'OSM Vectoriel',
                   vecteur:'IGN Vectoriel',fusion:'Fusion',decoupe:'Découpage'};
+  // Marqueur visuel du statut : ✓ ok (vert), ✗ ko (rouge), ⚠ en cours (orange,
+  // process probablement crashé — l'entrée n'a pas été finalisée).
+  const BADGES = {
+    'ok':       ['✓', '#3b9d3b'],
+    'ko':       ['✗', '#c44'],
+    'en cours': ['⚠', '#e08000'],
+  };
   list.innerHTML = _historique.map((e, i) => {
     const zone = e.dep  ? `Dep ${e.dep}`  :
                  e.ville ? e.ville         :
                  e.bbox  ? 'BBox'          :
                  e.gps   ? 'GPS'           : '';
+    const st = e.statut || 'ok';  // entrées pré-v2 : pas de statut → 'ok' implicite
+    const [sym, col] = BADGES[st] || ['', 'var(--dim)'];
     return `<div style="border:1px solid var(--bd);border-radius:4px;padding:8px;
                         margin-bottom:6px;cursor:pointer;font-size:12px"
                  onclick="rappelHistorique(${i})">
       <div style="display:flex;justify-content:space-between">
-        <strong>${LABELS[e.type]||e.type} — ${e.nom||'?'}</strong>
+        <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} — ${e.nom||'?'}</strong>
         <span style="color:var(--dim)">${e.date}</span>
       </div>
-      <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree}</div>
+      <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree||st}</div>
     </div>`;
   }).join('');
 }
@@ -13178,6 +14220,31 @@ function btnReset() {
   document.getElementById('btn-stop').disabled = true;
   setFormLocked(false);
 }
+  // ── Zoom Ctrl+molette ────────────────────────────────────────────────
+  // Fonctionne sur tous les OS et clients VNC (RealVNC Windows → macOS VM).
+  // Ctrl+molette haut = zoom in, Ctrl+molette bas = zoom out.
+  // Pinch-to-zoom trackpad fonctionne nativement via le navigateur embarqué.
+  (function() {
+    let _zoomLevel = 1.0;
+    const _ZOOM_STEP = 0.1;
+    const _ZOOM_MIN  = 0.5;
+    const _ZOOM_MAX  = 2.5;
+    document.addEventListener('wheel', function(e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      _zoomLevel += e.deltaY < 0 ? _ZOOM_STEP : -_ZOOM_STEP;
+      _zoomLevel  = Math.min(_ZOOM_MAX, Math.max(_ZOOM_MIN, _zoomLevel));
+      document.body.style.zoom = _zoomLevel;
+    }, { passive: false });
+    // Ctrl+0 pour réinitialiser le zoom
+    document.addEventListener('keydown', function(e) {
+      if (e.ctrlKey && (e.key === '0' || e.key === 'NumPad0')) {
+        e.preventDefault();
+        _zoomLevel = 1.0;
+        document.body.style.zoom = 1.0;
+      }
+    });
+  })();
 </script>
 </body>
 </html>"""
@@ -13274,8 +14341,21 @@ if __name__ == "__main__":
         # Cancellation propre : raisée par print_etape() ou _svf_numpy()
         # quand _stop_event a été set par Ctrl+C. Le finally restaure stdout
         # avant que Python imprime un message synthétique.
+        _historique_fin_crash()   # marque l'entrée 'en cours' comme 'ko'
         print("\n\n  Traitement interrompu par l'utilisateur.", flush=True)
         sys.exit(130)
+    except SystemExit as _e_sysexit:
+        # sys.exit() avec code != 0 = échec → marquer l'entrée 'en cours' 'ko'.
+        # (code 0 ou None = succès → ne rien faire ; succès est déjà géré par
+        # _historique_depuis_argv dans chaque main_*())
+        if _e_sysexit.code not in (None, 0):
+            _historique_fin_crash()
+        raise
+    except BaseException:
+        # Toute autre exception non rattrapée par les main_*() : marquer 'ko'
+        # avant de laisser Python imprimer la traceback.
+        _historique_fin_crash()
+        raise
     finally:
         if isinstance(sys.stdout, _TeeLogger):
             sys.stdout.close()
