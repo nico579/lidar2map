@@ -68,7 +68,22 @@ def _prepare_osmosis_staging():
         jar_dst = staging_osmosis / "lib" / MAPWRITER_JAR_SRC.name
         shutil.copy2(MAPWRITER_JAR_SRC, jar_dst)
         print(f"  [spec] mapwriter -> lib/{MAPWRITER_JAR_SRC.name}")
-        # osmosis shell script utilise glob $APP_HOME/lib/*.jar -> auto-inclus
+        # osmosis shell script Gradle utilise un CLASSPATH EXPLICITE (comme le
+        # .bat) — pas un glob. Sans patch, le plugin mapwriter reste invisible
+        # et la generation .map echoue avec "Task type mapfile-writer doesn't exist".
+        sh_path = staging_osmosis / "bin" / "osmosis"
+        if sh_path.exists():
+            sh_txt = sh_path.read_text(encoding="utf-8")
+            inject = f":$APP_HOME/lib/{MAPWRITER_JAR_SRC.name}"
+            marker = "$APP_HOME/lib/spring-jcl-5.3.30.jar"
+            if inject not in sh_txt:
+                if marker not in sh_txt:
+                    print(f"  [WARN] marker '{marker}' introuvable dans osmosis (Unix). "
+                          "Plugin mapwriter ne sera pas charge.")
+                else:
+                    sh_txt = sh_txt.replace(marker, marker + inject)
+                    sh_path.write_text(sh_txt, encoding="utf-8")
+                    print(f"  [spec] osmosis (Unix) patche")
     else:
         print(f"  [WARN] mapwriter jar absent : {MAPWRITER_JAR_SRC}")
     sh = staging_osmosis / "bin" / "osmosis"

@@ -72,20 +72,43 @@ def _prepare_osmosis_staging():
         jar_dst = staging_osmosis / "lib" / MAPWRITER_JAR_SRC.name
         shutil.copy2(MAPWRITER_JAR_SRC, jar_dst)
         print(f"  [spec] mapwriter -> lib/{MAPWRITER_JAR_SRC.name}")
-        # Patcher osmosis.bat pour inclure le jar dans CLASSPATH
+
+        # osmosis utilise un CLASSPATH explicite (généré par Gradle) — il faut
+        # injecter le jar mapwriter dans la liste, sinon Java ne le charge pas
+        # et le plugin reste invisible ("Task type mapfile-writer doesn't exist").
+        # On patche les DEUX launchers (Windows .bat + Unix shell) parce qu'on
+        # build Linux avec le même spec.
+
+        # 1. Windows : bin/osmosis.bat (séparateur ';', chemins '\', %APP_HOME%)
         bat_path = staging_osmosis / "bin" / "osmosis.bat"
-        bat_txt  = bat_path.read_text(encoding="utf-8")
-        inject   = f";%APP_HOME%\\lib\\{MAPWRITER_JAR_SRC.name}"
-        marker   = r"%APP_HOME%\lib\spring-jcl-5.3.30.jar"
-        if inject not in bat_txt:
-            if marker not in bat_txt:
-                raise RuntimeError(
-                    f"Marker introuvable dans osmosis.bat : {marker!r}. "
-                    "Adapter le spec à la version osmosis."
-                )
-            bat_txt = bat_txt.replace(marker, marker + inject)
-            bat_path.write_text(bat_txt, encoding="utf-8")
-            print(f"  [spec] osmosis.bat patché")
+        if bat_path.exists():
+            bat_txt = bat_path.read_text(encoding="utf-8")
+            inject  = f";%APP_HOME%\\lib\\{MAPWRITER_JAR_SRC.name}"
+            marker  = r"%APP_HOME%\lib\spring-jcl-5.3.30.jar"
+            if inject not in bat_txt:
+                if marker not in bat_txt:
+                    raise RuntimeError(
+                        f"Marker introuvable dans osmosis.bat : {marker!r}. "
+                        "Adapter le spec à la version osmosis."
+                    )
+                bat_txt = bat_txt.replace(marker, marker + inject)
+                bat_path.write_text(bat_txt, encoding="utf-8")
+                print(f"  [spec] osmosis.bat patché")
+
+        # 2. Linux/Mac : bin/osmosis (séparateur ':', chemins '/', $APP_HOME)
+        sh_path = staging_osmosis / "bin" / "osmosis"
+        if sh_path.exists():
+            sh_txt = sh_path.read_text(encoding="utf-8")
+            inject = f":$APP_HOME/lib/{MAPWRITER_JAR_SRC.name}"
+            marker = "$APP_HOME/lib/spring-jcl-5.3.30.jar"
+            if inject not in sh_txt:
+                if marker not in sh_txt:
+                    print(f"  [WARN] marker '{marker}' introuvable dans osmosis (Unix). "
+                          "Plugin mapwriter ne sera pas chargé.")
+                else:
+                    sh_txt = sh_txt.replace(marker, marker + inject)
+                    sh_path.write_text(sh_txt, encoding="utf-8")
+                    print(f"  [spec] osmosis (Unix) patché")
     else:
         print(f"  [WARN] mapwriter jar absent : {MAPWRITER_JAR_SRC}")
 
