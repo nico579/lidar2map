@@ -91,11 +91,13 @@ Pas de Python à installer côté utilisateur final. Le livrable contient son pr
 
 **Option a — Télécharger depuis [Releases](https://github.com/nico579/lidar2map/releases)** (si la version est publiée pour ta plateforme) :
 
-| OS | Livrable |
-|----|----------|
-| Windows | `lidar2map.exe` + `lidar2map_bundle.zip` (à placer côte à côte) |
-| macOS | `LIDAR2MAP.app` |
-| Linux | `lidar2map` + `lidar2map_bundle.zip` (à placer côte à côte) |
+| OS | Archive | Extraire avec |
+|----|---------|---------------|
+| Windows 10/11 (x86_64) | `lidar2map-windows-x86_64.zip` | `Expand-Archive` (PowerShell) ou double-clic |
+| Linux Ubuntu 24.04+ (x86_64) | `lidar2map-linux-x86_64.tar.gz` | `tar xzf` |
+| macOS (Apple Silicon) | _pas encore publié_ — builder depuis les sources |
+
+L'archive s'extrait en un dossier `lidar2map-<os>-x86_64/` contenant le binaire et son `lidar2map_bundle.zip` côte à côte. Aucune installation système.
 
 **Option b — Builder soi-même.** Deux scripts par plateforme : un setup machine (à faire **une fois**) puis un build (à relancer à chaque mise à jour de `lidar2map.py`).
 
@@ -137,6 +139,7 @@ Documentation complète du build (architecture du bundle, mise à jour sans rebu
 | OS | Commande |
 |----|----------|
 | Windows | Double-clic sur `lidar2map.exe` (ou dans un terminal pour voir le log) |
+| Linux | `chmod +x lidar2map && ./lidar2map` dans le dossier extrait |
 | macOS | Double-clic sur `LIDAR2MAP.app`. Premier lancement bloqué par Gatekeeper : `xattr -dr com.apple.quarantine LIDAR2MAP.app` puis double-clic |
 | Linux | `chmod +x lidar2map && ./lidar2map` |
 
