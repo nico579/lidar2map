@@ -7405,9 +7405,21 @@ Exemples :
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — déjà terminé")
-                    nb_ok += 1
-                    continue
+                    # Garde-fou : un crash entre fin de tuilage et fin de chunk
+                    # peut laisser un mbtiles vide alors que le manifest dit
+                    # "terminé". On revalide les sorties avant de skipper.
+                    _dossier_chunk = (
+                        (Path(args.dossier).resolve() if args.dossier
+                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                        / nom_z)
+                    _mbts_vides = [mbt for mbt in _dossier_chunk.glob("*.mbtiles")
+                                   if not _mbtiles_est_complete(mbt)]
+                    if not _mbts_vides:
+                        print(f"  [{cle}] {nom_z} — déjà terminé")
+                        nb_ok += 1
+                        continue
+                    for _v in _mbts_vides:
+                        print(f"  [{cle}] mbtiles vide détecté : {_v.name} — retraitement")
 
                 surface = (bx2_z-bx1_z)/1000 * (by2_z-by1_z)/1000
                 print(f"\n  ── Morceau {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
@@ -8509,6 +8521,21 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
         _creer_fichier(dalles_zone_txt)
 
 
+def _mbtiles_est_complete(mbt_path):
+    """Vérification silencieuse : True si le mbtiles existe, est un SQLite
+    lisible et contient >0 tuiles. Aucun side-effect, aucun print — utilisable
+    pour les checks de garde-fou dans les boucles de reprise (chunk-level
+    manifeste skip), où on veut savoir si un mbtiles "supposé fait" est
+    réellement utilisable."""
+    if not mbt_path.exists():
+        return False
+    try:
+        with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
+            return _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0] > 0
+    except (sqlite3.DatabaseError, sqlite3.OperationalError):
+        return False
+
+
 def _mbtiles_a_regenerer(mbt_path, ecraser):
     """Détermine si un mbtiles doit être (re)généré.
 
@@ -8518,15 +8545,12 @@ def _mbtiles_a_regenerer(mbt_path, ecraser):
     - le fichier existe mais contient 0 tuiles (artefact d'un run interrompu),
     - le fichier existe mais est corrompu (SQLite illisible).
 
-    Sinon retourne False (mbtiles valide, on le réutilise).
-
-    Garde-fou : sans cette vérification d'intégrité, un run précédent qui aurait
-    crashé pendant le tuilage laisserait un mbtiles vide (16 Ko = juste les tables
-    metadata/tiles), et un re-run le réutiliserait silencieusement → confusion
-    côté utilisateur (le chunk semble "déjà fait" alors qu'il n'a rien dedans).
+    Sinon retourne False (mbtiles valide, on le réutilise). Logue la raison
+    de la régénération pour éviter les disparitions silencieuses.
     """
     if not mbt_path.exists() or ecraser:
         return True
+    # Distinguer fichier illisible vs vide pour un log clair
     try:
         with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
             _n = _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
@@ -9307,9 +9331,20 @@ Exemples :
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — déjà terminé")
-                    nb_ok += 1
-                    continue
+                    # Garde-fou : revalider que les mbtiles produits sont non
+                    # vides (cf. boucle LiDAR équivalente).
+                    _dossier_chunk = (
+                        (Path(args.dossier).resolve() if args.dossier
+                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
+                        / nom_z)
+                    _mbts_vides = [mbt for mbt in _dossier_chunk.glob("*.mbtiles")
+                                   if not _mbtiles_est_complete(mbt)]
+                    if not _mbts_vides:
+                        print(f"  [{cle}] {nom_z} — déjà terminé")
+                        nb_ok += 1
+                        continue
+                    for _v in _mbts_vides:
+                        print(f"  [{cle}] mbtiles vide détecté : {_v.name} — retraitement")
 
                 surface_km2 = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
                               ((lat_n-lat_s)*111)
