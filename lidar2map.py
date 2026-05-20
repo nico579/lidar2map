@@ -8100,7 +8100,7 @@ Exemples :
             # Générer MBTiles si demandé explicitement, ou si nécessaire pour RMAP/SQLiteDB
             _mbt_path = dossier_ville / f"{_nom_mbt}.mbtiles"
             _ecraser_l = args.tuiles_ecraser
-            _mbt_requis = not _mbt_path.exists() or _ecraser_l
+            _mbt_requis = _mbtiles_a_regenerer(_mbt_path, _ecraser_l)
             _mbt_out = None
             if _mbt_requis:
                 _mbt_out = generer_mbtiles_lidar(_tif_src, dossier_ville, _nom_base,
@@ -8509,6 +8509,36 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
         _creer_fichier(dalles_zone_txt)
 
 
+def _mbtiles_a_regenerer(mbt_path, ecraser):
+    """Détermine si un mbtiles doit être (re)généré.
+
+    Retourne True si :
+    - le fichier n'existe pas,
+    - --tuiles-ecraser est passé,
+    - le fichier existe mais contient 0 tuiles (artefact d'un run interrompu),
+    - le fichier existe mais est corrompu (SQLite illisible).
+
+    Sinon retourne False (mbtiles valide, on le réutilise).
+
+    Garde-fou : sans cette vérification d'intégrité, un run précédent qui aurait
+    crashé pendant le tuilage laisserait un mbtiles vide (16 Ko = juste les tables
+    metadata/tiles), et un re-run le réutiliserait silencieusement → confusion
+    côté utilisateur (le chunk semble "déjà fait" alors qu'il n'a rien dedans).
+    """
+    if not mbt_path.exists() or ecraser:
+        return True
+    try:
+        with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
+            _n = _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+    except (sqlite3.DatabaseError, sqlite3.OperationalError) as _e:
+        print(f"  {mbt_path.name} → SQLite illisible ({type(_e).__name__}), régénération", flush=True)
+        return True
+    if _n == 0:
+        print(f"  {mbt_path.name} → existant mais vide (0 tuiles), régénération", flush=True)
+        return True
+    return False
+
+
 def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
     """
     Traite un morceau LiDAR directement en Python (sans subprocess).
@@ -8571,7 +8601,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                     nom_base = f"{nom_z}_{suffix}"
                     mbt_path = (dossier_ville
                                 / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles")
-                    _mbt_neuf = not mbt_path.exists() or args.tuiles_ecraser
+                    _mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser)
                     if _mbt_neuf:
                         mbt_out = generer_mbtiles_lidar(
                             tif, dossier_ville, nom_base,
@@ -8617,7 +8647,7 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             dossier_cache.mkdir(parents=True, exist_ok=True)
             _jpeg_q = (args.qualite_image
                        if img_fmt.lower() in ("image/png", "png") else None)
-            _mbt_neuf = not chemin_mbtiles.exists() or args.tuiles_ecraser
+            _mbt_neuf = _mbtiles_a_regenerer(chemin_mbtiles, args.tuiles_ecraser)
             if _mbt_neuf:
                 generer_mbtiles_wmts(
                     chemin=chemin_mbtiles,
@@ -9379,7 +9409,7 @@ Exemples :
     # Dans tous les autres cas (fichier existant, pas d'écraser) on l'utilise tel quel
     # pour la conversion / le découpage.
     _ecraser   = args.tuiles_ecraser
-    _mbtiles_requis = not chemin_mbtiles.exists() or _ecraser
+    _mbtiles_requis = _mbtiles_a_regenerer(chemin_mbtiles, _ecraser)
 
     if not _mbtiles_requis and chemin_mbtiles.exists():
         print(f"  MBTiles existant : {chemin_mbtiles.name} — découpage/conversion directe")
