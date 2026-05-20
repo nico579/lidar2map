@@ -302,7 +302,18 @@ fichier texte non analysé. Les specs lancent donc 2 analyses :
 **Procédure normale** pour toute modification de `lidar2map.py`.
 Aucun accès à la VM Mac nécessaire, aucun rebuild.
 
-### Via update_app.py (recommandé)
+`update_app.py` propose 3 modes selon le besoin :
+
+| Mode | Commande | Pour quoi |
+|------|----------|-----------|
+| Local | `python update_app.py` | Patcher un seul bundle local (workflow utilisateur) |
+| Archive macOS | `python update_app.py lidar2map-macos-arm64.zip` | Patcher chirurgicalement un `.app` zippé depuis Windows |
+| Release multi-OS | `python update_app.py --release` | Patcher les 3 archives Win/Linux/Mac et re-publier sur GitHub |
+
+Tous les modes valident la syntaxe Python (`compile()`) avant écriture —
+un fichier cassé n'est jamais injecté.
+
+### Mode local (utilisateur final)
 
 ```bash
 # Placer lidar2map.py modifié dans le même dossier que update_app.py
@@ -310,16 +321,49 @@ python3 update_app.py   # macOS/Linux
 python update_app.py    # Windows
 ```
 
-Le script détecte l'OS, trouve le bon bundle, remplace `_internal/lidar2map.py`,
-vérifie que le contenu a changé avant de modifier, et valide la syntaxe Python
-(`compile()`) avant de toucher au zip — un fichier cassé ne sera jamais injecté.
+Le script détecte l'OS, trouve le bon bundle, remplace `_internal/lidar2map.py`.
 
 Emplacements recherchés (premier trouvé) :
 - macOS : `LIDAR2MAP.app/Contents/Resources/lidar2map_bundle.zip` puis `dist/LIDAR2MAP.app/...`
 - Windows/Linux : `lidar2map_bundle.zip` à côté du script puis `dist/lidar2map_bundle.zip`
 
-L'écriture est atomique (tmp + `os.replace`) — un Ctrl+C en cours ne laisse
-jamais le zip dans un état partiel.
+Écriture atomique (tmp + `os.replace`) : un Ctrl+C en cours ne laisse jamais
+le zip dans un état partiel.
+
+### Mode archive macOS (patch chirurgical depuis Windows)
+
+```bash
+python update_app.py lidar2map-macos-arm64.zip
+```
+
+Permet de patcher un `.app` zippé sans accès à un Mac. Le bundle interne
+`Contents/Resources/lidar2map_bundle.zip` est régénéré, l'archive externe
+recopie verbatim les `ZipInfo` de toutes les autres entrées — donc les
+permissions Unix de `Contents/MacOS/lidar2map` (mode `0o755`, créé par
+`ditto`), les symlinks PyQt6 et les xattrs sont préservés. Impossible
+à obtenir avec un `Compress-Archive` Windows.
+
+### Mode release multi-OS (publication automatique)
+
+```bash
+python update_app.py --release --dry-run    # tester sans toucher GitHub
+python update_app.py --release               # vrai run
+python update_app.py --release --tag v1.2.0  # autre tag
+```
+
+Workflow complet en une commande, depuis n'importe quel OS :
+
+1. **GET** la release GitHub (tag par défaut : `v1.1.0`) → liste les 3 assets
+2. **Télécharge** les 3 archives dans `dist/release/` (cache si la taille match)
+3. **Patche** chaque archive :
+   - Windows `.zip` : surgical (`ZipInfo` recopiés)
+   - Linux `.tar.gz` : `tarfile` préserve mode/owner + **force `0o755` sur le launcher** si trouvé sans bit exécutable (bug de packaging)
+   - macOS `.zip` : surgical (ditto preserves Unix perms)
+4. **DELETE + UPLOAD** chaque asset sur la release
+5. **PATCH** le body markdown : nouveaux SHA256 dans le tableau + bloc de vérification
+
+Auth : `GH_TOKEN`, `GITHUB_TOKEN` ou `git credential helper`. Si l'UPLOAD plante
+après le DELETE, les archives patchées en cache permettent de relancer.
 
 ### Manuellement avec 7-Zip (Windows)
 
