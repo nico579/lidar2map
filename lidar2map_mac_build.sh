@@ -103,10 +103,24 @@ FINAL_SIZE=$(du -sm "$FINAL_APP" | cut -f1)
 # déjà embarqué dans LIDAR2MAP.app/Contents/MacOS/lidar2map)
 rm -f "$FINAL_OUT/lidar2map"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Archive zip pour distribution (ditto preserve permissions + symlinks +
+#    xattrs, indispensable pour une .app extractable sur un autre Mac)
+# ─────────────────────────────────────────────────────────────────────────────
+RELEASE_ZIP="$FINAL_OUT/lidar2map-macos-arm64.zip"
+echo ""
+echo "[4/4] Archive distribution (ditto)..."
+rm -f "$RELEASE_ZIP"
+ditto -c -k --keepParent "$FINAL_APP" "$RELEASE_ZIP"
+ZIP_SIZE=$(du -sm "$RELEASE_ZIP" | cut -f1)
+ZIP_SHA=$(shasum -a 256 "$RELEASE_ZIP" | awk '{print $1}')
+
 echo ""
 echo "=== BUILD TERMINE ==="
-echo "  Livrable : $FINAL_APP"
-echo "  Taille   : ${FINAL_SIZE} Mo"
+echo "  Livrables :"
+echo "    $FINAL_APP   (${FINAL_SIZE} Mo)"
+echo "    $RELEASE_ZIP (${ZIP_SIZE} Mo)"
+echo "    sha256       $ZIP_SHA"
 echo ""
 echo "  Note : .app non signe -> macOS affichera une alerte Gatekeeper"
 echo "  au premier lancement. Pour contourner :"
