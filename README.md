@@ -197,7 +197,25 @@ python lidar2map.py
 
 ## Captures d'écran
 
-> _À ajouter : capture de la GUI, exemple de SVF dans Locus Map sur une zone à restanques, comparaison ortho 1950 vs 2024._
+### Interface graphique
+
+Six onglets pour piloter LiDAR, IGN raster/vecteur, OSM, fusion et découpage.
+
+| LiDAR HD (ombrages archéo) | IGN raster (Plan / ortho / historique) | IGN vecteur (BD TOPO) |
+|---|---|---|
+| ![Onglet LiDAR](screenshots/GUI/IGN_Lidar.PNG) | ![Onglet IGN raster](screenshots/GUI/IGN_Raster.PNG) | ![Onglet IGN vecteur](screenshots/GUI/IGN_Vectoriel.PNG) |
+
+| OSM vectoriel (Mapsforge) | Fusion vecteur | Découpage raster |
+|---|---|---|
+| ![Onglet OSM](screenshots/GUI/OSM_Vectoriel.PNG) | ![Onglet Fusion](screenshots/GUI/Fusion_Vectoriel.PNG) | ![Onglet Découpage](screenshots/GUI/Decoupage_Raster.PNG) |
+
+### Rendu sur Locus Map
+
+Ombrages LiDAR archéo affichés en superposition sur le terrain dans Locus Map.
+
+| SVF (Sky-View Factor) | Multi-ombrages superposés |
+|---|---|
+| ![SVF dans Locus Map](screenshots/LIDAR_Samples/Svf_LocusMap.jpg) | ![Multi-ombrages dans Locus Map](screenshots/LIDAR_Samples/Multi_LocusMap.jpg) |
 
 ## Documentation
 
