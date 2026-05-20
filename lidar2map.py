@@ -3370,13 +3370,67 @@ def _trouver_osmosis():
     return _telecharger_osmosis_local()
 
 
+_MAPWRITER_VERSION = "0.25.0"
+_MAPWRITER_JAR     = f"mapsforge-map-writer-{_MAPWRITER_VERSION}-jar-with-dependencies.jar"
+_MAPWRITER_URL     = (
+    f"https://repo1.maven.org/maven2/org/mapsforge/mapsforge-map-writer"
+    f"/{_MAPWRITER_VERSION}/{_MAPWRITER_JAR}"
+)
+
+
+def _verifier_mapwriter():
+    """
+    Vérifie que le plugin mapsforge-map-writer est installé dans le dossier
+    plugins d'osmosis. Télécharge automatiquement si absent.
+
+    Dossier plugins (toutes plateformes) :
+      Windows  : %USERPROFILE%\\.openstreetmap\\osmosis\\plugins\\
+      Linux    : ~/.openstreetmap/osmosis/plugins/
+      macOS    : ~/.openstreetmap/osmosis/plugins/
+
+    Mode frozen : le plugin est embarqué dans osmosis/lib/ (osmosis.bat
+    bundlé inclut le jar dans son CLASSPATH) — rien à vérifier ici.
+    """
+    # Mode frozen : plugin déjà sur le classpath d'osmosis, court-circuit.
+    if getattr(sys, "frozen", False):
+        return True
+
+    plugins_dir = Path.home() / ".openstreetmap" / "osmosis" / "plugins"
+    jar_path    = plugins_dir / _MAPWRITER_JAR
+
+    if jar_path.exists():
+        return True
+
+    print(f"  URL  : {_MAPWRITER_URL}")
+    print(f"  Plugin mapwriter absent — téléchargement ({_MAPWRITER_JAR})...",
+          flush=True)
+    try:
+        plugins_dir.mkdir(parents=True, exist_ok=True)
+
+        def _prog(n, bs, total):
+            if total > 0:
+                print("  " + str(min(n * bs * 100 // total, 100)).rjust(3) + "%",
+                      end="\r", flush=True)
+
+        urllib.request.urlretrieve(_MAPWRITER_URL, jar_path, reporthook=_prog)
+        print("  100%")
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+        print(f"  ERREUR téléchargement mapwriter : {type(e).__name__}: {e}")
+        print(f"  Téléchargez manuellement :\n    {_MAPWRITER_URL}")
+        print(f"  et copiez-le dans :\n    {plugins_dir}")
+        return False
+
+    print(f"  Plugin installé : {jar_path}")
+    return True
+
+
 # ── --telecharger-outils ──────────────────────────────────────────────────────
 # Placé ici car nécessite _trouver_java() et _trouver_osmosis() définis
 # ci-dessus. Le flag est détecté tôt (avant bootstrap) pour passer dans
 # le re-exec venv, mais exécuté ici pour que les fonctions soient disponibles.
 if _TELECHARGER_OUTILS:
     print()
-    print("  ── Téléchargement des outils (osmosis + JRE) ──────────────────")
+    print("  ── Téléchargement des outils (osmosis + JRE + mapwriter) ──────")
     print()
     _java = _trouver_java()
     if _java:
@@ -3388,6 +3442,14 @@ if _TELECHARGER_OUTILS:
         print(f"  ✓ osmosis déjà présent : {_osmo}")
     else:
         print("  ⚠ osmosis : échec du téléchargement")
+    # Plugin mapsforge-map-writer : indispensable pour générer les .map OSM.
+    # Sans lui, osmosis échoue avec "Task type mapfile-writer doesn't exist".
+    # Le spec PyInstaller le récupère depuis ~/.openstreetmap/osmosis/plugins/
+    # pour le bundler dans osmosis/lib/ du .app/.exe.
+    if _verifier_mapwriter():
+        print(f"  ✓ mapwriter présent : ~/.openstreetmap/osmosis/plugins/{_MAPWRITER_JAR}")
+    else:
+        print("  ⚠ mapwriter : échec du téléchargement — la génération .map échouera")
     print()
     sys.exit(0)
 
@@ -6601,60 +6663,6 @@ def _java_opts_extra():
     fake_home = str(BUNDLE_DIR).replace("\\", "/")
     # Quoter pour gérer les espaces dans le chemin (cmd + osmosis.bat).
     return f' "-Duser.home={fake_home}"'
-
-
-_MAPWRITER_VERSION = "0.25.0"
-_MAPWRITER_JAR     = f"mapsforge-map-writer-{_MAPWRITER_VERSION}-jar-with-dependencies.jar"
-_MAPWRITER_URL     = (
-    f"https://repo1.maven.org/maven2/org/mapsforge/mapsforge-map-writer"
-    f"/{_MAPWRITER_VERSION}/{_MAPWRITER_JAR}"
-)
-
-
-def _verifier_mapwriter():
-    """
-    Vérifie que le plugin mapsforge-map-writer est installé dans le dossier
-    plugins d'osmosis. Télécharge automatiquement si absent.
-
-    Dossier plugins (toutes plateformes) :
-      Windows  : %USERPROFILE%\\.openstreetmap\\osmosis\\plugins\\
-      Linux    : ~/.openstreetmap/osmosis/plugins/
-      macOS    : ~/.openstreetmap/osmosis/plugins/
-
-    Mode frozen : le plugin est embarqué dans osmosis/lib/ (osmosis.bat
-    bundlé inclut le jar dans son CLASSPATH) — rien à vérifier ici.
-    """
-    # Mode frozen : plugin déjà sur le classpath d'osmosis, court-circuit.
-    if getattr(sys, "frozen", False):
-        return True
-
-    plugins_dir = Path.home() / ".openstreetmap" / "osmosis" / "plugins"
-    jar_path    = plugins_dir / _MAPWRITER_JAR
-
-    if jar_path.exists():
-        return True
-
-    print(f"  URL  : {_MAPWRITER_URL}")
-    print(f"  Plugin mapwriter absent — téléchargement ({_MAPWRITER_JAR})...",
-          flush=True)
-    try:
-        plugins_dir.mkdir(parents=True, exist_ok=True)
-
-        def _prog(n, bs, total):
-            if total > 0:
-                print("  " + str(min(n * bs * 100 // total, 100)).rjust(3) + "%",
-                      end="\r", flush=True)
-
-        urllib.request.urlretrieve(_MAPWRITER_URL, jar_path, reporthook=_prog)
-        print("  100%")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERREUR téléchargement mapwriter : {type(e).__name__}: {e}")
-        print(f"  Téléchargez manuellement :\n    {_MAPWRITER_URL}")
-        print(f"  et copiez-le dans :\n    {plugins_dir}")
-        return False
-
-    print(f"  Plugin installé : {jar_path}")
-    return True
 
 
 def _preparer_osmosis(dossier_hint=None):
