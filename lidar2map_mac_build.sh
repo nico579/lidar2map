@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-ROOT="$HOME/Downloads"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 # Un seul venv ~/.lidar2map/venv contient à la fois les deps runtime
 # (créé par setup_build_mac.sh via --installer-deps) ET pyinstaller
 # (ajouté en étape 4 du setup). Aligné sur Windows (lidar2map_win_build.ps1).
