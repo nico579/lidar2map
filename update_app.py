@@ -54,19 +54,32 @@ def sha256(path):
 
 # ── Helpers : patch chirurgical ──────────────────────────────────────────────
 
-def _patch_inner_bundle(inner_bytes, new_script):
+def _patch_inner_bundle(inner_bytes, new_script, extras=None):
     """Régénère un lidar2map_bundle.zip avec _internal/lidar2map.py remplacé.
+    extras : dict {path_in_bundle: file_bytes} pour ajouter/remplacer des fichiers
+             additionnels (ex: providers/*.py). Si une entrée extras coïncide
+             avec un fichier existant dans le bundle, elle l'écrase.
     Renvoie les bytes du nouveau zip ou lève SystemExit si TARGET absent."""
+    extras = extras or {}
     new_inner = io.BytesIO()
     found = False
+    written_paths = set()
     with zipfile.ZipFile(io.BytesIO(inner_bytes), "r") as in_b, \
          zipfile.ZipFile(new_inner, "w", compression=zipfile.ZIP_DEFLATED) as out_b:
         for item in in_b.infolist():
             if item.filename == TARGET:
                 out_b.writestr(item, new_script)
                 found = True
+            elif item.filename in extras:
+                # Remplace via le ZipInfo existant pour préserver les permissions
+                out_b.writestr(item, extras[item.filename])
             else:
                 out_b.writestr(item, in_b.read(item.filename))
+            written_paths.add(item.filename)
+        # Ajoute les extras qui n'existaient pas (nouveau fichiers, ex: providers/*.py)
+        for path, data in extras.items():
+            if path not in written_paths:
+                out_b.writestr(path, data, zipfile.ZIP_DEFLATED)
     if not found:
         sys.exit(f"ERREUR : {TARGET} absent du bundle interne.")
     return new_inner.getvalue()
@@ -95,10 +108,11 @@ def _patch_outer_zip(input_path, inner_name_endswith, new_inner_bytes, output_pa
     return n, inner_name
 
 
-def _patch_linux_targz(input_path, output_path, new_script):
+def _patch_linux_targz(input_path, output_path, new_script, extras=None):
     """Met à jour lidar2map_bundle.zip dans un tar.gz Linux. Bonus : force
     le mode du launcher à 0o755 si trouvé en 0o6xx (bug de packaging
-    original — le binaire doit être exécutable)."""
+    original — le binaire doit être exécutable).
+    extras : dict de fichiers à injecter dans le bundle interne."""
     n_entries = 0
     launcher_fixed = False
     bundle_patched = False
@@ -110,7 +124,7 @@ def _patch_linux_targz(input_path, output_path, new_script):
                 data = tin.extractfile(member).read()
                 base = member.name.rsplit("/", 1)[-1]
                 if base == "lidar2map_bundle.zip":
-                    data = _patch_inner_bundle(data, new_script)
+                    data = _patch_inner_bundle(data, new_script, extras=extras)
                     member.size = len(data)
                     bundle_patched = True
                 if base == "lidar2map" and (member.mode & 0o111) == 0:
@@ -233,16 +247,20 @@ _ASSET_SPECS = [
 ]
 
 
-def _patch_asset(local_path, kind, new_script):
+def _patch_asset(local_path, kind, new_script, extras=None):
     """Dispatch sur le bon patcher selon le type d'archive. Renvoie une str
-    diagnostic pour log."""
+    diagnostic pour log.
+    extras : dict {path_in_bundle: bytes} de fichiers additionnels à injecter
+             dans le bundle interne (ex: providers/*.py pour v1.2+)."""
     tmp = local_path.with_suffix(local_path.suffix + ".tmp")
     if kind == "targz":
-        n, launcher_fixed = _patch_linux_targz(local_path, tmp, new_script)
+        n, launcher_fixed = _patch_linux_targz(local_path, tmp, new_script, extras=extras)
         os.replace(tmp, local_path)
         msg = f"tar.gz {n} entries"
         if launcher_fixed:
             msg += " + launcher mode 0o755 (fix)"
+        if extras:
+            msg += f" + {len(extras)} extras"
         return msg
 
     # zip : peut être un outer mac (avec .app/Contents/Resources/...) ou
@@ -267,7 +285,7 @@ def _patch_asset(local_path, kind, new_script):
     with zipfile.ZipFile(local_path, "r") as z:
         inner_name = next(n for n in z.namelist() if n.endswith(suffix))
         inner_bytes = z.read(inner_name)
-    new_inner = _patch_inner_bundle(inner_bytes, new_script)
+    new_inner = _patch_inner_bundle(inner_bytes, new_script, extras=extras)
 
     n_entries, _ = _patch_outer_zip(local_path, suffix, new_inner, tmp)
     os.replace(tmp, local_path)
@@ -346,11 +364,23 @@ def _do_release(tag, new_script, dry_run=False):
             _download_with_progress(t["url"], dest)
         t["local"] = dest
 
+    # 3b. Collecter les fichiers additionnels à injecter (providers/*.py v1.2+).
+    # Les bundles v1.1 n'ont pas de providers/ — on l'ajoute via extras.
+    extras = {}
+    _providers_dir = HERE / "providers"
+    if _providers_dir.exists():
+        for _f in sorted(_providers_dir.glob("*.py")):
+            extras[f"_internal/providers/{_f.name}"] = _f.read_bytes()
+        if extras:
+            print(f"\n  Extras à injecter (providers/) : {len(extras)} fichiers")
+            for path in extras:
+                print(f"    + {path}")
+
     # 4. Patcher chaque archive
     print(f"\n[3/5] Patch des bundles internes...")
     for t in targets:
         print(f"  • {t['name']} :")
-        msg = _patch_asset(t["local"], t["kind"], new_script)
+        msg = _patch_asset(t["local"], t["kind"], new_script, extras=extras)
         new_sha = sha256(t["local"])
         t["new_sha"] = new_sha
         t["new_size"] = t["local"].stat().st_size
