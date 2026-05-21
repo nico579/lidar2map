@@ -2099,11 +2099,18 @@ else:
 # Pour nettoyer complètement lidar2map :  rm -rf ~/.lidar2map
 LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 
-# ── LiDAR IGN — géométrie des dalles ─────────────────────────────────────────
-RESOLUTION_M       = 0.5          # résolution native des MNT LiDAR HD IGN (m/px)
-DALLE_KM           = 1            # côté d'une dalle IGN (km)
-PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)  # → 2000 px
-SEUIL_DALLE_VALIDE = 2_000_000    # octets — en dessous : dalle mer/hors-zone, ignorée
+# ── Provider LiDAR (par défaut : France IGN HD) ──────────────────────────────
+# POC d'abstraction : tout ce qui est spécifique à une source nationale
+# (URLs, CRS, nommage des dalles, géométrie) vit dans providers/<pays>.py.
+# Le reste du pipeline (SVF, ombrages, MBTiles) reste agnostique.
+from providers import fr_ign as PROVIDER
+
+# Re-exports pour compat avec le code existant — éviter de toucher des
+# centaines de call sites en aval pendant ce POC.
+RESOLUTION_M       = PROVIDER.RESOLUTION_M
+DALLE_KM           = PROVIDER.DALLE_KM
+PX_PAR_DALLE       = PROVIDER.PX_PAR_DALLE
+SEUIL_DALLE_VALIDE = PROVIDER.SEUIL_DALLE_VALIDE
 
 # ── Réseau — tentatives et délais ─────────────────────────────────────────────
 MAX_TENTATIVES = 3    # essais avant abandon d'un téléchargement
@@ -2116,10 +2123,10 @@ BATCH_MBTILES_INSERT  = 500  # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
-# ── URLs IGN ─────────────────────────────────────────────────────────────────
-WMS_URL   = "https://data.geopf.fr/wms-r"
-WMS_LAYER = "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93"
-WFS_URL   = "https://data.geopf.fr/wfs/ows"
+# ── URLs IGN (re-exports du provider) ────────────────────────────────────────
+WMS_URL   = PROVIDER.WMS_URL
+WMS_LAYER = PROVIDER.WMS_LAYER
+WFS_URL   = PROVIDER.WFS_URL
 
 # ── Geofabrik : département → région (URL slug) ──────────────────────────────
 # Table statique (135 entrées) construite une seule fois à l'import au lieu
@@ -2728,18 +2735,8 @@ def _parser_departements(valeur: str) -> list:
 # ============================================================
 
 def calculer_grille_bbox(x1, y1, x2, y2):
-    """Retourne (dalles, bbox) depuis une BBox Lambert 93."""
-    step = DALLE_KM * 1000
-    x_start = int(x1 // step)
-    x_end   = int(x2 // step)
-    y_start = int(y1 // step)
-    y_end   = int(y2 // step)
-    dalles = [
-        (x_km, y_km)
-        for x_km in range(x_start, x_end + 1)
-        for y_km in range(y_start, y_end + 1)
-    ]
-    return dalles, (x1, y1, x2, y2)
+    """Retourne (dalles, bbox) depuis une BBox dans le CRS natif du provider."""
+    return PROVIDER.dalles_pour_bbox(x1, y1, x2, y2), (x1, y1, x2, y2)
 
 
 def calculer_grille(cx, cy, rayon_km):
@@ -2749,7 +2746,7 @@ def calculer_grille(cx, cy, rayon_km):
 
 
 def nom_dalle(x_km, y_km):
-    return f"LHD_FXX_{x_km:04d}_{y_km:04d}_MNT_O_0M50_LAMB93_IGN69.tif"
+    return PROVIDER.dalle_filename(x_km, y_km)
 
 
 def _rglob_tif_robuste(dossier):
@@ -2783,33 +2780,16 @@ def chemin_dalle(dossier_dalles, nom):
     chemin_racine = dossier_dalles / nom
     if chemin_racine.exists():
         return chemin_racine
-    # Extraire XXXX depuis LHD_FXX_XXXX_YYYY_...tif
-    m = re.match(r"LHD_FXX_(\d+)_", nom)
-    if m:
-        sous_dossier = dossier_dalles / m.group(1)
-        return sous_dossier / nom
+    # Délégation au provider pour extraire le sous-dossier depuis le nom
+    sub = PROVIDER.subdir_from_name(nom)
+    if sub:
+        return dossier_dalles / sub / nom
     return chemin_racine  # fallback si nom non reconnu
 
 
 def construire_url_wms(x_km, y_km):
-    # Le WMS IGN 1.3.0 retourne les pixels centrés sur la grille dalles.
-    # L'offset ±0.25 m (demi-pixel à 0.5 m/px) compense la convention
-    # "coin supérieur gauche" du WMS pour aligner les dalles sans chevauchement.
-    # xmin : on recule d'un demi-pixel vers l'ouest (coin gauche de la dalle)
-    # ymin : on avance d'un demi-pixel vers le nord (coin bas = nord pour BBOX WMS 1.3)
-    xmin = x_km * DALLE_KM * 1000 - 0.25
-    xmax = xmin + DALLE_KM * 1000
-    ymin = y_km * DALLE_KM * 1000 + 0.25
-    ymax = ymin + DALLE_KM * 1000
-    params = {
-        "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-        "LAYERS": WMS_LAYER, "FORMAT": "image/geotiff", "STYLES": "",
-        "CRS": "EPSG:2154",
-        "BBOX": f"{xmin},{ymin},{xmax},{ymax}",
-        "WIDTH": PX_PAR_DALLE, "HEIGHT": PX_PAR_DALLE,
-        "FILENAME": nom_dalle(x_km, y_km),
-    }
-    return WMS_URL + "?" + urllib.parse.urlencode(params)
+    """Délégation au provider — la logique URL/CRS/format dépend de la source."""
+    return PROVIDER.dalle_url(x_km, y_km)
 
 
 def _lon_lat_to_tile(lon, lat, z):
