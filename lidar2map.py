@@ -7065,7 +7065,7 @@ Exemples :
     if _osm_seul:
         print("  Carte OSM vectorielle")
     else:
-        print("  Téléchargement MNT LiDAR HD IGN (WMS)")
+        print(f"  LiDAR : {PROVIDER.NAME}")
         print("  Pipeline rasterio + numpy (numba pour SVF)")
     print("=" * 55)
     print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
@@ -7208,7 +7208,7 @@ Exemples :
             sys.exit(1)
         dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
-        print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
+        print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
         print(f"  Surface : ~{surface_km2:.0f} km²  |  {len(dalles)} dalles")
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
@@ -7248,7 +7248,7 @@ Exemples :
         except ImportError:
             cx, cy = wgs84_to_lamb93_approx(lon, lat)
             print("  (pyproj absent, conversion approchee)")
-        print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+        print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
 
     elif args.zone_ville:
         nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
@@ -7281,7 +7281,7 @@ Exemples :
             except ImportError:
                 cx, cy = wgs84_to_lamb93_approx(lon, lat)
                 print("  (pyproj absent, conversion approchee)")
-            print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+            print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
         else:
             ville_saisie = input("  Nom de la ville : ").strip()
             if not ville_saisie:
@@ -8182,7 +8182,7 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         bars = int(done * largeur / max(nb_total, 1))
         elap = int(time.time() - t0_dl)
         barre = "█" * bars + "░" * (largeur - bars)
-        print(f"\r  Dalles IGN [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
+        print(f"\r  Dalles LIDAR [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
               end="", flush=True)
 
     if a_telecharger:
