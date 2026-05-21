@@ -163,19 +163,22 @@ def _import_mvt():
 
 
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
-    """Interroge le TMS vectoriel IGN pour obtenir les dalles disponibles.
+    """Liste les dalles disponibles dans la bbox — entry point unifié.
 
-    Source : https://data.geopf.fr/tms/1.0.0/IGNF_MNT-LIDAR-HD-produit/{z}/{x}/{y}.pbf
+    Combine deux sources :
+      1. **Index TMS vectoriel** (data.geopf.fr/tms/...IGNF_MNT-LIDAR-HD-produit) :
+         truth officielle des dalles existantes côté IGN, avec URLs WFS prêtes.
+      2. **Fallback grille** : pour chaque (x_km, y_km) déductible de bbox_natif
+         et absent du TMS, on synthétise une URL WMS GetMap. Couvre les cas
+         où le TMS rate des bordures ou est temporairement indisponible.
 
-    bbox_wgs84 : (lon_min, lat_min, lon_max, lat_max) — pour calculer la
-                 plage de tuiles TMS à interroger.
-    bbox_natif : (x_min, y_min, x_max, y_max) en Lambert-93 — filtre les
-                 features par intersection. Sans filtre, toutes les dalles
-                 des tuiles TMS (~40×40 km chacune) seraient retournées.
-    cache_path : chemin du fichier JSON où mettre en cache les réponses TMS
-                 (les tuiles changent rarement → on évite des re-fetch).
+    bbox_wgs84 : (lon_min, lat_min, lon_max, lat_max) WGS84 pour le découpage TMS
+    bbox_natif : (x_min, y_min, x_max, y_max) en Lambert-93 pour le filtre + grille
+    cache_path : JSON où mettre en cache les tuiles TMS brutes
+    workers    : threads parallèles pour fetch TMS
 
-    Retourne {nom_dalle: url_wms} ou None si toutes les requêtes échouent.
+    Retourne {nom_dalle: url} (jamais None — la grille garantit au moins
+    quelques dalles si bbox_natif est valide).
     """
     _mvt = _import_mvt()
     if _mvt is None:
@@ -261,9 +264,23 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
             dalles[nom] = url_dl
 
     if nb_erreurs == nb_tuiles:
-        print("  ERREUR TMS : toutes les tuiles ont échoué")
-        return None
-    if nb_erreurs:
+        print("  ERREUR TMS : toutes les tuiles ont échoué — repli sur grille pure WMS")
+        dalles = {}   # repli total : aucune dalle TMS, on construit tout depuis la grille
+    elif nb_erreurs:
         print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur (ignorées)")
-    print(f"  TMS : {len(dalles)} dalle(s) disponibles dans la bbox")
+    print(f"  TMS : {len(dalles)} dalle(s) trouvée(s)", flush=True)
+
+    # ── Fallback grille : ajouter les dalles (x_km, y_km) absentes du TMS ────
+    # Utile quand TMS rate des bordures ou n'indexe pas certaines dalles.
+    if bbox_natif is not None:
+        x1, y1, x2, y2 = bbox_natif
+        ajoutes = 0
+        for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
+            nom = dalle_filename(x_km, y_km)
+            if nom not in dalles:
+                dalles[nom] = dalle_url(x_km, y_km)
+                ajoutes += 1
+        if ajoutes:
+            print(f"  Grille : +{ajoutes} dalle(s) complémentaires (WMS direct)")
+
     return dalles
