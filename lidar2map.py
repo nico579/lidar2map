@@ -2103,7 +2103,32 @@ LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 # POC d'abstraction : tout ce qui est spécifique à une source nationale
 # (URLs, CRS, nommage des dalles, géométrie) vit dans providers/<pays>.py.
 # Le reste du pipeline (SVF, ombrages, MBTiles) reste agnostique.
-from providers import fr_ign as PROVIDER
+#
+# Sélection : --provider <code> en CLI, ou variable d'env LIDAR2MAP_PROVIDER.
+# Codes disponibles : fr-ign (défaut), nl-ahn (POC).
+import importlib as _importlib
+import os as _os
+
+def _load_provider():
+    code = None
+    # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré)
+    if "--provider" in sys.argv:
+        _i = sys.argv.index("--provider")
+        if _i + 1 < len(sys.argv):
+            code = sys.argv[_i + 1]
+    code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
+    # Mapping code → module (kebab-case → snake_case)
+    module_name = code.replace("-", "_")
+    try:
+        return _importlib.import_module(f"providers.{module_name}")
+    except ImportError as e:
+        print(f"ERREUR : provider '{code}' introuvable "
+              f"(providers/{module_name}.py absent) : {e}", file=sys.stderr)
+        print(f"Provider FR_IGN par défaut.", file=sys.stderr)
+        from providers import fr_ign
+        return fr_ign
+
+PROVIDER = _load_provider()
 
 # Re-exports pour compat avec le code existant — éviter de toucher des
 # centaines de call sites en aval pendant ce POC.
@@ -2124,9 +2149,12 @@ BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqli
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
 # ── URLs IGN (re-exports du provider) ────────────────────────────────────────
-WMS_URL   = PROVIDER.WMS_URL
-WMS_LAYER = PROVIDER.WMS_LAYER
-WFS_URL   = PROVIDER.WFS_URL
+# getattr avec fallback : tous les providers n'ont pas forcément ces attributs.
+# Ex: AHN expose WCS_URL au lieu de WFS_URL — les chemins de code qui utilisent
+# WFS_URL retomberont sur None et devront être adaptés (BDTOPO, etc.).
+WMS_URL   = getattr(PROVIDER, "WMS_URL",   None)
+WMS_LAYER = getattr(PROVIDER, "WMS_LAYER", None)
+WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 
 # ── Geofabrik : département → région (URL slug) ──────────────────────────────
 # Table statique (135 entrées) construite une seule fois à l'import au lieu
