@@ -128,19 +128,69 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     except Exception:
         pass
 
-    # Filtre : retient le COG 0.5m EPSG:2056 (asset nommé *_0.5_2056_*.tif)
-    dalles = {}
+    # Filtre 1 : retient le COG 0.5m EPSG:2056 (asset nommé *_0.5_2056_*.tif)
+    # Filtre 2 : intersection STRICTE avec bbox_natif (LV95). La caller passe
+    # une bbox_wgs84 élargie de ±0.05° (~5.5 km) pour les providers TMS (FR) ;
+    # sans ce 2e filtre, STAC retourne des dizaines de dalles hors zone réelle
+    # (genève 1 km → 251 dalles au lieu de 4).
+    # On dérive la bbox de chaque dalle depuis son ID :
+    #   swissalti3d_<year>_<E_km>-<N_km>_... → couvre (E*1000, N*1000) → +1000m
+    import re as _re
+    # Feature ID = "swissalti3d_<year>_<E_km>-<N_km>" (sans suffixe)
+    # Asset name = "...-<N_km>_<res>_<crs>_<elev>.tif" (avec suffixe)
+    # On match les deux : E_km-N_km optionnellement suivi de _.
+    _id_pattern = _re.compile(r"swissalti3d_\d+_(\d+)-(\d+)(?:_|$)")
+
+    def _dalle_intersect_bbox_natif(item_id):
+        if bbox_natif is None:
+            return True
+        m = _id_pattern.search(item_id)
+        if not m:
+            return True
+        e_km, n_km = int(m.group(1)), int(m.group(2))
+        fx0, fy0 = e_km * 1000, n_km * 1000
+        fx1, fy1 = fx0 + 1000, fy0 + 1000
+        zx0, zy0, zx1, zy1 = bbox_natif
+        return not (fx1 < zx0 or fx0 > zx1 or fy1 < zy0 or fy0 > zy1)
+
+    # swissALTI3D peut avoir plusieurs millésimes par tuile (ex: 2019, 2021).
+    # On collecte tout, puis on dédupplique en gardant la dernière année par
+    # couple (E_km, N_km) — la plus fraîche acquisition.
+    _year_pattern = _re.compile(r"swissalti3d_(\d+)_(\d+)-(\d+)")
+    candidats = {}   # (E_km, N_km) -> (year, nom, url)
+    n_filtered_geo = 0
+    n_total_assets = 0
     for it in items:
+        if not _dalle_intersect_bbox_natif(it.get("id", "")):
+            n_filtered_geo += 1
+            continue
         assets = it.get("assets", {}) or {}
         for nom, ass in assets.items():
-            # Pattern : ..._0.5_2056_<elev>.tif (COG 0.5m, CRS Swiss LV95)
-            if (nom.endswith(".tif")
+            if not (nom.endswith(".tif")
                     and "_0.5_2056_" in nom
                     and ass.get("type", "").startswith("image/tiff")):
-                href = ass.get("href")
-                if href:
-                    dalles[nom] = href
+                continue
+            href = ass.get("href")
+            if not href:
+                continue
+            n_total_assets += 1
+            m = _year_pattern.search(nom)
+            if not m:
+                continue
+            year = int(m.group(1))
+            e_km = int(m.group(2))
+            n_km = int(m.group(3))
+            key = (e_km, n_km)
+            prev = candidats.get(key)
+            if prev is None or year > prev[0]:
+                candidats[key] = (year, nom, href)
 
-    print(f"  swisstopo : {n_pages} page(s) STAC → {len(items)} items "
-          f"→ {len(dalles)} COG 0.5m retenus")
+    dalles = {nom: href for (_y, nom, href) in candidats.values()}
+
+    msg = (f"  swisstopo : {n_pages} page(s) STAC → {len(items)} items, "
+           f"{n_total_assets} COG 0.5m → {len(dalles)} dalles retenues "
+           f"(dernier millésime par tuile)")
+    if n_filtered_geo:
+        msg += f" — {n_filtered_geo} hors bbox LV95 filtrées"
+    print(msg)
     return dalles
