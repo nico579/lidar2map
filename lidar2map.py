@@ -2576,9 +2576,14 @@ def geocoder_ville_wgs84(nom_ville):
     En mode --oui, lève une erreur claire si le résultat n'est pas un lieu
     administratif/habité reconnu. En mode interactif, demande confirmation.
     """
+    # Le code pays vient du provider actif. Nominatim filtre par ISO code
+    # (countrycodes=fr/nl/etc.) — évite "Amsterdam" → "Île d'Amsterdam (TAAF, FR)"
+    # quand on travaille avec un provider NL.
+    _cc = (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower()
     url = (
         "https://nominatim.openstreetmap.org/search"
-        f"?q={urllib.parse.quote(nom_ville + ', France')}"
+        f"?q={urllib.parse.quote(nom_ville)}"
+        f"&countrycodes={_cc}"
         "&format=json&limit=1&addressdetails=1"
     )
     req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
@@ -11812,28 +11817,49 @@ def lancer_gui():
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
-        # ── Autocomplétion ville (proxy BAN) ─────────────────────────────
+        # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
         # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
         # WebView2 traite mal vis-à-vis du CORS — on relaie ici en Python.
-        def autocomplete_ville(self, prefix):
+        # FR : Geoplateforme BAN (rapide, précis pour communes françaises)
+        # Hors FR : Nominatim avec countrycodes=<pays> pour scoper à un pays
+        def autocomplete_ville(self, prefix, country="fr"):
             try:
                 p = (prefix or "").strip()
-                if len(p) < 3:   # Geoplateforme rejette < 3 caractères
+                if len(p) < 3:
                     return []
-                url = ("https://data.geopf.fr/geocodage/search/"
+                country = (country or "fr").lower()
+                if country == "fr":
+                    url = ("https://data.geopf.fr/geocodage/search/"
+                           f"?q={urllib.parse.quote(p)}"
+                           "&type=municipality&autocomplete=1&limit=8")
+                    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+                    with urllib.request.urlopen(req, timeout=3) as r:
+                        data = json.load(r)
+                    out = []
+                    for f in data.get("features", []):
+                        props = f.get("properties", {}) or {}
+                        label = props.get("name") or props.get("label") or ""
+                        if label:
+                            out.append({"label": label,
+                                        "context": props.get("context", "")})
+                    return out
+                # Non-FR : Nominatim international, filtre par pays
+                url = ("https://nominatim.openstreetmap.org/search"
                        f"?q={urllib.parse.quote(p)}"
-                       "&type=municipality&autocomplete=1&limit=8")
-                req = urllib.request.Request(
-                    url, headers={"User-Agent": _HTTP_UA})
-                with urllib.request.urlopen(req, timeout=3) as r:
+                       f"&countrycodes={country}&format=json&limit=8&addressdetails=1")
+                req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+                with urllib.request.urlopen(req, timeout=5) as r:
                     data = json.load(r)
                 out = []
-                for f in data.get("features", []):
-                    props = f.get("properties", {}) or {}
-                    label = props.get("name") or props.get("label") or ""
+                for item in data:
+                    addr = item.get("address", {}) or {}
+                    label = (addr.get("city") or addr.get("town")
+                             or addr.get("village") or addr.get("municipality")
+                             or item.get("display_name", "").split(",")[0])
                     if label:
-                        out.append({"label":   label,
-                                    "context": props.get("context", "")})
+                        ctx_parts = [addr.get(k) for k in ("state", "country") if addr.get(k)]
+                        out.append({"label": label,
+                                    "context": ", ".join(ctx_parts)})
                 return out
             except Exception:
                 return []
@@ -13529,7 +13555,12 @@ function _acSurleve(delta) {
 }
 
 async function _acRequete(prefix) {
-  const key = prefix.toLowerCase();
+  // Pays du provider actif : pilote BAN (FR) vs Nominatim (autre)
+  const psel = document.getElementById('f-provider');
+  const country = (psel && psel.dataset.country) || 'fr';
+  // Clé de cache incluant le pays : sinon les résultats FR seraient renvoyés
+  // pour la même saisie en NL après switch de provider.
+  const key = country + '|' + prefix.toLowerCase();
   if (_acCache.has(key)) { _acRendre(_acCache.get(key)); return; }
   const myId = ++_acReqId;
   try {
@@ -13538,7 +13569,7 @@ async function _acRequete(prefix) {
       _acFermer();
       return;
     }
-    const items = await pywebview.api.autocomplete_ville(prefix);
+    const items = await pywebview.api.autocomplete_ville(prefix, country);
     if (myId !== _acReqId) return;
     const list = Array.isArray(items) ? items : [];
     _acCache.set(key, list);
