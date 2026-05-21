@@ -2109,6 +2109,33 @@ LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 import importlib as _importlib
 import os as _os
 
+def _discover_providers():
+    """Liste les providers disponibles dans providers/*.py.
+
+    Retourne une liste de dicts {code, name, country} (sans erreur si un
+    module est cassé). Utilisé par la GUI pour peupler son sélecteur de
+    provider.
+    """
+    providers_dir = Path(__file__).resolve().parent / "providers"
+    result = []
+    if not providers_dir.exists():
+        return result
+    for f in sorted(providers_dir.glob("*.py")):
+        if f.stem.startswith("_"):
+            continue
+        try:
+            mod = _importlib.import_module(f"providers.{f.stem}")
+            result.append({
+                "code":    getattr(mod, "CODE",    f.stem),
+                "name":    getattr(mod, "NAME",    f.stem),
+                "country": getattr(mod, "COUNTRY", ""),
+            })
+        except Exception as e:
+            print(f"  [provider scan] {f.name} ignoré : {type(e).__name__}: {e}",
+                  file=sys.stderr)
+    return result
+
+
 def _load_provider():
     code = None
     # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré)
@@ -11768,6 +11795,8 @@ def lancer_gui():
                 "osm_tags":   _OSM_TAGS_DATA,
                 "apikey_def": APIKEY_DEFAUT,
                 "historique": _lire_historique(),
+                "providers":  _discover_providers(),
+                "active_provider": PROVIDER.CODE,
             }
 
         def get_historique(self):
@@ -11847,6 +11876,10 @@ def lancer_gui():
             cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
                    else [sys.executable, str(SCRIPT)])
             t = cfg.get("type", "lidar")
+
+            # Provider (multi-pays) — propagé au subprocess
+            if cfg.get("provider") and cfg["provider"] != PROVIDER.CODE:
+                cmd += ["--provider", cfg["provider"]]
 
             # Zone (pas pour fusion / découpe)
             if t != "fusion" and t != "decoupe":
@@ -12597,16 +12630,29 @@ body.log-resizing *{
   </div>
 
   <!-- Type de carte -->
+  <div class="section sec-provider">
+   <div class="section-hd">Provider LiDAR</div>
+   <div class="section-body">
+    <div class="row">
+     <label for="f-provider">Source :</label>
+     <select id="f-provider" style="min-width:280px"
+             title="Choix de la source LiDAR. Les onglets IGN Raster/Vecteur ne sont disponibles que pour les providers FR.">
+      <option value="fr-ign">Chargement...</option>
+     </select>
+    </div>
+   </div>
+  </div>
+
   <div class="section sec-type">
    <div class="section-hd">Type de traitement de carte</div>
    <div class="section-body">
     <div id="type-sel">
      <input type="radio" name="type" id="t-lidar"   value="lidar"   checked>
-     <label for="t-lidar">IGN LiDAR MNT Raster</label>
+     <label for="t-lidar">LiDAR MNT</label>
      <input type="radio" name="type" id="t-scan"    value="scan">
-     <label for="t-scan">IGN Raster</label>
+     <label for="t-scan" data-fr-only="1">IGN Raster</label>
      <input type="radio" name="type" id="t-vecteur" value="vecteur">
-     <label for="t-vecteur">IGN Vectoriel</label>
+     <label for="t-vecteur" data-fr-only="1">IGN Vectoriel</label>
      <input type="radio" name="type" id="t-osm"     value="osm">
      <label for="t-osm">OSM Vectoriel</label>
      <input type="radio" name="type" id="t-fusion"  value="fusion">
@@ -13229,6 +13275,7 @@ async function initAsync() {
   _initialized = true;
   try {
     const d = await pywebview.api.get_init_data();
+    buildProviders(d.providers || [], d.active_provider || 'fr-ign');
     buildCouches(d.couches);
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);
@@ -13245,6 +13292,56 @@ async function initAsync() {
     console.error('initAsync error:', e);
     document.getElementById('footer-status').textContent = 'Erreur init: ' + e;
   }
+}
+
+// ── Provider selector ────────────────────────────────────────────────────────
+// Peuple le <select id="f-provider"> avec la liste des providers disponibles
+// et règle la visibilité des onglets FR-only selon le pays du provider actif.
+function buildProviders(providers, activeCode) {
+  const sel = document.getElementById('f-provider');
+  if (!sel) return;
+  if (!providers.length) {
+    sel.innerHTML = '<option value="fr-ign">fr-ign (défaut)</option>';
+    sel.value = 'fr-ign';
+    sel.dataset.country = 'fr';
+    applyProviderCountry('fr');
+    return;
+  }
+  sel.innerHTML = providers.map(p =>
+    `<option value="${p.code}" data-country="${p.country}">${p.name}</option>`
+  ).join('');
+  sel.value = activeCode;
+  const opt = sel.options[sel.selectedIndex];
+  const country = (opt && opt.dataset.country) || 'fr';
+  sel.dataset.country = country;
+  applyProviderCountry(country);
+  sel.addEventListener('change', () => {
+    const o = sel.options[sel.selectedIndex];
+    const c = (o && o.dataset.country) || 'fr';
+    sel.dataset.country = c;
+    applyProviderCountry(c);
+  });
+}
+
+function applyProviderCountry(country) {
+  // Cache les onglets/labels marqués data-fr-only="1" si le pays n'est pas FR.
+  const elts = document.querySelectorAll('[data-fr-only="1"]');
+  elts.forEach(el => {
+    el.style.display = (country === 'fr') ? '' : 'none';
+    // Cacher aussi le radio input associé si c'est un <label for="...">
+    const forId = el.getAttribute('for');
+    if (forId) {
+      const inp = document.getElementById(forId);
+      if (inp) {
+        inp.style.display = (country === 'fr') ? '' : 'none';
+        // Si l'onglet courant devient invisible, basculer sur LiDAR
+        if (country !== 'fr' && inp.checked) {
+          const lidarRadio = document.getElementById('t-lidar');
+          if (lidarRadio) { lidarRadio.checked = true; lidarRadio.dispatchEvent(new Event('change')); }
+        }
+      }
+    }
+  });
 }
 
 let _historique = [];
@@ -13603,6 +13700,7 @@ function getConfig() {
 
   const cfg = {
     type, mode,
+    provider: g('f-provider')?.value || 'fr-ign',
     nom:    g('f-nom')?.value.trim(),
     dossier:g('f-dossier')?.value.trim(),
     ville:  g('f-ville')?.value.trim(),
@@ -13727,6 +13825,15 @@ function loadConfig(cfg) {
   if (cfg.type) sr('type', cfg.type);
   // (window.applyMode/applyType seront rappelées en fin de loadConfig
   //  pour synchroniser les sections visibles avec les radios cochés)
+
+  // Provider (multi-pays) — restauré depuis l'historique si présent
+  if (cfg.provider) {
+    const psel = document.getElementById('f-provider');
+    if (psel && psel.querySelector(`option[value="${cfg.provider}"]`)) {
+      psel.value = cfg.provider;
+      psel.dispatchEvent(new Event('change'));
+    }
+  }
 
   // Projet
   s('f-nom',     cfg.nom);
