@@ -8596,6 +8596,20 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             if args.telechargement:
                 _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args)
 
+            # Enregistrer les dalles utilisées par ce chunk dans le manifest pour
+            # permettre leur nettoyage par --nettoyage. Le téléchargement parallèle
+            # (ThreadPoolExecutor) ne propage pas _manifest_ctx (threading.local),
+            # donc _creer_fichier dans les workers reste muet : on registre ici
+            # depuis le main thread.
+            # NB : les dalles à la frontière de chunks adjacents seront comptées
+            # dans plusieurs chunks → un chunk suivant pourra devoir re-télécharger
+            # une dalle frontalière. Coût acceptable (~1-2% de re-downloads pour
+            # un découpage 4x4) face au gain de disque (10+ Go par chunk libérés).
+            for _x_km, _y_km in dalles:
+                _cd = chemin_dalle(dossier_dalles, nom_dalle(_x_km, _y_km))
+                if _cd.exists():
+                    _creer_fichier(_cd)
+
             if args.ombrages:
                 TOUS = ["315","045","135","225","multi","slope","svf","svf100","lrm","rrim"]
                 choix = (TOUS if "tous" in args.ombrages
