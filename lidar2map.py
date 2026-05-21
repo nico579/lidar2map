@@ -2763,12 +2763,21 @@ def _parser_departements(valeur: str) -> list:
 # ============================================================
 
 def calculer_grille_bbox(x1, y1, x2, y2):
-    """Retourne (dalles, bbox) depuis une BBox dans le CRS natif du provider."""
-    return PROVIDER.dalles_pour_bbox(x1, y1, x2, y2), (x1, y1, x2, y2)
+    """Retourne (dalles, bbox) depuis une BBox dans le CRS natif du provider.
+
+    Si le provider n'utilise pas de grille régulière (système kaartblad
+    alphanumérique pour NL AHN, etc.), retourne une liste vide — le
+    pipeline downstream utilise alors PROVIDER.discover_dalles() qui ne
+    suppose pas de grille."""
+    try:
+        dalles = PROVIDER.dalles_pour_bbox(x1, y1, x2, y2)
+    except NotImplementedError:
+        dalles = []
+    return dalles, (x1, y1, x2, y2)
 
 
 def calculer_grille(cx, cy, rayon_km):
-    """Retourne (dalles, bbox) depuis un centre Lambert 93 et un rayon en km."""
+    """Retourne (dalles, bbox) depuis un centre CRS natif et un rayon en km."""
     r = rayon_km * 1000
     return calculer_grille_bbox(cx - r, cy - r, cx + r, cy + r)
 
@@ -2832,7 +2841,7 @@ def _lon_lat_to_tile(lon, lat, z):
 def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
     """Wrapper vers PROVIDER.discover_dalles — voir providers/fr_ign.py.
     Retourne {nom_dalle: url_wms} ou None si erreur totale."""
-    cache_path = DOSSIER_TRAVAIL / "cache" / "tms_dalles_cache.json"
+    cache_path = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
     return PROVIDER.discover_dalles(
         (lon_min, lat_min, lon_max, lat_max), bbox_l93, cache_path)
 
@@ -6930,6 +6939,9 @@ Exemples :
                              "Utile pour séparer cache et sorties sur disques différents.")
 
     # Téléchargement
+    parser.add_argument("--provider", default=None, metavar="CODE",
+                        help="Provider LiDAR (défaut: fr-ign). Codes disponibles : "
+                             "fr-ign, nl-ahn (POC). Voir providers/")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Connexions parallèles (défaut: {NB_WORKERS})")
     parser.add_argument("--telechargement-compresser", action="store_true",
@@ -7538,6 +7550,23 @@ Exemples :
             print("  Aucune dalle hors zone trouvée.")
 
     # -------------------------------------------------------
+    # Découverte des dalles via le provider — source de vérité unifiée
+    # -------------------------------------------------------
+    # Calculé une fois ici, utilisé par la cache-check ET le download.
+    # Pour FR : TMS + fallback grille → dict {nom: url}.
+    # Pour NL : index JSON kaartbladen → dict {nom: url}.
+    # Provider-agnostique : aucune hypothèse sur la géométrie des tuiles.
+    _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+    _lon1, _lat1 = _t_wgs.transform(bbox[0], bbox[1])
+    _lon2, _lat2 = _t_wgs.transform(bbox[2], bbox[3])
+    bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
+                max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+    # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
+    cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+    dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+    noms_attendus = set(dalles_dict.keys())
+
+    # -------------------------------------------------------
     # Détecter si on peut sauter le téléchargement
     # -------------------------------------------------------
     sauter_telechargement = False
@@ -7567,29 +7596,23 @@ Exemples :
             # dalles d'autres zones (autres tests précédents). Si aucune dalle
             # ne couvre la zone, on plante avec un message clair plutôt que de
             # laisser le pipeline continuer puis échouer plus loin.
-            if dalles:  # liste des (x, y) de la grille pour la zone demandée
-                noms_grille_attendus = {nom_dalle(x, y) for x, y in dalles}
+            if noms_attendus:  # discover_dalles a retourné une liste non-vide
                 dalles_zone_cache = [d for d in dalles_existantes
-                                     if d.name in noms_grille_attendus
+                                     if d.name in noms_attendus
                                      and d.stat().st_size > SEUIL_DALLE_VALIDE]
                 if not dalles_zone_cache:
                     print(f"\n  ATTENTION : {len(dalles_existantes)} dalle(s) dans le cache,")
                     print(f"              mais AUCUNE ne couvre la zone demandée.")
                     print(f"  Cache global : {dossier_dalles}")
-                    # Affiche le nom de ville original (avec accents) quand on
-                    # vient de --zone-ville, sinon retombe sur nom_zone normalisé.
-                    # Les autres branches (bbox, gps, dept) n'ont pas de label
-                    # humain distinct du nom_zone, et le mode interactif est
-                    # marginal (--oui recommandé pour scripts).
                     libelle_zone = args.zone_ville or nom_zone
-                    print(f"  Zone demandée : grille de {len(dalles)} dalle(s) autour de "
+                    print(f"  Zone demandée : {len(noms_attendus)} dalle(s) autour de "
                           f"{libelle_zone}")
                     print(f"  Ajoutez --telechargement pour télécharger les dalles manquantes.")
                     sys.exit(1)
                 print(f"\n  Téléchargement ignoré "
-                      f"({len(dalles_zone_cache)}/{len(dalles)} dalle(s) de la zone trouvées en cache)")
+                      f"({len(dalles_zone_cache)}/{len(noms_attendus)} dalle(s) de la zone trouvées en cache)")
             else:
-                # Pas de grille définie (cas dégradé) : juste compter les dalles
+                # Provider sans index pour cette bbox (cas dégradé) : juste compter
                 print(f"\n  Téléchargement ignoré ({len(dalles_existantes)} dalle(s) en cache)")
             sauter_telechargement = True
 
@@ -7597,16 +7620,8 @@ Exemples :
     # Téléchargement + assemblage (pivoté sur PROVIDER.discover_dalles)
     # -------------------------------------------------------
     if not sauter_telechargement:
-        # Découverte unifiée : index + fallback grille via le provider
-        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        _lon1, _lat1 = _t.transform(bbox[0], bbox[1])
-        _lon2, _lat2 = _t.transform(bbox[2], bbox[3])
-        bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
-                    max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
-        cache_discover = DOSSIER_TRAVAIL / "cache" / "tms_dalles_cache.json"
-        dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
-
-        # Orchestration download + persistance via le helper provider-agnostique
+        # dalles_dict a déjà été calculé plus haut via PROVIDER.discover_dalles.
+        # Orchestration download + persistance via le helper provider-agnostique.
         _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
     # -------------------------------------------------------
@@ -7632,11 +7647,11 @@ Exemples :
                 print(f"  Zone modifiée — reconstruction {dalles_zone_txt.name} depuis le cache...")
                 print(f"    Ancienne bbox : {_bbox_fichier}")
                 print(f"    Nouvelle bbox : {_bbox_courante}")
-                # Reconstruire depuis le cache disque sans retélécharger
-                noms_grille = {nom_dalle(x, y) for x, y in dalles}
+                # Reconstruire depuis le cache disque sans retélécharger.
+                # noms_attendus vient de PROVIDER.discover_dalles (provider-agnostique).
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_grille and d.stat().st_size > SEUIL_DALLE_VALIDE}
+                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
                     dalles_zone_txt.write_text(
                         _bbox_courante + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
@@ -7649,18 +7664,18 @@ Exemples :
             else:
                 noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
                 print(f"  Liste dalles zone : {dalles_zone_txt.name} ({len(noms_zone)} dalles)")
-        elif not args.telechargement and dalles:
+        elif not args.telechargement and noms_attendus:
             # Si seul --osm demandé, pas besoin des dalles
             if args.osm and not args.ombrages and not args.mbtiles:
                 pass  # on ne cherche pas les dalles
             else:
-                # dalles_zone.txt absent mais grille connue → reconstruction depuis le cache disque
-                # (la vérification en amont garantit qu'on trouvera au moins une dalle)
+                # dalles_zone.txt absent mais liste attendue connue → reconstruction
+                # depuis le cache disque (la vérification en amont garantit qu'on
+                # trouvera au moins une dalle).
                 print(f"  Reconstruction de {dalles_zone_txt.name} depuis le cache disque...")
-                noms_grille = {nom_dalle(x, y) for x, y in dalles}
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_grille and d.stat().st_size > SEUIL_DALLE_VALIDE}
+                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
                     _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
                     dalles_zone_txt.write_text(
@@ -8279,7 +8294,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             _lon2, _lat2 = _t.transform(bx2, by2)
             bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
                         max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
-            cache_discover = DOSSIER_TRAVAIL / "cache" / "tms_dalles_cache.json"
+            cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
             dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
 
             if args.telechargement:
