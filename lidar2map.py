@@ -7405,21 +7405,9 @@ Exemples :
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    # Garde-fou : un crash entre fin de tuilage et fin de chunk
-                    # peut laisser un mbtiles vide alors que le manifest dit
-                    # "terminé". On revalide les sorties avant de skipper.
-                    _dossier_chunk = (
-                        (Path(args.dossier).resolve() if args.dossier
-                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
-                        / nom_z)
-                    _mbts_vides = [mbt for mbt in _dossier_chunk.glob("*.mbtiles")
-                                   if not _mbtiles_est_complete(mbt)]
-                    if not _mbts_vides:
-                        print(f"  [{cle}] {nom_z} — déjà terminé")
-                        nb_ok += 1
-                        continue
-                    for _v in _mbts_vides:
-                        print(f"  [{cle}] mbtiles vide détecté : {_v.name} — retraitement")
+                    print(f"  [{cle}] {nom_z} — déjà terminé")
+                    nb_ok += 1
+                    continue
 
                 surface = (bx2_z-bx1_z)/1000 * (by2_z-by1_z)/1000
                 print(f"\n  ── Morceau {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
@@ -7434,7 +7422,20 @@ Exemples :
                     print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
-                        _supprimer_fichiers(manifeste.fichiers_morceau(cle))
+                        # Si le chunk a produit un mbtiles vide (chunk en mer
+                        # hors couverture IGN, ou bug à diagnostiquer), on
+                        # conserve les .tif intermédiaires pour permettre
+                        # l'inspection — sinon l'utilisateur perd le contexte.
+                        _dossier_chunk = (
+                            (Path(args.dossier).resolve() if args.dossier
+                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                            / nom_z)
+                        _has_empty = any(not _mbtiles_est_complete(mbt)
+                                         for mbt in _dossier_chunk.glob("*.mbtiles"))
+                        if _has_empty:
+                            print(f"  [{cle}] mbtiles vide détecté — nettoyage skipé (intermédiaires conservés pour inspection)")
+                        else:
+                            _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
                     print(f"  [{cle}] ✗ ERREUR : {_e_z} — relancez pour reprendre")
                     raise
@@ -9331,20 +9332,9 @@ Exemples :
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    # Garde-fou : revalider que les mbtiles produits sont non
-                    # vides (cf. boucle LiDAR équivalente).
-                    _dossier_chunk = (
-                        (Path(args.dossier).resolve() if args.dossier
-                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
-                        / nom_z)
-                    _mbts_vides = [mbt for mbt in _dossier_chunk.glob("*.mbtiles")
-                                   if not _mbtiles_est_complete(mbt)]
-                    if not _mbts_vides:
-                        print(f"  [{cle}] {nom_z} — déjà terminé")
-                        nb_ok += 1
-                        continue
-                    for _v in _mbts_vides:
-                        print(f"  [{cle}] mbtiles vide détecté : {_v.name} — retraitement")
+                    print(f"  [{cle}] {nom_z} — déjà terminé")
+                    nb_ok += 1
+                    continue
 
                 surface_km2 = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
                               ((lat_n-lat_s)*111)
@@ -9361,7 +9351,19 @@ Exemples :
                     print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
-                        _supprimer_fichiers(manifeste.fichiers_morceau(cle))
+                        # Cf. boucle LiDAR : si chunk vide, on conserve les
+                        # intermédiaires pour inspection plutôt que de tout
+                        # supprimer silencieusement.
+                        _dossier_chunk = (
+                            (Path(args.dossier).resolve() if args.dossier
+                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
+                            / nom_z)
+                        _has_empty = any(not _mbtiles_est_complete(mbt)
+                                         for mbt in _dossier_chunk.glob("*.mbtiles"))
+                        if _has_empty:
+                            print(f"  [{cle}] mbtiles vide détecté — nettoyage skipé (intermédiaires conservés pour inspection)")
+                        else:
+                            _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
                     print(f"  [{cle}] ✗ ERREUR : {_e_z} — relancez pour reprendre")
                     raise
