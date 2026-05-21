@@ -138,6 +138,17 @@ hiddenimports = []
 if (SRC / "tagmapping-min.xml").exists():
     datas += [("tagmapping-min.xml", ".")]
 
+# Providers multi-pays (v1.2+) : tous les modules providers/*.py sont
+# embarques comme data + declares hiddenimports pour que importlib les trouve
+# en mode frozen (PyInstaller ne suit pas les imports dynamiques).
+_providers_dir = SRC / "providers"
+if _providers_dir.exists():
+    for _pf in sorted(_providers_dir.glob("*.py")):
+        datas += [(str(_pf), "providers")]
+        if not _pf.stem.startswith("_"):
+            hiddenimports.append(f"providers.{_pf.stem}")
+    hiddenimports.append("providers")
+
 # ── JRE ───────────────────────────────────────────────────────────────────────
 if JRE_SRC and JRE_SRC.exists():
     datas += _add_tree(JRE_SRC, f"jre/{JRE_SRC.name}")
