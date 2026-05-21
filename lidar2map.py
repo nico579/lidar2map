@@ -3093,7 +3093,9 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
             chemin_tmp.unlink(missing_ok=True)
             chemin.unlink(missing_ok=True)
             if tentative < MAX_TENTATIVES:
-                print(f"  ↻ Retry {tentative}/{MAX_TENTATIVES} {nom} : {_e}")
+                # Retry silencieux : IGN renvoie 502/400/timeouts en rafale en
+                # journée, chaque retry print bourrait la console. Seul l'échec
+                # final (3/3) reste visible — la progress bar montre l'avancée.
                 time.sleep(DELAI_RETRY)
             else:
                 print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
@@ -3159,7 +3161,8 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
             chemin_tmp.unlink(missing_ok=True)
             chemin.unlink(missing_ok=True)
             if tentative < MAX_TENTATIVES:
-                print(f"  ↻ Retry {tentative}/{MAX_TENTATIVES} {nom} : {_e}")
+                # Cf. telecharger_dalle_directe : retry silencieux pour éviter
+                # le bourrage console quand IGN renvoie 502/400/timeouts en rafale.
                 time.sleep(DELAI_RETRY)
             else:
                 print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
