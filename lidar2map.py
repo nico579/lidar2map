@@ -2968,7 +2968,10 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     la socket BSD renvoie b"" sans erreur, ce qui sans cette garde produirait
     un fichier tronqué accepté silencieusement comme valide.
     """
-    _log_req(url, "WMS")
+    # Pas de _log_req(url) ici : cette fonction est appelée des centaines à
+    # milliers de fois en parallèle (1 par dalle WMS) → le spam URL noie la
+    # console. La progress bar de _telecharger_dalles_zone suffit ; les
+    # erreurs sont loguées par le code de retry des callers.
     # Timeout lecture : prendre la valeur max si tuple (connect, read).
     _timeout = max(timeout) if isinstance(timeout, tuple) else timeout
     try:
