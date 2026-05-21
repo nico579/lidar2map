@@ -12098,8 +12098,17 @@ def lancer_gui():
             # ici, open_folder() pointerait vers un chemin inexistant.
             nom_slug = normaliser_nom(nom) if nom else ""
             base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-            _type_dir = {"lidar":LIDAR_SUBDIR,"scan":"ign_raster","osm":"osm_vecteur",
-                         "vecteur":"ign_vecteur","fusion":"fusion","decoupe":""}
+            # Le subprocess utilise --provider <code> → ecrit dans lidar/<country>.
+            # On reconstruit le meme path ici sinon open_folder pointe ailleurs.
+            _cfg_provider = cfg.get("provider", PROVIDER.CODE)
+            _cfg_country = "fr"
+            for _p in _discover_providers():
+                if _p["code"] == _cfg_provider:
+                    _cfg_country = _p.get("country", "fr")
+                    break
+            _lidar_subdir_cfg = f"lidar/{_cfg_country}"
+            _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"ign_raster", "osm":"osm_vecteur",
+                         "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)
             else:
