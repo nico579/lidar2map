@@ -8536,6 +8536,20 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
             _bbox_hdr + "\n" + "\n".join(sorted(set(noms_persistance))), encoding="utf-8")
         _creer_fichier(dalles_zone_txt)
 
+    # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
+    # pour permettre --nettoyage de les supprimer en fin de chunk. On itère
+    # noms_persistance plutôt que la grille stricte (x_km, y_km) car la
+    # requête TMS retourne aussi des dalles dans la marge de 5 km autour
+    # de la bbox du chunk — sans ce tracking elles resteraient orphelines
+    # dans le cache, accumulées par chunk.
+    # Le téléchargement parallèle (ThreadPoolExecutor) ne propage pas
+    # _manifest_ctx (threading.local), donc on enregistre ici depuis le
+    # main thread où le contexte manifeste est actif.
+    for _nom in noms_persistance:
+        _cd = chemin_dalle(dossier_dalles, _nom)
+        if _cd.exists():
+            _creer_fichier(_cd)
+
 
 def _mbtiles_est_complete(mbt_path):
     """Vérification silencieuse : True si le mbtiles existe, est un SQLite
@@ -8610,20 +8624,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
 
             if args.telechargement:
                 _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args)
-
-            # Enregistrer les dalles utilisées par ce chunk dans le manifest pour
-            # permettre leur nettoyage par --nettoyage. Le téléchargement parallèle
-            # (ThreadPoolExecutor) ne propage pas _manifest_ctx (threading.local),
-            # donc _creer_fichier dans les workers reste muet : on registre ici
-            # depuis le main thread.
-            # NB : les dalles à la frontière de chunks adjacents seront comptées
-            # dans plusieurs chunks → un chunk suivant pourra devoir re-télécharger
-            # une dalle frontalière. Coût acceptable (~1-2% de re-downloads pour
-            # un découpage 4x4) face au gain de disque (10+ Go par chunk libérés).
-            for _x_km, _y_km in dalles:
-                _cd = chemin_dalle(dossier_dalles, nom_dalle(_x_km, _y_km))
-                if _cd.exists():
-                    _creer_fichier(_cd)
+                # Le tracking des dalles pour --nettoyage est fait à la fin de
+                # _telecharger_dalles_zone (inclut les dalles TMS hors grille).
 
             if args.ombrages:
                 TOUS = ["315","045","135","225","multi","slope","svf","svf100","lrm","rrim"]
