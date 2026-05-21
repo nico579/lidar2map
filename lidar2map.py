@@ -12576,8 +12576,13 @@ body.log-resizing *{
       <label style="min-width:auto;margin-right:4px">Nom *</label>
       <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
       <label style="min-width:auto;margin-left:12px">Dossier sortie</label>
-      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:4">
+      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
+      <label style="min-width:auto;margin-left:12px"
+             title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.">Provider</label>
+      <select id="f-provider" style="min-width:200px">
+       <option value="fr-ign">Chargement...</option>
+      </select>
      </div>
    </div>
   </div>
@@ -12630,19 +12635,6 @@ body.log-resizing *{
   </div>
 
   <!-- Type de carte -->
-  <div class="section sec-provider">
-   <div class="section-hd">Provider LiDAR</div>
-   <div class="section-body">
-    <div class="row">
-     <label for="f-provider">Source :</label>
-     <select id="f-provider" style="min-width:280px"
-             title="Choix de la source LiDAR. Les onglets IGN Raster/Vecteur ne sont disponibles que pour les providers FR.">
-      <option value="fr-ign">Chargement...</option>
-     </select>
-    </div>
-   </div>
-  </div>
-
   <div class="section sec-type">
    <div class="section-hd">Type de traitement de carte</div>
    <div class="section-body">
