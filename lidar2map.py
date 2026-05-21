@@ -2099,11 +2099,50 @@ else:
 # Pour nettoyer complètement lidar2map :  rm -rf ~/.lidar2map
 LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 
-# ── LiDAR IGN — géométrie des dalles ─────────────────────────────────────────
-RESOLUTION_M       = 0.5          # résolution native des MNT LiDAR HD IGN (m/px)
-DALLE_KM           = 1            # côté d'une dalle IGN (km)
-PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)  # → 2000 px
-SEUIL_DALLE_VALIDE = 2_000_000    # octets — en dessous : dalle mer/hors-zone, ignorée
+# ── Provider LiDAR (par défaut : France IGN HD) ──────────────────────────────
+# POC d'abstraction : tout ce qui est spécifique à une source nationale
+# (URLs, CRS, nommage des dalles, géométrie) vit dans providers/<pays>.py.
+# Le reste du pipeline (SVF, ombrages, MBTiles) reste agnostique.
+#
+# Sélection : --provider <code> en CLI, ou variable d'env LIDAR2MAP_PROVIDER.
+# Codes disponibles : fr-ign (défaut), nl-ahn (POC).
+import importlib as _importlib
+import os as _os
+
+def _load_provider():
+    code = None
+    # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré)
+    if "--provider" in sys.argv:
+        _i = sys.argv.index("--provider")
+        if _i + 1 < len(sys.argv):
+            code = sys.argv[_i + 1]
+    code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
+    # Mapping code → module (kebab-case → snake_case)
+    module_name = code.replace("-", "_")
+    try:
+        return _importlib.import_module(f"providers.{module_name}")
+    except ImportError as e:
+        print(f"ERREUR : provider '{code}' introuvable "
+              f"(providers/{module_name}.py absent) : {e}", file=sys.stderr)
+        print(f"Provider FR_IGN par défaut.", file=sys.stderr)
+        from providers import fr_ign
+        return fr_ign
+
+PROVIDER = _load_provider()
+
+# Sous-dossier provider-spécifique pour cache et Projets (rétrocompat : si le
+# user a un ancien cache/ign_lidar/ ou Projets/<zone>/ign_lidar/, ils ne sont
+# plus utilisés automatiquement — migration manuelle requise).
+# Convention : "lidar/<country>" pour disambigüer par pays
+# (cache/lidar/fr/, cache/lidar/nl/, ...).
+LIDAR_SUBDIR = f"lidar/{PROVIDER.COUNTRY}"
+
+# Re-exports pour compat avec le code existant — éviter de toucher des
+# centaines de call sites en aval pendant ce POC.
+RESOLUTION_M       = PROVIDER.RESOLUTION_M
+DALLE_KM           = PROVIDER.DALLE_KM
+PX_PAR_DALLE       = PROVIDER.PX_PAR_DALLE
+SEUIL_DALLE_VALIDE = PROVIDER.SEUIL_DALLE_VALIDE
 
 # ── Réseau — tentatives et délais ─────────────────────────────────────────────
 MAX_TENTATIVES = 3    # essais avant abandon d'un téléchargement
@@ -2116,10 +2155,13 @@ BATCH_MBTILES_INSERT  = 500  # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
-# ── URLs IGN ─────────────────────────────────────────────────────────────────
-WMS_URL   = "https://data.geopf.fr/wms-r"
-WMS_LAYER = "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93"
-WFS_URL   = "https://data.geopf.fr/wfs/ows"
+# ── URLs IGN (re-exports du provider) ────────────────────────────────────────
+# getattr avec fallback : tous les providers n'ont pas forcément ces attributs.
+# Ex: AHN expose WCS_URL au lieu de WFS_URL — les chemins de code qui utilisent
+# WFS_URL retomberont sur None et devront être adaptés (BDTOPO, etc.).
+WMS_URL   = getattr(PROVIDER, "WMS_URL",   None)
+WMS_LAYER = getattr(PROVIDER, "WMS_LAYER", None)
+WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 
 # ── Geofabrik : département → région (URL slug) ──────────────────────────────
 # Table statique (135 entrées) construite une seule fois à l'import au lieu
@@ -2286,7 +2328,7 @@ def _get_transformer(src_crs, dst_crs, always_xy=True):
     """Retourne un pyproj Transformer mémorisé pour la paire (src, dst).
 
     Utilisation :
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         x_l93, y_l93 = t.transform(lon, lat)
 
     Note : ne pas appeler avec always_xy=False et always_xy=True alternativement
@@ -2486,7 +2528,7 @@ def _lamb93_to_wgs84_safe(x, y):
     sans proj.db. Précision pyproj < 1 m, approximation < 50 m.
     """
     try:
-        _t = _get_transformer("EPSG:2154", "EPSG:4326")
+        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
         return _t.transform(x, y)
     except Exception:
         return lamb93_to_wgs84_approx(x, y)
@@ -2572,7 +2614,7 @@ def geocoder_ville_l93(nom_ville):
     if lat is None:
         return None, None
     try:
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         x, y = t.transform(lon, lat)
     except ImportError:
         x, y = wgs84_to_lamb93_approx(lon, lat)
@@ -2604,7 +2646,7 @@ def geocoder_departement(num_dep):
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
         try:
-            t = _get_transformer("EPSG:4326", "EPSG:2154")
+            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
             bx1, by1 = t.transform(c['lon_min'], c['lat_min'])
             bx2, by2 = t.transform(c['lon_max'], c['lat_max'])
         except ImportError:
@@ -2673,7 +2715,7 @@ def geocoder_departement(num_dep):
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
     try:
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         bx1, by1 = t.transform(lon_min, lat_min)
         bx2, by2 = t.transform(lon_max, lat_max)
     except ImportError:
@@ -2728,28 +2770,27 @@ def _parser_departements(valeur: str) -> list:
 # ============================================================
 
 def calculer_grille_bbox(x1, y1, x2, y2):
-    """Retourne (dalles, bbox) depuis une BBox Lambert 93."""
-    step = DALLE_KM * 1000
-    x_start = int(x1 // step)
-    x_end   = int(x2 // step)
-    y_start = int(y1 // step)
-    y_end   = int(y2 // step)
-    dalles = [
-        (x_km, y_km)
-        for x_km in range(x_start, x_end + 1)
-        for y_km in range(y_start, y_end + 1)
-    ]
+    """Retourne (dalles, bbox) depuis une BBox dans le CRS natif du provider.
+
+    Si le provider n'utilise pas de grille régulière (système kaartblad
+    alphanumérique pour NL AHN, etc.), retourne une liste vide — le
+    pipeline downstream utilise alors PROVIDER.discover_dalles() qui ne
+    suppose pas de grille."""
+    try:
+        dalles = PROVIDER.dalles_pour_bbox(x1, y1, x2, y2)
+    except NotImplementedError:
+        dalles = []
     return dalles, (x1, y1, x2, y2)
 
 
 def calculer_grille(cx, cy, rayon_km):
-    """Retourne (dalles, bbox) depuis un centre Lambert 93 et un rayon en km."""
+    """Retourne (dalles, bbox) depuis un centre CRS natif et un rayon en km."""
     r = rayon_km * 1000
     return calculer_grille_bbox(cx - r, cy - r, cx + r, cy + r)
 
 
 def nom_dalle(x_km, y_km):
-    return f"LHD_FXX_{x_km:04d}_{y_km:04d}_MNT_O_0M50_LAMB93_IGN69.tif"
+    return PROVIDER.dalle_filename(x_km, y_km)
 
 
 def _rglob_tif_robuste(dossier):
@@ -2783,33 +2824,16 @@ def chemin_dalle(dossier_dalles, nom):
     chemin_racine = dossier_dalles / nom
     if chemin_racine.exists():
         return chemin_racine
-    # Extraire XXXX depuis LHD_FXX_XXXX_YYYY_...tif
-    m = re.match(r"LHD_FXX_(\d+)_", nom)
-    if m:
-        sous_dossier = dossier_dalles / m.group(1)
-        return sous_dossier / nom
+    # Délégation au provider pour extraire le sous-dossier depuis le nom
+    sub = PROVIDER.subdir_from_name(nom)
+    if sub:
+        return dossier_dalles / sub / nom
     return chemin_racine  # fallback si nom non reconnu
 
 
 def construire_url_wms(x_km, y_km):
-    # Le WMS IGN 1.3.0 retourne les pixels centrés sur la grille dalles.
-    # L'offset ±0.25 m (demi-pixel à 0.5 m/px) compense la convention
-    # "coin supérieur gauche" du WMS pour aligner les dalles sans chevauchement.
-    # xmin : on recule d'un demi-pixel vers l'ouest (coin gauche de la dalle)
-    # ymin : on avance d'un demi-pixel vers le nord (coin bas = nord pour BBOX WMS 1.3)
-    xmin = x_km * DALLE_KM * 1000 - 0.25
-    xmax = xmin + DALLE_KM * 1000
-    ymin = y_km * DALLE_KM * 1000 + 0.25
-    ymax = ymin + DALLE_KM * 1000
-    params = {
-        "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-        "LAYERS": WMS_LAYER, "FORMAT": "image/geotiff", "STYLES": "",
-        "CRS": "EPSG:2154",
-        "BBOX": f"{xmin},{ymin},{xmax},{ymax}",
-        "WIDTH": PX_PAR_DALLE, "HEIGHT": PX_PAR_DALLE,
-        "FILENAME": nom_dalle(x_km, y_km),
-    }
-    return WMS_URL + "?" + urllib.parse.urlencode(params)
+    """Délégation au provider — la logique URL/CRS/format dépend de la source."""
+    return PROVIDER.dalle_url(x_km, y_km)
 
 
 def _lon_lat_to_tile(lon, lat, z):
@@ -2822,136 +2846,11 @@ def _lon_lat_to_tile(lon, lat, z):
 
 
 def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
-    """
-    Interroge le TMS vectoriel IGN (tuiles PBF) pour obtenir la liste des dalles
-    MNT LiDAR HD disponibles ET intersectant la bbox L93 demandée.
-
-    Source : https://data.geopf.fr/tms/1.0.0/IGNF_MNT-LIDAR-HD-produit/{z}/{x}/{y}.pbf
-    C'est la même source que cartes.gouv.fr/telechargement — plus exhaustive que le WFS.
-
-    bbox_l93 : (x_min, y_min, x_max, y_max) en Lambert 93 — filtre les features
-               par intersection avec la zone demandée. Sans ce filtre, toutes les
-               dalles de la tuile TMS (~40×40 km) seraient retournées.
-
-    Retourne un dict {nom_dalle: url_wms} ou None si erreur totale.
-    """
-    # Auto-install mapbox-vector-tile si absent
-    try:
-        import mapbox_vector_tile as _mvt
-    except ImportError:
-        print("  Installation mapbox-vector-tile...", flush=True)
-        r = subprocess.run([sys.executable, "-m", "pip", "install",
-                      "mapbox-vector-tile", "-q"], capture_output=True)
-        if r.returncode != 0:
-            subprocess.run([sys.executable, "-m", "pip", "install",
-                      "mapbox-vector-tile", "-q", "--user"], capture_output=True)
-        try:
-            import mapbox_vector_tile as _mvt
-        except ImportError:
-            print("  ERREUR : mapbox-vector-tile non installable — repli WFS")
-            return None
-
-    TMS_URL  = "https://data.geopf.fr/tms/1.0.0/IGNF_MNT-LIDAR-HD-produit"
-    ZOOM     = 12   # zoom suffisant pour avoir toutes les dalles 1km×1km
-    WORKERS  = 16   # requêtes parallèles
-    CACHE_PATH = DOSSIER_TRAVAIL / "cache" / "tms_dalles_cache.json"
-
-    # Calcul de la plage de tuiles couvrant la bbox
-    tx0, ty0 = _lon_lat_to_tile(lon_min, lat_max, ZOOM)   # NW
-    tx1, ty1 = _lon_lat_to_tile(lon_max, lat_min, ZOOM)   # SE
-    tuiles = [(tx, ty) for tx in range(tx0, tx1 + 1) for ty in range(ty0, ty1 + 1)]
-    nb_tuiles = len(tuiles)
-    print(f"  TMS : {nb_tuiles} tuiles à interroger (zoom {ZOOM}, "
-          f"x={tx0}..{tx1}, y={ty0}..{ty1})...", flush=True)
-
-    # ── Cache tuiles brutes (sans filtre bbox) ────────────────────────────────
-    # Les tuiles TMS ne changent que rarement — on les met en cache JSON.
-    try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        cache = json.loads(CACHE_PATH.read_text(encoding="utf-8")) if CACHE_PATH.exists() else {}
-    except Exception:
-        cache = {}
-
-    tuiles_a_fetcher = [(tx, ty) for tx, ty in tuiles
-                        if f"{tx}/{ty}" not in cache]
-    if tuiles_a_fetcher:
-        print(f"  TMS cache : {nb_tuiles - len(tuiles_a_fetcher)} tuiles en cache, "
-              f"{len(tuiles_a_fetcher)} à télécharger...", flush=True)
-
-    def _fetch_tuile(tx, ty):
-        url = f"{TMS_URL}/{ZOOM}/{tx}/{ty}.pbf"
-        _log_req(url, "TMS")
-        req = urllib.request.Request(
-            url, headers={"User-Agent": _HTTP_UA})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                pbf_data = resp.read()
-            tile = _mvt.decode(pbf_data)
-            entries = []
-            for layer in tile.values():
-                for feat in layer.get("features", []):
-                    props = feat.get("properties", {})
-                    nom   = props.get("name_download") or props.get("name")
-                    url_dl = props.get("url")
-                    bbox_s = props.get("bbox")
-                    if nom and url_dl:
-                        if not nom.endswith(".tif"):
-                            nom += ".tif"
-                        entries.append((nom, url_dl, bbox_s))
-            return (tx, ty, entries, None)
-        except Exception as _e:
-            return (tx, ty, [], str(_e))
-
-    # Fetch parallèle des tuiles manquantes
-    nb_erreurs = 0
-    done_fetch = 0
-    if tuiles_a_fetcher:
-        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            futs = {pool.submit(_fetch_tuile, tx, ty): (tx, ty)
-                    for tx, ty in tuiles_a_fetcher}
-            for fut in as_completed(futs):
-                tx, ty, entries, err = fut.result()
-                done_fetch += 1
-                if err:
-                    nb_erreurs += 1
-                    cache[f"{tx}/{ty}"] = []
-                else:
-                    cache[f"{tx}/{ty}"] = entries
-                if done_fetch % 20 == 0 or done_fetch == len(tuiles_a_fetcher):
-                    pct = done_fetch * 100 // max(len(tuiles_a_fetcher), 1)
-                    print(f"\r  TMS : {pct:3d}%  {done_fetch}/{len(tuiles_a_fetcher)} "
-                          f"nouvelles tuiles...", end="", flush=True)
-        if tuiles_a_fetcher:
-            print()
-        # Sauvegarder le cache (seulement les entrées sans erreur)
-        try:
-            _ecrire_json_atomique(CACHE_PATH, cache)
-        except Exception:
-            pass
-
-    # ── Appliquer filtre bbox L93 sur les résultats ───────────────────────────
-    dalles = {}
-    for tx, ty in tuiles:
-        for entry in cache.get(f"{tx}/{ty}", []):
-            nom, url_dl, bbox_s = entry if len(entry) == 3 else (*entry, None)
-            if bbox_l93 is not None and bbox_s:
-                try:
-                    _fx0, _fy0, _fx1, _fy1 = map(float, str(bbox_s).split(","))
-                    _zx0, _zy0, _zx1, _zy1 = bbox_l93
-                    if _fx1 < _zx0 or _fx0 > _zx1 or _fy1 < _zy0 or _fy0 > _zy1:
-                        continue
-                except Exception:
-                    pass
-            dalles[nom] = url_dl
-
-    if nb_erreurs == nb_tuiles:
-        print("  ERREUR TMS : toutes les tuiles ont échoué")
-        return None
-    if nb_erreurs:
-        print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur (ignorées)")
-
-    print(f"  TMS : {len(dalles)} dalle(s) disponibles dans la bbox")
-    return dalles
+    """Wrapper vers PROVIDER.discover_dalles — voir providers/fr_ign.py.
+    Retourne {nom_dalle: url_wms} ou None si erreur totale."""
+    cache_path = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+    return PROVIDER.discover_dalles(
+        (lon_min, lat_min, lon_max, lat_max), bbox_l93, cache_path)
 
 
 def _download_to_tmp(url, chemin_tmp, timeout=60):
@@ -3032,10 +2931,16 @@ def _valider_tif_dalle(chemin):
     try:
         with open(chemin, "rb") as fh:
             magic = fh.read(4)
-        # TIFF little-endian : II + 42 ; big-endian : MM + 42
+        # TIFF magic = II/MM (byte order) + 42 ou 43 (BigTIFF, supporté par
+        # rasterio/GDAL). BigTIFF est utilisé par certains COG (ex: AHN PDOK)
+        # même pour des fichiers < 4 Go. Refuser BigTIFF = faux négatif.
+        # - TIFF classique LE : II + 2A 00  (42)
+        # - TIFF classique BE : MM + 00 2A  (42)
+        # - BigTIFF LE        : II + 2B 00  (43)
+        # - BigTIFF BE        : MM + 00 2B  (43)
         if magic[:2] not in (b"II", b"MM"):
             return False
-        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a"):
+        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a", b"\x2b\x00", b"\x00\x2b"):
             return False
     except OSError:
         return False
@@ -5471,7 +5376,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _y0 = y0_l if y0_l is not None else y0_bb
             _y1 = y1_l if y1_l is not None else y1_bb
             try:
-                _t = _get_transformer("EPSG:2154", "EPSG:3857")
+                _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 te_xmin, te_ymin = _t.transform(x0, _y0)
                 te_xmax, te_ymax = _t.transform(x1, _y1)
             except Exception:
@@ -5591,7 +5496,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         elif warp_deja_fait and bb_src is not None:
             # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src
             try:
-                _t2 = _get_transformer("EPSG:2154", "EPSG:3857")
+                _t2 = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 _rx0, _ry0 = _t2.transform(bb_src[0], bb_src[1])
                 _rx1, _ry1 = _t2.transform(bb_src[2], bb_src[3])
             except Exception:
@@ -7008,7 +6913,7 @@ Exemples :
     )
     parser.add_argument("--version", action="version",
                         version="lidar2map 1.0.0 (2026-03)")
-    parser.add_argument("--ignlidar", action="store_true",
+    parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="Mode LiDAR MNT IGN")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
@@ -7047,6 +6952,9 @@ Exemples :
                              "Utile pour séparer cache et sorties sur disques différents.")
 
     # Téléchargement
+    parser.add_argument("--provider", default=None, metavar="CODE",
+                        help="Provider LiDAR (défaut: fr-ign). Codes disponibles : "
+                             "fr-ign, nl-ahn (POC). Voir providers/")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Connexions parallèles (défaut: {NB_WORKERS})")
     parser.add_argument("--telechargement-compresser", action="store_true",
@@ -7157,10 +7065,10 @@ Exemples :
     if _osm_seul:
         print("  Carte OSM vectorielle")
     else:
-        print("  Téléchargement MNT LiDAR HD IGN (WMS)")
+        print(f"  LiDAR : {PROVIDER.NAME}")
         print("  Pipeline rasterio + numpy (numba pour SVF)")
     print("=" * 55)
-    print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / "ign_lidar")}")
+    print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
     print()
 
     # ── --source : mode autonome selon l'extension + CRS ────────────────────────
@@ -7241,8 +7149,8 @@ Exemples :
         sys.exit(1)
     if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps:
         # Mode migration pure : on n'a besoin que de dossier_dalles
-        racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / "ign_lidar"))
-        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / "ign_lidar"
+        racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
+        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
         dossier_dalles.mkdir(parents=True, exist_ok=True)
         a_migrer = [f for f in dossier_dalles.glob("*.tif")]
         if not a_migrer:
@@ -7300,7 +7208,7 @@ Exemples :
             sys.exit(1)
         dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
-        print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
+        print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
         print(f"  Surface : ~{surface_km2:.0f} km²  |  {len(dalles)} dalles")
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
@@ -7335,12 +7243,12 @@ Exemples :
         # une bbox Mercator vide et un MBTiles à 0 tuiles.
         print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
         try:
-            t = _get_transformer("EPSG:4326", "EPSG:2154")
+            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
             cx, cy = t.transform(lon, lat)
         except ImportError:
             cx, cy = wgs84_to_lamb93_approx(lon, lat)
             print("  (pyproj absent, conversion approchee)")
-        print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+        print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
 
     elif args.zone_ville:
         nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
@@ -7368,12 +7276,12 @@ Exemples :
             # BUGFIX : conversion GPS→L93 dans tous les cas (cf. fix ci-dessus)
             print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
             try:
-                t = _get_transformer("EPSG:4326", "EPSG:2154")
+                t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
                 cx, cy = t.transform(lon, lat)
             except ImportError:
                 cx, cy = wgs84_to_lamb93_approx(lon, lat)
                 print("  (pyproj absent, conversion approchee)")
-            print(f"  Lambert 93 -> X={cx:.0f}, Y={cy:.0f}")
+            print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
         else:
             ville_saisie = input("  Nom de la ville : ").strip()
             if not ville_saisie:
@@ -7406,7 +7314,7 @@ Exemples :
             _cols_pr * _rows_pr, 0.0, unite_m=True)
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
-                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
             manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
             n_total   = len(sous_zones)
             nb_done   = sum(1 for z in sous_zones
@@ -7445,7 +7353,7 @@ Exemples :
                         # l'inspection — sinon l'utilisateur perd le contexte.
                         _dossier_chunk = (
                             (Path(args.dossier).resolve() if args.dossier
-                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
                             / nom_z)
                         _mbts = list(_dossier_chunk.glob("*.mbtiles"))
                         _has_empty = (not _mbts) or any(
@@ -7516,8 +7424,8 @@ Exemples :
         if input(f"\n  Lancer le téléchargement ? [O/n] : ").strip().lower() == "n":
             sys.exit(0)
 
-    racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar"
-    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / "ign_lidar"
+    racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
+    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
     dossier_ville  = racine
     _sans_telechargement = not getattr(args, "telechargement", False)
     _sans_ombrages = not getattr(args, "ombrages", None)
@@ -7655,6 +7563,23 @@ Exemples :
             print("  Aucune dalle hors zone trouvée.")
 
     # -------------------------------------------------------
+    # Découverte des dalles via le provider — source de vérité unifiée
+    # -------------------------------------------------------
+    # Calculé une fois ici, utilisé par la cache-check ET le download.
+    # Pour FR : TMS + fallback grille → dict {nom: url}.
+    # Pour NL : index JSON kaartbladen → dict {nom: url}.
+    # Provider-agnostique : aucune hypothèse sur la géométrie des tuiles.
+    _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+    _lon1, _lat1 = _t_wgs.transform(bbox[0], bbox[1])
+    _lon2, _lat2 = _t_wgs.transform(bbox[2], bbox[3])
+    bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
+                max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+    # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
+    cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+    dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+    noms_attendus = set(dalles_dict.keys())
+
+    # -------------------------------------------------------
     # Détecter si on peut sauter le téléchargement
     # -------------------------------------------------------
     sauter_telechargement = False
@@ -7684,235 +7609,33 @@ Exemples :
             # dalles d'autres zones (autres tests précédents). Si aucune dalle
             # ne couvre la zone, on plante avec un message clair plutôt que de
             # laisser le pipeline continuer puis échouer plus loin.
-            if dalles:  # liste des (x, y) de la grille pour la zone demandée
-                noms_grille_attendus = {nom_dalle(x, y) for x, y in dalles}
+            if noms_attendus:  # discover_dalles a retourné une liste non-vide
                 dalles_zone_cache = [d for d in dalles_existantes
-                                     if d.name in noms_grille_attendus
+                                     if d.name in noms_attendus
                                      and d.stat().st_size > SEUIL_DALLE_VALIDE]
                 if not dalles_zone_cache:
                     print(f"\n  ATTENTION : {len(dalles_existantes)} dalle(s) dans le cache,")
                     print(f"              mais AUCUNE ne couvre la zone demandée.")
                     print(f"  Cache global : {dossier_dalles}")
-                    # Affiche le nom de ville original (avec accents) quand on
-                    # vient de --zone-ville, sinon retombe sur nom_zone normalisé.
-                    # Les autres branches (bbox, gps, dept) n'ont pas de label
-                    # humain distinct du nom_zone, et le mode interactif est
-                    # marginal (--oui recommandé pour scripts).
                     libelle_zone = args.zone_ville or nom_zone
-                    print(f"  Zone demandée : grille de {len(dalles)} dalle(s) autour de "
+                    print(f"  Zone demandée : {len(noms_attendus)} dalle(s) autour de "
                           f"{libelle_zone}")
                     print(f"  Ajoutez --telechargement pour télécharger les dalles manquantes.")
                     sys.exit(1)
                 print(f"\n  Téléchargement ignoré "
-                      f"({len(dalles_zone_cache)}/{len(dalles)} dalle(s) de la zone trouvées en cache)")
+                      f"({len(dalles_zone_cache)}/{len(noms_attendus)} dalle(s) de la zone trouvées en cache)")
             else:
-                # Pas de grille définie (cas dégradé) : juste compter les dalles
+                # Provider sans index pour cette bbox (cas dégradé) : juste compter
                 print(f"\n  Téléchargement ignoré ({len(dalles_existantes)} dalle(s) en cache)")
             sauter_telechargement = True
 
     # -------------------------------------------------------
-    # Téléchargement + assemblage
+    # Téléchargement + assemblage (pivoté sur PROVIDER.discover_dalles)
     # -------------------------------------------------------
     if not sauter_telechargement:
-        ok = skip = absent = erreur = 0
-
-        # ── Interrogation WFS IGN ─────────────────────────────────────────────
-        tms_dalles = None
-        try:
-            _t = _get_transformer("EPSG:2154", "EPSG:4326")
-            lon1, lat1 = _t.transform(bbox[0], bbox[1])
-            lon2, lat2 = _t.transform(bbox[2], bbox[3])
-            lon_min_w = min(lon1, lon2) - 0.05
-            lat_min_w = min(lat1, lat2) - 0.05
-            lon_max_w = max(lon1, lon2) + 0.05
-            lat_max_w = max(lat1, lat2) + 0.05
-            print(f"  Interrogation TMS IGN (dalles disponibles)...", flush=True)
-            print(f"  TMS bbox WGS84 : {lon_min_w:.4f},{lat_min_w:.4f} → "
-                  f"{lon_max_w:.4f},{lat_max_w:.4f}", flush=True)
-            tms_dalles = interroger_tms_dalles(lon_min_w, lat_min_w,
-                                               lon_max_w, lat_max_w,
-                                               bbox_l93=bbox)
-            if tms_dalles is not None:
-                pass  # déjà affiché dans interroger_tms_dalles
-            else:
-                print("  TMS indisponible — repli sur WMS dalle par dalle")
-        except Exception as e_wfs:
-            print(f"  TMS erreur ({e_wfs}) — repli sur WMS")
-
-        largeur = 30; done = 0; t0_dl = time.time()
-
-        # ── Étape 1 : WFS → liste officielle des dalles disponibles ─────────
-        # ── Étape 2 : grille théorique → complète les dalles absentes du WFS ─
-        # Le WFS IGN est incomplet : certaines dalles existent sur le WMS mais
-        # ne sont pas référencées dans le catalogue WFS. On télécharge d'abord
-        # les dalles WFS, puis on tente les cases manquantes via WMS.
-
-        # Construire le dict complet : WFS en priorité, grille en complément
-        a_telecharger_wfs  = []   # (nom, url_wfs)  — URL exacte IGN
-        a_telecharger_wms  = []   # (x_km, y_km)    — grille théorique hors WFS
-
-        noms_tms = set(tms_dalles.keys()) if tms_dalles else set()
-
-        try:
-            if tms_dalles is not None:
-                for nom, url in tms_dalles.items():
-                    if args.telechargement_forcer:
-                        chemin_dalle(dossier_dalles, nom).unlink(missing_ok=True)
-                    chemin_d = chemin_dalle(dossier_dalles, nom)
-                    if not chemin_d.exists() or chemin_d.stat().st_size < SEUIL_DALLE_VALIDE:
-                        a_telecharger_wfs.append((nom, url))
-                    else:
-                        skip += 1
-
-            # Cases de la grille théorique absentes du WFS → tentative WMS
-            for x_km, y_km in dalles:
-                nom = nom_dalle(x_km, y_km)
-                if nom in noms_tms:
-                    continue  # déjà géré par WFS
-                if args.telechargement_forcer:
-                    chemin_dalle(dossier_dalles, nom).unlink(missing_ok=True)
-                chemin_d = chemin_dalle(dossier_dalles, nom)
-                if not chemin_d.exists() or chemin_d.stat().st_size < SEUIL_DALLE_VALIDE:
-                    a_telecharger_wms.append((x_km, y_km))
-                else:
-                    skip += 1
-        except OSError as _e_scan:
-            msg = (f"Erreur accès disque dalles :\n{_e_scan}\n\n"
-                   f"Vérifiez que le disque {dossier_dalles} est connecté.")
-            print(f"  ERREUR : {msg}", flush=True)
-            if WINDOWS:
-                try:
-                    import ctypes as _ct
-                    _ct.windll.user32.MessageBoxW(0, msg, "lidar2map — Erreur disque", 0x10)
-                except Exception:
-                    pass
-            sys.exit(1)
-
-        nb_total = len(a_telecharger_wfs) + len(a_telecharger_wms)
-        nb_wfs_skip = (len(noms_tms) - len(a_telecharger_wfs))
-        print(f"  Dalles en cache : {nb_wfs_skip + skip}")
-        if nb_total > 0:
-            print(f"  À télécharger   : {nb_total}  (WFS:{len(a_telecharger_wfs)}  WMS:{len(a_telecharger_wms)})", flush=True)
-        else:
-            print(f"  Toutes les dalles sont déjà en cache — téléchargement ignoré", flush=True)
-
-        def telecharger_une_wfs(a):
-            i, (nom, url) = a
-            res = telecharger_dalle_directe(nom, url, dossier_dalles,
-                                            ecraser=args.telechargement_ecraser)
-            taille = 0
-            if res in ("ok", "skip") and chemin_dalle(dossier_dalles, nom).exists():
-                taille = chemin_dalle(dossier_dalles, nom).stat().st_size / 1e6
-            return i, nom, res, taille
-
-        def telecharger_une_wms(a):
-            i, (x_km, y_km) = a
-            nom = nom_dalle(x_km, y_km)
-            res = telecharger_dalle(x_km, y_km, dossier_dalles, compresser,
-                                    ecraser=args.telechargement_ecraser)
-            taille = 0
-            if res == "ok" and chemin_dalle(dossier_dalles, nom).exists():
-                taille = chemin_dalle(dossier_dalles, nom).stat().st_size / 1e6
-            return i, nom, res, taille
-
-        # Téléchargement WFS
-        if a_telecharger_wfs:
-            _log_req(WFS_URL, "WFS IGN LiDAR")
-            print(f"  Phase 1/2 — WFS ({len(a_telecharger_wfs)} dalles)...", flush=True)
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
-                futures = {executor.submit(telecharger_une_wfs, (i, d)): i
-                           for i, d in enumerate(a_telecharger_wfs, 1)}
-                for future in as_completed(futures):
-                    i, nom, res, taille = future.result()
-                    done += 1
-                    pct  = int(done * 100 / max(nb_total, 1))
-                    bars = int(done * largeur / max(nb_total, 1))
-                    barre_str = "█" * bars + "░" * (largeur - bars)
-                    elap = int(time.time() - t0_dl)
-                    label = "  Dalles IGN".ljust(40)
-                    if res == "ok":
-                        ok += 1
-                        print(f"\r{label} [{barre_str}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
-                              flush=True)
-                        print(f"  [{done:4d}/{nb_total}] {nom} -> OK ({taille:.1f} Mo)")
-                    elif res == "skip":
-                        skip += 1
-                    elif res == "absent":
-                        absent += 1
-                    else:
-                        erreur += 1
-                    print(f"\r{label} [{barre_str}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
-                          end="", flush=True)
-
-        # Téléchargement WMS (cases hors WFS)
-        if a_telecharger_wms:
-            print(f"\n  Phase 2/2 — WMS grille ({len(a_telecharger_wms)} cases)...",
-                  flush=True)
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
-                futures = {executor.submit(telecharger_une_wms, (i, d)): i
-                           for i, d in enumerate(a_telecharger_wms, 1)}
-                for future in as_completed(futures):
-                    i, nom, res, taille = future.result()
-                    done += 1
-                    pct  = int(done * 100 / max(nb_total, 1))
-                    bars = int(done * largeur / max(nb_total, 1))
-                    barre_str = "█" * bars + "░" * (largeur - bars)
-                    elap = int(time.time() - t0_dl)
-                    label = "  Dalles IGN".ljust(40)
-                    ligne_barre = (f"\r{label} [{barre_str}] {pct:3d}%  "
-                                   f"{done}/{nb_total}  {_hms(elap)}")
-                    if res == "ok":
-                        ok += 1
-                        print(ligne_barre, flush=True)
-                        print(f"  [{done:4d}/{nb_total}] {nom} -> OK ({taille:.1f} Mo)")
-                    elif res == "skip":
-                        skip += 1
-                    elif res == "absent":
-                        absent += 1
-                    else:
-                        erreur += 1
-                    print(ligne_barre, end="", flush=True)
-
-        if not a_telecharger_wfs and not a_telecharger_wms:
-            print(f"  Toutes les dalles sont en cache ({skip} dalles) — téléchargement ignoré",
-                  flush=True)
-
-        print()  # fin de la barre (si barre affichée)
-
-        print("\n" + "=" * 55)
-        print(f"  Téléchargées    : {ok}")
-        print(f"  Déjà présentes  : {skip}")
-        print(f"  Non disponibles : {absent}")
-        print(f"  Erreurs         : {erreur}")
-        print("=" * 55)
-
-        # ── Persistance de la liste des dalles de la zone ────────────────────
-        # Inclut WFS + WMS (cases hors WFS téléchargées avec succès)
-        noms_wfs_set = set(tms_dalles.keys()) if tms_dalles else set()
-        noms_persistance = []
-        # Dalles WFS présentes sur disque
-        for nom in noms_wfs_set:
-            if chemin_dalle(dossier_dalles, nom).exists() and \
-                    chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE:
-                noms_persistance.append(nom)
-        # Dalles WMS (hors WFS) présentes sur disque
-        nb_wms_bonus = 0
-        for x_km, y_km in dalles:
-            nom = nom_dalle(x_km, y_km)
-            if nom not in noms_wfs_set:
-                if chemin_dalle(dossier_dalles, nom).exists() and \
-                        chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE:
-                    noms_persistance.append(nom)
-                    nb_wms_bonus += 1
-        if noms_persistance:
-            dalles_zone_txt = dossier_ville / "dalles_zone.txt"
-            _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
-            dalles_zone_txt.write_text(
-                _bbox_hdr + "\n" + "\n".join(sorted(set(noms_persistance))), encoding="utf-8")
-            _creer_fichier(dalles_zone_txt)
-            print(f"  Liste dalles zone : {dalles_zone_txt.name}"
-                  f" ({len(set(noms_persistance))} dalles"
-                  f" dont {nb_wms_bonus} hors-WFS)")
+        # dalles_dict a déjà été calculé plus haut via PROVIDER.discover_dalles.
+        # Orchestration download + persistance via le helper provider-agnostique.
+        _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
     # -------------------------------------------------------
     # Ombrages
@@ -7937,11 +7660,11 @@ Exemples :
                 print(f"  Zone modifiée — reconstruction {dalles_zone_txt.name} depuis le cache...")
                 print(f"    Ancienne bbox : {_bbox_fichier}")
                 print(f"    Nouvelle bbox : {_bbox_courante}")
-                # Reconstruire depuis le cache disque sans retélécharger
-                noms_grille = {nom_dalle(x, y) for x, y in dalles}
+                # Reconstruire depuis le cache disque sans retélécharger.
+                # noms_attendus vient de PROVIDER.discover_dalles (provider-agnostique).
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_grille and d.stat().st_size > SEUIL_DALLE_VALIDE}
+                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
                     dalles_zone_txt.write_text(
                         _bbox_courante + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
@@ -7954,18 +7677,18 @@ Exemples :
             else:
                 noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
                 print(f"  Liste dalles zone : {dalles_zone_txt.name} ({len(noms_zone)} dalles)")
-        elif not args.telechargement and dalles:
+        elif not args.telechargement and noms_attendus:
             # Si seul --osm demandé, pas besoin des dalles
             if args.osm and not args.ombrages and not args.mbtiles:
                 pass  # on ne cherche pas les dalles
             else:
-                # dalles_zone.txt absent mais grille connue → reconstruction depuis le cache disque
-                # (la vérification en amont garantit qu'on trouvera au moins une dalle)
+                # dalles_zone.txt absent mais liste attendue connue → reconstruction
+                # depuis le cache disque (la vérification en amont garantit qu'on
+                # trouvera au moins une dalle).
                 print(f"  Reconstruction de {dalles_zone_txt.name} depuis le cache disque...")
-                noms_grille = {nom_dalle(x, y) for x, y in dalles}
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_grille and d.stat().st_size > SEUIL_DALLE_VALIDE}
+                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
                     _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
                     dalles_zone_txt.write_text(
@@ -8401,10 +8124,13 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=Tr
             sous_zones.append((i_lat, i_lon, x_w, y_s, x_e, y_n))
     return sous_zones, mode_desc
 
-def _lister_dalles_zone(dalles, dossier_dalles, dossier_ville, bbox):
-    """
-    Retourne la liste des dalles valides pour la zone courante,
-    en se basant sur dalles_zone.txt ou en reconstruisant depuis le cache disque.
+def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
+    """Retourne la liste des Path des dalles valides présentes sur disque
+    pour cette zone. Source de vérité : dalles_zone.txt si bbox match,
+    sinon le set `noms_attendus` (issu de PROVIDER.discover_dalles).
+
+    noms_attendus : iterable de noms de dalles attendus pour la zone
+                    (typiquement les keys du dict retourné par discover_dalles).
     """
     noms_zone = set()
     dalles_zone_txt = dossier_ville / "dalles_zone.txt"
@@ -8414,66 +8140,39 @@ def _lister_dalles_zone(dalles, dossier_dalles, dossier_ville, bbox):
         if _lignes and _lignes[0].strip() == _bbox_courante:
             noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
     if not noms_zone:
-        noms_grille = {nom_dalle(x, y) for x, y in dalles}
+        noms_attendus_set = set(noms_attendus)
         toutes = _rglob_tif_robuste(dossier_dalles)
         noms_zone = {d.name for d in toutes
-                     if d.name in noms_grille and d.stat().st_size > SEUIL_DALLE_VALIDE}
+                     if d.name in noms_attendus_set and d.stat().st_size > SEUIL_DALLE_VALIDE}
     toutes_dalles   = sorted(_rglob_tif_robuste(dossier_dalles))
     dalles_zone     = [d for d in toutes_dalles if d.name in noms_zone]
     dalles_ombrages = [d for d in dalles_zone   if d.stat().st_size > SEUIL_DALLE_VALIDE]
     return dalles_ombrages
 
 
-def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
-    """
-    Télécharge les dalles manquantes pour une bbox donnée.
-    Extrait du bloc de téléchargement de main() — réutilisable par _traiter_bbox_lidar.
-    """
-    tms_dalles = None
-    try:
-        _t = _get_transformer("EPSG:2154", "EPSG:4326")
-        lon1, lat1 = _t.transform(bbox[0], bbox[1])
-        lon2, lat2 = _t.transform(bbox[2], bbox[3])
-        lon_min_w = min(lon1, lon2) - 0.05
-        lat_min_w = min(lat1, lat2) - 0.05
-        lon_max_w = max(lon1, lon2) + 0.05
-        lat_max_w = max(lat1, lat2) + 0.05
-        tms_dalles = interroger_tms_dalles(lon_min_w, lat_min_w,
-                                           lon_max_w, lat_max_w,
-                                           bbox_l93=bbox)
-    except Exception as e_wfs:
-        print(f"  TMS erreur ({e_wfs}) — repli sur WMS")
+def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args):
+    """Télécharge en parallèle les dalles d'un dict {nom: url} (issu de
+    PROVIDER.discover_dalles). Pure orchestration : la découverte et le
+    fallback grille sont entièrement délégués au provider.
 
+    dalles_dict : {nom_dalle: url_telechargement_complet}
+    bbox        : (x_min, y_min, x_max, y_max) en CRS natif (informatif, pour
+                  le header de dalles_zone.txt)
+    """
     compresser = getattr(args, "telechargement_compresser", False)
-
-    a_telecharger_wfs = []
-    a_telecharger_wms = []
-    noms_tms = set(tms_dalles.keys()) if tms_dalles else set()
     ok = skip = absent = erreur = 0
+    a_telecharger = []
 
-    if tms_dalles:
-        for nom, url in tms_dalles.items():
-            if args.telechargement_forcer:
-                chemin_dalle(dossier_dalles, nom).unlink(missing_ok=True)
-            cd = chemin_dalle(dossier_dalles, nom)
-            if not cd.exists() or cd.stat().st_size < SEUIL_DALLE_VALIDE:
-                a_telecharger_wfs.append((nom, url))
-            else:
-                skip += 1
-
-    for x_km, y_km in dalles:
-        nom = nom_dalle(x_km, y_km)
-        if nom in noms_tms:
-            continue
+    for nom, url in dalles_dict.items():
         if args.telechargement_forcer:
             chemin_dalle(dossier_dalles, nom).unlink(missing_ok=True)
         cd = chemin_dalle(dossier_dalles, nom)
         if not cd.exists() or cd.stat().st_size < SEUIL_DALLE_VALIDE:
-            a_telecharger_wms.append((x_km, y_km))
+            a_telecharger.append((nom, url))
         else:
             skip += 1
 
-    nb_total = len(a_telecharger_wfs) + len(a_telecharger_wms)
+    nb_total = len(a_telecharger)
     largeur  = 30
     done = 0
     t0_dl = time.time()
@@ -8483,30 +8182,16 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
         bars = int(done * largeur / max(nb_total, 1))
         elap = int(time.time() - t0_dl)
         barre = "█" * bars + "░" * (largeur - bars)
-        print(f"\r  Dalles IGN [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
+        print(f"\r  Dalles LIDAR [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
               end="", flush=True)
 
-    if a_telecharger_wfs:
+    if a_telecharger:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
                                  args.telechargement_ecraser): (nom,)
-                       for nom, url in a_telecharger_wfs}
+                       for nom, url in a_telecharger}
             for fut in as_completed(futures):
                 nom = futures[fut][0]
-                res = fut.result()
-                done += 1
-                if res == "ok":   ok += 1
-                elif res == "skip": skip += 1
-                elif res == "absent": absent += 1
-                else: erreur += 1
-                _afficher_barre(done, nb_total, t0_dl)
-
-    if a_telecharger_wms:
-        with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(telecharger_dalle, x, y, dossier_dalles, compresser,
-                                 args.telechargement_ecraser): (x, y)
-                       for x, y in a_telecharger_wms}
-            for fut in as_completed(futures):
                 res = fut.result()
                 done += 1
                 if res == "ok":   ok += 1
@@ -8519,19 +8204,11 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
         print()  # fin barre
         print(f"  Téléchargées : {ok}  Cache : {skip}  Absent : {absent}  Erreurs : {erreur}")
 
-    # Persister dalles_zone.txt
-    noms_wfs_set = set(tms_dalles.keys()) if tms_dalles else set()
-    noms_persistance = []
-    for nom in noms_wfs_set:
-        cd = chemin_dalle(dossier_dalles, nom)
-        if cd.exists() and cd.stat().st_size > SEUIL_DALLE_VALIDE:
-            noms_persistance.append(nom)
-    for x_km, y_km in dalles:
-        nom = nom_dalle(x_km, y_km)
-        if nom not in noms_wfs_set:
-            cd = chemin_dalle(dossier_dalles, nom)
-            if cd.exists() and cd.stat().st_size > SEUIL_DALLE_VALIDE:
-                noms_persistance.append(nom)
+    # Persister dalles_zone.txt — utile pour --dalles-purger-hors-zone et la
+    # reprise (cf. _lister_dalles_zone qui lit ce fichier).
+    noms_persistance = [nom for nom in dalles_dict.keys()
+                        if chemin_dalle(dossier_dalles, nom).exists()
+                        and chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE]
     if noms_persistance:
         _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
@@ -8540,14 +8217,9 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
         _creer_fichier(dalles_zone_txt)
 
     # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
-    # pour permettre --nettoyage de les supprimer en fin de chunk. On itère
-    # noms_persistance plutôt que la grille stricte (x_km, y_km) car la
-    # requête TMS retourne aussi des dalles dans la marge de 5 km autour
-    # de la bbox du chunk — sans ce tracking elles resteraient orphelines
-    # dans le cache, accumulées par chunk.
-    # Le téléchargement parallèle (ThreadPoolExecutor) ne propage pas
-    # _manifest_ctx (threading.local), donc on enregistre ici depuis le
-    # main thread où le contexte manifeste est actif.
+    # pour permettre --nettoyage de les supprimer en fin de chunk. Le
+    # téléchargement parallèle ne propage pas _manifest_ctx (threading.local)
+    # → registration explicite depuis le main thread.
     for _nom in noms_persistance:
         _cd = chemin_dalle(dossier_dalles, _nom)
         if _cd.exists():
@@ -8613,22 +8285,33 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
 
     try:
         with _contexte_manifeste(manifeste, cle):
-            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+            bbox = (bx1, by1, bx2, by2)
             # Structure : <racine>/<nom_zone_base>/ign_lidar/<nom_z>/
             # (tous les morceaux sont sous-dossiers du même projet parent)
             racine_base = (Path(args.dossier).resolve() if args.dossier
-                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "ign_lidar")
+                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
             racine = racine_base
             dossier_dalles = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                              else DOSSIER_TRAVAIL / "cache" / "ign_lidar")
+                              else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR)
             dossier_ville = racine / nom_z
             dossier_ville.mkdir(parents=True, exist_ok=True)
             dossier_dalles.mkdir(parents=True, exist_ok=True)
 
+            # Découverte des dalles via le provider — retourne {nom: url} en
+            # combinant index officiel (TMS pour FR, JSON pour NL, etc.) et
+            # éventuel fallback grille interne au provider. Le pipeline reste
+            # provider-agnostique : il ne suppose ni grille (x_km, y_km) ni
+            # protocole d'accès particulier.
+            _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+            _lon1, _lat1 = _t.transform(bx1, by1)
+            _lon2, _lat2 = _t.transform(bx2, by2)
+            bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
+                        max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+            cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+            dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+
             if args.telechargement:
-                _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args)
-                # Le tracking des dalles pour --nettoyage est fait à la fin de
-                # _telecharger_dalles_zone (inclut les dalles TMS hors grille).
+                _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
             if args.ombrages:
                 TOUS = ["315","045","135","225","multi","slope","svf","svf100","lrm","rrim"]
@@ -8636,7 +8319,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                          else [] if "aucun" in args.ombrages
                          else args.ombrages)
                 if choix:
-                    dalles_ombrages = _lister_dalles_zone(dalles, dossier_dalles,
+                    dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
                                                           dossier_ville, bbox)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
                             else ELEVATION_SOLEIL)
@@ -12356,7 +12039,7 @@ def lancer_gui():
             # ici, open_folder() pointerait vers un chemin inexistant.
             nom_slug = normaliser_nom(nom) if nom else ""
             base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-            _type_dir = {"lidar":"ign_lidar","scan":"ign_raster","osm":"osm_vecteur",
+            _type_dir = {"lidar":LIDAR_SUBDIR,"scan":"ign_raster","osm":"osm_vecteur",
                          "vecteur":"ign_vecteur","fusion":"fusion","decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)
