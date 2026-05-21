@@ -7,12 +7,24 @@
 #   - Géométrie des dalles (1 km × 1 km, 0.5 m/px)
 #   - Format de nommage et organisation sous-dossiers
 #   - Construction d'URL GetMap
+#   - Découverte des dalles disponibles via TMS vectoriel
 #
 # Tout le reste du pipeline (SVF, ombrages, warp EPSG:3857, MBTiles) est
 # provider-agnostique : il consomme des GeoTIFF en CRS natif et n'a rien
 # de spécifique à la France au-delà de ce module.
+#
+# Self-contained : pour rester indépendant de lidar2map.py, ce module
+# importe uniquement la stdlib + mapbox-vector-tile (lazy import).
 
+import json
+import math
+import os
+import subprocess
+import sys
 import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -101,3 +113,157 @@ def dalles_pour_bbox(x1, y1, x2, y2):
     return [(x_km, y_km)
             for x_km in range(x_start, x_end + 1)
             for y_km in range(y_start, y_end + 1)]
+
+
+# ── Découverte des dalles disponibles via TMS vectoriel ──────────────────────
+HTTP_UA  = "lidar2map/1.0 (IGN WMTS/WMS)"
+TMS_ZOOM = 12         # zoom suffisant pour avoir toutes les dalles 1 km × 1 km
+
+
+def _deg_to_tile(lat_deg, lon_deg, zoom):
+    """WGS84 → tuile XYZ (Google/OSM, y=0 en haut). Pure math."""
+    n = 2 ** zoom
+    x = int((lon_deg + 180.0) / 360.0 * n)
+    lat_r = math.radians(lat_deg)
+    y = int((1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
+            / 2.0 * n)
+    return x, max(0, min(n - 1, y))
+
+
+def _write_json_atomic(path, data):
+    """Écriture JSON atomique : tmp + os.replace. Best-effort (silent fail)."""
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
+def _import_mvt():
+    """Lazy import mapbox-vector-tile, auto-install si absent."""
+    try:
+        import mapbox_vector_tile as _mvt
+        return _mvt
+    except ImportError:
+        pass
+    print("  Installation mapbox-vector-tile...", flush=True)
+    r = subprocess.run([sys.executable, "-m", "pip", "install",
+                        "mapbox-vector-tile", "-q"], capture_output=True)
+    if r.returncode != 0:
+        subprocess.run([sys.executable, "-m", "pip", "install",
+                        "mapbox-vector-tile", "-q", "--user"], capture_output=True)
+    try:
+        import mapbox_vector_tile as _mvt
+        return _mvt
+    except ImportError:
+        return None
+
+
+def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
+    """Interroge le TMS vectoriel IGN pour obtenir les dalles disponibles.
+
+    Source : https://data.geopf.fr/tms/1.0.0/IGNF_MNT-LIDAR-HD-produit/{z}/{x}/{y}.pbf
+
+    bbox_wgs84 : (lon_min, lat_min, lon_max, lat_max) — pour calculer la
+                 plage de tuiles TMS à interroger.
+    bbox_natif : (x_min, y_min, x_max, y_max) en Lambert-93 — filtre les
+                 features par intersection. Sans filtre, toutes les dalles
+                 des tuiles TMS (~40×40 km chacune) seraient retournées.
+    cache_path : chemin du fichier JSON où mettre en cache les réponses TMS
+                 (les tuiles changent rarement → on évite des re-fetch).
+
+    Retourne {nom_dalle: url_wms} ou None si toutes les requêtes échouent.
+    """
+    _mvt = _import_mvt()
+    if _mvt is None:
+        print("  ERREUR : mapbox-vector-tile non installable — repli WFS")
+        return None
+
+    lon_min, lat_min, lon_max, lat_max = bbox_wgs84
+    tx0, ty0 = _deg_to_tile(lat_max, lon_min, TMS_ZOOM)   # NW
+    tx1, ty1 = _deg_to_tile(lat_min, lon_max, TMS_ZOOM)   # SE
+    tuiles = [(tx, ty) for tx in range(tx0, tx1 + 1) for ty in range(ty0, ty1 + 1)]
+    nb_tuiles = len(tuiles)
+    print(f"  TMS : {nb_tuiles} tuiles à interroger (zoom {TMS_ZOOM}, "
+          f"x={tx0}..{tx1}, y={ty0}..{ty1})...", flush=True)
+
+    cache_path = Path(cache_path)
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8")) if cache_path.exists() else {}
+    except Exception:
+        cache = {}
+
+    tuiles_a_fetcher = [(tx, ty) for tx, ty in tuiles if f"{tx}/{ty}" not in cache]
+    if tuiles_a_fetcher:
+        print(f"  TMS cache : {nb_tuiles - len(tuiles_a_fetcher)} tuiles en cache, "
+              f"{len(tuiles_a_fetcher)} à télécharger...", flush=True)
+
+    def _fetch_tuile(tx, ty):
+        url = f"{TMS_URL}/{TMS_ZOOM}/{tx}/{ty}.pbf"
+        req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                pbf_data = resp.read()
+            tile = _mvt.decode(pbf_data)
+            entries = []
+            for layer in tile.values():
+                for feat in layer.get("features", []):
+                    props = feat.get("properties", {})
+                    nom    = props.get("name_download") or props.get("name")
+                    url_dl = props.get("url")
+                    bbox_s = props.get("bbox")
+                    if nom and url_dl:
+                        if not nom.endswith(".tif"):
+                            nom += ".tif"
+                        entries.append((nom, url_dl, bbox_s))
+            return (tx, ty, entries, None)
+        except Exception as _e:
+            return (tx, ty, [], str(_e))
+
+    nb_erreurs = 0
+    done_fetch = 0
+    if tuiles_a_fetcher:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(_fetch_tuile, tx, ty): (tx, ty)
+                    for tx, ty in tuiles_a_fetcher}
+            for fut in as_completed(futs):
+                tx, ty, entries, err = fut.result()
+                done_fetch += 1
+                if err:
+                    nb_erreurs += 1
+                    cache[f"{tx}/{ty}"] = []
+                else:
+                    cache[f"{tx}/{ty}"] = entries
+                if done_fetch % 20 == 0 or done_fetch == len(tuiles_a_fetcher):
+                    pct = done_fetch * 100 // max(len(tuiles_a_fetcher), 1)
+                    print(f"\r  TMS : {pct:3d}%  {done_fetch}/{len(tuiles_a_fetcher)} "
+                          f"nouvelles tuiles...", end="", flush=True)
+        if tuiles_a_fetcher:
+            print()
+        _write_json_atomic(cache_path, cache)
+
+    # Filtre bbox L93 sur les résultats
+    dalles = {}
+    for tx, ty in tuiles:
+        for entry in cache.get(f"{tx}/{ty}", []):
+            nom, url_dl, bbox_s = entry if len(entry) == 3 else (*entry, None)
+            if bbox_natif is not None and bbox_s:
+                try:
+                    _fx0, _fy0, _fx1, _fy1 = map(float, str(bbox_s).split(","))
+                    _zx0, _zy0, _zx1, _zy1 = bbox_natif
+                    if _fx1 < _zx0 or _fx0 > _zx1 or _fy1 < _zy0 or _fy0 > _zy1:
+                        continue
+                except Exception:
+                    pass
+            dalles[nom] = url_dl
+
+    if nb_erreurs == nb_tuiles:
+        print("  ERREUR TMS : toutes les tuiles ont échoué")
+        return None
+    if nb_erreurs:
+        print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur (ignorées)")
+    print(f"  TMS : {len(dalles)} dalle(s) disponibles dans la bbox")
+    return dalles
