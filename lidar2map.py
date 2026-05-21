@@ -2293,7 +2293,7 @@ def _get_transformer(src_crs, dst_crs, always_xy=True):
     """Retourne un pyproj Transformer mémorisé pour la paire (src, dst).
 
     Utilisation :
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         x_l93, y_l93 = t.transform(lon, lat)
 
     Note : ne pas appeler avec always_xy=False et always_xy=True alternativement
@@ -2493,7 +2493,7 @@ def _lamb93_to_wgs84_safe(x, y):
     sans proj.db. Précision pyproj < 1 m, approximation < 50 m.
     """
     try:
-        _t = _get_transformer("EPSG:2154", "EPSG:4326")
+        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
         return _t.transform(x, y)
     except Exception:
         return lamb93_to_wgs84_approx(x, y)
@@ -2579,7 +2579,7 @@ def geocoder_ville_l93(nom_ville):
     if lat is None:
         return None, None
     try:
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         x, y = t.transform(lon, lat)
     except ImportError:
         x, y = wgs84_to_lamb93_approx(lon, lat)
@@ -2611,7 +2611,7 @@ def geocoder_departement(num_dep):
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
         try:
-            t = _get_transformer("EPSG:4326", "EPSG:2154")
+            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
             bx1, by1 = t.transform(c['lon_min'], c['lat_min'])
             bx2, by2 = t.transform(c['lon_max'], c['lat_max'])
         except ImportError:
@@ -2680,7 +2680,7 @@ def geocoder_departement(num_dep):
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
     try:
-        t = _get_transformer("EPSG:4326", "EPSG:2154")
+        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
         bx1, by1 = t.transform(lon_min, lat_min)
         bx2, by2 = t.transform(lon_max, lat_max)
     except ImportError:
@@ -5326,7 +5326,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _y0 = y0_l if y0_l is not None else y0_bb
             _y1 = y1_l if y1_l is not None else y1_bb
             try:
-                _t = _get_transformer("EPSG:2154", "EPSG:3857")
+                _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 te_xmin, te_ymin = _t.transform(x0, _y0)
                 te_xmax, te_ymax = _t.transform(x1, _y1)
             except Exception:
@@ -5446,7 +5446,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         elif warp_deja_fait and bb_src is not None:
             # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src
             try:
-                _t2 = _get_transformer("EPSG:2154", "EPSG:3857")
+                _t2 = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 _rx0, _ry0 = _t2.transform(bb_src[0], bb_src[1])
                 _rx1, _ry1 = _t2.transform(bb_src[2], bb_src[3])
             except Exception:
@@ -7190,7 +7190,7 @@ Exemples :
         # une bbox Mercator vide et un MBTiles à 0 tuiles.
         print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
         try:
-            t = _get_transformer("EPSG:4326", "EPSG:2154")
+            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
             cx, cy = t.transform(lon, lat)
         except ImportError:
             cx, cy = wgs84_to_lamb93_approx(lon, lat)
@@ -7223,7 +7223,7 @@ Exemples :
             # BUGFIX : conversion GPS→L93 dans tous les cas (cf. fix ci-dessus)
             print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
             try:
-                t = _get_transformer("EPSG:4326", "EPSG:2154")
+                t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
                 cx, cy = t.transform(lon, lat)
             except ImportError:
                 cx, cy = wgs84_to_lamb93_approx(lon, lat)
@@ -7574,7 +7574,7 @@ Exemples :
         # ── Interrogation WFS IGN ─────────────────────────────────────────────
         tms_dalles = None
         try:
-            _t = _get_transformer("EPSG:2154", "EPSG:4326")
+            _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
             lon1, lat1 = _t.transform(bbox[0], bbox[1])
             lon2, lat2 = _t.transform(bbox[2], bbox[3])
             lon_min_w = min(lon1, lon2) - 0.05
@@ -8286,7 +8286,7 @@ def _telecharger_dalles_zone(dalles, bbox, dossier_dalles, dossier_ville, args):
     """
     tms_dalles = None
     try:
-        _t = _get_transformer("EPSG:2154", "EPSG:4326")
+        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
         lon1, lat1 = _t.transform(bbox[0], bbox[1])
         lon2, lat2 = _t.transform(bbox[2], bbox[3])
         lon_min_w = min(lon1, lon2) - 0.05
