@@ -4793,6 +4793,17 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     if isinstance(cogs, Path):
         cogs = [cogs]
 
+    # Aucune dalle valide pour ce chunk (hors couverture IGN, ou
+    # téléchargements tous en échec). On retourne proprement plutôt que
+    # de planter sur `sources[0]` plus bas — la boucle des chunks
+    # poursuit avec les morceaux suivants. Le chunk ne produira pas
+    # de .tif d'ombrage donc pas de mbtiles non plus.
+    if not cogs:
+        print(f"  ⚠ Aucune dalle disponible dans ce chunk "
+              f"(hors couverture IGN LiDAR ou téléchargement échoué) — "
+              f"ombrages skipés.", flush=True)
+        return
+
     # Variables conservées pour compatibilité du code existant : après le
     # refactor rasterio (étapes 1-7), aucun de ces exes n'est plus appelé.
     # _trouver_outil_gdal renvoie toujours None (no-op), donc ces variables
@@ -7422,18 +7433,19 @@ Exemples :
                     print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
-                        # Si le chunk a produit un mbtiles vide (chunk en mer
-                        # hors couverture IGN, ou bug à diagnostiquer), on
-                        # conserve les .tif intermédiaires pour permettre
+                        # Si le chunk a produit un mbtiles vide OU aucun mbtiles
+                        # (chunk en mer hors couverture IGN, ou bug à diagnostiquer),
+                        # on conserve les .tif intermédiaires pour permettre
                         # l'inspection — sinon l'utilisateur perd le contexte.
                         _dossier_chunk = (
                             (Path(args.dossier).resolve() if args.dossier
                              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
                             / nom_z)
-                        _has_empty = any(not _mbtiles_est_complete(mbt)
-                                         for mbt in _dossier_chunk.glob("*.mbtiles"))
+                        _mbts = list(_dossier_chunk.glob("*.mbtiles"))
+                        _has_empty = (not _mbts) or any(
+                            not _mbtiles_est_complete(mbt) for mbt in _mbts)
                         if _has_empty:
-                            print(f"  [{cle}] mbtiles vide détecté — nettoyage skipé (intermédiaires conservés pour inspection)")
+                            print(f"  [{cle}] mbtiles vide ou absent — nettoyage skipé (intermédiaires conservés pour inspection)")
                         else:
                             _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
@@ -9365,17 +9377,18 @@ Exemples :
                     print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
-                        # Cf. boucle LiDAR : si chunk vide, on conserve les
-                        # intermédiaires pour inspection plutôt que de tout
-                        # supprimer silencieusement.
+                        # Cf. boucle LiDAR : si chunk vide ou aucun mbtiles, on
+                        # conserve les intermédiaires pour inspection plutôt que
+                        # de tout supprimer silencieusement.
                         _dossier_chunk = (
                             (Path(args.dossier).resolve() if args.dossier
                              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
                             / nom_z)
-                        _has_empty = any(not _mbtiles_est_complete(mbt)
-                                         for mbt in _dossier_chunk.glob("*.mbtiles"))
+                        _mbts = list(_dossier_chunk.glob("*.mbtiles"))
+                        _has_empty = (not _mbts) or any(
+                            not _mbtiles_est_complete(mbt) for mbt in _mbts)
                         if _has_empty:
-                            print(f"  [{cle}] mbtiles vide détecté — nettoyage skipé (intermédiaires conservés pour inspection)")
+                            print(f"  [{cle}] mbtiles vide ou absent — nettoyage skipé (intermédiaires conservés pour inspection)")
                         else:
                             _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
