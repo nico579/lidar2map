@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Pays-Bas — AHN5 (Actueel Hoogtebestand Nederland)"
+NAME       = "Pays-Bas — AHN4 (Actueel Hoogtebestand Nederland)"
 CODE       = "nl-ahn"
 LICENSE    = "CC-0 (domaine public)"
 DOC_URL    = "https://www.ahn.nl/"
@@ -45,13 +45,15 @@ SEUIL_DALLE_VALIDE = 5_000_000     # AHN COG plus volumineux qu'IGN — ajuster 
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
-BASE_URL    = "https://service.pdok.nl/rws/ahn"
-WMS_URL     = f"{BASE_URL}/wms/v1_0"
-WCS_URL     = f"{BASE_URL}/wcs/v1_0"
+# URL canonique : actueel-hoogtebestand-nederland. Le shorthand `/rws/ahn/`
+# fonctionne aussi (redirection PDOK).
+BASE_URL    = "https://service.pdok.nl/rws/actueel-hoogtebestand-nederland"
+WMS_URL     = "https://service.pdok.nl/rws/ahn/wms/v1_0"
+WCS_URL     = "https://service.pdok.nl/rws/ahn/wcs/v1_0"
 ATOM_URL    = f"{BASE_URL}/atom/index.xml"
 DOWNLOAD_BASE = f"{BASE_URL}/atom/downloads"
-# Layers WMS pour visualisation : ahn5_05m_dtm, ahn5_05m_dsm, ahn4_05m_dtm, etc.
-WMS_LAYER   = "ahn5_05m_dtm"
+# Layers WMS pour visualisation : actuellement AHN4 (DTM/DSM ingéré 2020-2022)
+WMS_LAYER   = "ahn_05m_dtm"
 # Produit pour téléchargement direct (chemin URL) :
 PRODUIT     = "dtm_05m"   # alternatives : dsm_05m, dtm_5m, dsm_5m
 
@@ -83,7 +85,8 @@ def subdir_from_name(nom):
 # ── Construction URL pour une dalle (par nom, pas par x_km, y_km) ────────────
 def dalle_url_by_name(nom):
     """URL directe de téléchargement d'un kaartblad AHN (COG GeoTIFF).
-    Ex: dalle_url_by_name('R_31HZ2.tif') → https://.../atom/downloads/dtm_05m/R_31HZ2.tif"""
+    Le préfixe `M_` désigne les DTM (Maaiveld = sol), `R_` les DSM (Ruw = brut).
+    Ex: dalle_url_by_name('M_31DN2') → https://.../atom/downloads/dtm_05m/M_31DN2.tif"""
     if not nom.endswith(".tif"):
         nom = nom + ".tif"
     return f"{DOWNLOAD_BASE}/{PRODUIT}/{nom}"
@@ -105,17 +108,10 @@ def dalles_pour_bbox(x1, y1, x2, y2):
 
 # ── Découverte des dalles via l'index JSON de l'ATOM feed ────────────────────
 HTTP_UA = "lidar2map/1.0 (PDOK AHN)"
-# Le JSON index est référencé dans l'ATOM feed sous forme d'enclosure
-# de type application/json. Sa structure (best-effort, à vérifier au
-# premier appel réel) ressemble à :
-#   {
-#     "type": "FeatureCollection",
-#     "features": [
-#       {"properties": {"naam": "R_31HZ2"}, "geometry": {... bbox RD New ...}},
-#       ...
-#     ]
-#   }
-JSON_INDEX_URL = f"{BASE_URL}/atom/downloads/{PRODUIT}/index.json"
+# Vrai endpoint d'index JSON (vérifié 2026-05) : ~1.1 Mo, 1373 features,
+# GeoJSON FeatureCollection en EPSG:28992 (RD New). Référencé via rel="index"
+# dans le sub-ATOM dtm_05m.xml.
+JSON_INDEX_URL = f"{DOWNLOAD_BASE}/{PRODUIT}/kaartbladindex.json"
 
 
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
@@ -164,16 +160,28 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     features = index.get("features", []) if isinstance(index, dict) else []
     for feat in features:
         props = feat.get("properties", {}) or {}
-        nom   = props.get("naam") or props.get("name") or props.get("kaartblad")
+        # PDOK utilise kaartbladNr comme identifiant primaire
+        nom = props.get("kaartbladNr") or props.get("name")
         if not nom:
             continue
-        # bbox de la tuile, conventionnellement [xmin, ymin, xmax, ymax] en RD New
-        b = feat.get("bbox") or props.get("bbox")
-        if b and len(b) == 4:
-            fx0, fy0, fx1, fy1 = map(float, b)
+        # Geometry est un Polygon GeoJSON en RD New — on extrait sa bbox depuis
+        # les coordonnées (4 ou 5 points pour un rectangle fermé).
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates")
+        if coords and isinstance(coords, list) and coords:
+            # coords = [[[x1,y1], [x2,y2], ...]] pour Polygon
+            ring = coords[0]
+            xs = [p[0] for p in ring]
+            ys = [p[1] for p in ring]
+            fx0, fy0 = min(xs), min(ys)
+            fx1, fy1 = max(xs), max(ys)
             if fx1 < zx0 or fx0 > zx1 or fy1 < zy0 or fy0 > zy1:
                 continue
-        dalles[f"{nom}.tif" if not nom.endswith(".tif") else nom] = dalle_url_by_name(nom)
+        # URL : préférer celle dans les properties (PDOK la fournit) sinon
+        # reconstruire via dalle_url_by_name
+        url = props.get("url") or dalle_url_by_name(nom)
+        nom_fichier = f"{nom}.tif" if not nom.endswith(".tif") else nom
+        dalles[nom_fichier] = url
 
     print(f"  AHN : {len(dalles)} dalle(s) dans la bbox")
     return dalles
