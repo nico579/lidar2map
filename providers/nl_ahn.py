@@ -28,6 +28,7 @@ from pathlib import Path
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "Pays-Bas — AHN4 (Actueel Hoogtebestand Nederland)"
 CODE       = "nl-ahn"
+COUNTRY    = "nl"          # ISO 3166-1 alpha-2 — utilisé pour cache/lidar/<country>/
 LICENSE    = "CC-0 (domaine public)"
 DOC_URL    = "https://www.ahn.nl/"
 

@@ -2130,6 +2130,13 @@ def _load_provider():
 
 PROVIDER = _load_provider()
 
+# Sous-dossier provider-spécifique pour cache et Projets (rétrocompat : si le
+# user a un ancien cache/ign_lidar/ ou Projets/<zone>/ign_lidar/, ils ne sont
+# plus utilisés automatiquement — migration manuelle requise).
+# Convention : "lidar/<country>" pour disambigüer par pays
+# (cache/lidar/fr/, cache/lidar/nl/, ...).
+LIDAR_SUBDIR = f"lidar/{PROVIDER.COUNTRY}"
+
 # Re-exports pour compat avec le code existant — éviter de toucher des
 # centaines de call sites en aval pendant ce POC.
 RESOLUTION_M       = PROVIDER.RESOLUTION_M
@@ -2924,10 +2931,16 @@ def _valider_tif_dalle(chemin):
     try:
         with open(chemin, "rb") as fh:
             magic = fh.read(4)
-        # TIFF little-endian : II + 42 ; big-endian : MM + 42
+        # TIFF magic = II/MM (byte order) + 42 ou 43 (BigTIFF, supporté par
+        # rasterio/GDAL). BigTIFF est utilisé par certains COG (ex: AHN PDOK)
+        # même pour des fichiers < 4 Go. Refuser BigTIFF = faux négatif.
+        # - TIFF classique LE : II + 2A 00  (42)
+        # - TIFF classique BE : MM + 00 2A  (42)
+        # - BigTIFF LE        : II + 2B 00  (43)
+        # - BigTIFF BE        : MM + 00 2B  (43)
         if magic[:2] not in (b"II", b"MM"):
             return False
-        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a"):
+        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a", b"\x2b\x00", b"\x00\x2b"):
             return False
     except OSError:
         return False
@@ -6900,7 +6913,7 @@ Exemples :
     )
     parser.add_argument("--version", action="version",
                         version="lidar2map 1.0.0 (2026-03)")
-    parser.add_argument("--ignlidar", action="store_true",
+    parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="Mode LiDAR MNT IGN")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
@@ -7055,7 +7068,7 @@ Exemples :
         print("  Téléchargement MNT LiDAR HD IGN (WMS)")
         print("  Pipeline rasterio + numpy (numba pour SVF)")
     print("=" * 55)
-    print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / "ign_lidar")}")
+    print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
     print()
 
     # ── --source : mode autonome selon l'extension + CRS ────────────────────────
@@ -7136,8 +7149,8 @@ Exemples :
         sys.exit(1)
     if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps:
         # Mode migration pure : on n'a besoin que de dossier_dalles
-        racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / "ign_lidar"))
-        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / "ign_lidar"
+        racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
+        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
         dossier_dalles.mkdir(parents=True, exist_ok=True)
         a_migrer = [f for f in dossier_dalles.glob("*.tif")]
         if not a_migrer:
@@ -7301,7 +7314,7 @@ Exemples :
             _cols_pr * _rows_pr, 0.0, unite_m=True)
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
-                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
             manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
             n_total   = len(sous_zones)
             nb_done   = sum(1 for z in sous_zones
@@ -7340,7 +7353,7 @@ Exemples :
                         # l'inspection — sinon l'utilisateur perd le contexte.
                         _dossier_chunk = (
                             (Path(args.dossier).resolve() if args.dossier
-                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar")
+                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
                             / nom_z)
                         _mbts = list(_dossier_chunk.glob("*.mbtiles"))
                         _has_empty = (not _mbts) or any(
@@ -7411,8 +7424,8 @@ Exemples :
         if input(f"\n  Lancer le téléchargement ? [O/n] : ").strip().lower() == "n":
             sys.exit(0)
 
-    racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_lidar"
-    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / "ign_lidar"
+    racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
+    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
     dossier_ville  = racine
     _sans_telechargement = not getattr(args, "telechargement", False)
     _sans_ombrages = not getattr(args, "ombrages", None)
@@ -8276,10 +8289,10 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             # Structure : <racine>/<nom_zone_base>/ign_lidar/<nom_z>/
             # (tous les morceaux sont sous-dossiers du même projet parent)
             racine_base = (Path(args.dossier).resolve() if args.dossier
-                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "ign_lidar")
+                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
             racine = racine_base
             dossier_dalles = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                              else DOSSIER_TRAVAIL / "cache" / "ign_lidar")
+                              else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR)
             dossier_ville = racine / nom_z
             dossier_ville.mkdir(parents=True, exist_ok=True)
             dossier_dalles.mkdir(parents=True, exist_ok=True)
@@ -12026,7 +12039,7 @@ def lancer_gui():
             # ici, open_folder() pointerait vers un chemin inexistant.
             nom_slug = normaliser_nom(nom) if nom else ""
             base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-            _type_dir = {"lidar":"ign_lidar","scan":"ign_raster","osm":"osm_vecteur",
+            _type_dir = {"lidar":LIDAR_SUBDIR,"scan":"ign_raster","osm":"osm_vecteur",
                          "vecteur":"ign_vecteur","fusion":"fusion","decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)

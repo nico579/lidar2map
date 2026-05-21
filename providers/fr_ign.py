@@ -30,6 +30,7 @@ from pathlib import Path
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "France — IGN LiDAR HD"
 CODE       = "fr-ign"
+COUNTRY    = "fr"          # ISO 3166-1 alpha-2 — utilisé pour cache/lidar/<country>/
 LICENSE    = "Open License Etalab 2.0"
 DOC_URL    = "https://geoservices.ign.fr/lidarhd"
 
