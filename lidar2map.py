@@ -12633,19 +12633,18 @@ body.log-resizing *{
    <div class="section-hd">Projet</div>
    <div class="section-body">
      <div class="row">
-      <label style="min-width:auto;margin-right:4px">Nom *</label>
+      <label style="min-width:auto;margin-right:4px" for="f-nom">Nom *</label>
       <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
-      <label style="min-width:auto;margin-left:12px">Dossier sortie</label>
+      <label style="min-width:auto;margin-left:12px" for="f-dossier">Dossier sortie</label>
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
       <label style="min-width:auto;margin-left:12px"
-             title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.">Provider</label>
+             title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR." for="f-provider">Provider</label>
       <select id="f-provider" style="min-width:200px">
        <option value="fr-ign">Chargement...</option>
       </select>
       <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
-       <span style="color:var(--dim)">Clé API :</span>
-       <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
+       <span style="color:var(--dim)">Clé API :</span><input type="text" aria-label="Clé API" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
               placeholder="clé OpenTopography">
       </span>
      </div>
@@ -12673,17 +12672,17 @@ body.log-resizing *{
        <input type="text" id="f-ville" placeholder="ex: Garéoult" autocomplete="off">
        <div id="f-ville-ac" class="ac-dropdown hidden" role="listbox"></div>
      </div>
-     <label style="min-width:auto;margin-left:8px">Rayon km</label>
+     <label style="min-width:auto;margin-left:8px" for="f-rayon">Rayon km</label>
      <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-gps"><label>GPS lat,lon</label>
+    <div class="row hidden z-zone" id="z-gps"><label for="f-gps">GPS lat,lon</label>
      <input type="text" id="f-gps" placeholder="43.3156,6.0423" style="max-width:160px">
-     <label style="min-width:auto;margin-left:8px">Rayon km</label>
+     <label style="min-width:auto;margin-left:8px" for="f-rayon-gps">Rayon km</label>
      <input type="number" id="f-rayon-gps" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-bbox"><label>BBox W,S,E,N</label>
+    <div class="row hidden z-zone" id="z-bbox"><label for="f-bbox">BBox W,S,E,N</label>
      <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:200px"></div>
     <div class="hidden z-zone" id="z-dep">
      <div class="row">
-      <label>Département(s)</label>
+      <label for="f-dep">Département(s)</label>
       <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
              title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
      </div>
@@ -12728,7 +12727,7 @@ body.log-resizing *{
     </div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label for="f-priori-cols">Grille :</label>
       <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-priori-rows" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
@@ -12750,10 +12749,10 @@ body.log-resizing *{
     </div>
     <div class="section-body" id="body-tel">
      <div class="row">
-      <label>Workers :</label>
+      <label for="f-workers-l">Workers :</label>
       <input type="number" id="f-workers-l" value="8" min="1" max="32" class="inp-short">
       <label style="min-width:auto"><input type="checkbox" id="f-comp"> Compresser</label>
-      <label style="min-width:auto;margin-left:12px">Cache externe :</label>
+      <label style="min-width:auto;margin-left:12px" for="f-dossier-dalles">Cache externe :</label>
       <input type="text" id="f-dossier-dalles" placeholder="(cache auto)">
       <button class="btn btn-sm" onclick="pickDir('f-dossier-dalles')">…</button>
      </div>
@@ -12794,10 +12793,9 @@ body.log-resizing *{
     </div>
     <div class="section-body hidden" id="body-mbt">
      <div class="row">
-      <label>Zoom :</label>
+      <label for="f-zoom-min-l">Zoom :</label>
       <input type="number" id="f-zoom-min-l" value="8" min="8" max="20" class="inp-short">
-      <span style="color:var(--dim)">–</span>
-      <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
+      <span style="color:var(--dim)">–</span><input type="number" aria-label="–" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
       <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
        <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg" checked><label for="fl-jpeg">JPEG</label>
@@ -12828,7 +12826,7 @@ body.log-resizing *{
     </div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label for="f-priori-cols-s">Grille :</label>
       <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-priori-rows-s" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
@@ -12847,9 +12845,9 @@ body.log-resizing *{
     <div class="section-hd">Couche IGN</div>
     <div class="section-body">
      <div class="row">
-      <label>Couche :</label>
+      <label for="f-couche">Couche :</label>
       <select id="f-couche"></select>
-      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN"></span>
+      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)">Clé API :</span><input type="text" aria-label="Clé API" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN"></span>
      </div>
      <div id="scan-restriction-warning" class="hidden" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
       ⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>
@@ -12864,7 +12862,7 @@ body.log-resizing *{
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-s">  Écraser le fichier résultat</label>
     </div>
     <div class="section-body" id="body-tel-s">
-     <div class="row"><label>Workers :</label>
+     <div class="row"><label for="f-workers-s">Workers :</label>
       <input type="number" id="f-workers-s" value="8" min="1" max="32" class="inp-short"></div>
     </div>
    </div>
@@ -12875,10 +12873,9 @@ body.log-resizing *{
     </div>
     <div class="section-body" id="body-tuil-s">
      <div class="row">
-      <label>Zoom :</label>
+      <label for="f-zoom-min-s">Zoom :</label>
       <input type="number" id="f-zoom-min-s" value="12" min="1" max="20" class="inp-short">
-      <span style="color:var(--dim)">–</span>
-      <input type="number" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
+      <span style="color:var(--dim)">–</span><input type="number" aria-label="–" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
       <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
        <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg" checked><label for="fs-jpeg">JPEG</label>
@@ -12911,7 +12908,7 @@ body.log-resizing *{
     <div class="section-body" id="body-tel-osm">
      <div class="cb-group" id="osm-tag-checks"></div>
      <div class="row" style="margin-top:4px">
-      <label>Workers :</label>
+      <label for="f-workers-osm">Workers :</label>
       <input type="number" id="f-workers-osm" value="4" min="1" max="16" class="inp-short">
       <span class="hint" style="margin-left:6px">(parallélisme téléchargement PBF)</span>
      </div>
@@ -12945,7 +12942,7 @@ body.log-resizing *{
     <div class="section-body" id="body-tel-v">
      <div class="cb-group" id="wfs-checks"></div>
      <div class="row" style="margin-top:4px">
-      <label>Workers :</label>
+      <label for="f-workers-v">Workers :</label>
       <input type="number" id="f-workers-v" value="4" min="1" max="16" class="inp-short">
       <span class="hint" style="margin-left:6px">(max 4 recommandé)</span>
      </div>
@@ -12966,7 +12963,7 @@ body.log-resizing *{
     <div class="section-body hidden" id="body-map-v">
      <span class="hint">GeoJSON IGN → OSM XML → osmosis+mapwriter → .map</span>
      <div class="row" id="row-simplif-v" class="hidden" style="margin-top:6px">
-      <label>Simplification vecteur</label>
+      <label for="f-simplif-v">Simplification vecteur</label>
       <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
              style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
       <span class="hint" style="margin-left:6px">m  (vide = auto : 3 m local → 40 m région)</span>
@@ -12996,7 +12993,7 @@ body.log-resizing *{
       </div>
      </div>
      <div class="row" id="row-simplif-fusion" class="hidden" style="margin-top:6px">
-      <label>Simplification vecteur</label>
+      <label for="f-simplif-fusion">Simplification vecteur</label>
       <input type="number" id="f-simplif-fusion" min="1" max="200" step="1" placeholder="auto"
              style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
       <span class="hint" style="margin-left:6px">m  (vide = auto)</span>
@@ -13012,7 +13009,7 @@ body.log-resizing *{
     <div class="section-hd">Fichier source</div>
     <div class="section-body">
      <div class="row">
-      <label>Source MBTiles</label>
+      <label for="f-source-decoupe">Source MBTiles</label>
       <input type="text" id="f-source-decoupe" placeholder="chemin vers le fichier .mbtiles">
       <button class="btn btn-sm" onclick="pickFile('f-source-decoupe',false,[])">…</button>
      </div>
@@ -13022,7 +13019,7 @@ body.log-resizing *{
     <div class="section-hd">Découpage</div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label for="f-cols-decoupe">Grille :</label>
       <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" title="Colonnes (Est-Ouest)">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" title="Lignes (Nord-Sud)">
