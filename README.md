@@ -1,8 +1,8 @@
 # lidar2map
 
-**Cartes offline LiDAR archéologique, IGN raster/vecteur et OSM pour Locus Map / OsmAnd / TwoNav**
+**Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données géographiques publiques de l'IGN (LiDAR HD, orthophotos, BD TOPO) et OpenStreetMap, calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge).
+Script Python autonome qui télécharge les données LiDAR publiques de plusieurs portails nationaux (IGN France, AHN Pays-Bas, swisstopo Suisse, Kartverket Norvège), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 > ⚠️ **Statut** : usage personnel diffusé. Code testé intensivement sur Windows 10/11. Linux et macOS testés partiellement — voir [TEST_LINUX_MAC.md](TEST_LINUX_MAC.md). Les retours sont bienvenus via les [issues GitHub](https://github.com/nico579/lidar2map/issues).
 
@@ -10,26 +10,32 @@ Script Python autonome qui télécharge les données géographiques publiques de
 
 ## Pour qui ?
 
-- **Randonneurs** qui veulent des cartes IGN topo offline sur leur téléphone (Locus Map Pro, OsmAnd+)
-- **Archéologues amateurs** intéressés par la prospection LiDAR : restanques, chemins muletiers, glacières, charbonnières, voies anciennes
-- **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995) et MNT pour repérer les vestiges humains avant la déprise agricole
-- **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public
+- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne en France (IGN HD), Pays-Bas (AHN4), Suisse (swissALTI3D), Norvège (Nasjonal Høydemodell). Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) — les onglets IGN raster/vecteur restent France-only.
+- **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
+- **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
 
-L'outil n'est **pas** destiné à la détection métallique. Le code respecte strictement les licences ouvertes (Etalab, ODbL).
+L'outil n'est **pas** destiné à la détection métallique. Le code respecte strictement les licences ouvertes (Etalab FR, CC BY 4.0 NO, CC-0 NL, BGDI CH).
 
 ## Ce que ça produit
 
 À partir d'une commune, de coordonnées GPS, d'une bbox ou d'un département entier :
 
-- **Ombrages archéo** depuis le LiDAR HD IGN (résolution 50 cm) :
+- **Ombrages archéo** depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
   - Hillshade multidirectionnel (angle solaire 25° pour micro-relief)
   - SVF (Sky-View Factor) 20 m et 100 m — révèle fossés, restanques, enceintes
   - LRM (Local Relief Model) — supprime le relief naturel, garde les anomalies
   - RRIM (Red Relief Image Map) — composite couleur SVF + pente
 
-- **Cartes raster IGN** : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
+  Sources LiDAR supportées (via flag `--provider <code>`) :
+  - **France** (`fr-ign`, défaut) — IGN LiDAR HD, 0.5 m, couverture nationale
+  - **Pays-Bas** (`nl-ahn`) — AHN4, 0.5 m, couverture nationale
+  - **Suisse** (`ch-swisstopo`) — swissALTI3D, 0.5 m, couverture nationale
+  - **Norvège** (`no-kartverket`) — Nasjonal Høydemodell, 1 m, couverture nationale
 
-- **Cartes vectorielles** : OSM (Mapsforge `.map`) ou IGN BD TOPO
+- **Cartes raster IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
+
+- **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*
 
 - **Sorties** : MBTiles (universel), RMAP (Locus optimisé), SQLiteDB (TwoNav), Mapsforge `.map` (OsmAnd / Locus)
 
@@ -43,7 +49,7 @@ Deux façons d'utiliser lidar2map :
 |---|---|---|
 | **Prérequis** | Python 3.12 | Aucun |
 | **Première install** | ~5 min (bootstrap deps) | Aucun |
-| **Mises à jour** | `git pull` + relance | Builder un nouveau livrable, ou remplacer `lidar2map.py` dans le zip via [`update_app.py`](update_app.py) |
+| **Mises à jour** | `git pull` + relance | Patcher les 3 binaires existants sur la release GitHub en une commande : `python update_app.py --release` (voir [`update_app.py`](update_app.py)) |
 | **Distribuable** | Non — chaque utilisateur installe Python | Oui — `.exe` / `.app` / binaire Linux + bundle zip côte à côte |
 | **Idéal pour** | dev / Linux / contribuer au code | utilisateur final / Windows / distribuer |
 
@@ -95,7 +101,7 @@ Pas de Python à installer côté utilisateur final. Le livrable contient son pr
 |----|---------|---------------|
 | Windows 10/11 (x86_64) | `lidar2map-windows-x86_64.zip` | `Expand-Archive` (PowerShell) ou double-clic |
 | Linux Ubuntu 24.04+ (x86_64) | `lidar2map-linux-x86_64.tar.gz` | `tar xzf` |
-| macOS (Apple Silicon) | _pas encore publié_ — builder depuis les sources |
+| macOS 12+ (Apple Silicon) | `lidar2map-macos-arm64.zip` | `unzip` puis `xattr -dr com.apple.quarantine LIDAR2MAP.app` |
 
 L'archive s'extrait en un dossier `lidar2map-<os>-x86_64/` contenant le binaire et son `lidar2map_bundle.zip` côte à côte. Aucune installation système.
 
@@ -154,10 +160,31 @@ Désinstallation propre : `lidar2map(.exe) --desinstaller`.
 
 ## Exemples en ligne de commande
 
-**Ombrage SVF + carte topo IGN sur une commune (zone 1 km² autour de Garéoult) :**
+**Ombrage SVF + carte topo IGN sur une commune (zone 1 km² autour de Garéoult, France) :**
 ```bash
-python lidar2map.py --ignlidar --zone-ville Gareoult --zone-rayon 1 \
+python lidar2map.py --lidar --zone-ville Gareoult --zone-rayon 1 \
     --ombrages multi svf --formats-fichier mbtiles --oui
+```
+
+**Ombrages sur Amsterdam (Pays-Bas, AHN4) :**
+```bash
+python lidar2map.py --provider nl-ahn --lidar --telechargement \
+    --zone-bbox 120000,486000,122000,488000 --zone-nom amsterdam \
+    --ombrages multi --formats-fichier mbtiles --oui
+```
+
+**Ombrages sur Genève (Suisse, swissALTI3D) :**
+```bash
+python lidar2map.py --provider ch-swisstopo --lidar --telechargement \
+    --zone-ville Geneve --zone-rayon 1 \
+    --ombrages svf --formats-fichier mbtiles --oui
+```
+
+**Ombrages sur Oslo (Norvège, Kartverket) :**
+```bash
+python lidar2map.py --provider no-kartverket --lidar --telechargement \
+    --zone-ville Oslo --zone-rayon 1 \
+    --ombrages multi --formats-fichier mbtiles --oui
 ```
 
 **Orthophoto historique 1950-1965 sur une zone de chasse archéo :**
@@ -184,6 +211,30 @@ python lidar2map.py
 
 (Idem avec `lidar2map.exe` ou `LIDAR2MAP.app` pour l'exécutable autonome.)
 
+## Providers LiDAR — ajouter un pays
+
+L'abstraction provider permet d'ajouter une source LiDAR nationale sans toucher au cœur du pipeline. Chaque provider vit dans `providers/<code>.py` (~50-200 lignes) et expose :
+
+```python
+NAME, CODE, COUNTRY, LICENSE          # métadonnées
+CRS_NATIF, RESOLUTION_M, DALLE_KM     # géométrie
+discover_dalles(bbox_wgs, bbox_natif, cache)  # → {nom: url}
+# + helpers : dalle_filename, dalle_url, subdir_from_name, dalles_pour_bbox
+```
+
+Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnostique : il consomme les GeoTIFF retournés par `discover_dalles`, peu importe le CRS natif ou le format d'index utilisé en amont.
+
+| Code | Pays | CRS natif | Résolution | Paradigme API |
+|---|---|---|---|---|
+| `fr-ign` | France | EPSG:2154 (Lambert-93) | 0.5 m | TMS vectoriel PBF + WMS GetMap |
+| `nl-ahn` | Pays-Bas | EPSG:28992 (RD New) | 0.5 m | ATOM feed + JSON FeatureCollection |
+| `ch-swisstopo` | Suisse | EPSG:2056 (CH1903+/LV95) | 0.5 m | STAC API REST |
+| `no-kartverket` | Norvège | EPSG:25833 (UTM33N) | 1 m | ArcGIS ImageServer exportImage |
+
+Sélection : flag `--provider <code>` (CLI), variable d'env `LIDAR2MAP_PROVIDER`, ou dropdown en haut de la GUI.
+
+Pour ajouter un 5e pays (ex. UK Environment Agency, Espagne PNOA-LiDAR, Italie PNRR) : copier le provider le plus proche en paradigme et adapter URLs/CRS/format de nommage. Le 1er provider abouti prend ~½ journée, les suivants ~1-2h chacun.
+
 ## Fonctionnalités principales
 
 - **Auto-bootstrap** : aucune dépendance pré-installée requise. Le script télécharge à la demande Python deps (Pillow, pyproj, numpy, scipy), GDAL (Windows) ou demande l'installation système (Linux/macOS), JRE Temurin 21, osmosis, mapwriter.
@@ -192,7 +243,8 @@ python lidar2map.py
 - **Reprise après interruption** : la même commande reprend où elle s'est arrêtée, via un manifeste `.json` qui suit les morceaux terminés.
 - **Découpage à priori** : pour les grandes zones, découper en grille N×N — utile pour ne pas avoir à régénérer la zone entière en cas de plantage.
 - **Historique crash-safe** : chaque exécution est enregistrée *au démarrage* (statut "en cours") puis finalisée en "ok" ou "ko". Un crash dur (kill -9, panne) laisse l'entrée visible dans l'UI — la trace est conservée pour debug.
-- **GUI interactive** : 6 onglets (LiDAR, IGN raster, IGN vecteur, OSM, Fusion, Découpage), historique des 50 dernières commandes avec badges de statut, validation des paramètres, log live, modal d'erreur.
+- **Multi-provider LiDAR** : abstraction `providers/<code>.py` permettant de plugger n'importe quelle source LiDAR nationale. 4 providers fournis (FR/NL/CH/NO) couvrant 4 paradigmes d'API distincts (TMS PBF, JSON FeatureCollection, STAC API, ArcGIS ImageServer). Ajout d'un 5e pays = ~50-150 lignes dans un nouveau fichier provider.
+- **GUI interactive** : 6 onglets (LiDAR, IGN raster, IGN vecteur, OSM, Fusion, Découpage), sélecteur de provider en haut du formulaire (onglets IGN Raster/Vecteur masqués automatiquement pour les providers non-FR), historique des 50 dernières commandes avec badges de statut, validation des paramètres, log live, modal d'erreur.
 - **Cartes orthophotos historiques** : combo unique pour l'archéo — SVF 2024 (LiDAR actuel) + ortho 1950 (avant déprise) → révèle les structures encore lisibles 70 ans après.
 
 ## Captures d'écran
