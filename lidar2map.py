@@ -14196,6 +14196,25 @@ function btnReset() {
 
     api = Api()
 
+    # Profile WebView2 isolé par instance — évite les conflits quand plusieurs
+    # GUI tournent simultanément ou si une instance précédente n'a pas relâché
+    # son contexte. Chaque PID a son propre user_data_folder dans %TEMP%/
+    # lidar2map_wv2_<pid>/, nettoyé à la sortie.
+    # Symptôme typique sans cette isolation : "API non disponible" après 10s
+    # parce que pywebview.api n'arrive pas à s'attacher au navigator (conflit).
+    if WINDOWS:
+        import atexit
+        _wv2_profile = Path(tempfile.gettempdir()) / f"lidar2map_wv2_{os.getpid()}"
+        _wv2_profile.mkdir(parents=True, exist_ok=True)
+        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(_wv2_profile)
+        def _cleanup_wv2_profile():
+            try:
+                import shutil
+                shutil.rmtree(_wv2_profile, ignore_errors=True)
+            except Exception:
+                pass
+        atexit.register(_cleanup_wv2_profile)
+
     win = webview.create_window(
         "lidar2map — Cartes offline LiDAR/IGN/OSM",
         html=HTML,
