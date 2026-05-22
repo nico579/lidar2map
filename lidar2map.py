@@ -2126,9 +2126,10 @@ def _discover_providers():
         try:
             mod = _importlib.import_module(f"providers.{f.stem}")
             result.append({
-                "code":    getattr(mod, "CODE",    f.stem),
-                "name":    getattr(mod, "NAME",    f.stem),
-                "country": getattr(mod, "COUNTRY", ""),
+                "code":           getattr(mod, "CODE",           f.stem),
+                "name":           getattr(mod, "NAME",           f.stem),
+                "country":        getattr(mod, "COUNTRY",        ""),
+                "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
             })
         except Exception as e:
             print(f"  [provider scan] {f.name} ignoré : {type(e).__name__}: {e}",
@@ -11926,6 +11927,10 @@ def lancer_gui():
             # Provider (multi-pays) — propagé au subprocess
             if cfg.get("provider") and cfg["provider"] != PROVIDER.CODE:
                 cmd += ["--provider", cfg["provider"]]
+            # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
+            # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
+            if cfg.get("lidar_apikey"):
+                cmd += ["--apikey", cfg["lidar_apikey"]]
 
             # Zone (pas pour fusion / découpe)
             if t != "fusion" and t != "decoupe":
@@ -12638,6 +12643,11 @@ body.log-resizing *{
       <select id="f-provider" style="min-width:200px">
        <option value="fr-ign">Chargement...</option>
       </select>
+      <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
+       <span style="color:var(--dim)">Clé API :</span>
+       <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
+              placeholder="clé OpenTopography">
+      </span>
      </div>
    </div>
   </div>
@@ -13355,19 +13365,30 @@ function buildProviders(providers, activeCode) {
     return;
   }
   sel.innerHTML = providers.map(p =>
-    `<option value="${p.code}" data-country="${p.country}">${p.name}</option>`
+    `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}">${p.name}</option>`
   ).join('');
   sel.value = activeCode;
   const opt = sel.options[sel.selectedIndex];
   const country = (opt && opt.dataset.country) || 'fr';
   sel.dataset.country = country;
   applyProviderCountry(country);
+  applyProviderApiKey(opt);
   sel.addEventListener('change', () => {
     const o = sel.options[sel.selectedIndex];
     const c = (o && o.dataset.country) || 'fr';
     sel.dataset.country = c;
     applyProviderCountry(c);
+    applyProviderApiKey(o);
   });
+}
+
+function applyProviderApiKey(opt) {
+  // Affiche le champ "Clé API" à côté de la dropdown provider si le provider
+  // actif l'exige (data-apikey-requise="1"). Sinon caché.
+  const group = document.getElementById('lidar-apikey-group');
+  if (!group) return;
+  const needs = opt && opt.dataset.apikeyRequise === '1';
+  group.style.display = needs ? 'inline-flex' : 'none';
 }
 
 function applyProviderCountry(country) {
@@ -13753,6 +13774,7 @@ function getConfig() {
   const cfg = {
     type, mode,
     provider: g('f-provider')?.value || 'fr-ign',
+    lidar_apikey: g('f-lidar-apikey')?.value.trim(),
     nom:    g('f-nom')?.value.trim(),
     dossier:g('f-dossier')?.value.trim(),
     ville:  g('f-ville')?.value.trim(),
@@ -13929,6 +13951,9 @@ function loadConfig(cfg) {
   // FIX: f-nettoyage et f-nettoyage-s n'étaient jamais restaurés
   s('f-nettoyage',   cfg.nettoyage);
   s('f-nettoyage-s', cfg.nettoyage);
+
+  // Clé API LiDAR (us-3dep) — persistée séparément de l'IGN scan
+  s('f-lidar-apikey',   cfg.lidar_apikey);
 
   // Scan IGN raster
   s('f-couche',         cfg.couche);

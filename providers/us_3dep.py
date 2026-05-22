@@ -33,6 +33,10 @@ COUNTRY    = "us"
 LICENSE    = "Public domain (USGS) + OT terms"
 DOC_URL    = "https://opentopography.org/news/api-access-usgs-3dep-rasters-now-available"
 
+# Flag lu par la GUI (_discover_providers) pour décider d'afficher le champ
+# "Clé API" à côté de la dropdown provider.
+APIKEY_REQUISE = True
+
 
 # ── Géométrie ────────────────────────────────────────────────────────────────
 # CRS_NATIF Web Mercator pour avoir des mètres : c'est dans cette unité que
