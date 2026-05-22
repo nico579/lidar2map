@@ -14279,7 +14279,10 @@ function btnReset() {
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win
 
-    webview.start(debug=False)
+    # Activable via flag --debug (clic droit → Inspect dans la fenêtre webview,
+    # ou F12, pour ouvrir les DevTools et voir la console JS).
+    _wv_debug = "--debug" in sys.argv
+    webview.start(debug=_wv_debug)
 
 
 def _normaliser_argv_valeurs_negatives():
@@ -14316,7 +14319,11 @@ def _normaliser_argv_valeurs_negatives():
 if __name__ == "__main__":
     try:
         _normaliser_argv_valeurs_negatives()
-        if len(sys.argv) == 1:
+        # --debug (DevTools WebView2) est un flag GUI-only. On le détecte tôt
+        # pour qu'il ne perturbe pas argparse en aval (qui ne le reconnaît pas).
+        # Lu directement dans sys.argv par lancer_gui() avant strip.
+        _is_only_debug = (len(sys.argv) == 2 and sys.argv[1] == "--debug")
+        if len(sys.argv) == 1 or _is_only_debug:
             lancer_gui()
         else:
             # ── Détection du mode via un PRÉ-PARSER argparse ──────────────────
