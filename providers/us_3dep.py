@@ -97,13 +97,24 @@ def subdir_from_name(nom):
 
 
 # ── Construction URL pour une dalle (bbox Mercator -> WGS84 pour OT) ─────────
+# Marge en mètres Mercator élargissant la bbox source demandée à OT.
+# Sans marge, la reprojection NAD83->Mercator laisse une frange nodata sur les
+# bords (~2 pixels) car le grid sample tombe en dehors de la couverture source
+# vue depuis Mercator. Avec ~30m de marge, on garantit assez de pixels source
+# pour remplir tout le target sans bord vide.
+_MARGE_MERCATOR_M = 30
+
+
 def dalle_url(x_km, y_km):
     """Pour une tuile 1 km × 1 km en Mercator (x_km, y_km en km), convertit
-    les coins en WGS84 pour appeler l'API OT (qui ne sait que lat/lon)."""
-    xmin_m = x_km * 1000
-    ymin_m = y_km * 1000
-    xmax_m = xmin_m + 1000
-    ymax_m = ymin_m + 1000
+    les coins en WGS84 pour appeler l'API OT (qui ne sait que lat/lon).
+    On élargit la bbox source de _MARGE_MERCATOR_M pour éviter les bords nodata
+    après reprojection."""
+    m = _MARGE_MERCATOR_M
+    xmin_m = x_km * 1000 - m
+    ymin_m = y_km * 1000 - m
+    xmax_m = (x_km + 1) * 1000 + m
+    ymax_m = (y_km + 1) * 1000 + m
     west,  south = _merc_to_wgs(xmin_m, ymin_m)
     east,  north = _merc_to_wgs(xmax_m, ymax_m)
     params = {
