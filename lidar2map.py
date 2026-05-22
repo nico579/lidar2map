@@ -14279,8 +14279,9 @@ function btnReset() {
     # Workaround pywebview/WebView2 : la couche AccessibilityObject de WebView2
     # peut entrer en récursion infinie côté Python lors de l'inspection de
     # l'arbre accessibility (cycles Empty.Empty.Empty...). Limite par défaut
-    # 1000 = insuffisant. 10000 évite le crash sans risque pratique.
-    sys.setrecursionlimit(10000)
+    # 1000 = insuffisant. 100000 confortable, pas de risque pratique (Python
+    # consomme la stack OS, pas la stack Python).
+    sys.setrecursionlimit(100000)
 
     # Activable via flag --debug (clic droit → Inspect dans la fenêtre webview,
     # ou F12, pour ouvrir les DevTools et voir la console JS).
