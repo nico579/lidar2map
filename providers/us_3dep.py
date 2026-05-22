@@ -148,44 +148,73 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     return dalles
 
 
-# ── Hook post-download : reproject NAD83 -> Mercator ─────────────────────────
-def post_download(path):
-    """Reprojette la tile OT (EPSG:4269 NAD83 géo) vers EPSG:3857 (Web Mercator).
+# ── Hook post-download : reproject NAD83 -> Mercator aligné sur grille ───────
+_NAME_PATTERN = _re.compile(r"us3dep_[^_]+_([+-]?\d+)_([+-]?\d+)_")
 
-    OT renvoie systématiquement du NAD83 géographique, mais le pipeline
-    lidar2map a besoin d'un CRS projeté en mètres pour SVF/hillshade.
-    Reprojection en place via rasterio.warp.
+
+def post_download(path):
+    """Reprojette la tile OT (EPSG:4269 NAD83 géo) vers EPSG:3857 (Web Mercator),
+    EN FORÇANT l'output sur la grille km Mercator partagée.
+
+    Sans cet alignement strict, chaque tile a une origine légèrement différente
+    (décalages ~0.2m) et le VRT mosaiqué produit des seams visibles (= effet
+    quadrillage signalé par l'utilisateur).
     """
     import rasterio
-    from rasterio.warp import calculate_default_transform, reproject, Resampling
+    from rasterio.warp import reproject, Resampling
+    from rasterio.transform import from_bounds
     from pathlib import Path
     path = Path(path)
 
-    with rasterio.open(str(path)) as src:
-        # Si déjà en Mercator (cas idempotent), skip
-        if src.crs and "3857" in src.crs.to_wkt():
-            return
-        dst_crs = rasterio.CRS.from_epsg(3857)
-        transform, w, h = calculate_default_transform(
-            src.crs, dst_crs, src.width, src.height, *src.bounds,
-            resolution=(RESOLUTION_M, RESOLUTION_M))
-        kwargs = src.meta.copy()
-        kwargs.update({"crs": dst_crs, "transform": transform,
-                       "width": w, "height": h, "driver": "GTiff",
-                       "compress": "deflate", "predictor": 2, "tiled": True,
-                       "blockxsize": 256, "blockysize": 256})
-        src_data = src.read()
-        src_transform = src.transform
-        src_crs = src.crs
-        src_nodata = src.nodata
+    # Extraire (x_km, y_km) du nom pour calculer les bounds cibles exacts
+    m = _NAME_PATTERN.search(path.name)
+    if not m:
+        print(f"  ⚠ post_download : nom non parsable {path.name}", flush=True)
+        return
+    x_km = int(m.group(1))
+    y_km = int(m.group(2))
 
+    # Grille cible : tile [x_km*1000, (x_km+1)*1000] × [y_km*1000, (y_km+1)*1000]
+    target_left   = x_km * 1000
+    target_bottom = y_km * 1000
+    target_right  = target_left + 1000
+    target_top    = target_bottom + 1000
+    target_w      = int(1000 / RESOLUTION_M)
+    target_h      = int(1000 / RESOLUTION_M)
+    target_transform = from_bounds(target_left, target_bottom,
+                                   target_right, target_top,
+                                   target_w, target_h)
+
+    with rasterio.open(str(path)) as src:
+        if src.crs and "3857" in src.crs.to_wkt() and src.width == target_w and src.height == target_h:
+            return   # idempotent
+        src_data      = src.read()
+        src_transform = src.transform
+        src_crs       = src.crs
+        src_nodata    = src.nodata
+        src_dtype     = src.dtypes[0]
+        src_count     = src.count
+
+    kwargs = {
+        "driver":     "GTiff",
+        "height":     target_h,
+        "width":      target_w,
+        "count":      src_count,
+        "dtype":      src_dtype,
+        "crs":        rasterio.CRS.from_epsg(3857),
+        "transform":  target_transform,
+        "nodata":     src_nodata,
+        "compress":   "deflate", "predictor": 2, "tiled": True,
+        "blockxsize": 256, "blockysize": 256,
+    }
     tmp = path.with_suffix(".reproj.tif")
     with rasterio.open(str(tmp), "w", **kwargs) as dst:
-        for i in range(src_data.shape[0]):
+        for i in range(src_count):
             reproject(source=src_data[i],
                       destination=rasterio.band(dst, i + 1),
                       src_transform=src_transform, src_crs=src_crs,
-                      dst_transform=transform, dst_crs=dst_crs,
+                      dst_transform=target_transform,
+                      dst_crs=rasterio.CRS.from_epsg(3857),
                       src_nodata=src_nodata, dst_nodata=src_nodata,
                       resampling=Resampling.bilinear)
     os.replace(str(tmp), str(path))
