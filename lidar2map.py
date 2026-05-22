@@ -14203,7 +14203,7 @@ function btnReset() {
     # Symptôme typique sans cette isolation : "API non disponible" après 10s
     # parce que pywebview.api n'arrive pas à s'attacher au navigator (conflit).
     if WINDOWS:
-        import atexit
+        import atexit, tempfile
         _wv2_profile = Path(tempfile.gettempdir()) / f"lidar2map_wv2_{os.getpid()}"
         _wv2_profile.mkdir(parents=True, exist_ok=True)
         os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(_wv2_profile)
