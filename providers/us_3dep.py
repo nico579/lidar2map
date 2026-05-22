@@ -1,30 +1,26 @@
 # providers/us_3dep.py — USA, USGS 3DEP via OpenTopography API
 #
 # Source : USGS 3D Elevation Program (3DEP) servi par OpenTopography.
-# Distribution : API REST simple bbox → GeoTIFF (https://portal.opentopography.org/API/usgsdem)
+# Distribution : API REST simple bbox WGS84 → GeoTIFF EPSG:4269 (NAD83 géo).
 #
 # 3 datasets disponibles :
 #   - USGS1m  : 1 m natif (ACADEMIQUE seulement, max 250 km² par requête)
 #   - USGS10m : 10 m / 1/3 arc-seconde, libre
 #   - USGS30m : 30 m / 1 arc-seconde, libre
 #
-# Spécificités vs FR/NL/CH/NO :
-#   - Pas un portail national mais un agrégateur académique (OT)
-#   - Coverage : USA entiers (incl. Alaska, Hawaii)
-#   - **API Key requise** (gratuite après inscription opentopography.org)
-#     → variable d'environnement OPENTOPOGRAPHY_API_KEY
-#   - CRS de sortie : NAD83 géographique (EPSG:4269) — degrees, pas mètres
-#     → Le pipeline downstream SVF/ombrages perd en précision sur des CRS
-#       géographiques. Pour usage archéo sérieux, prévoir une étape de
-#       reprojection vers UTM dans un futur fix.
+# Particularité majeure de ce provider :
+#   OT retourne ses tiles en EPSG:4269 (NAD83 géographique, lat/lon degrés).
+#   Le pipeline lidar2map (VRT, SVF, ombrages) suppose un CRS projeté en
+#   mètres. Sans reprojection, le calcul gradient et la grille VRT échouent.
+#   → Solution : on déclare CRS_NATIF = EPSG:3857 (Web Mercator) et on
+#     reprojette CHAQUE tile post-download via le hook PROVIDER.post_download().
+#   → Mercator au lieu d'UTM-zone parce qu'universel (pas de zone à calculer)
+#     et c'est le CRS cible final du pipeline MBTiles → warp identité.
+#   → Distorsion Mercator à 37°N (Mesa Verde) : ~0.8x — acceptable archéo.
 #
-# Limitations connues :
-#   - USGS1m restreint aux comptes "academic" sur opentopography.org
-#   - Rate limit : 50 calls/24h non-academic, 200/24h academic
-#   - 1m max 250 km² par requête
-#
-# Status POC : structure validée. URL pattern correct. Test live nécessite
-# un API key OpenTopography (gratuit après inscription).
+# Spécifs config :
+#   --apikey TA_CLE  ou  env OPENTOPOGRAPHY_API_KEY  (gratuit, inscription)
+#   env OPENTOPOGRAPHY_DATASET = USGS10m (défaut) | USGS1m | USGS30m
 
 import os
 import urllib.parse
@@ -39,36 +35,27 @@ DOC_URL    = "https://opentopography.org/news/api-access-usgs-3dep-rasters-now-a
 
 
 # ── Géométrie ────────────────────────────────────────────────────────────────
-CRS_NATIF          = "EPSG:4269"       # NAD83 géographique (lat/lon decimal degrees)
-                                       # ⚠ Pas un CRS projeté → SVF/ombrages
-                                       # sous-optimaux sans reprojection UTM.
-# Dataset par défaut. Configurable via env OPENTOPOGRAPHY_DATASET.
-# USGS1m nécessite un compte "academic" + max 250 km² par requête.
+# CRS_NATIF Web Mercator pour avoir des mètres : c'est dans cette unité que
+# le pipeline calcule SVF/hillshade. Les tiles OT (NAD83 géo) sont reprojetées
+# au download via post_download() ci-dessous.
+CRS_NATIF          = "EPSG:3857"
 DATASET            = os.environ.get("OPENTOPOGRAPHY_DATASET", "USGS10m")
 _RES_PAR_DATASET   = {"USGS1m": 1, "USGS10m": 10, "USGS30m": 30}
 RESOLUTION_M       = _RES_PAR_DATASET.get(DATASET, 10)
-
-# Taille de tuile : on choisit 0.01° (~1.1 km à l'équateur, ~0.85 km à 40°N).
-# Compromis entre nombre de requêtes (rate limit OT) et granularité.
-DALLE_DEG          = 0.01
-DALLE_KM           = 1                 # approximation pour le code générique
-PX_PAR_DALLE       = int(DALLE_DEG * 111000 / RESOLUTION_M)   # ~110 à 10 m/px
-SEUIL_DALLE_VALIDE = 5_000             # raster geographic petit en bytes
+DALLE_KM           = 1                  # tuiles 1×1 km en Mercator
+PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)
+SEUIL_DALLE_VALIDE = 5_000              # 100×100 pixel float32 compressé : variable
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 API_BASE = "https://portal.opentopography.org/API/usgsdem"
 
 
-# ── API Key (requise pour toutes les requêtes OT) ────────────────────────────
-# Source de la clé, par ordre de priorité :
-#   1. CLI : --apikey <cle>  (via set_apikey() appelé depuis main)
-#   2. env : OPENTOPOGRAPHY_API_KEY
+# ── API Key ──────────────────────────────────────────────────────────────────
 _APIKEY = ""
 
 
 def set_apikey(key):
-    """Permet à lidar2map.py de transmettre args.apikey au provider depuis la CLI."""
     global _APIKEY
     _APIKEY = (key or "").strip()
 
@@ -82,91 +69,123 @@ def _get_api_key():
     return key
 
 
-# ── Nommage des dalles ───────────────────────────────────────────────────────
-def dalle_filename(x_lon, y_lat):
-    """Pour US 3DEP les coords sont en degrés décimaux NAD83. On code en
-    centièmes de degré pour avoir des noms de fichiers stables."""
-    return f"us3dep_{DATASET}_{int(x_lon * 100):06d}_{int(y_lat * 100):05d}.tif"
+# ── Helpers Mercator <-> WGS84 ───────────────────────────────────────────────
+def _merc_to_wgs(x_m, y_m):
+    """EPSG:3857 (x, y) en mètres → EPSG:4326 (lon, lat) en degrés."""
+    from pyproj import Transformer
+    t = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+    return t.transform(x_m, y_m)
 
 
-def dalle_subdir(x_lon):
-    """Sous-dossier par degré entier de longitude (12 zones pour les USA)."""
-    return f"lon{int(x_lon):+04d}"
+# ── Nommage des dalles (en km Mercator) ──────────────────────────────────────
+def dalle_filename(x_km, y_km):
+    """Nom basé sur les km Mercator. Couvre négatifs (USA = X < 0)."""
+    return f"us3dep_{DATASET}_{x_km:+06d}_{y_km:+06d}_3857.tif"
+
+
+def dalle_subdir(x_km):
+    return f"{x_km:+06d}"
 
 
 import re as _re
-_SUBDIR_FROM_NAME = _re.compile(r"us3dep_[^_]+_(-?\d+)_")
+_SUBDIR_FROM_NAME = _re.compile(r"us3dep_[^_]+_([+-]?\d+)_")
 
 
 def subdir_from_name(nom):
     m = _SUBDIR_FROM_NAME.match(nom)
-    if not m:
-        return None
-    x_lon_cent = int(m.group(1))
-    return f"lon{x_lon_cent // 100:+04d}"
+    return f"{int(m.group(1)):+06d}" if m else None
 
 
-# ── Construction URL pour une dalle ──────────────────────────────────────────
-def dalle_url(x_lon, y_lat):
-    """URL OpenTopography exportImage 3DEP pour une tuile DALLE_DEG° × DALLE_DEG°.
-    Convention : (x_lon, y_lat) = coin SW de la tuile en centièmes de degré.
-    """
-    west  = x_lon
-    south = y_lat
-    east  = west + DALLE_DEG
-    north = south + DALLE_DEG
+# ── Construction URL pour une dalle (bbox Mercator -> WGS84 pour OT) ─────────
+def dalle_url(x_km, y_km):
+    """Pour une tuile 1 km × 1 km en Mercator (x_km, y_km en km), convertit
+    les coins en WGS84 pour appeler l'API OT (qui ne sait que lat/lon)."""
+    xmin_m = x_km * 1000
+    ymin_m = y_km * 1000
+    xmax_m = xmin_m + 1000
+    ymax_m = ymin_m + 1000
+    west,  south = _merc_to_wgs(xmin_m, ymin_m)
+    east,  north = _merc_to_wgs(xmax_m, ymax_m)
     params = {
         "datasetName": DATASET,
         "south": south, "north": north,
-        "west": west, "east": east,
+        "west":  west,  "east":  east,
         "outputFormat": "GTiff",
         "API_Key": _get_api_key(),
     }
     return API_BASE + "?" + urllib.parse.urlencode(params)
 
 
-# ── Grille pour une bbox ─────────────────────────────────────────────────────
+# ── Grille en km Mercator ────────────────────────────────────────────────────
 def dalles_pour_bbox(x1, y1, x2, y2):
-    """Pour US 3DEP, la bbox est en degrés NAD83. La grille est en 0.01°."""
-    step = DALLE_DEG
-    # Index par centièmes de degré (intégers pour avoir des keys stables)
-    lon_start = int(x1 / step)
-    lon_end   = int(x2 / step)
-    lat_start = int(y1 / step)
-    lat_end   = int(y2 / step)
-    dalles = []
-    for i_lon in range(lon_start, lon_end + 1):
-        for i_lat in range(lat_start, lat_end + 1):
-            dalles.append((i_lon * step, i_lat * step))
-    return dalles
+    """Bbox en EPSG:3857 (mètres) → liste de (x_km, y_km)."""
+    step = DALLE_KM * 1000
+    x_start = int(x1 // step)
+    x_end   = int(x2 // step)
+    y_start = int(y1 // step)
+    y_end   = int(y2 // step)
+    return [(x_km, y_km)
+            for x_km in range(x_start, x_end + 1)
+            for y_km in range(y_start, y_end + 1)]
 
 
-# ── Découverte des dalles ────────────────────────────────────────────────────
+# ── Découverte ───────────────────────────────────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
-    """Construit {nom: url} depuis la grille deg en NAD83.
-
-    bbox_wgs84 : (lon_min, lat_min, lon_max, lat_max) — identique à bbox_natif
-                 puisque NAD83 ≈ WGS84 pour des usages non-géodésiques
-                 (différence < 1 m à l'échelle continentale USA).
-    bbox_natif : (x1, y1, x2, y2) où x = lon, y = lat (degrés NAD83).
-    """
-    key = _get_api_key()
-    if not key:
-        print("  ERREUR : OPENTOPOGRAPHY_API_KEY manquante.")
+    """bbox_natif en EPSG:3857 — c'est le pipeline qui le passe correctement
+    depuis _get_transformer(CRS_NATIF, ...)."""
+    if not _get_api_key():
         return None
-
     if bbox_natif is None:
         return {}
     x1, y1, x2, y2 = bbox_natif
     dalles = {}
-    for x_lon, y_lat in dalles_pour_bbox(x1, y1, x2, y2):
-        nom = dalle_filename(x_lon, y_lat)
-        dalles[nom] = dalle_url(x_lon, y_lat)
-
-    # Rate limit OT : 50 calls/24h non-academic. Si la bbox génère >50 dalles,
-    # l'utilisateur va se faire bloquer après ~50.
+    for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
+        dalles[dalle_filename(x_km, y_km)] = dalle_url(x_km, y_km)
     if len(dalles) > 50:
-        print(f"  ⚠ {len(dalles)} dalles → dépasse le rate limit OT non-academic "
-              f"(50/24h). Réduire la bbox ou changer pour USGS10m/30m.")
-    print(f"  US 3DEP : {len(dalles)} dalle(s) générées (grille 0.01° {DATASET})")
+        print(f"  ⚠ {len(dalles)} dalles → rate limit OT non-academic est 50/24h. "
+              f"Réduire la bbox.")
+    print(f"  US 3DEP : {len(dalles)} dalle(s) générées (grille km Mercator, {DATASET})")
     return dalles
+
+
+# ── Hook post-download : reproject NAD83 -> Mercator ─────────────────────────
+def post_download(path):
+    """Reprojette la tile OT (EPSG:4269 NAD83 géo) vers EPSG:3857 (Web Mercator).
+
+    OT renvoie systématiquement du NAD83 géographique, mais le pipeline
+    lidar2map a besoin d'un CRS projeté en mètres pour SVF/hillshade.
+    Reprojection en place via rasterio.warp.
+    """
+    import rasterio
+    from rasterio.warp import calculate_default_transform, reproject, Resampling
+    from pathlib import Path
+    path = Path(path)
+
+    with rasterio.open(str(path)) as src:
+        # Si déjà en Mercator (cas idempotent), skip
+        if src.crs and "3857" in src.crs.to_wkt():
+            return
+        dst_crs = rasterio.CRS.from_epsg(3857)
+        transform, w, h = calculate_default_transform(
+            src.crs, dst_crs, src.width, src.height, *src.bounds,
+            resolution=(RESOLUTION_M, RESOLUTION_M))
+        kwargs = src.meta.copy()
+        kwargs.update({"crs": dst_crs, "transform": transform,
+                       "width": w, "height": h, "driver": "GTiff",
+                       "compress": "deflate", "predictor": 2, "tiled": True,
+                       "blockxsize": 256, "blockysize": 256})
+        src_data = src.read()
+        src_transform = src.transform
+        src_crs = src.crs
+        src_nodata = src.nodata
+
+    tmp = path.with_suffix(".reproj.tif")
+    with rasterio.open(str(tmp), "w", **kwargs) as dst:
+        for i in range(src_data.shape[0]):
+            reproject(source=src_data[i],
+                      destination=rasterio.band(dst, i + 1),
+                      src_transform=src_transform, src_crs=src_crs,
+                      dst_transform=transform, dst_crs=dst_crs,
+                      src_nodata=src_nodata, dst_nodata=src_nodata,
+                      resampling=Resampling.bilinear)
+    os.replace(str(tmp), str(path))

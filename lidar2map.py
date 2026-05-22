@@ -3018,6 +3018,14 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
                 raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
+            # Hook post-download : permet à un provider de transformer le tile
+            # (ex: us-3dep reprojette NAD83 -> EPSG:3857 ici).
+            if hasattr(PROVIDER, "post_download"):
+                try:
+                    PROVIDER.post_download(chemin)
+                except Exception as _e_pd:
+                    print(f"  ⚠ post_download {nom} : {type(_e_pd).__name__}: {_e_pd}",
+                          flush=True)
             _creer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
