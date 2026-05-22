@@ -14229,8 +14229,40 @@ function btnReset() {
     webview.start(debug=False)
 
 
+def _normaliser_argv_valeurs_negatives():
+    """Recolle les valeurs négatives à leur flag pour qu'argparse les accepte.
+
+    Argparse considère par défaut tout token commençant par '-' comme un nouveau
+    flag, ce qui casse les commandes du type :
+        --zone-bbox -108.5,37.18,-108.48,37.20
+    car '-108.5,...' est vu comme un flag inconnu.
+
+    Solution : pour chaque flag connu qui prend une valeur, si le token suivant
+    commence par '-' et contient une virgule (pattern typique bbox/gps), on
+    fusionne avec '=' (forme acceptée nativement par argparse).
+    """
+    FLAGS_VALEUR = (
+        "--zone-bbox", "--zone-gps",
+        "--bbox",   # alias historique éventuels
+    )
+    out = []
+    i = 0
+    while i < len(sys.argv):
+        tok = sys.argv[i]
+        if (tok in FLAGS_VALEUR and i + 1 < len(sys.argv)
+                and sys.argv[i + 1].startswith("-")
+                and "," in sys.argv[i + 1]):
+            out.append(f"{tok}={sys.argv[i + 1]}")
+            i += 2
+        else:
+            out.append(tok)
+            i += 1
+    sys.argv = out
+
+
 if __name__ == "__main__":
     try:
+        _normaliser_argv_valeurs_negatives()
         if len(sys.argv) == 1:
             lancer_gui()
         else:
