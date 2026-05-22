@@ -14249,25 +14249,6 @@ function btnReset() {
 
     api = Api()
 
-    # Profile WebView2 isolé par instance — évite les conflits quand plusieurs
-    # GUI tournent simultanément ou si une instance précédente n'a pas relâché
-    # son contexte. Chaque PID a son propre user_data_folder dans %TEMP%/
-    # lidar2map_wv2_<pid>/, nettoyé à la sortie.
-    # Symptôme typique sans cette isolation : "API non disponible" après 10s
-    # parce que pywebview.api n'arrive pas à s'attacher au navigator (conflit).
-    if WINDOWS:
-        import atexit, tempfile
-        _wv2_profile = Path(tempfile.gettempdir()) / f"lidar2map_wv2_{os.getpid()}"
-        _wv2_profile.mkdir(parents=True, exist_ok=True)
-        os.environ["WEBVIEW2_USER_DATA_FOLDER"] = str(_wv2_profile)
-        def _cleanup_wv2_profile():
-            try:
-                import shutil
-                shutil.rmtree(_wv2_profile, ignore_errors=True)
-            except Exception:
-                pass
-        atexit.register(_cleanup_wv2_profile)
-
     win = webview.create_window(
         "lidar2map — Cartes offline LiDAR/IGN/OSM",
         html=HTML,
@@ -14278,12 +14259,6 @@ function btnReset() {
     )
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win
-
-    # Workaround pywebview/WebView2 : la couche AccessibilityObject de WebView2
-    # peut entrer en récursion infinie côté Python lors de l'inspection de
-    # l'arbre accessibility (cycles Empty.Empty.Empty...). Limite par défaut
-    # 1000 = insuffisant. 10000 évite le crash sans risque pratique.
-    sys.setrecursionlimit(100000)
 
     # Activable via flag --debug (clic droit → Inspect dans la fenêtre webview,
     # ou F12, pour ouvrir les DevTools et voir la console JS).
