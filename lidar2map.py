@@ -13313,14 +13313,22 @@ function setLogProgress(pct, cls) {
 document.addEventListener('DOMContentLoaded', () => {
   bindAll();
   _acInstaller();
-  waitForApi();
+  // pywebview émet 'pywebviewready' sur window quand le bridge JS↔Python est
+  // établi. C'est plus fiable que le polling seul (qui peut timeout en
+  // debug=False sur certaines configs WebView2 lentes).
+  if (window.pywebview && window.pywebview.api) {
+    initAsync();
+  } else {
+    window.addEventListener('pywebviewready', initAsync, { once: true });
+    waitForApi();   // fallback polling (au cas où l'event soit raté)
+  }
 });
 
 function waitForApi(tries=0) {
   if (window.pywebview && window.pywebview.api &&
       typeof window.pywebview.api.get_init_data === 'function') {
     initAsync();
-  } else if (tries < 200) {
+  } else if (tries < 600) {   // 600×50ms = 30s (au lieu de 10s)
     setTimeout(() => waitForApi(tries+1), 50);
   } else {
     document.getElementById('footer-status').textContent = 'API non disponible';
