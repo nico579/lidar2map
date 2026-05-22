@@ -6986,7 +6986,14 @@ Exemples :
     # Téléchargement
     parser.add_argument("--provider", default=None, metavar="CODE",
                         help="Provider LiDAR (défaut: fr-ign). Codes disponibles : "
-                             "fr-ign, nl-ahn (POC). Voir providers/")
+                             "fr-ign, nl-ahn, ch-swisstopo, no-kartverket, us-3dep. "
+                             "Voir providers/")
+    parser.add_argument("--apikey", default="", metavar="CLE",
+                        help="Clé API du provider quand requise. Pour us-3dep : "
+                             "https://portal.opentopography.org/myopentopo. "
+                             "Pour IGN scan*: compte pro cartes.gouv.fr (cf. --ignraster). "
+                             "Peut aussi être définie via env IGN_APIKEY ou "
+                             "OPENTOPOGRAPHY_API_KEY selon le provider.")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Connexions parallèles (défaut: {NB_WORKERS})")
     parser.add_argument("--telechargement-compresser", action="store_true",
@@ -7079,6 +7086,11 @@ Exemples :
 
     args = parser.parse_args()
     _valider_zooms(args, parser)
+
+    # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
+    if hasattr(PROVIDER, "set_apikey"):
+        PROVIDER.set_apikey(args.apikey)
+
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff

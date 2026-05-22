@@ -61,10 +61,23 @@ API_BASE = "https://portal.opentopography.org/API/usgsdem"
 
 
 # ── API Key (requise pour toutes les requêtes OT) ────────────────────────────
+# Source de la clé, par ordre de priorité :
+#   1. CLI : --apikey <cle>  (via set_apikey() appelé depuis main)
+#   2. env : OPENTOPOGRAPHY_API_KEY
+_APIKEY = ""
+
+
+def set_apikey(key):
+    """Permet à lidar2map.py de transmettre args.apikey au provider depuis la CLI."""
+    global _APIKEY
+    _APIKEY = (key or "").strip()
+
+
 def _get_api_key():
-    key = os.environ.get("OPENTOPOGRAPHY_API_KEY", "").strip()
+    key = _APIKEY or os.environ.get("OPENTOPOGRAPHY_API_KEY", "").strip()
     if not key:
-        print("  ⚠ OPENTOPOGRAPHY_API_KEY non définie — inscription gratuite : "
+        print("  ⚠ Clé API OpenTopography manquante — passer --apikey <cle> ou "
+              "définir OPENTOPOGRAPHY_API_KEY. Inscription gratuite : "
               "https://portal.opentopography.org/myopentopo", flush=True)
     return key
 
