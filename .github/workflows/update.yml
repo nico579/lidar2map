@@ -1,0 +1,45 @@
+name: Update bundles (sans rebuild)
+
+# Patche `_internal/lidar2map.py` dans les 3 assets d'une release EXISTANTE, sans
+# recompiler — l'équivalent cloud de `python update_app.py --release`, sauf que
+# le download + patch + upload (~1,5 Go) se fait sur le réseau GitHub, pas sur ta
+# connexion. Idéal pour livrer un fix de CODE (main / GUI / logique) après avoir
+# poussé le nouveau lidar2map.py.
+#
+# Prérequis : la release <tag> existe déjà avec ses 3 assets (créée par
+# release.yml). Ne convient QU'À un changement de code *inner* — PAS à un
+# changement de dépendances / spec / bloc launcher (-> rebuild via release.yml).
+#
+# Déclenchement : manuel (Actions -> Update bundles -> Run workflow -> tag).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag de la release à patcher (ex: v1.3.0)'
+        required: true
+
+jobs:
+  update:
+    name: patch bundles ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout (récupère le lidar2map.py courant de la branche)
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # update_app.py n'utilise que la stdlib -> aucun pip install.
+      # --release : télécharge les 3 assets de la release <tag>, remplace
+      # _internal/lidar2map.py dans chacun, réuploade (DELETE+UPLOAD) et met à
+      # jour les SHA256 du corps de la release. GH_TOKEN = token éphémère du run.
+      - name: update_app.py --release (download + patch + upload sur GitHub)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python update_app.py --release --tag "${{ inputs.tag }}"
