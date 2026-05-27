@@ -25,7 +25,7 @@ bloc `--__lidar2map_inner__` en tête détecte le mode launcher vs inner
         |
         | lit
         v
-lidar2map_bundle.zip (~300 Mo)       fichier SÉPARÉ (remplaçable)
+lidar2map_bundle.zip (~460 Mo)       fichier SÉPARÉ (remplaçable)
   lidar2map(.exe)   binaire interne (entry point = _loader.py)
   _internal/
     lidar2map.py  <── remplaçable depuis Windows sans rebuild
@@ -65,7 +65,7 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 
 | OS      | Backend  | Notes |
 |---------|----------|-------|
-| Windows | WebView2 | Natif Edge, préinstallé Win10+ |
+| Windows | PyQt6    | Forcé via `PYWEBVIEW_GUI=qt` — évite la régression pythonnet 3.1.0 du backend WinForms (sérialisation .NET en récursion → GUI gelée) |
 | macOS   | PyQt6    | Forcé via `PYWEBVIEW_GUI=qt` — fonctionne en SSH+VNC |
 | Linux   | PyQt6    | Seul backend viable via pip |
 
@@ -135,7 +135,7 @@ python3.12 lidar2map.py --installer-deps
 ```
 
 Installe : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona, certifi,
-pywebview, PyQt6/WebEngine/qtpy (macOS/Linux), osmium, numba, laspy,
+pywebview, PyQt6/WebEngine/qtpy (les 3 OS), osmium, numba, laspy,
 py7zr, mapbox-vector-tile.
 
 ### `--telecharger-outils`
@@ -283,7 +283,7 @@ Unblock-File .\lidar2map_win_build.ps1
 .\lidar2map_win_build.ps1
 ```
 
-Livrables dans `dist\` : `lidar2map.exe` (~14 Mo) + `lidar2map_bundle.zip` (~235 Mo)
+Livrables dans `dist\` : `lidar2map.exe` (~14 Mo) + `lidar2map_bundle.zip` (~460 Mo, Qt inclus)
 
 ### Deux passes PyInstaller (macOS et Windows)
 

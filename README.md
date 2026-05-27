@@ -55,7 +55,7 @@ Deux façons d'utiliser lidar2map :
 
 ### A. Script Python
 
-Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les dépendances critiques (Pillow, pyproj, numpy, rasterio, pywebview…). Téléchargement de GDAL (Windows), du JRE Temurin 21 et d'osmosis à la demande. ~150 Mo total, **une seule fois**.
+Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les dépendances critiques (Pillow, pyproj, numpy, rasterio, pywebview + PyQt6/QtWebEngine…). Téléchargement de GDAL (Windows), du JRE Temurin 21 et d'osmosis à la demande. ~400 Mo total, **une seule fois**.
 
 #### Windows 10+
 
@@ -149,7 +149,7 @@ Documentation complète du build (architecture du bundle, mise à jour sans rebu
 | macOS | Double-clic sur `LIDAR2MAP.app`. Premier lancement bloqué par Gatekeeper : `xattr -dr com.apple.quarantine LIDAR2MAP.app` puis double-clic |
 | Linux | `chmod +x lidar2map && ./lidar2map` |
 
-Le premier lancement extrait le bundle (~5-10 s, une fois) dans :
+Le premier lancement extrait le bundle (~30-60 s, une fois — il contient Qt) dans :
 - Windows : `%LOCALAPPDATA%\lidar2map\`
 - macOS : `~/Library/Application Support/lidar2map/`
 - Linux : `~/.local/share/lidar2map/`
