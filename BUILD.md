@@ -396,20 +396,33 @@ ni les dépendances, ni les specs.
 | Changement d'un **spec** ou de `_loader.py` | Oui |
 | Mise à jour de Python / PyInstaller, nouvel OS | Oui |
 
-**Cloud vs local :**
+### Trois méthodes de livraison — laquelle choisir
 
-- ☁️ **Cloud (`release.yml`, Actions)** — pour **compiler** : les 3 OS, clean-room
-  reproductible (pas de dérive de machine ; ex. un venv local avec une mauvaise
-  version de pythonnet/PyQt6). **Source de vérité des binaires distribués**,
-  déclenché par un tag `vX.Y.Z`.
-- ⚡ **Local + `update_app.py --release`** — pour **mettre à jour le code** entre
-  deux compilations : sert les 3 OS depuis une seule machine, sans recompiler.
-  La voie du quotidien.
-- 🔧 **Build local par-OS** (`lidar2map_*_build.*`) — pour **itérer/déboguer** sur
-  sa propre plateforme uniquement ; ne pas publier un build local comme asset.
+| Méthode | Compile ? | Upload ~1,5 Go depuis | Pour |
+|---|---|---|---|
+| ☁️ **`release.yml`** (tag `v*`) | oui (3 OS, clean-room) | réseau GitHub | deps / spec / **bloc launcher** / nouvelle version |
+| ☁️ **`update.yml`** (manuel + tag) | non | réseau GitHub | **fix de code seul (recommandé)** |
+| ⚡ **`update_app.py --release`** (local) | non | **ta** connexion | fix de code hors cloud |
+| 🔧 **build local par-OS** (`lidar2map_*_build.*`) | oui (1 OS) | — | itérer / déboguer |
 
-**Règle** : compiler via le cloud → fix de code ensuite via `update_app.py`
-(3 OS, sans rebuild) → rebuilder seulement si deps / spec / launcher changent.
+Détails :
+- ☁️ **`release.yml`** — **source de vérité des binaires distribués** : runner neuf,
+  reproductible (pas de dérive machine ; ex. un venv local avec une mauvaise
+  version de pythonnet/PyQt6). Seul moyen d'obtenir Linux/macOS sans la machine.
+  Déclenché par un tag `vX.Y.Z`.
+- ☁️ **`update.yml`** — fait tourner `update_app.py --release` **sur un runner** :
+  download + patch + ré-upload des ~1,5 Go d'assets se font sur le **réseau GitHub**,
+  pas sur ta liaison montante. **La voie idéale pour livrer un fix de code.**
+- ⚡ **`update_app.py --release` en local** — même résultat, mais re-pousse ~1,5 Go
+  depuis **ta** connexion (DELETE+UPLOAD des assets entiers — GitHub ne patche pas
+  partiellement) ; sur upload lent, plus long que le cloud. À réserver au cas
+  hors-ligne / sans accès au repo.
+- 🔧 **Build local** — ne jamais publier un build local comme asset (dérive machine
+  + 1 seul OS) ; sert uniquement à tester sur sa plateforme.
+
+**Règle** : pour livrer, **rester dans le cloud** — `release.yml` si deps/spec/
+launcher changent, sinon `update.yml` (fix de code, sans rebuild ni upload local).
+Le build local n'est que pour itérer/déboguer.
 
 ---
 
