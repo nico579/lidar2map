@@ -605,9 +605,24 @@ if getattr(sys, "frozen", False):
                 return exe
 
             if _need_extract:
-                # Lockfile contre les extractions simultanées (double-clic)
+                # Lockfile contre les extractions simultanées (double-clic).
+                # Durci contre les locks ORPHELINS : si le lock est plus vieux
+                # que _LOCK_STALE_S (instance tuée/plantée pendant l'extraction),
+                # on le considère périmé et on le retire au lieu d'attendre 60 s
+                # puis d'échouer. L'extraction du bundle prend ~30-60 s -> 300 s
+                # est une borne haute sûre (pas de faux positif en cas de double-clic).
                 import time as _time
-                if _lock.exists():
+                _LOCK_STALE_S = 300
+                _lock_actif = _lock.exists()
+                if _lock_actif:
+                    try:
+                        _lock_actif = (_time.time() - _lock.stat().st_mtime) < _LOCK_STALE_S
+                    except Exception:
+                        _lock_actif = False
+                    if not _lock_actif:
+                        print("  Lockfile périmé détecté — nettoyage et reprise.", flush=True)
+                        _lock.unlink(missing_ok=True)
+                if _lock_actif:
                     print("Installation en cours dans une autre instance — attente...",
                           flush=True)
                     for _ in range(60):
@@ -897,8 +912,12 @@ def _gui_deps_plateforme():
             [],
         )
     else:
-        # Windows : WebView2 natif, rien à installer.
-        return ([], [])
+        # Windows : on force le backend Qt (PYWEBVIEW_GUI=qt) au lieu de
+        # WinForms/WebView2+pythonnet. pythonnet 3.1.0 régresse (récursion
+        # infinie dans la sérialisation .NET -> bridge JS<->Python cassé ->
+        # GUI gelée) et WinForms freeze par intermittence. Qt = même moteur
+        # Chromium que Linux/macOS, plus aucune couche .NET.
+        return (["PyQt6", "PyQt6-WebEngine", "qtpy"], [])
 
 
 def _verifier_venv_linux():
@@ -2149,12 +2168,44 @@ def _load_provider():
     module_name = code.replace("-", "_")
     try:
         return _importlib.import_module(f"providers.{module_name}")
-    except ImportError as e:
-        print(f"ERREUR : provider '{code}' introuvable "
-              f"(providers/{module_name}.py absent) : {e}", file=sys.stderr)
-        print(f"Provider FR_IGN par défaut.", file=sys.stderr)
-        from providers import fr_ign
-        return fr_ign
+    except ImportError:
+        # providers/ absent (distribution minimale) ou provider inconnu :
+        # on retombe sur un provider FR-IGN inline pour ne pas crasher.
+        import types as _types
+        _p = _types.SimpleNamespace(
+            CODE               = "fr-ign",
+            NAME               = "France IGN LiDAR HD",
+            COUNTRY            = "fr",
+            CRS_NATIF          = "EPSG:2154",
+            RESOLUTION_M       = 0.5,
+            DALLE_KM           = 1,
+            PX_PAR_DALLE       = 2000,
+            SEUIL_DALLE_VALIDE = 50_000,
+            APIKEY_REQUISE     = False,
+            WMS_URL            = None,
+            WMS_LAYER          = None,
+            WFS_URL            = None,
+        )
+        # dalles_pour_bbox : lever NotImplementedError → calculer_grille_bbox
+        # attrape cette exception et retourne une liste vide (comportement attendu
+        # pour les providers sans grille régulière).
+        def _dalles_pour_bbox(x1, y1, x2, y2): raise NotImplementedError
+        _p.dalles_pour_bbox = _dalles_pour_bbox
+        # dalle_filename / dalle_url : ne devraient pas être appelées en mode --osm
+        def _not_available(msg):
+            raise RuntimeError(f"Provider fr-ign (fallback) : {msg} — "
+                               "dossier providers/ absent.")
+        _p.dalle_filename  = lambda x_km, y_km:            _not_available("dalle_filename")
+        _p.dalle_url       = lambda x_km, y_km:            _not_available("téléchargement LiDAR")
+        # discover_dalles : retourne {} — les call sites font déjà `or {}`
+        # et le téléchargement est sauté si dalles_dict est vide.
+        _p.discover_dalles = lambda bbox, bbox_l93, cache: {}
+        # subdir_from_name : None → chemin_dalle retombe sur la racine (ok)
+        _p.subdir_from_name = lambda nom: None
+        # post_download / set_apikey : no-op silencieux
+        _p.post_download    = lambda chemin: None
+        _p.set_apikey       = lambda key:    None
+        return _p
 
 PROVIDER = _load_provider()
 
@@ -2195,109 +2246,123 @@ WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 # Table statique (135 entrées) construite une seule fois à l'import au lieu
 # d'être recréée à chaque appel d'`if args.osm:` dans main().
 _GEOFABRIK = {
-    # Auvergne-Rhône-Alpes
-    "01": "auvergne-rhone-alpes",  # Ain
-    "03": "auvergne-rhone-alpes",  # Allier
-    "07": "auvergne-rhone-alpes",  # Ardèche
-    "15": "auvergne-rhone-alpes",  # Cantal
-    "26": "auvergne-rhone-alpes",  # Drôme
-    "38": "auvergne-rhone-alpes",  # Isère
-    "42": "auvergne-rhone-alpes",  # Loire
-    "43": "auvergne-rhone-alpes",  # Haute-Loire
-    "63": "auvergne-rhone-alpes",  # Puy-de-Dôme
-    "69": "auvergne-rhone-alpes",  # Rhône
-    "73": "auvergne-rhone-alpes",  # Savoie
-    "74": "auvergne-rhone-alpes",  # Haute-Savoie
-    # Bourgogne-Franche-Comté
-    "21": "bourgogne-franche-comte",  # Côte-d'Or
-    "25": "bourgogne-franche-comte",  # Doubs
-    "39": "bourgogne-franche-comte",  # Jura
-    "58": "bourgogne-franche-comte",  # Nièvre
-    "70": "bourgogne-franche-comte",  # Haute-Saône
-    "71": "bourgogne-franche-comte",  # Saône-et-Loire
-    "89": "bourgogne-franche-comte",  # Yonne
-    "90": "bourgogne-franche-comte",  # Territoire de Belfort
-    # Bretagne
-    "22": "bretagne",  # Côtes-d'Armor
-    "29": "bretagne",  # Finistère
-    "35": "bretagne",  # Ille-et-Vilaine
-    "56": "bretagne",  # Morbihan
-    # Centre-Val de Loire
-    "18": "centre-val-de-loire",  # Cher
-    "28": "centre-val-de-loire",  # Eure-et-Loir
-    "36": "centre-val-de-loire",  # Indre
-    "37": "centre-val-de-loire",  # Indre-et-Loire
-    "41": "centre-val-de-loire",  # Loir-et-Cher
-    "45": "centre-val-de-loire",  # Loiret
-    # Corse
-    "2A": "corse",  # Corse-du-Sud
-    "2B": "corse",  # Haute-Corse
-    # Grand Est
-    "08": "grand-est",  # Ardennes
-    "10": "grand-est",  # Aube
-    "51": "grand-est",  # Marne
-    "52": "grand-est",  # Haute-Marne
-    "54": "grand-est",  # Meurthe-et-Moselle
-    "55": "grand-est",  # Meuse
-    "57": "grand-est",  # Moselle
-    "67": "grand-est",  # Bas-Rhin
-    "68": "grand-est",  # Haut-Rhin
-    "88": "grand-est",  # Vosges
-    # Hauts-de-France
-    "02": "hauts-de-france",  # Aisne
-    "59": "hauts-de-france",  # Nord
-    "60": "hauts-de-france",  # Oise
-    "62": "hauts-de-france",  # Pas-de-Calais
-    "80": "hauts-de-france",  # Somme
-    # Île-de-France
-    "75": "ile-de-france",  # Paris
-    "77": "ile-de-france",  # Seine-et-Marne
-    "78": "ile-de-france",  # Yvelines
-    "91": "ile-de-france",  # Essonne
-    "92": "ile-de-france",  # Hauts-de-Seine
-    "93": "ile-de-france",  # Seine-Saint-Denis
-    "94": "ile-de-france",  # Val-de-Marne
-    "95": "ile-de-france",  # Val-d'Oise
-    # Normandie
-    "14": "normandie",  # Calvados
-    "27": "normandie",  # Eure
-    "50": "normandie",  # Manche
-    "61": "normandie",  # Orne
-    "76": "normandie",  # Seine-Maritime
-    # Nouvelle-Aquitaine
-    "16": "nouvelle-aquitaine",  # Charente
-    "17": "nouvelle-aquitaine",  # Charente-Maritime
-    "19": "nouvelle-aquitaine",  # Corrèze
-    "23": "nouvelle-aquitaine",  # Creuse
-    "24": "nouvelle-aquitaine",  # Dordogne
-    "33": "nouvelle-aquitaine",  # Gironde
-    "40": "nouvelle-aquitaine",  # Landes
-    "47": "nouvelle-aquitaine",  # Lot-et-Garonne
-    "64": "nouvelle-aquitaine",  # Pyrénées-Atlantiques
-    "79": "nouvelle-aquitaine",  # Deux-Sèvres
-    "86": "nouvelle-aquitaine",  # Vienne
-    "87": "nouvelle-aquitaine",  # Haute-Vienne
-    # Occitanie
-    "09": "occitanie",  # Ariège
-    "11": "occitanie",  # Aude
-    "12": "occitanie",  # Aveyron
-    "30": "occitanie",  # Gard
-    "31": "occitanie",  # Haute-Garonne
-    "32": "occitanie",  # Gers
-    "34": "occitanie",  # Hérault
-    "46": "occitanie",  # Lot
-    "48": "occitanie",  # Lozère
-    "65": "occitanie",  # Hautes-Pyrénées
-    "66": "occitanie",  # Pyrénées-Orientales
-    "81": "occitanie",  # Tarn
-    "82": "occitanie",  # Tarn-et-Garonne
-    # Pays de la Loire
-    "44": "pays-de-la-loire",  # Loire-Atlantique
-    "49": "pays-de-la-loire",  # Maine-et-Loire
-    "53": "pays-de-la-loire",  # Mayenne
-    "72": "pays-de-la-loire",  # Sarthe
-    "85": "pays-de-la-loire",  # Vendée
-    # Provence-Alpes-Côte d'Azur
+    # !! Geofabrik utilise les ANCIENNES régions administratives (pré-réforme 2016).
+    # Les nouvelles régions (Occitanie, Nouvelle-Aquitaine, Grand Est, etc.)
+    # n'existent PAS sur Geofabrik — chaque département pointe vers son ancienne région.
+    # Source : https://download.geofabrik.de/europe/france.html
+
+    # Rhône-Alpes (≠ Auvergne-Rhône-Alpes)
+    "01": "rhone-alpes",           # Ain
+    "07": "rhone-alpes",           # Ardèche
+    "26": "rhone-alpes",           # Drôme
+    "38": "rhone-alpes",           # Isère
+    "42": "rhone-alpes",           # Loire
+    "69": "rhone-alpes",           # Rhône
+    "73": "rhone-alpes",           # Savoie
+    "74": "rhone-alpes",           # Haute-Savoie
+    # Auvergne (≠ Auvergne-Rhône-Alpes)
+    "03": "auvergne",              # Allier
+    "15": "auvergne",              # Cantal
+    "43": "auvergne",              # Haute-Loire
+    "63": "auvergne",              # Puy-de-Dôme
+    # Bourgogne (≠ Bourgogne-Franche-Comté)
+    "21": "bourgogne",             # Côte-d'Or
+    "58": "bourgogne",             # Nièvre
+    "71": "bourgogne",             # Saône-et-Loire
+    "89": "bourgogne",             # Yonne
+    # Franche-Comté (≠ Bourgogne-Franche-Comté)
+    "25": "franche-comte",         # Doubs
+    "39": "franche-comte",         # Jura
+    "70": "franche-comte",         # Haute-Saône
+    "90": "franche-comte",         # Territoire de Belfort
+    # Bretagne (inchangée)
+    "22": "bretagne",              # Côtes-d'Armor
+    "29": "bretagne",              # Finistère
+    "35": "bretagne",              # Ille-et-Vilaine
+    "56": "bretagne",              # Morbihan
+    # Centre (Geofabrik utilise "centre", pas "centre-val-de-loire")
+    "18": "centre",                # Cher
+    "28": "centre",                # Eure-et-Loir
+    "36": "centre",                # Indre
+    "37": "centre",                # Indre-et-Loire
+    "41": "centre",                # Loir-et-Cher
+    "45": "centre",                # Loiret
+    # Corse (inchangée)
+    "2A": "corse",                 # Corse-du-Sud
+    "2B": "corse",                 # Haute-Corse
+    # Alsace (≠ Grand Est)
+    "67": "alsace",                # Bas-Rhin
+    "68": "alsace",                # Haut-Rhin
+    # Champagne-Ardenne (≠ Grand Est)
+    "08": "champagne-ardenne",     # Ardennes
+    "10": "champagne-ardenne",     # Aube
+    "51": "champagne-ardenne",     # Marne
+    "52": "champagne-ardenne",     # Haute-Marne
+    # Lorraine (≠ Grand Est)
+    "54": "lorraine",              # Meurthe-et-Moselle
+    "55": "lorraine",              # Meuse
+    "57": "lorraine",              # Moselle
+    "88": "lorraine",              # Vosges
+    # Nord-Pas-de-Calais (≠ Hauts-de-France)
+    "59": "nord-pas-de-calais",    # Nord
+    "62": "nord-pas-de-calais",    # Pas-de-Calais
+    # Picardie (≠ Hauts-de-France)
+    "02": "picardie",              # Aisne
+    "60": "picardie",              # Oise
+    "80": "picardie",              # Somme
+    # Île-de-France (inchangée)
+    "75": "ile-de-france",         # Paris
+    "77": "ile-de-france",         # Seine-et-Marne
+    "78": "ile-de-france",         # Yvelines
+    "91": "ile-de-france",         # Essonne
+    "92": "ile-de-france",         # Hauts-de-Seine
+    "93": "ile-de-france",         # Seine-Saint-Denis
+    "94": "ile-de-france",         # Val-de-Marne
+    "95": "ile-de-france",         # Val-d'Oise
+    # Haute-Normandie (≠ Normandie)
+    "27": "haute-normandie",       # Eure
+    "76": "haute-normandie",       # Seine-Maritime
+    # Basse-Normandie (≠ Normandie)
+    "14": "basse-normandie",       # Calvados
+    "50": "basse-normandie",       # Manche
+    "61": "basse-normandie",       # Orne
+    # Aquitaine (≠ Nouvelle-Aquitaine)
+    "24": "aquitaine",             # Dordogne
+    "33": "aquitaine",             # Gironde
+    "40": "aquitaine",             # Landes
+    "47": "aquitaine",             # Lot-et-Garonne
+    "64": "aquitaine",             # Pyrénées-Atlantiques
+    # Limousin (≠ Nouvelle-Aquitaine)
+    "19": "limousin",              # Corrèze
+    "23": "limousin",              # Creuse
+    "87": "limousin",              # Haute-Vienne
+    # Poitou-Charentes (≠ Nouvelle-Aquitaine)
+    "16": "poitou-charentes",      # Charente
+    "17": "poitou-charentes",      # Charente-Maritime
+    "79": "poitou-charentes",      # Deux-Sèvres
+    "86": "poitou-charentes",      # Vienne
+    # Languedoc-Roussillon (≠ Occitanie)
+    "11": "languedoc-roussillon",  # Aude
+    "30": "languedoc-roussillon",  # Gard
+    "34": "languedoc-roussillon",  # Hérault
+    "48": "languedoc-roussillon",  # Lozère
+    "66": "languedoc-roussillon",  # Pyrénées-Orientales
+    # Midi-Pyrénées (≠ Occitanie)
+    "09": "midi-pyrenees",         # Ariège
+    "12": "midi-pyrenees",         # Aveyron
+    "31": "midi-pyrenees",         # Haute-Garonne
+    "32": "midi-pyrenees",         # Gers
+    "46": "midi-pyrenees",         # Lot
+    "65": "midi-pyrenees",         # Hautes-Pyrénées
+    "81": "midi-pyrenees",         # Tarn
+    "82": "midi-pyrenees",         # Tarn-et-Garonne
+    # Pays de la Loire (inchangé)
+    "44": "pays-de-la-loire",      # Loire-Atlantique
+    "49": "pays-de-la-loire",      # Maine-et-Loire
+    "53": "pays-de-la-loire",      # Mayenne
+    "72": "pays-de-la-loire",      # Sarthe
+    "85": "pays-de-la-loire",      # Vendée
+    # Provence-Alpes-Côte d'Azur (inchangée)
     "04": "provence-alpes-cote-d-azur",  # Alpes-de-Haute-Provence
     "05": "provence-alpes-cote-d-azur",  # Hautes-Alpes
     "06": "provence-alpes-cote-d-azur",  # Alpes-Maritimes
@@ -2313,6 +2378,20 @@ _GEOFABRIK = {
 }
 _GEOFABRIK_BASE_URL      = "https://download.geofabrik.de/europe/france"
 _GEOFABRIK_BASE_URL_ROOT = "https://download.geofabrik.de/europe"
+
+
+def _regions_disponibles():
+    """Liste triée des slugs de régions Geofabrik (dédupliqués depuis _GEOFABRIK).
+
+    L'unité = la région Geofabrik (anciennes régions pré-2016), pas la région
+    administrative actuelle : chaque slug correspond à exactement un PBF, ce qui
+    évite toute fusion. Ex: 'provence-alpes-cote-d-azur'."""
+    return sorted(set(_GEOFABRIK.values()))
+
+
+def _departements_de_region(slug):
+    """Départements (codes INSEE) appartenant à la région Geofabrik `slug`."""
+    return sorted(d for d, s in _GEOFABRIK.items() if s == slug)
 
 # ── Rendu archéologique ───────────────────────────────────────────────────────
 ELEVATION_SOLEIL = 25   # degrés — 25° révèle micro-reliefs ; 45° usage général
@@ -2764,6 +2843,36 @@ def geocoder_departement(num_dep):
     surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
     print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
     print(f"  Surface estimée : ~{surface_km2:.0f} km²")
+    return nom, bx1, by1, bx2, by2
+
+
+def geocoder_region(slug):
+    """Retourne (nom, bx1, by1, bx2, by2) dans le CRS natif du provider =
+    bbox englobante (union) des départements de la région Geofabrik `slug`.
+
+    Réutilise geocoder_departement (donc le cache dep_bbox_cache.json et la même
+    conversion CRS). Retourne (None, …) si le slug est inconnu ou si le géocodage
+    d'un département échoue."""
+    slug = slug.strip().lower()
+    deps = _departements_de_region(slug)
+    if not deps:
+        print(f"  ERREUR : région '{slug}' inconnue.")
+        print(f"  Régions disponibles : {', '.join(_regions_disponibles())}")
+        return None, None, None, None, None
+    print(f"  Région {slug} — {len(deps)} départements : {', '.join(deps)}", flush=True)
+    bx1 = by1 = float("inf")
+    bx2 = by2 = float("-inf")
+    for d in deps:
+        nom_d, dx1, dy1, dx2, dy2 = geocoder_departement(d)
+        if nom_d is None:
+            print(f"  ERREUR : géocodage du département {d} échoué — région incomplète.")
+            return None, None, None, None, None
+        bx1, by1 = min(bx1, dx1), min(by1, dy1)
+        bx2, by2 = max(bx2, dx2), max(by2, dy2)
+    nom = slug.replace("-", " ").title()
+    surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
+    print(f"  BBox région {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
+    print(f"  Surface (bbox englobante) : ~{surface_km2:.0f} km²")
     return nom, bx1, by1, bx2, by2
 
 def _parser_departements(valeur: str) -> list:
@@ -7196,11 +7305,12 @@ Exemples :
     _source_tif_sans_zone = (
         args.source and Path(args.source).suffix.lower() in (".tif", ".tiff") and
         not args.zone_departement and not args.zone_bbox and
-        not args.zone_ville and not args.zone_gps)
+        not args.zone_ville and not args.zone_gps and
+        not getattr(args, "zone_region", None))
     if _source_tif_sans_zone:
-        print("  ERREUR : --source TIF nécessite une zone : --zone-ville/--zone-rayon, --zone-bbox ou --zone-departement")
+        print("  ERREUR : --source TIF nécessite une zone : --zone-ville/--zone-rayon, --zone-bbox, --zone-departement ou --zone-region")
         sys.exit(1)
-    if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps:
+    if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps and not getattr(args, "zone_region", None):
         # Mode migration pure : on n'a besoin que de dossier_dalles
         racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
         dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
@@ -7240,17 +7350,43 @@ Exemples :
 
     cx = cy = 0.0
     dalles = []
-    if args.zone_departement:
+    if getattr(args, "zone_region", None):
+        slug = args.zone_region.strip().lower()
+        # Nom automatique : le slug région ex "provence_alpes_cote_d_azur"
+        nom_auto = normaliser_nom(slug)
+        nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
+        if _osm_seul:
+            # OSM-seul : le PBF Geofabrik EST déjà la région — on le traite en
+            # entier (skip_bbox). Inutile de géocoder ses 6 départements pour une
+            # bbox de découpe dont on ne se sert pas → zéro appel Overpass.
+            # La section OSM utilisera une bbox "monde" ; ce sentinel n'est jamais lu.
+            if slug not in _regions_disponibles():
+                print(f"  ERREUR : région '{slug}' inconnue.")
+                print(f"  Régions disponibles : {', '.join(_regions_disponibles())}")
+                sys.exit(1)
+            dalles, bbox = [], (0.0, 0.0, 0.0, 0.0)
+            print(f"  Dossier : {nom_zone}")
+        else:
+            # raster / vecteur / lidar : bbox = union des bbox des départements.
+            nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
+            if nom_reg is None:
+                sys.exit(1)
+            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+            print(f"  Dossier : {nom_zone}  |  {len(dalles)} dalles")
+
+    elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
         nom_dep, bx1, by1, bx2, by2 = geocoder_departement(num_dep)
         if nom_dep is None:
             sys.exit(1)
-        dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-        nb_dalles = len(dalles)
+        if _osm_seul:
+            dalles, bbox = [], (bx1, by1, bx2, by2)
+        else:
+            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         # Nom automatique : ex "var_83"
         nom_auto = normaliser_nom(nom_dep) + "_" + num_dep.lower()
         nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
-        print(f"  Dossier : {nom_zone}  |  {nb_dalles} dalles")
+        print(f"  Dossier : {nom_zone}" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
 
     elif args.zone_bbox:
         try:
@@ -7259,10 +7395,13 @@ Exemples :
         except (ValueError, IndexError):
             print("  Format BBox invalide. Exemple : --bbox 880000,6210000,1080000,6360000")
             sys.exit(1)
-        dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+        if _osm_seul:
+            dalles, bbox = [], (bx1, by1, bx2, by2)
+        else:
+            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Surface : ~{surface_km2:.0f} km²  |  {len(dalles)} dalles")
+        print(f"  Surface : ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
         elif args.oui:
@@ -7346,8 +7485,8 @@ Exemples :
             if cx is None:
                 sys.exit(1)
 
-    # Rayon + grille (modes ville / gps / interactif — pas bbox, dept, france)
-    if not args.zone_bbox and not args.zone_departement:
+    # Rayon + grille (modes ville / gps / interactif — pas bbox, dept, région, france)
+    if not args.zone_bbox and not args.zone_departement and not getattr(args, "zone_region", None):
         if args.zone_rayon:
             rayon = args.zone_rayon
         else:
@@ -7361,7 +7500,7 @@ Exemples :
     # ── Découpage à priori : traitement séquentiel morceau par morceau ────────
     _cols_pr = getattr(args, "cols_decoupe", 0) or 0
     _rows_pr = getattr(args, "rows_decoupe", 0) or 0
-    if _cols_pr > 0 and _rows_pr > 0:
+    if _cols_pr > 0 and _rows_pr > 0 and not _osm_seul:
         sous_zones, mode_desc = _calculer_sous_zones_priori(
             bbox[0], bbox[1], bbox[2], bbox[3],
             _cols_pr * _rows_pr, 0.0, unite_m=True)
@@ -7622,15 +7761,24 @@ Exemples :
     # Pour FR : TMS + fallback grille → dict {nom: url}.
     # Pour NL : index JSON kaartbladen → dict {nom: url}.
     # Provider-agnostique : aucune hypothèse sur la géométrie des tuiles.
-    _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-    _lon1, _lat1 = _t_wgs.transform(bbox[0], bbox[1])
-    _lon2, _lat2 = _t_wgs.transform(bbox[2], bbox[3])
-    bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
-                max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
-    # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
-    cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
-    dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
-    noms_attendus = set(dalles_dict.keys())
+    # OSM-seul : aucune dalle LiDAR nécessaire — NE PAS interroger le provider
+    # (discover_dalles déclenche une requête TMS coûteuse : une région entière =
+    # des milliers de tuiles d'index pour rien). La section OSM recalcule sa
+    # propre bbox WGS84 plus bas, donc bbox_wgs peut rester None ici.
+    if _osm_seul:
+        bbox_wgs = None
+        dalles_dict = {}
+        noms_attendus = set()
+    else:
+        _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+        _lon1, _lat1 = _t_wgs.transform(bbox[0], bbox[1])
+        _lon2, _lat2 = _t_wgs.transform(bbox[2], bbox[3])
+        bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
+                    max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+        # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
+        cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+        dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+        noms_attendus = set(dalles_dict.keys())
 
     # -------------------------------------------------------
     # Détecter si on peut sauter le téléchargement
@@ -7988,28 +8136,34 @@ Exemples :
                 pbf = None
         else:
             # Téléchargement automatique — détecter le département depuis le centre
+            _zone_region = getattr(args, "zone_region", None)
             num_dep = getattr(args, "zone_departement", None)
 
-            if not num_dep:
-                # Modes ville/gps/bbox : cx, cy sont en Lambert 93
-                # → convertir en WGS84 → requête geo.api.gouv.fr reverse
-                try:
-                    clon, clat = lamb93_to_wgs84_approx(cx, cy)
-                    url_rev = (f"https://geo.api.gouv.fr/communes"
-                               f"?lon={clon:.5f}&lat={clat:.5f}"
-                               f"&fields=codeDepartement&format=json")
-                    req_rev = urllib.request.Request(
-                        url_rev,
-                        headers={"User-Agent": _HTTP_UA})
-                    with urllib.request.urlopen(req_rev, timeout=10) as resp_rev:
-                        data_rev = json.loads(resp_rev.read())
-                    if data_rev:
-                        num_dep = data_rev[0].get("codeDepartement")
-                        print(f"  Département détecté : {num_dep}", flush=True)
-                except Exception as e_rev:
-                    print(f"  Géocodage inverse échoué ({e_rev})")
+            if _zone_region:
+                # Région explicite : slug Geofabrik direct, pas de détection
+                # ni de géocodage inverse (on traitera tout le PBF, skip_bbox).
+                region_slug = _zone_region.strip().lower()
+            else:
+                if not num_dep:
+                    # Modes ville/gps/bbox : cx, cy sont en Lambert 93
+                    # → convertir en WGS84 → requête geo.api.gouv.fr reverse
+                    try:
+                        clon, clat = lamb93_to_wgs84_approx(cx, cy)
+                        url_rev = (f"https://geo.api.gouv.fr/communes"
+                                   f"?lon={clon:.5f}&lat={clat:.5f}"
+                                   f"&fields=codeDepartement&format=json")
+                        req_rev = urllib.request.Request(
+                            url_rev,
+                            headers={"User-Agent": _HTTP_UA})
+                        with urllib.request.urlopen(req_rev, timeout=10) as resp_rev:
+                            data_rev = json.loads(resp_rev.read())
+                        if data_rev:
+                            num_dep = data_rev[0].get("codeDepartement")
+                            print(f"  Département détecté : {num_dep}", flush=True)
+                    except Exception as e_rev:
+                        print(f"  Géocodage inverse échoué ({e_rev})")
 
-            region_slug = _GEOFABRIK.get(num_dep) if num_dep else None
+                region_slug = _GEOFABRIK.get(num_dep) if num_dep else None
             if not region_slug:
                 print(f"  Département {num_dep} non trouvé dans la table Geofabrik.")
                 print(f"  Repli sur le PBF national France (~4 Go).")
@@ -8080,15 +8234,21 @@ Exemples :
                     pbf = None
 
         if pbf and pbf.exists():
-            # Bbox en WGS84 depuis la bbox Lambert 93 de la zone
-            try:
-                lon1, lat1 = lamb93_to_wgs84_approx(bbox[0], bbox[1])
-                lon2, lat2 = lamb93_to_wgs84_approx(bbox[2], bbox[3])
-                bbox_wgs = (min(lon1,lon2), min(lat1,lat2),
-                            max(lon1,lon2), max(lat1,lat2))
-            except (ValueError, TypeError, ImportError) as e:
-                print(f"  ERREUR conversion bbox WGS84 ({type(e).__name__}) : {e}")
-                bbox_wgs = None
+            _region_mode = bool(getattr(args, "zone_region", None))
+            if _region_mode:
+                # Région : on traite TOUT le PBF régional. bbox "monde" → le .map
+                # ignore la bbox (skip_bbox) et l'export geojson ne découpe rien.
+                bbox_wgs = (-180.0, -90.0, 180.0, 90.0)
+            else:
+                # Bbox en WGS84 depuis la bbox Lambert 93 de la zone
+                try:
+                    lon1, lat1 = lamb93_to_wgs84_approx(bbox[0], bbox[1])
+                    lon2, lat2 = lamb93_to_wgs84_approx(bbox[2], bbox[3])
+                    bbox_wgs = (min(lon1,lon2), min(lat1,lat2),
+                                max(lon1,lon2), max(lat1,lat2))
+                except (ValueError, TypeError, ImportError) as e:
+                    print(f"  ERREUR conversion bbox WGS84 ({type(e).__name__}) : {e}")
+                    bbox_wgs = None
             if bbox_wgs:
                 # Dossier dédié OSM — pas le dossier LiDAR
                 dossier_osm = (Path(args.dossier).resolve() if args.dossier
@@ -8096,13 +8256,15 @@ Exemples :
                 dossier_osm.mkdir(parents=True, exist_ok=True)
                 # Liste des formats GeoJSON demandés (parmi "gz" et "geojson")
                 _gj_formats = [f for f in ("gz", "geojson") if f in args.formats_fichier]
+                # Mode région : traiter tout le PBF régional sans re-clip
+                # (le PBF EST déjà la région — c'est le gain vs boucle départements).
                 generer_carte_osm(bbox_wgs, dossier_osm, nom_zone, pbf,
                                   osm_tags=(args.couche
                                             if getattr(args, 'couche', None)
                                             else getattr(args, 'osm_tags', None)),
                                   export_geojson=bool(_gj_formats),
                                   ecraser_tuiles=args.tuiles_ecraser,
-                                  skip_bbox=False,
+                                  skip_bbox=_region_mode,
                                   geojson_formats=_gj_formats or ["gz"])
 
     if etape_cur[0] > 0:
@@ -8744,6 +8906,10 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
                          help="Numéro de département ex: 83, 2A, 971. "
                               "Récupère automatiquement la bbox depuis geo.api.gouv.fr. "
                               "Le nom du dossier est défini automatiquement (ex: var_83).")
+        loc.add_argument("--zone-region", metavar="SLUG",
+                         help="Région Geofabrik ex: provence-alpes-cote-d-azur. "
+                              "Traite toute la région = bbox englobante de ses départements. "
+                              "En --osm : carte régionale unique (PBF complet, sans re-clip).")
     else:
         loc.add_argument("--zone-ville",       metavar="NOM")
         loc.add_argument("--zone-gps",         metavar="LAT,LON")
@@ -8752,6 +8918,7 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
         else:
             loc.add_argument("--zone-bbox",    metavar=bbox_metavar)
         loc.add_argument("--zone-departement", metavar="NUM")
+        loc.add_argument("--zone-region", metavar="SLUG")
 
     parser.add_argument("--zone-rayon", type=float, default=rayon_default,
                         metavar="KM",
@@ -8779,7 +8946,18 @@ def _resoudre_zone_wgs84(args):
     _zone_nom_raw = getattr(args, 'zone_nom', None)
     nom_zone = normaliser_nom(_zone_nom_raw) if _zone_nom_raw else None
 
-    if args.zone_departement:
+    if getattr(args, "zone_region", None):
+        slug = args.zone_region.strip().lower()
+        nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
+        if nom_reg is None:
+            sys.exit(1)
+        if not nom_zone:
+            nom_zone = normaliser_nom(slug)
+        # geocoder_region retourne du Lambert 93 — reconvertir en WGS84
+        lon_min, lat_min = _lamb93_to_wgs84_safe(bx1, by1)
+        lon_max, lat_max = _lamb93_to_wgs84_safe(bx2, by2)
+
+    elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
         nom_dep, bx1, by1, bx2, by2 = geocoder_departement(num_dep)
         if nom_dep is None:
@@ -9699,6 +9877,13 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     import decimal as _dec
     import traceback as _tb
 
+    # Valeur d'attribut XML : délimitée par " → il faut aussi échapper les
+    # guillemets doubles (saxutils.escape ne gère que & < >). Sinon un nom IGN
+    # contenant " (ex: 'Circuit "le Serre Sommet"') casse le XML et osmosis
+    # échoue au parsing. On échappe aussi ' par sûreté.
+    def _xml_attr(s):
+        return _xml_escape(str(s), {'"': "&quot;", "'": "&apos;"})
+
     geojson_path = Path(geojson_path)
     osm_xml_path = Path(osm_xml_path)
     _eps = epsilon if epsilon is not None else _IGN_SIMPLIFY_EPSILON
@@ -9745,7 +9930,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         if tags:
             out.write(f'<node {attrs}>')
             for k, v in tags.items():
-                out.write(f'<tag k="{_xml_escape(k)}" v="{_xml_escape(str(v))}" />')
+                out.write(f'<tag k="{_xml_attr(k)}" v="{_xml_attr(v)}" />')
             out.write('</node>')
         else:
             out.write(f'<node {attrs} />')
@@ -9756,7 +9941,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
             out.write(f'<nd ref="{r}" />')
         if tags:
             for k, v in tags.items():
-                out.write(f'<tag k="{_xml_escape(k)}" v="{_xml_escape(str(v))}" />')
+                out.write(f'<tag k="{_xml_attr(k)}" v="{_xml_attr(v)}" />')
         out.write('</way>')
 
     # ── Compteurs et bounds (passe unique, sans _coords_flat × 4) ────────────
@@ -11463,7 +11648,8 @@ def _cfg_depuis_argv() -> dict:
          "fusion"  if "--fusionner"  in argv else
          "decoupe" if "--decouper"   in argv else "lidar")
 
-    mode = ("dep"  if "--zone-departement" in argv else
+    mode = ("region" if "--zone-region"      in argv else
+            "dep"  if "--zone-departement" in argv else
             "gps"  if "--zone-gps"         in argv else
             "bbox" if "--zone-bbox"         in argv else "ville")
 
@@ -11477,6 +11663,7 @@ def _cfg_depuis_argv() -> dict:
         "nom":     _arg("--zone-nom"),
         "dossier": _arg("--dossier"),
         "dep":     _arg("--zone-departement"),
+        "region":  _arg("--zone-region"),
         "ville":   _arg("--zone-ville"),
         "gps":     _arg("--zone-gps"),
         "bbox":    _arg("--zone-bbox"),
@@ -11823,6 +12010,7 @@ def lancer_gui():
                 "historique": _lire_historique(),
                 "providers":  _discover_providers(),
                 "active_provider": PROVIDER.CODE,
+                "regions":    _regions_disponibles(),
             }
 
         def get_historique(self):
@@ -11943,6 +12131,8 @@ def lancer_gui():
                     cmd += ["--zone-bbox", cfg["bbox"]]
                 elif mode == "dep"  and cfg.get("dep"):
                     cmd += ["--zone-departement", cfg["dep"]]
+                elif mode == "region" and cfg.get("region"):
+                    cmd += ["--zone-region", cfg["region"]]
                 if cfg.get("rayon") is not None and cfg["rayon"] != "":
                     cmd += ["--zone-rayon", str(cfg["rayon"])]
                 if cfg.get("nom"):
@@ -12666,6 +12856,8 @@ body.log-resizing *{
       <label for="m-bbox">BBox</label>
       <input type="radio" name="mode" id="m-dep" value="dep">
       <label for="m-dep">Département</label>
+      <input type="radio" name="mode" id="m-region" value="region">
+      <label for="m-region">Région</label>
      </div>
     </div>
     <div class="row z-zone" id="z-ville"><label>Ville</label>
@@ -12694,6 +12886,16 @@ body.log-resizing *{
       <code>1-3,75,83</code> &nbsp;·&nbsp;
       DOM : <code>2A</code> <code>971</code>
       &nbsp;—&nbsp; Multi-département : un fichier par département
+     </div>
+    </div>
+    <div class="hidden z-zone" id="z-region">
+     <div class="row">
+      <label>Région</label>
+      <select id="f-region" style="min-width:240px"></select>
+     </div>
+     <div class="hint" style="margin-top:3px;margin-left:0">
+      Région Geofabrik = bbox englobante de ses départements.
+      &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
      </div>
     </div>
    </div>
@@ -13341,6 +13543,7 @@ async function initAsync() {
   try {
     const d = await pywebview.api.get_init_data();
     buildProviders(d.providers || [], d.active_provider || 'fr-ign');
+    buildRegions(d.regions || []);
     buildCouches(d.couches);
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);
@@ -13359,14 +13562,29 @@ async function initAsync() {
   }
 }
 
+// ── Sélecteur de région ───────────────────────────────────────────────────────
+// Peuple le <select id="f-region"> avec les slugs Geofabrik (mode zone "Région").
+function buildRegions(regions) {
+  const sel = document.getElementById('f-region');
+  if (!sel) return;
+  sel.innerHTML = regions.map(r => `<option value="${r}">${r}</option>`).join('');
+}
+
 // ── Provider selector ────────────────────────────────────────────────────────
 // Peuple le <select id="f-provider"> avec la liste des providers disponibles
 // et règle la visibilité des onglets FR-only selon le pays du provider actif.
 function buildProviders(providers, activeCode) {
   const sel = document.getElementById('f-provider');
   if (!sel) return;
+  // Dossier providers/ absent (liste vide) : masquer label + select + apikey,
+  // et rester silencieusement actif en fr-ign (provider de fallback côté Python).
   if (!providers.length) {
-    sel.innerHTML = '<option value="fr-ign">fr-ign (défaut)</option>';
+    const apiKeyGroup = document.getElementById('lidar-apikey-group');
+    if (apiKeyGroup) apiKeyGroup.style.display = 'none';
+    document.querySelectorAll('label').forEach(lbl => {
+      if (lbl.textContent.trim() === 'Provider') lbl.style.display = 'none';
+    });
+    sel.style.display = 'none';
     sel.value = 'fr-ign';
     sel.dataset.country = 'fr';
     applyProviderCountry('fr');
@@ -13689,7 +13907,7 @@ function bindAll() {
   // donc loadConfig() doit appeler applyMode() après sr('mode', ...).
   window.applyMode = function() {
     const cur = document.querySelector('input[name=mode]:checked')?.value || 'ville';
-    ['ville','gps','bbox','dep'].forEach(m => {
+    ['ville','gps','bbox','dep','region'].forEach(m => {
       const z = document.getElementById('z-'+m);
       if (z) z.classList.toggle('hidden', cur !== m);
     });
@@ -13789,6 +14007,7 @@ function getConfig() {
     gps:    g('f-gps')?.value.trim(),
     bbox:   g('f-bbox')?.value.trim(),
     dep:    g('f-dep')?.value.trim(),
+    region: g('f-region')?.value.trim(),
     rayon:  parseFloat(g(rayonId)?.value ?? 10),
     // LiDAR
     tel:           g('f-tel')?.checked,
@@ -13926,6 +14145,7 @@ function loadConfig(cfg) {
   s('f-gps',     cfg.gps);
   s('f-bbox',    cfg.bbox);
   s('f-dep',     cfg.dep);
+  s('f-region',  cfg.region);
   s('f-rayon',     cfg.rayon);
   s('f-rayon-gps', cfg.rayon);
 
@@ -14107,13 +14327,14 @@ async function lancer() {
   }
   // Valider que la zone géographique est renseignée (sauf Fusion et Découpage raster)
   if (cfg.type !== 'fusion' && cfg.type !== 'decoupe') {
-    const zoneOk = (cfg.mode === 'ville'  && cfg.ville) ||
-                   (cfg.mode === 'gps'    && cfg.gps)   ||
-                   (cfg.mode === 'bbox'   && cfg.bbox)  ||
-                   (cfg.mode === 'dep'    && cfg.dep)   ||
+    const zoneOk = (cfg.mode === 'ville'  && cfg.ville)  ||
+                   (cfg.mode === 'gps'    && cfg.gps)    ||
+                   (cfg.mode === 'bbox'   && cfg.bbox)   ||
+                   (cfg.mode === 'dep'    && cfg.dep)    ||
+                   (cfg.mode === 'region' && cfg.region) ||
                     false;
     if (!zoneOk) {
-      const labels = {ville:'Ville', gps:'GPS', bbox:'BBox', dep:'Département'};
+      const labels = {ville:'Ville', gps:'GPS', bbox:'BBox', dep:'Département', region:'Région'};
       alert(`Le champ "${labels[cfg.mode] || cfg.mode}" est obligatoire.`);
       return;
     }
@@ -14249,13 +14470,53 @@ function btnReset() {
 
     api = Api()
 
+    # Backend Qt forcé sous Windows et Linux (PyQt6+QtWebEngine, plus de
+    # WinForms/.NET). macOS : le runtime hook du .app pose déjà PYWEBVIEW_GUI=qt.
+    if platform.system() in ("Windows", "Linux"):
+        os.environ.setdefault("PYWEBVIEW_GUI", "qt")
+        # Muselle l'avertissement bénin de fermeture QtWebEngine
+        # ("Release of profile requested but WebEnginePage still not deleted").
+        try:
+            from PyQt6 import QtCore as _QtCore
+            _QT_NOISE = ("WebEnginePage still not deleted",
+                         "Release of profile requested")
+
+            def _qt_msg_filter(_mode, _ctx, _msg):
+                if any(_n in _msg for _n in _QT_NOISE):
+                    return
+                try:
+                    sys.stderr.write(str(_msg) + "\n")
+                except Exception:
+                    pass
+
+            _QtCore.qInstallMessageHandler(_qt_msg_filter)
+        except Exception:
+            pass
+
+    # Taille initiale bornée à l'écran : sous Qt + DPI, une hauteur fixe peut
+    # dépasser un écran de portable -> fenêtre hors écran. On clampe sur la
+    # zone de travail (hors barre des tâches) sous Windows. Redimensionnable.
+    _w, _h = 1300, 850
+    try:
+        if platform.system() == "Windows":
+            import ctypes
+            from ctypes import wintypes
+            _r = wintypes.RECT()
+            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(_r), 0)  # SPI_GETWORKAREA
+            _wa_w, _wa_h = _r.right - _r.left, _r.bottom - _r.top
+            if _wa_h > 0:
+                _h = max(600, min(_h, _wa_h - 48))
+                _w = max(1000, min(_w, _wa_w - 48))
+    except Exception:
+        pass
+
     win = webview.create_window(
         "lidar2map — Cartes offline LiDAR/IGN/OSM",
         html=HTML,
         js_api=api,
-        width=1300, height=850,
+        width=_w, height=_h,
         min_size=(1000, 600),
-        zoomable=True,   # active Ctrl+molette (Edge WebView2 sur Windows)
+        zoomable=True,   # active Ctrl+molette
     )
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win

@@ -196,31 +196,26 @@ try:
 except Exception:
     pass
 
-# ── pywebview (backend dépendant de la plateforme) ───────────────────────────
+# ── pywebview : backend Qt forcé (Windows ET Linux) ──────────────────────────
+# Cette spec sert Windows et Linux ; les deux utilisent désormais le backend Qt
+# (PyQt6 + QtWebEngine). Sous Windows ça remplace WinForms/WebView2+pythonnet
+# (régression pythonnet 3.1.0 : récursion infinie sérialisation .NET -> bridge
+# JS<->Python cassé -> GUI gelée + freezes WinForms) -> plus de couche .NET,
+# moteur Chromium identique sur les 3 OS.
 datas         += collect_data_files("webview")
 hiddenimports += collect_submodules("webview")
-if IS_LINUX:
-    # Linux : PyQt6 + WebEngine + qtpy (auto-installés par le bootstrap)
-    for _lib in ("PyQt6", "qtpy"):
-        try:
-            d, b, h = collect_all(_lib)
-            datas += d; binaries += b; hiddenimports += h
-        except Exception as _e:
-            print(f"  [WARN] collect_all({_lib}) a échoué : {_e}")
-    hiddenimports += [
-        "webview.platforms.qt",
-        "PyQt6.QtWebEngineWidgets",
-        "PyQt6.QtWebEngineCore",
-        "PyQt6.QtWebChannel",
-    ]
-else:
-    # Windows : WinForms / Edge WebView2 (Win10+)
-    hiddenimports += [
-        "webview.platforms.winforms",
-        "clr_loader",
-        "clr_loader.netfx",
-        "pythonnet",
-    ]
+for _lib in ("PyQt6", "qtpy"):
+    try:
+        d, b, h = collect_all(_lib)
+        datas += d; binaries += b; hiddenimports += h
+    except Exception as _e:
+        print(f"  [WARN] collect_all({_lib}) a échoué : {_e}")
+hiddenimports += [
+    "webview.platforms.qt",
+    "PyQt6.QtWebEngineWidgets",
+    "PyQt6.QtWebEngineCore",
+    "PyQt6.QtWebChannel",
+]
 
 # ── PIL ───────────────────────────────────────────────────────────────────────
 hiddenimports += [
@@ -304,21 +299,17 @@ _excludes = [
     "test", "unittest", "pydoc_data",
     "IPython", "jupyter",
 ]
-if IS_LINUX:
-    # Linux : on garde PyQt6 (sinon pywebview ne trouve aucun backend)
-    # et on exclut les backends non-utilisables
-    _excludes += ["webview.platforms.winforms", "webview.platforms.cocoa",
-                  "clr_loader", "pythonnet"]
-else:
-    # Windows : exclut PyQt6 (backend WinForms utilisé à la place)
-    _excludes += ["PyQt6"]
+# Backend Qt sur Windows+Linux : on garde PyQt6, on exclut WinForms/Cocoa et
+# toute la couche .NET (plus utilisée).
+_excludes += ["webview.platforms.winforms", "webview.platforms.cocoa",
+              "clr", "clr_loader", "clr_loader.netfx", "pythonnet"]
 
-# ── Runtime hook (Linux uniquement) : forcer PYWEBVIEW_GUI=qt + chemins Qt ──
-_runtime_hooks = []
-if IS_LINUX:
-    _hook = SRC / "build" / "_runtime_hook_linux.py"
-    _hook.parent.mkdir(parents=True, exist_ok=True)
-    _hook.write_text("""\
+# ── Runtime hook : forcer PYWEBVIEW_GUI=qt + chemins QtWebEngine ─────────────
+# S'applique Windows ET Linux (backend Qt sur les deux). Les gardes os.path
+# rendent les chemins inexistants inoffensifs sur l'OS qui ne les a pas.
+_hook = SRC / "build" / "_runtime_hook_qt.py"
+_hook.parent.mkdir(parents=True, exist_ok=True)
+_hook.write_text("""\
 import os, sys
 _base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
 os.environ.setdefault('PYWEBVIEW_GUI', 'qt')
@@ -328,7 +319,8 @@ if os.path.isdir(_plugins):
     os.environ.setdefault('QT_PLUGIN_PATH', _plugins)
 # QtWebEngineProcess
 for _cand in (
-    os.path.join(_base, 'PyQt6', 'Qt6', 'libexec', 'QtWebEngineProcess'),
+    os.path.join(_base, 'PyQt6', 'Qt6', 'bin', 'QtWebEngineProcess.exe'),   # Windows
+    os.path.join(_base, 'PyQt6', 'Qt6', 'libexec', 'QtWebEngineProcess'),   # Linux
     os.path.join(_base, 'PyQt6', 'QtWebEngineProcess'),
 ):
     if os.path.isfile(_cand):
@@ -342,7 +334,7 @@ if os.path.isdir(_loc):
     os.environ.setdefault('QTWEBENGINE_LOCALES_PATH',
                           os.path.join(_loc, 'qtwebengine_locales'))
 """)
-    _runtime_hooks = [str(_hook)]
+_runtime_hooks = [str(_hook)]
 
 # Passe 1 : analyse de lidar2map.py pour la détection des imports
 a_detect = Analysis(

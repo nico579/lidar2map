@@ -19,7 +19,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 ## Ce que ça produit
 
-À partir d'une commune, de coordonnées GPS, d'une bbox ou d'un département entier :
+À partir d'une commune, de coordonnées GPS, d'une bbox, d'un département ou d'une région entière :
 
 - **Ombrages archéo** depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
   - Hillshade multidirectionnel (angle solaire 25° pour micro-relief)
@@ -198,11 +198,24 @@ python lidar2map.py --ignraster --zone-bbox 6.0,43.3,6.1,43.4 \
 python lidar2map.py --osm --zone-departement 83 --formats-fichier map --oui
 ```
 
-**Carte IGN BD TOPO (routes + bâtiments) en GeoJSON compressé :**
+**Région entière (`--zone-region`) — disponible pour tous les modes :**
+```bash
+# OSM : une seule carte pour toute la région, sans re-découpe
+# (le PBF Geofabrik EST déjà régional — bien plus rapide qu'une boucle par département)
+python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --oui
+
+# IGN vecteur : chemins/itinéraires de toute la région en GeoJSON + carte .map Locus
+python lidar2map.py --ignvecteur --zone-region provence-alpes-cote-d-azur \
+    --couche chemins --formats-fichier gz map --oui
+```
+Le slug est celui de [Geofabrik France](https://download.geofabrik.de/europe/france.html) (anciennes régions : `provence-alpes-cote-d-azur`, `bretagne`, `corse`, `rhone-alpes`…). En OSM la région est traitée d'un bloc (le fichier Geofabrik est déjà régional, aucun géocodage de département) ; pour les modes raster/vecteur/lidar la zone est la bbox englobant tous les départements de la région. Un slug inconnu liste les régions disponibles.
+
+**Carte IGN BD TOPO (routes + bâtiments) en GeoJSON compressé + carte .map Mapsforge :**
 ```bash
 python lidar2map.py --ignvecteur --zone-departement 83 \
-    --couche routes batiments --formats-fichier gz --oui
+    --couche routes batiments --formats-fichier gz map --oui
 ```
+Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible Locus Map / OsmAnd).
 
 **Mode interactif (GUI) — sans aucun argument :**
 ```bash

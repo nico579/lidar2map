@@ -1,0 +1,165 @@
+name: Release (build 3 OS)
+
+# Build des exécutables autonomes sur les 3 OS puis publication sur la release.
+# PyInstaller n'est pas un cross-compilateur : chaque binaire DOIT être produit
+# sur son OS/arch natif. Ce workflow le fait sur les runners GitHub.
+#
+# Déclenchement :
+#   - push d'un tag v*           (ex: git tag v1.3.0 && git push origin v1.3.0)
+#   - manuel (workflow_dispatch) avec saisie du tag
+#
+# Assets produits (noms attendus par update_app.py) :
+#   lidar2map-windows-x86_64.zip     (dossier : lidar2map.exe + lidar2map_bundle.zip)
+#   lidar2map-linux-x86_64.tar.gz    (dossier : lidar2map   + lidar2map_bundle.zip)
+#   lidar2map-macos-arm64.zip        (LIDAR2MAP.app zippé via ditto)
+#
+# NB : le build lidar2map est lourd (JRE + osmosis + Qt/QtWebEngine + deps géo) :
+# onedir ~1,2 Go, bundle ~450 Mo. Les setup_build_* téléchargent JRE+osmosis
+# (--telecharger-outils). Prévoir des jobs longs (timeout-minutes).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag de la release (ex: v1.3.0)'
+        required: true
+
+jobs:
+  build:
+    name: build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ── Windows ──────────────────────────────────────────────────────────
+      - name: Setup machine (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\setup_build_windows.ps1
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\lidar2map_win_build.ps1
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "dist\lidar2map-windows-x86_64"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item dist\lidar2map.exe          $stage\
+          Copy-Item dist\lidar2map_bundle.zip   $stage\
+          $zip = "dist\lidar2map-windows-x86_64.zip"
+          Compress-Archive -Path $stage -DestinationPath $zip -Force
+          (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
+            Out-File "$zip.sha256" -Encoding ascii -NoNewline
+
+      # ── Linux ────────────────────────────────────────────────────────────
+      - name: Setup machine (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y zip
+          bash setup_build_linux.sh
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: bash lidar2map_linux_build.sh
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/lidar2map-linux-x86_64
+          cp dist/lidar2map             dist/lidar2map-linux-x86_64/
+          cp dist/lidar2map_bundle.zip  dist/lidar2map-linux-x86_64/
+          tar czf dist/lidar2map-linux-x86_64.tar.gz -C dist lidar2map-linux-x86_64
+          sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
+            > dist/lidar2map-linux-x86_64.tar.gz.sha256
+
+      # ── macOS ────────────────────────────────────────────────────────────
+      - name: Setup machine (macOS)
+        if: runner.os == 'macOS'
+        run: bash setup_build_mac.sh
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: bash lidar2map_mac_build.sh
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          shasum -a 256 dist/lidar2map-macos-arm64.zip | awk '{print $1}' \
+            > dist/lidar2map-macos-arm64.zip.sha256
+
+      # ── Upload artefact (asset + .sha256) ────────────────────────────────
+      - name: Upload artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asset-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            dist/lidar2map-*.zip
+            dist/lidar2map-*.tar.gz
+            dist/lidar2map-*.sha256
+
+  publish:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Composer le body + publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          ASSETS=()
+          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables autonomes (Python + dépendances + JRE + osmosis embarqués, aucune installation).\n\nPremier lancement : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`.\n\n| Fichier | SHA256 |\n|---|---|\n'
+          while IFS= read -r sha; do
+            asset="${sha%.sha256}"
+            name="$(basename "$asset")"
+            hash="$(tr -d '[:space:]' < "$sha")"
+            BODY+="| \`$name\` | \`$hash\` |"$'\n'
+            ASSETS+=("$asset")
+          done < <(find artifacts -name '*.sha256' | sort)
+
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "ERREUR : aucun asset trouvé dans artifacts/" >&2
+            exit 1
+          fi
+          printf '%s' "$BODY" > body.md
+          echo "── Body de la release ──"; cat body.md
+          echo "── Assets ──"; printf '  %s\n' "${ASSETS[@]}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit   "$TAG" --notes-file body.md
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "lidar2map $TAG" --notes-file body.md
+          fi
+          echo "Release $TAG publiée."
