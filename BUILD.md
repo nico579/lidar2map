@@ -379,15 +379,37 @@ Note : le launcher détecte les mises à jour via la **mtime** du zip (puis SHA2
 en confirmation). 7-Zip et `update_app.py` mettent tous deux à jour la mtime
 au moment de l'écriture, donc la ré-extraction se déclenche automatiquement.
 
-### Quand faut-il rebuilder ?
+### Quand faut-il rebuilder ? (compiler vs patcher)
 
-| Changement | Rebuild nécessaire ? |
-|------------|----------------------|
-| Modification de `lidar2map.py` | Non — remplacer dans le zip |
-| Ajout d'une dépendance Python | Oui |
-| Mise à jour de Python, PyInstaller | Oui |
-| Changement de `_loader.py` | Oui |
-| Mise à jour rasterio, PyQt6, etc. | Oui |
+Deux opérations **distinctes** : **compiler** (PyInstaller, OS-spécifique —
+`.exe` / ELF / `.app` avec libs natives) vs **mettre à jour** le
+`_internal/lidar2map.py` d'un bundle existant (simple manip de zip, faisable
+pour **les 3 OS depuis une seule machine** via `update_app.py --release`).
+`update_app.py` ne patche QUE le code de l'app *inner* — pas le bloc launcher,
+ni les dépendances, ni les specs.
+
+| Changement | Rebuild ? |
+|------------|-----------|
+| Code app dans `lidar2map.py` (`main`, GUI, calcul…) | **Non** — `update_app.py` (3 OS, sans recompiler) |
+| **Bloc launcher** de `lidar2map.py` (recherche bundle / extraction / **lockfile**) | **Oui** — compilé *dans* l'exe launcher, pas dans le bundle |
+| Ajout / mise à jour d'une **dépendance** (rasterio, PyQt6…) | Oui |
+| Changement d'un **spec** ou de `_loader.py` | Oui |
+| Mise à jour de Python / PyInstaller, nouvel OS | Oui |
+
+**Cloud vs local :**
+
+- ☁️ **Cloud (`release.yml`, Actions)** — pour **compiler** : les 3 OS, clean-room
+  reproductible (pas de dérive de machine ; ex. un venv local avec une mauvaise
+  version de pythonnet/PyQt6). **Source de vérité des binaires distribués**,
+  déclenché par un tag `vX.Y.Z`.
+- ⚡ **Local + `update_app.py --release`** — pour **mettre à jour le code** entre
+  deux compilations : sert les 3 OS depuis une seule machine, sans recompiler.
+  La voie du quotidien.
+- 🔧 **Build local par-OS** (`lidar2map_*_build.*`) — pour **itérer/déboguer** sur
+  sa propre plateforme uniquement ; ne pas publier un build local comme asset.
+
+**Règle** : compiler via le cloud → fix de code ensuite via `update_app.py`
+(3 OS, sans rebuild) → rebuilder seulement si deps / spec / launcher changent.
 
 ---
 
