@@ -11865,13 +11865,14 @@ def lancer_gui():
     import threading, queue
 
     # ── Sélection du backend GUI ───────────────────────────────────────────
-    # macOS : forcer le backend Qt (PyQt6) avant l'import de webview.
-    # Le backend Cocoa (défaut) plante en session SSH même avec VNC actif,
-    # car NSScreen.mainScreen() ne voit pas la session VNC depuis SSH.
-    # Qt se connecte directement au serveur de fenêtres macOS et fonctionne.
-    # PYWEBVIEW_GUI doit être posé AVANT import webview (lu à l'import).
-    if platform.system() == "Darwin":
-        os.environ["PYWEBVIEW_GUI"] = "qt"
+    # Forcer le backend Qt AVANT l'import de webview sur les 3 OS (pywebview
+    # peut lire PYWEBVIEW_GUI dès l'import) :
+    #   macOS   : évite Cocoa (NSScreen None en SSH+VNC -> crash).
+    #   Windows : évite WinForms/pythonnet (régression 3.1.0 -> GUI gelée).
+    #   Linux   : Qt est le seul backend viable.
+    # En frozen, le runtime hook la pose déjà ; ceci fiabilise le mode dev.
+    if platform.system() in ("Darwin", "Windows", "Linux"):
+        os.environ.setdefault("PYWEBVIEW_GUI", "qt")
 
     try:
         import webview
@@ -14470,12 +14471,10 @@ function btnReset() {
 
     api = Api()
 
-    # Backend Qt forcé sous Windows et Linux (PyQt6+QtWebEngine, plus de
-    # WinForms/.NET). macOS : le runtime hook du .app pose déjà PYWEBVIEW_GUI=qt.
+    # Muselle l'avertissement bénin de fermeture QtWebEngine
+    # ("Release of profile requested but WebEnginePage still not deleted").
+    # (PYWEBVIEW_GUI=qt est déjà posé avant `import webview`, dans lancer_gui.)
     if platform.system() in ("Windows", "Linux"):
-        os.environ.setdefault("PYWEBVIEW_GUI", "qt")
-        # Muselle l'avertissement bénin de fermeture QtWebEngine
-        # ("Release of profile requested but WebEnginePage still not deleted").
         try:
             from PyQt6 import QtCore as _QtCore
             _QT_NOISE = ("WebEnginePage still not deleted",
