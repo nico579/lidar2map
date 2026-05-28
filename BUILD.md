@@ -629,3 +629,45 @@ xattr -dr com.apple.quarantine LIDAR2MAP.app
 ```
 
 Ou clic droit → Ouvrir → Ouvrir quand même.
+
+### Spécifique Linux
+
+- **`error: externally-managed-environment`** (PEP 668, Linux récent) : le
+  bootstrap tente déjà `--break-system-packages` puis `--user`. Si tout
+  échoue : créer un venv et relancer :
+  ```bash
+  python3 -m venv ~/.venv-lidar && source ~/.venv-lidar/bin/activate
+  ```
+- **Distribution sans `apt`** (Fedora, Arch, openSUSE) : le script ne sait
+  pas installer GDAL automatiquement. Installer à la main puis relancer :
+  ```bash
+  sudo dnf install gdal                # Fedora
+  sudo pacman -S gdal                  # Arch
+  sudo zypper install gdal             # openSUSE
+  ```
+- **`No suitable backend found`** (pywebview, GUI) : Qt absent au niveau
+  système. Installer les paquets distro (pas pip) :
+  ```bash
+  sudo apt install python3-pyqt6 python3-pyqt6.qtwebengine    # Debian/Ubuntu
+  sudo dnf install python3-qt6 python3-qt6-qtwebengine        # Fedora
+  sudo pacman -S python-pyqt6 python-pyqt6-webengine          # Arch
+  ```
+- **Wayland, fenêtre blanche ou artefacts d'affichage** : forcer X11 :
+  ```bash
+  QT_QPA_PLATFORM=xcb python3 lidar2map.py
+  ```
+
+### Spécifique macOS
+
+- **`"java" cannot be opened because the developer cannot be verified`** :
+  Gatekeeper bloque le JRE Temurin téléchargé automatiquement. Soit :
+  - Préférences Système → Sécurité → Autoriser (sur le binaire bloqué).
+  - **Ou** installer Java système (`brew install openjdk@21`) ; le script
+    détecte un Java système valide et l'utilise au lieu du JRE téléchargé.
+- **Apple Silicon, crash au démarrage / `mach-o, but wrong architecture`** :
+  vérifier que `python3` est arm64 :
+  ```bash
+  python3 -c "import platform; print(platform.machine())"   # doit dire arm64
+  ```
+  Si non, soit lancer en arm64 forcé (`arch -arm64 python3 lidar2map.py ...`),
+  soit réinstaller Python depuis python.org / Homebrew ARM.

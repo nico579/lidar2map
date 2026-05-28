@@ -4,7 +4,7 @@
 
 Script Python autonome qui télécharge les données LiDAR publiques de plusieurs portails nationaux (IGN France, AHN Pays-Bas, swisstopo Suisse, Kartverket Norvège), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
-> ⚠️ **Statut** : usage personnel diffusé. Code testé intensivement sur Windows 10/11. Linux et macOS testés partiellement — voir [TEST_LINUX_MAC.md](TEST_LINUX_MAC.md). Les retours sont bienvenus via les [issues GitHub](https://github.com/nico579/lidar2map/issues).
+> ⚠️ **Statut** : usage personnel diffusé. Code testé intensivement sur Windows 10/11. Linux et macOS testés partiellement — cas connus + dépannage cross-OS dans la section *Dépannage* de [BUILD.md](BUILD.md). Les retours sont bienvenus via les [issues GitHub](https://github.com/nico579/lidar2map/issues).
 
 ---
 
@@ -87,7 +87,7 @@ python3.12 lidar2map.py
 
 Le script demandera l'autorisation d'installer GDAL via `sudo apt install gdal-bin`.
 
-Résolution de problèmes : [TEST_LINUX_MAC.md](TEST_LINUX_MAC.md).
+Résolution de problèmes : section *Dépannage* de [BUILD.md](BUILD.md) (incluant les cas spécifiques Linux/macOS : PEP 668, Qt distro packages, Wayland, Gatekeeper sur le JRE…).
 
 ### B. Exécutable autonome
 
@@ -291,8 +291,7 @@ Ombrages LiDAR archéo affichés en superposition sur le terrain dans Locus Map.
 ## Documentation
 
 - **README de l'utilisateur** : ce fichier
-- **Build & déploiement** : [BUILD.md](BUILD.md) — architecture du bundle, scripts de build par OS, mise à jour sans rebuild, dépannage
-- **Procédure de test Linux/Mac** : [TEST_LINUX_MAC.md](TEST_LINUX_MAC.md)
+- **Build & déploiement** : [BUILD.md](BUILD.md) — architecture du bundle, scripts de build par OS, mise à jour sans rebuild, dépannage (incluant cas spécifiques Linux et macOS)
 - **Aide intégrée** : `python lidar2map.py --help` (LiDAR), `--ignraster --help` (raster), `--ignvecteur --help` (vecteur), `--osm --help`, `--fusionner --help`
 
 ## Licence

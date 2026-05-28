@@ -81,7 +81,6 @@ MAP = {
     # Doc + CI + meta
     "README_Github.md":              "README.md",
     "README_LIDAR2MAP.md":           "BUILD.md",
-    "TEST_LINUX_MAC.md":             "TEST_LINUX_MAC.md",
     "ci_github.yml":                 ".github/workflows/ci.yml",
     "release_github.yml":            ".github/workflows/release.yml",
     "update_github.yml":             ".github/workflows/update.yml",
@@ -100,6 +99,7 @@ REMOVE = [
     "launcher.spec",
     "push_github.ps1",       # remplacé par deploy.py
     "deploy_update.ps1",     # remplacé par deploy.py
+    "TEST_LINUX_MAC.md",     # contenu utile fondu dans BUILD.md (section Dépannage)
 ]
 
 # Patterns "rebuild requis" : si l'un de ces fichiers a changé, le patch ne
