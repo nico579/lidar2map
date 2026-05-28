@@ -237,14 +237,19 @@ def copy_files():
 
 def mirror_folders():
     cprint("\n==> Copie des dossiers (mirror)", "cyan")
+    # Exclure les artefacts Python : __pycache__/, .pyc, .pyo. Sans ça,
+    # copytree copierait le bytecode au temp clone et seul le .gitignore
+    # empêcherait le commit — fragile si la règle change.
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
+    def _is_artefact(p): return "__pycache__" in p.parts or p.suffix in (".pyc", ".pyo")
     for src_name, dst_name in FOLDERS.items():
         s = SRC / src_name
         d = CLONE / dst_name
         if s.exists():
             if d.exists():
                 shutil.rmtree(d)
-            shutil.copytree(s, d)
-            count = sum(1 for p in s.rglob("*") if p.is_file())
+            shutil.copytree(s, d, ignore=ignore)
+            count = sum(1 for p in s.rglob("*") if p.is_file() and not _is_artefact(p))
             print(f"    OK  {src_name:<32} -> {dst_name}  ({count} fichiers)")
         else:
             cprint(f"    -- {src_name:<32} (introuvable, ignoré)", "yellow")
