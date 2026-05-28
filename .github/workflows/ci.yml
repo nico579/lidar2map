@@ -4,9 +4,11 @@ on:
   push:
     paths:
       - 'lidar2map.py'
+      - 'deploy.py'
   pull_request:
     paths:
       - 'lidar2map.py'
+      - 'deploy.py'
   workflow_dispatch:
 
 jobs:
@@ -32,6 +34,9 @@ jobs:
 
       - name: Syntaxe Python
         run: python -c "import ast; ast.parse(open('lidar2map.py', encoding='utf-8').read()); print('OK')"
+
+      - name: Syntaxe _loader.py
+        run: python -c "import ast; ast.parse(open('_loader.py', encoding='utf-8').read()); print('OK')"
 
       - name: Import complet sans erreur
         run: |

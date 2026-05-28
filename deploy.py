@@ -120,6 +120,7 @@ def is_rebuild_file(name: str) -> bool:
 
 _USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 if os.name == "nt" and _USE_COLOR:
+    # Active la séquence ANSI sur les terminaux Windows récents.
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
@@ -145,15 +146,24 @@ def fail(msg: str) -> "NoReturn":
 
 # === SHELL HELPERS ===========================================================
 
-def run(cmd, cwd=None, check=True, capture=False, env=None):
-    """Wrapper subprocess.run. capture=True -> renvoie stdout (texte)."""
-    result = subprocess.run(
-        cmd, cwd=str(cwd) if cwd else None,
-        check=False, text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
-        env=env,
-    )
+def run(cmd, cwd=None, check=True, capture=False, env=None, timeout=120):
+    """Wrapper subprocess.run. capture=True -> renvoie stdout (texte).
+
+    timeout : secondes avant abandon. 120s suffit pour la majorité des git/gh
+    opérations. Pour les commandes longues par nature (git clone d'un repo
+    avec gros assets, gh run watch sur update.yml, update_app.py --release
+    qui upload ~1,5 Go), passer un timeout explicite plus large au call site."""
+    try:
+        result = subprocess.run(
+            cmd, cwd=str(cwd) if cwd else None,
+            check=False, text=True,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            env=env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        fail(f"{' '.join(cmd)} a dépassé le timeout ({timeout}s) — réseau bloqué ou commande hangée ?")
     if check and result.returncode != 0:
         cmd_str = " ".join(cmd)
         err = (result.stderr or result.stdout or "").strip()
@@ -161,9 +171,11 @@ def run(cmd, cwd=None, check=True, capture=False, env=None):
     return result
 
 def git(*args, check=True, capture=False):
+    """git -C <CLONE> <args>"""
     return run(["git", "-C", str(CLONE), *args], check=check, capture=capture)
 
 def gh_json(*args):
+    """gh ... --json X (renvoie le JSON parsé)."""
     res = run(["gh", *args], capture=True)
     return json.loads(res.stdout)
 
@@ -196,7 +208,8 @@ def clone_or_pull():
         cprint(f"==> Clone {REPO_URL} -> {CLONE}", "cyan")
         if CLONE.exists():
             shutil.rmtree(CLONE)
-        run(["git", "clone", REPO_URL, str(CLONE)])
+        # Clone initial : peut prendre 1-2 min (assets binaires, screenshots).
+        run(["git", "clone", REPO_URL, str(CLONE)], timeout=300)
 
 def remove_obsolete():
     cprint("\n==> Suppression des anciens chemins renommés", "cyan")
@@ -249,6 +262,7 @@ def compute_diff():
 def commit_and_push(message: str, new_tag: str = ""):
     cprint("\n==> Commit", "cyan")
     msg_file = CLONE / "COMMIT_MSG.txt"
+    # UTF-8 SANS BOM par défaut sur Python.
     msg_file.write_text(message, encoding="utf-8")
     try:
         git("commit", "-F", str(msg_file))
@@ -283,8 +297,10 @@ def invoke_cloud(repo: str, target_tag: str):
     print(f"    Run : https://github.com/{repo}/actions/runs/{run_id}")
 
     cprint("==> Surveillance du run (~6-7 min)", "cyan")
+    # update.yml dure typiquement 5-7 min ; on tolère jusqu'à 20 min pour rester
+    # robuste si le runner GitHub est lent ce jour-là.
     res = run(["gh", "run", "watch", str(run_id), "--repo", repo,
-               "--exit-status", "--interval", "20"], check=False)
+               "--exit-status", "--interval", "20"], check=False, timeout=1200)
     if res.returncode != 0:
         fail(f"le run update.yml a échoué : gh run view {run_id} --repo {repo} --log-failed")
 
@@ -299,6 +315,8 @@ def invoke_local(target_tag: str):
 
     env = os.environ.copy()
     if "GH_TOKEN" not in env and "GITHUB_TOKEN" not in env:
+        # Récupère le token de gh CLI si dispo, pour éviter à update_app.py
+        # le détour par git credential (qui peut prompter).
         tok = run(["gh", "auth", "token"], capture=True, check=False)
         if tok.returncode == 0 and tok.stdout.strip():
             env["GH_TOKEN"] = tok.stdout.strip()
@@ -309,7 +327,9 @@ def invoke_local(target_tag: str):
     if not update_app.exists():
         fail(f"update_app.py introuvable à côté ({update_app})")
 
-    run([py, str(update_app), "--release", "--tag", target_tag], env=env)
+    # update_app.py --release : download 3 assets + patch + upload ~1,5 Go
+    # depuis la connexion locale. Tolère jusqu'à 40 min pour les connexions lentes.
+    run([py, str(update_app), "--release", "--tag", target_tag], env=env, timeout=2400)
     cprint(f"\n==> OK. Bundles de {target_tag} patchés sans rebuild (local).", "green")
     print(f"    Release : https://github.com/{REPO_DEFAULT}/releases/tag/{target_tag}")
 
@@ -328,8 +348,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Voir le docstring en tête du fichier pour les exemples.",
     )
-    parser.add_argument("-m", "--message", required=True)
-    parser.add_argument("--mode", choices=["cloud", "local"], default="cloud")
+    parser.add_argument("-m", "--message", required=True,
+                        help="message de commit")
+    parser.add_argument("--mode", choices=["cloud", "local"], default="cloud",
+                        help="voie de patch (défaut: cloud = update.yml sur GitHub)")
     parser.add_argument("--patch-tag", default="",
                         help="tag existant à patcher (défaut: dernière release)")
     parser.add_argument("--new-tag", default="",
@@ -338,9 +360,11 @@ def main():
                         help="sauter push+détection, patcher directement la release")
     parser.add_argument("--dry-run", action="store_true",
                         help="afficher le diff sans commit ni push")
-    parser.add_argument("--repo", default=REPO_DEFAULT)
+    parser.add_argument("--repo", default=REPO_DEFAULT,
+                        help=f"repo GitHub cible (défaut: {REPO_DEFAULT})")
     args = parser.parse_args()
 
+    # --- Validation ---
     if args.new_tag and args.skip_push:
         fail("--new-tag et --skip-push sont contradictoires")
     if args.new_tag and args.patch_tag:
@@ -348,12 +372,14 @@ def main():
     if args.dry_run and args.skip_push:
         fail("--dry-run et --skip-push sont contradictoires")
 
+    # --- Mode --skip-push : patch direct, pas de push ni de détection ---
     if args.skip_push:
         cprint(f"==> --skip-push : pas de push ni de détection, déclenchement direct ({args.mode}).", "yellow")
         tag = args.patch_tag or get_latest_tag(args.repo)
         invoke_patch(args.mode, args.repo, tag)
         return 0
 
+    # --- Phase 1 : push + détection ---
     cprint("==> [1/2] Push des sources sur main + détection du diff", "cyan")
     clone_or_pull()
     remove_obsolete()
@@ -362,7 +388,7 @@ def main():
     changed = compute_diff()
 
     if not changed:
-        return 0
+        return 0  # message déjà affiché par compute_diff
 
     if args.dry_run:
         cprint("\n==> --dry-run : pas de commit ni de push.", "yellow")
@@ -379,6 +405,7 @@ def main():
     for c in changed:
         print(f"    {c}")
 
+    # --- Phase 2 : catégorisation -> action ---
     rebuild = [c for c in changed if is_rebuild_file(c)]
     code_changed = APP_PY in changed
 

@@ -133,10 +133,14 @@ jobs:
       - name: Composer le body + publier la release
         env:
           GH_TOKEN: ${{ github.token }}
+          # GH_REPO : le job publish ne fait pas de checkout (pas de .git),
+          # donc gh ne peut pas déduire le repo via git -> on le lui donne
+          # explicitement, sinon "fatal: not a git repository".
           GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          # Collecter les assets (zip/tar.gz) et leurs SHA256
           ASSETS=()
           BODY=$'## lidar2map '"$TAG"$'\n\nExécutables autonomes (Python + dépendances + JRE + osmosis embarqués, aucune installation).\n\nPremier lancement : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`.\n\n| Fichier | SHA256 |\n|---|---|\n'
           while IFS= read -r sha; do

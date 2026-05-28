@@ -16,6 +16,11 @@ name: deploy.py cross-platform
 # --dry-run sort AVANT tout commit/push : aucun risque pour main.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy.py'
+      - '.github/workflows/cross_platform.yml'
   workflow_dispatch:
 
 jobs:
