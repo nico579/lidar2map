@@ -85,11 +85,15 @@ MAP = {
     "release_github.yml":            ".github/workflows/release.yml",
     "update_github.yml":             ".github/workflows/update.yml",
     "cross_platform_github.yml":     ".github/workflows/cross_platform.yml",
+    "LICENSE":                       "LICENSE",
     ".gitignore":                    ".gitignore",
 }
 
 # Dossiers à synchroniser récursivement (mirror local -> remote)
-FOLDERS = {"screenshots": "screenshots"}
+FOLDERS = {
+    "screenshots": "screenshots",
+    "providers":   "providers",   # implémentations LiDAR par pays (fr-ign, nl-ahn, ch-swisstopo, etc.)
+}
 
 # Anciens chemins sur GitHub à supprimer (renommages + scripts PS1 obsolètes)
 REMOVE = [
