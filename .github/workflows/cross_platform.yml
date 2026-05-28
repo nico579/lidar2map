@@ -1,0 +1,46 @@
+name: deploy.py cross-platform
+
+# Smoke test manuel : valide que deploy.py (Python pur, stdlib seule) tourne
+# sur Ubuntu et macOS aussi bien que sur Windows.
+#
+# Le test execute :
+#   1. python3 deploy.py --help     (argparse + UTF-8 reconfigure + imports)
+#   2. python3 deploy.py -m ... --dry-run
+#      = clone du repo, copie des fichiers MAP du checkout vers le clone,
+#        diff. Sur un checkout, la plupart des MAP keys sont des noms locaux
+#        absents (README_Github.md vs README.md), donc copy_files les ignore
+#        proprement et le diff est vide ou minimal. Le but est de valider
+#        qu'aucune erreur OS-specifique (path separator, encoding, ctypes
+#        Windows-only, etc.) ne casse l'execution.
+#
+# --dry-run sort AVANT tout commit/push : aucun risque pour main.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: python3 --version
+        run: python3 --version
+
+      - name: deploy.py --help
+        run: python3 deploy.py --help
+
+      - name: deploy.py --dry-run (clone + copie + diff, sort avant commit)
+        run: python3 deploy.py -m "ci dry-run cross-platform" --dry-run

@@ -84,6 +84,7 @@ MAP = {
     "ci_github.yml":                 ".github/workflows/ci.yml",
     "release_github.yml":            ".github/workflows/release.yml",
     "update_github.yml":             ".github/workflows/update.yml",
+    "cross_platform_github.yml":     ".github/workflows/cross_platform.yml",
     ".gitignore":                    ".gitignore",
 }
 
