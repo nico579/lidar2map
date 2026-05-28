@@ -96,8 +96,7 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 | `setup_build_mac.sh` | Setup machine de build macOS vierge (4 étapes) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
-| `push_github.ps1` | Pousse les sources sur le repo GitHub (clone/pull, copie, commit, push, tag) |
-| `deploy_update.ps1` | **Déploiement auto en 1 commande** : détecte le diff et choisit push / `update.yml` / `release.yml` |
+| `deploy.py` | **Déploiement unifié en 1 commande** (cross-platform Win/Mac/Linux) : push, détection du diff, patch cloud/local ou tag pour rebuild |
 
 ### Livrables à distribuer
 
@@ -426,39 +425,45 @@ Détails :
 launcher changent, sinon `update.yml` (fix de code, sans rebuild ni upload local).
 Le build local n'est que pour itérer/déboguer.
 
-### Déploiement automatique en une commande — `deploy_update.ps1`
+### Déploiement unifié en une commande — `deploy.py`
 
-Plutôt que d'enchaîner à la main « push → patcher la release → surveiller »,
-`deploy_update.ps1` **détecte ce qui a changé** et applique la bonne action,
-sur la voie de ton choix (cloud par défaut, ou local) :
+Un seul script (cross-platform : Windows / macOS / Linux) qui **détecte ce qui
+a changé** et applique la bonne action, sur la voie de ton choix :
 
-```powershell
-.\deploy_update.ps1 -Message "mon correctif"                # cloud, dernière release
-.\deploy_update.ps1 -Message "..." -Tag v1.3.0              # cible un tag précis
-.\deploy_update.ps1 -Message "..." -Mode local              # local au lieu de cloud
-.\deploy_update.ps1 -Message "..." -SkipPush                # patch direct, sans push ni détection
+```bash
+python deploy.py -m "mon correctif"                         # cloud, dernière release
+python deploy.py -m "..." --patch-tag v1.3.0                # cibler un tag existant
+python deploy.py -m "..." --mode local                      # patch local au lieu de cloud
+python deploy.py -m "..." --new-tag v1.4.0                  # créer un NOUVEAU tag -> release.yml
+python deploy.py -m "..." --skip-push                       # patch direct, sans push ni détection
+python deploy.py -m "..." --dry-run                         # voir le diff sans pousser
 ```
 
-| `-Mode` | Voie | Qui upload les ~1,5 Go ? | Prérequis |
+Sous Mac/Linux : `python3 deploy.py ...` ou `./deploy.py ...` (le script a un
+shebang `#!/usr/bin/env python3`, faire `chmod +x deploy.py` la 1ère fois).
+
+| `--mode` | Voie | Qui upload les ~1,5 Go ? | Prérequis |
 |---|---|---|---|
 | `cloud` (défaut) | `update.yml` sur runner GitHub | **GitHub** | `gh auth status` |
-| `local` | `python update_app.py --release` ici | **ta connexion** | `python` + `GH_TOKEN`/`GITHUB_TOKEN` (ou git credential) |
+| `local` | `python update_app.py --release` ici | **ta connexion** | `python` + `GH_TOKEN`/`GITHUB_TOKEN` (ou `gh auth token`) |
 
 | Ce qui a changé (diff réel) | Action automatique (identique cloud / local) |
 |---|---|
-| `lidar2map.py` seul (code interne) | push **+ patch** (cloud ou local selon `-Mode`) sur la dernière release |
-| `.spec` / `_loader.py` / `*_build.*` / `setup_build_*` / `tagmapping-min.xml` | push **puis STOP** : indique de tagger pour `release.yml` (rebuild ; version = choix humain) |
+| `lidar2map.py` seul (code interne) | push **+ patch** (cloud ou local selon `--mode`) sur la dernière release |
+| `.spec` / `_loader.py` / `*_build.*` / `setup_build_*` / `tagmapping-min.xml` | push **puis STOP** : indique de relancer avec `--new-tag` (rebuild ; version = choix humain) |
 | docs / meta seules (README, BUILD, workflows, screenshots) | **push seul** — aucun binaire à toucher |
 
-Il s'appuie sur `push_github.ps1 -ChangedOutFile` (qui écrit la liste des fichiers
-réellement poussés) pour catégoriser sans dupliquer la table de fichiers.
+**Deux sémantiques de tag distinctes** :
+- `--patch-tag vX.Y.Z` = cibler une release **existante** pour le patch (défaut : la dernière).
+- `--new-tag vX.Y.Z` = créer un **nouveau** tag git → déclenche `release.yml` (rebuild complet 3 OS, ~30 min).
+
 `tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml` ni par
 `update_app.py --release`, qui ne touchent que `_internal/lidar2map.py`) → classé rebuild.
 
 > ⚠️ **Angle mort** assumé : le bloc launcher et les dépendances vivent *dans*
 > `lidar2map.py`. Si seul `lidar2map.py` change, le script suppose un fix de code
 > interne (→ patch) et **affiche un avertissement** : si tu as touché au
-> bloc launcher ou aux deps, lance plutôt `release.yml` (rebuild) via un tag.
+> bloc launcher ou aux deps, relance avec `--new-tag <vX.Y.Z>` pour un rebuild.
 
 ---
 
