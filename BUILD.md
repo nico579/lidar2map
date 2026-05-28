@@ -96,6 +96,8 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 | `setup_build_mac.sh` | Setup machine de build macOS vierge (4 étapes) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
+| `push_github.ps1` | Pousse les sources sur le repo GitHub (clone/pull, copie, commit, push, tag) |
+| `deploy_update.ps1` | **Déploiement auto en 1 commande** : détecte le diff et choisit push / `update.yml` / `release.yml` |
 
 ### Livrables à distribuer
 
@@ -423,6 +425,33 @@ Détails :
 **Règle** : pour livrer, **rester dans le cloud** — `release.yml` si deps/spec/
 launcher changent, sinon `update.yml` (fix de code, sans rebuild ni upload local).
 Le build local n'est que pour itérer/déboguer.
+
+### Déploiement automatique en une commande — `deploy_update.ps1`
+
+Plutôt que d'enchaîner à la main « push → déclencher update.yml → surveiller »,
+`deploy_update.ps1` **détecte ce qui a changé** et applique la bonne action :
+
+```powershell
+.\deploy_update.ps1 -Message "mon correctif"        # détecte + agit (dernière release)
+.\deploy_update.ps1 -Message "..." -Tag v1.3.0      # cible un tag précis pour update.yml
+.\deploy_update.ps1 -Message "..." -SkipPush        # force update.yml sans push ni détection
+```
+
+| Ce qui a changé (diff réel) | Action automatique |
+|---|---|
+| `lidar2map.py` seul (code interne) | push **+ `update.yml`** sur la dernière release + surveillance du run |
+| `.spec` / `_loader.py` / `*_build.*` / `setup_build_*` / `tagmapping-min.xml` | push **puis STOP** : indique de tagger pour `release.yml` (rebuild ; version = choix humain) |
+| docs / meta seules (README, BUILD, workflows, screenshots) | **push seul** — aucun binaire à toucher |
+
+Il s'appuie sur `push_github.ps1 -ChangedOutFile` (qui écrit la liste des fichiers
+réellement poussés) pour catégoriser sans dupliquer la table de fichiers.
+`tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml`,
+qui ne touche que `_internal/lidar2map.py`) → classé rebuild.
+
+> ⚠️ **Angle mort** assumé : le bloc launcher et les dépendances vivent *dans*
+> `lidar2map.py`. Si seul `lidar2map.py` change, le script suppose un fix de code
+> interne (→ `update.yml`) et **affiche un avertissement** : si tu as touché au
+> bloc launcher ou aux deps, lance plutôt `release.yml` (rebuild) via un tag.
 
 ---
 
