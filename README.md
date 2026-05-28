@@ -158,7 +158,20 @@ Désinstallation propre : `lidar2map(.exe) --desinstaller`.
 
 ---
 
-## Exemples en ligne de commande
+## Utilisation
+
+Deux modes, sélectionnés automatiquement selon les arguments (même logique que
+le projet jumeau [gpxsolar](https://github.com/nico579/gpxsolar)) :
+
+- **Sans argument → interface graphique** (pywebview / Qt). Mode courant.
+- **Avec arguments → calcul en ligne de commande** (headless, sans fenêtre).
+  Pratique pour scripter, lancer sur un serveur, ou reproduire un rendu précis.
+
+Tout ce qui suit vaut pour le binaire comme pour le script — remplacez simplement
+`python lidar2map.py` par `lidar2map.exe` (Windows), `./lidar2map` (Linux) ou
+`LIDAR2MAP.app` (macOS).
+
+### Exemples en ligne de commande
 
 **Ombrage SVF + carte topo IGN sur une commune (zone 1 km² autour de Garéoult, France) :**
 ```bash
@@ -216,13 +229,6 @@ python lidar2map.py --ignvecteur --zone-departement 83 \
     --couche routes batiments --formats-fichier gz map --oui
 ```
 Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible Locus Map / OsmAnd).
-
-**Mode interactif (GUI) — sans aucun argument :**
-```bash
-python lidar2map.py
-```
-
-(Idem avec `lidar2map.exe` ou `LIDAR2MAP.app` pour l'exécutable autonome.)
 
 ## Providers LiDAR — ajouter un pays
 
