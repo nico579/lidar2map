@@ -428,29 +428,36 @@ Le build local n'est que pour itérer/déboguer.
 
 ### Déploiement automatique en une commande — `deploy_update.ps1`
 
-Plutôt que d'enchaîner à la main « push → déclencher update.yml → surveiller »,
-`deploy_update.ps1` **détecte ce qui a changé** et applique la bonne action :
+Plutôt que d'enchaîner à la main « push → patcher la release → surveiller »,
+`deploy_update.ps1` **détecte ce qui a changé** et applique la bonne action,
+sur la voie de ton choix (cloud par défaut, ou local) :
 
 ```powershell
-.\deploy_update.ps1 -Message "mon correctif"        # détecte + agit (dernière release)
-.\deploy_update.ps1 -Message "..." -Tag v1.3.0      # cible un tag précis pour update.yml
-.\deploy_update.ps1 -Message "..." -SkipPush        # force update.yml sans push ni détection
+.\deploy_update.ps1 -Message "mon correctif"                # cloud, dernière release
+.\deploy_update.ps1 -Message "..." -Tag v1.3.0              # cible un tag précis
+.\deploy_update.ps1 -Message "..." -Mode local              # local au lieu de cloud
+.\deploy_update.ps1 -Message "..." -SkipPush                # patch direct, sans push ni détection
 ```
 
-| Ce qui a changé (diff réel) | Action automatique |
+| `-Mode` | Voie | Qui upload les ~1,5 Go ? | Prérequis |
+|---|---|---|---|
+| `cloud` (défaut) | `update.yml` sur runner GitHub | **GitHub** | `gh auth status` |
+| `local` | `python update_app.py --release` ici | **ta connexion** | `python` + `GH_TOKEN`/`GITHUB_TOKEN` (ou git credential) |
+
+| Ce qui a changé (diff réel) | Action automatique (identique cloud / local) |
 |---|---|
-| `lidar2map.py` seul (code interne) | push **+ `update.yml`** sur la dernière release + surveillance du run |
+| `lidar2map.py` seul (code interne) | push **+ patch** (cloud ou local selon `-Mode`) sur la dernière release |
 | `.spec` / `_loader.py` / `*_build.*` / `setup_build_*` / `tagmapping-min.xml` | push **puis STOP** : indique de tagger pour `release.yml` (rebuild ; version = choix humain) |
 | docs / meta seules (README, BUILD, workflows, screenshots) | **push seul** — aucun binaire à toucher |
 
 Il s'appuie sur `push_github.ps1 -ChangedOutFile` (qui écrit la liste des fichiers
 réellement poussés) pour catégoriser sans dupliquer la table de fichiers.
-`tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml`,
-qui ne touche que `_internal/lidar2map.py`) → classé rebuild.
+`tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml` ni par
+`update_app.py --release`, qui ne touchent que `_internal/lidar2map.py`) → classé rebuild.
 
 > ⚠️ **Angle mort** assumé : le bloc launcher et les dépendances vivent *dans*
 > `lidar2map.py`. Si seul `lidar2map.py` change, le script suppose un fix de code
-> interne (→ `update.yml`) et **affiche un avertissement** : si tu as touché au
+> interne (→ patch) et **affiche un avertissement** : si tu as touché au
 > bloc launcher ou aux deps, lance plutôt `release.yml` (rebuild) via un tag.
 
 ---
