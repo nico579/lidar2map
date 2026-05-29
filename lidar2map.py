@@ -3826,8 +3826,12 @@ def _get_numba_svf_kernel():
                         for r in range(1, max_r + 1):
                             rr = row + ddy * r
                             cc = col + ddx * r
-                            r0i = int(_math.floor(rr))
-                            c0i = int(_math.floor(cc))
+                            # floor calculé une seule fois (réutilisé pour
+                            # l'indice entier ET la partie fractionnaire).
+                            rr_fl = _math.floor(rr)
+                            cc_fl = _math.floor(cc)
+                            r0i = int(rr_fl)
+                            c0i = int(cc_fl)
                             r1i = r0i + 1
                             c1i = c0i + 1
                             if r0i < 0:       r0i = 0
@@ -3838,8 +3842,8 @@ def _get_numba_svf_kernel():
                             elif c0i > w - 1: c0i = w - 1
                             if c1i < 0:       c1i = 0
                             elif c1i > w - 1: c1i = w - 1
-                            fr = rr - _math.floor(rr)
-                            fc = cc - _math.floor(cc)
+                            fr = rr - rr_fl
+                            fc = cc - cc_fl
                             zn = (dem[r0i, c0i] * (1 - fr) * (1 - fc) +
                                   dem[r0i, c1i] * (1 - fr) *      fc  +
                                   dem[r1i, c0i] *      fr  * (1 - fc) +
@@ -3849,7 +3853,8 @@ def _get_numba_svf_kernel():
                             if tan_a > max_tan:
                                 max_tan = tan_a
                         mt = max_tan if max_tan > 0.0 else 0.0
-                        svf_sum += 1.0 / (1.0 + mt * mt)
+                        # SVF RVT (Kokalj/Hesse) : 1 − sin(γ), sin γ = mt/√(1+mt²)
+                        svf_sum += 1.0 - mt / _math.sqrt(1.0 + mt * mt)
                     out[row, col] = svf_sum / n_dir
             return out
 
@@ -3876,8 +3881,9 @@ def _get_numba_svf_sweep_kernel():
     - Pop avant les points hors fenêtre max_r (cap distance)
     - Horizon angle = scan du hull, query en O(hull_size) amorti
 
-    Complexité : O(W·H·N + W·H·hull_size_moyen)
-    au lieu de O(W·H·N·max_r) du ray-cast classique.
+    Complexité : O(W·H·N·hull_size_moyen) — la query re-scanne tout le hull à
+    chaque pixel. hull_size reste petit (~5-10 en terrain naturel), d'où le
+    gain massif vs O(W·H·N·max_r) du ray-cast classique.
 
     Pour terrain naturel (hull_size ~5-10), speedup vs ray-cast bilinéaire :
         max_r=40    (SVF 20m)   → ~×5-15
@@ -4007,7 +4013,8 @@ def _get_numba_svf_sweep_kernel():
                             tail = (tail + 1) % DEQ_CAP
 
                             # Accumulation SVF
-                            out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+                            # SVF RVT : 1 − sin(γ) ; max_tan = tan γ déjà clampé ≥ 0
+                            out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
                 else:
                     # ── Direction y-dominante : scan-lines balaient en y ──────
                     sy = 1 if ddy > 0 else -1
@@ -4080,7 +4087,8 @@ def _get_numba_svf_sweep_kernel():
                             deque_z[tail]    = z_curr
                             tail = (tail + 1) % DEQ_CAP
 
-                            out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+                            # SVF RVT : 1 − sin(γ) ; max_tan = tan γ déjà clampé ≥ 0
+                            out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
 
             # Normalisation : moyenne sur n_dir
             inv_n = 1.0 / n_dir
@@ -4473,6 +4481,33 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
     return True
 
 
+def _lrm_array(dem, nodata_val, sigma_px):
+    """Local Relief Model brut (float) : DEM − gaussienne(σ), pleine mémoire.
+
+    Centralise le calcul partagé par le LRM standalone (fallback pleine
+    mémoire) et le composite RRIM, qui divergeaient cosmétiquement (l'un
+    posait nan avant nanmean, l'autre masquait directement) pour un résultat
+    identique. Le trou nodata est rempli par la moyenne des pixels valides
+    avant le flou — sinon la gaussienne propagerait le nodata dans le relief.
+
+    dem        : array float (lu via _lire_dem_rasterio).
+    nodata_val : valeur nodata du raster source, ou None.
+    sigma_px   : écart-type gaussien en pixels.
+
+    Retourne (lrm, nodata_mask) ; lrm vaut np.nan sur les nodata.
+    """
+    import numpy as np
+    from scipy.ndimage import gaussian_filter as _gf
+    nodata_mask = (dem < -9000) | (dem > 9000)
+    if nodata_val is not None:
+        nodata_mask |= (dem == nodata_val)
+    mean_val = float(np.nanmean(dem[~nodata_mask])) if (~nodata_mask).any() else 0.0
+    dem_fill = np.where(nodata_mask, mean_val, dem)
+    lrm = dem - _gf(dem_fill, sigma=sigma_px)
+    lrm[nodata_mask] = np.nan
+    return lrm, nodata_mask
+
+
 def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
     """
     Hillshade / hillshade-multi / slope par fenêtres avec halo = 1 px (Horn 3x3).
@@ -4701,7 +4736,13 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     """
     Sky-View Factor — pixel-level ray casting.
 
-    SVF(p) = (1/N) × Σ_k  1 / (1 + max(tan_horizon_k, 0)²)
+    SVF(p) = 1 − (1/N) × Σ_k sin(γ_k),  γ_k = angle d'horizon dans la direction k
+
+    Convention RVT (Kokalj & Hesse, Relief Visualization Toolbox) — le standard
+    archéo repris par QGIS. sin γ est calculé depuis tan γ = max(pente_horizon, 0)
+    via sin γ = tan γ / √(1+tan²γ). Privilégié à la variante flux cos²γ car
+    linéaire (et non quadratique) aux faibles angles → meilleur contraste sur le
+    micro-relief, et valeurs directement comparables à un SVF RVT/QGIS.
 
     Moteurs disponibles par ordre de préférence :
       1. Numba njit + prange  → ×15-50 vs numpy pur, compilation ~20s au 1er appel
@@ -4784,7 +4825,8 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
                 np.maximum(max_tan, tan_angle, out=max_tan)
 
             mt = np.maximum(max_tan, 0.0)
-            return (1.0 / (1.0 + mt * mt)).astype(np.float32)
+            # SVF RVT (Kokalj/Hesse) : 1 − sin(γ), sin γ = mt/√(1+mt²)
+            return (1.0 - mt / np.sqrt(1.0 + mt * mt)).astype(np.float32)
 
         n_workers = min(n_directions, max(1, os.cpu_count() or 4))
         svf_sum   = np.zeros((h, w), dtype=np.float32)
@@ -4838,7 +4880,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     Types numpy/scipy (sans WhiteboxTools) :
         svf    — Sky-View Factor 20 m  : fossés, murs, structures ≤ 5 m (16 dir, rayon 20 m)
         svf100 — Sky-View Factor 100 m : enceintes, voiries, grandes anomalies (16 dir, rayon 100 m)
-        rrim   — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=SVF)
+        rrim   — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
         lrm    — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
 
     elevation_soleil : angle solaire en degrés (défaut: 25° archéo, vs 45° usage général).
@@ -4892,7 +4934,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         "lrm":    ("lrm_ombrage",      None,
                    {"sigma_px": 15}),                            # σ=15 px = 7.5 m — compromise structures 4-15 m
         "rrim":   ("rrim_ombrage",     None,
-                   {"max_dist_px": 40,  "n_directions": 16}),   # SVF 20m + slope
+                   {"sigma_px": 15}),   # slope + LRM σ=7.5 m (cf. clé "lrm")
     }
     co = ["-of", "GTiff",
           "-co", "BIGTIFF=YES",
@@ -5118,7 +5160,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 # Traitement par blocs avec overlap pour borner la RAM :
                 #   chemin 1 : _lrm_chunked() si rasterio + scipy disponibles
                 #   chemin 2 : pleine mémoire (fallback)
-                sigma_px = params_numpy["sigma_px"]  # 50 px = 25 m à 0.5 m/px
+                sigma_px = params_numpy["sigma_px"]  # 15 px = 7.5 m à 0.5 m/px
                 print(f"  LRM gaussien (σ={sigma_px} px = {sigma_px * RESOLUTION_M:.0f} m)"
                       f" — peut prendre 3-7 min...", flush=True)
 
@@ -5135,16 +5177,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     # ── Chemin 2 : fallback pleine mémoire ─────────────────
                     try:
                         import numpy as np
-                        from scipy.ndimage import gaussian_filter as _gf
                         dem_arr, _nd_val = _lire_dem_rasterio(src_str)
-                        nodata_mask = (dem_arr < -9000) | (dem_arr > 9000)
-                        if _nd_val is not None:
-                            nodata_mask |= (dem_arr == _nd_val)
-                        dem_arr[nodata_mask] = np.nan
-                        dem_fill = np.where(nodata_mask, np.nanmean(dem_arr), dem_arr)
-                        smooth = _gf(dem_fill, sigma=sigma_px)
-                        lrm = dem_arr - smooth
-                        lrm[nodata_mask] = np.nan
+                        lrm, nodata_mask = _lrm_array(dem_arr, _nd_val, sigma_px)
                         lrm_valid = lrm[np.isfinite(lrm)]
                         p1  = float(np.percentile(lrm_valid,  5))
                         p99 = float(np.percentile(lrm_valid, 95))
@@ -5221,19 +5255,14 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 # où SVF ≈ 0.97 partout → G/B ≈ 255 constant → dominance bleue.
                 try:
                     import numpy as np
-                    from scipy.ndimage import gaussian_filter as _gf2
 
                     slope_arr, _nd_sl = _lire_dem_rasterio(str(_slope_src))
 
-                    # Calcul LRM interne pour RRIM (sigma identique au LRM standalone)
+                    # LRM interne pour RRIM via le helper partagé — même calcul
+                    # exact que le LRM standalone (voir _lrm_array).
                     dem_rrim, _nd_rr  = _lire_dem_rasterio(src_str)
-                    nodata_r = (dem_rrim < -9000) | (dem_rrim > 9000)
-                    if _nd_rr is not None:
-                        nodata_r |= (dem_rrim == _nd_rr)
-                    dem_fill_r = np.where(nodata_r, float(np.nanmean(dem_rrim[~nodata_r])), dem_rrim)
-                    sigma_rrim = 15  # px = 7.5 m
-                    lrm_r = dem_rrim - _gf2(dem_fill_r, sigma=sigma_rrim)
-                    lrm_r[nodata_r] = np.nan
+                    sigma_rrim = params_numpy["sigma_px"]  # 15 px = 7.5 m
+                    lrm_r, _ = _lrm_array(dem_rrim, _nd_rr, sigma_rrim)
 
                     # Aligner dimensions
                     h = min(slope_arr.shape[0], lrm_r.shape[0])
@@ -5525,16 +5554,25 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             # En mode banding : restreindre à la tranche courante
             _y0 = y0_l if y0_l is not None else y0_bb
             _y1 = y1_l if y1_l is not None else y1_bb
+            # Enveloppe Mercator des 4 coins : un rectangle L93 ne reste pas
+            # axis-aligné après reprojection (la grille tourne légèrement),
+            # donc min/max sur 2 coins opposés sous-estimerait l'étendue et
+            # rognerait quelques pixels en bordure. gdalwarp -te procède de
+            # même (enveloppe des 4 coins).
+            corners = [(x0, _y0), (x1, _y0), (x1, _y1), (x0, _y1)]
             try:
                 _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
-                te_xmin, te_ymin = _t.transform(x0, _y0)
-                te_xmax, te_ymax = _t.transform(x1, _y1)
+                pts = [_t.transform(cx, cy) for cx, cy in corners]
             except Exception:
-                te_xmin, te_ymin = _lamb93_to_merc(x0, _y0)
-                te_xmax, te_ymax = _lamb93_to_merc(x1, _y1)
-        elif y0_l is not None:
-            te_xmin, te_ymin = _lamb93_to_merc(bb_src[0], y0_l)
-            te_xmax, te_ymax = _lamb93_to_merc(bb_src[2], y1_l)
+                pts = [_lamb93_to_merc(cx, cy) for cx, cy in corners]
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            te_xmin, te_xmax = min(xs), max(xs)
+            te_ymin, te_ymax = min(ys), max(ys)
+        # NB : l'ancienne branche `elif y0_l is not None` référençait bb_src[0]
+        # alors que bb_src est None ici (TypeError garanti) — supprimée. Si
+        # bb_src est None, te_* restent None et le warp retombe proprement sur
+        # calculate_default_transform (étendue auto calculée depuis la source).
 
         if not warp_deja_fait:
             # ── 1. Warp via rasterio (remplace gdalwarp CLI — étape 5) ──────
