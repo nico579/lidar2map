@@ -4,6 +4,10 @@
 
 Script Python autonome qui télécharge les données LiDAR publiques de plusieurs portails nationaux (IGN France, AHN Pays-Bas, swisstopo Suisse, Kartverket Norvège), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
+![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
+
+*Même emprise sous trois regards : la photo satellite et la carte OSM ne montrent rien du micro-relief — le Sky-View Factor calculé depuis le LiDAR HD le révèle d'un coup.*
+
 > ⚠️ **Statut** : usage personnel diffusé. Code testé intensivement sur Windows 10/11. Linux et macOS testés partiellement — cas connus + dépannage cross-OS dans la section *Dépannage* de [BUILD.md](BUILD.md). Les retours sont bienvenus via les [issues GitHub](https://github.com/nico579/lidar2map/issues).
 
 ---
