@@ -308,6 +308,25 @@ chemins anciens, invisibles vus du ciel.
 | ![Vue satellite](screenshots/LIDAR_Samples/sat.png) | ![Vue OSM](screenshots/LIDAR_Samples/osm.png) | ![Vue SVF](screenshots/LIDAR_Samples/svf.png) |
 | Garrigue opaque | Quasi aucun détail | Restanques + chemins nets |
 
+#### Reproduire ce rendu
+
+Le SVF d'en-tête et du triptyque ci-dessus (secteur de Rougiers, 83) a été calculé avec :
+
+```bash
+python lidar2map.py \
+  --zone-gps <lat> <lon> --zone-rayon 1 --zone-nom hero \
+  --ignlidar --telechargement --workers 8 \
+  --ombrages svf --ombrages-elevation 25 \
+  --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
+  --formats-fichier mbtiles --zoom-min 8 --zoom-max 18 \
+  --formats-image jpeg --qualite-image 85 --oui
+```
+
+Remplace `<lat> <lon>` par ta propre zone ; les paramètres SVF ci-dessus sont
+ceux du visuel. Les coordonnées exactes d'un micro-relief ne sont volontairement
+pas diffusées (déontologie : ne pas guider vers un vestige précis — cf. le
+disclaimer anti-détection ci-dessous).
+
 ## Documentation
 
 - **README de l'utilisateur** : ce fichier
