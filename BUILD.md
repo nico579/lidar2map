@@ -606,7 +606,7 @@ Le script supprime désormais le fichier partiel automatiquement et avertit
 si 0 tuiles sont générées depuis une source > 1 Mo.
 
 Pour relancer les morceaux concernés :
-1. Supprimer les TIF `_svf_100m_ombrage_tuilage_z18.tif` et `.mbtiles`
+1. Supprimer les TIF `_svf_*_ombrage_tuilage_z18.tif` et `.mbtiles`
 2. Passer `"termine": false` dans `manifeste.json` pour ces morceaux
 3. Relancer
 

@@ -23,9 +23,14 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Ombrages archéo** depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
   - Hillshade multidirectionnel (angle solaire 25° pour micro-relief)
-  - SVF (Sky-View Factor) 20 m et 100 m — révèle fossés, restanques, enceintes
+  - SVF (Sky-View Factor) paramétrable — révèle fossés, restanques, enceintes.
+    Convention `flux` (cos²γ, contraste à l'œil, défaut) ou `rvt` (1−sin γ,
+    standard archéo Kokalj/Hesse / openness) ; distance d'horizon réglable
+    (10–200 m, défaut 20 m) ; gamma d'affichage ; kernel sweep-horizon.
+    Flags : `--svf-conv flux|rvt`, `--svf-dist M`, `--svf-gamma G`,
+    `--svf-sweep` / `--no-svf-sweep` (ou le panneau SVF dans la GUI).
   - LRM (Local Relief Model) — supprime le relief naturel, garde les anomalies
-  - RRIM (Red Relief Image Map) — composite couleur SVF + pente
+  - RRIM (Red Relief Image Map) — composite couleur (pente + LRM)
 
   Sources LiDAR supportées (via flag `--provider <code>`) :
   - **France** (`fr-ign`, défaut) — IGN LiDAR HD, 0.5 m, couverture nationale
@@ -287,6 +292,17 @@ Ombrages LiDAR archéo affichés en superposition sur le terrain dans Locus Map.
 | SVF (Sky-View Factor) | Multi-ombrages superposés |
 |---|---|
 | ![SVF dans Locus Map](screenshots/LIDAR_Samples/Svf_LocusMap.jpg) | ![Multi-ombrages dans Locus Map](screenshots/LIDAR_Samples/Multi_LocusMap.jpg) |
+
+### Ce que le SVF révèle — même zone, trois sources
+
+Sous le couvert végétal, la photo aérienne et OSM ne montrent rien. Le SVF
+LiDAR fait apparaître les restanques (terrasses en pierre sèche) et les
+chemins anciens, invisibles vus du ciel.
+
+| Photo satellite | OSM | SVF (LiDAR HD) |
+|---|---|---|
+| ![Vue satellite](screenshots/LIDAR_Samples/sat.png) | ![Vue OSM](screenshots/LIDAR_Samples/osm.png) | ![Vue SVF](screenshots/LIDAR_Samples/svf.png) |
+| Garrigue opaque | Quasi aucun détail | Restanques + chemins nets |
 
 ## Documentation
 

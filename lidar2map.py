@@ -115,9 +115,13 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
     --ombrages TYPE...          Ombrages à générer :
-                                  315 045 135 225 multi slope svf svf100 lrm rrim
+                                  315 045 135 225 multi slope svf lrm rrim
                                   tous | aucun
+    --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
+    --svf-dist M                Rayon SVF en mètres, 10–200 (déf. 20)
+    --svf-sweep / --no-svf-sweep  Kernel sweep-horizon SVF (déf. activé)
     --ombrages-elevation DEG    Angle solaire en degrés (défaut: 25)
+    --svf-gamma G               Gamma du SVF (défaut: 2.0 ; <1 éclaircit, >1 assombrit)
     --ombrages-compresser       Compresser les TIF ombrages existants (DEFLATE)
     --zoom-min N                Zoom minimum MBTiles (défaut: 13 — inclut z8-12 via --zoom-min 8)
     --zoom-max N                Zoom maximum MBTiles (défaut: 18)
@@ -146,7 +150,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     Ombrage multi (gdaldem)            : ~5-10 s
     Ombrage SVF (numpy, 4 km²)         : ~5 min
     Ombrage LRM (scipy)                : ~2 min
-    Ombrage RRIM (SVF + slope)         : ~8 min
+    Ombrage RRIM (slope + LRM)         : ~8 min
     MBTiles z8-18 (495 tuiles)         : ~5 s
     MBTiles z8-18 (zone 400 km²)       : ~5-10 min
 
@@ -2396,6 +2400,13 @@ def _departements_de_region(slug):
 # ── Rendu archéologique ───────────────────────────────────────────────────────
 ELEVATION_SOLEIL = 25   # degrés — 25° révèle micro-reliefs ; 45° usage général
 
+# Gamma appliqué au SVF après stretch percentile (p2→p98) avant ×255.
+# <1 éclaircit (√), 1 = linéaire, >1 assombrit. Le SVF flux cos²γ est tassé
+# près de 1 : gamma 2.0 assombrit les midtones et fait ressortir le contraste
+# (rendu jugé meilleur à l'œil que la variante RVT 1−sin γ). Surchargeable
+# via --svf-gamma ou le champ γ du GUI.
+SVF_GAMMA = 2.0
+
 
 def _valider_zooms(args, parser):
     """Vérifie zoom_min ≤ zoom_max avant lancement du pipeline.
@@ -3810,7 +3821,9 @@ def _get_numba_svf_kernel():
         import math as _math
 
         @_nb.njit(parallel=True, fastmath=True)
-        def _svf_kernel(dem, n_dir, max_r, res):
+        def _svf_kernel(dem, n_dir, max_r, res, conv):
+            # conv : 0 = flux cos²γ (contraste) ; 1 = RVT 1−sin γ (archéo).
+            # Argument runtime → une seule compilation gère les deux variantes.
             h, w = dem.shape
             PI2 = 2.0 * _math.pi
             out = _np.zeros((h, w), dtype=_np.float32)
@@ -3853,8 +3866,12 @@ def _get_numba_svf_kernel():
                             if tan_a > max_tan:
                                 max_tan = tan_a
                         mt = max_tan if max_tan > 0.0 else 0.0
-                        # SVF RVT (Kokalj/Hesse) : 1 − sin(γ), sin γ = mt/√(1+mt²)
-                        svf_sum += 1.0 - mt / _math.sqrt(1.0 + mt * mt)
+                        if conv == 0:
+                            # SVF flux : cos²γ = 1/(1+tan²γ) — contraste
+                            svf_sum += 1.0 / (1.0 + mt * mt)
+                        else:
+                            # SVF RVT (Kokalj/Hesse) : 1 − sin γ (archéo/openness)
+                            svf_sum += 1.0 - mt / _math.sqrt(1.0 + mt * mt)
                     out[row, col] = svf_sum / n_dir
             return out
 
@@ -3911,7 +3928,8 @@ def _get_numba_svf_sweep_kernel():
         import math as _math
 
         @_nb.njit(parallel=True, fastmath=True)
-        def _svf_sweep_kernel(dem, n_dir, max_r, res):
+        def _svf_sweep_kernel(dem, n_dir, max_r, res, conv):
+            # conv : 0 = flux cos²γ ; 1 = RVT 1−sin γ (cf. _svf_kernel).
             h, w = dem.shape
             PI2 = 2.0 * _math.pi
             out = _np.zeros((h, w), dtype=_np.float32)
@@ -4013,8 +4031,11 @@ def _get_numba_svf_sweep_kernel():
                             tail = (tail + 1) % DEQ_CAP
 
                             # Accumulation SVF
-                            # SVF RVT : 1 − sin(γ) ; max_tan = tan γ déjà clampé ≥ 0
-                            out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
+                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan = tan γ ≥ 0)
+                            if conv == 0:
+                                out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+                            else:
+                                out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
                 else:
                     # ── Direction y-dominante : scan-lines balaient en y ──────
                     sy = 1 if ddy > 0 else -1
@@ -4087,8 +4108,11 @@ def _get_numba_svf_sweep_kernel():
                             deque_z[tail]    = z_curr
                             tail = (tail + 1) % DEQ_CAP
 
-                            # SVF RVT : 1 − sin(γ) ; max_tan = tan γ déjà clampé ≥ 0
-                            out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
+                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan = tan γ ≥ 0)
+                            if conv == 0:
+                                out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
+                            else:
+                                out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
 
             # Normalisation : moyenne sur n_dir
             inv_n = 1.0 / n_dir
@@ -4602,7 +4626,7 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
 
 
 def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
-                 resolution=0.5, gamma=2.0, use_sweep=False):
+                 resolution=0.5, gamma=SVF_GAMMA, use_sweep=False, conv=0):
     """
     Sky-View Factor par fenêtres avec halo = max_dist_px (rayons SVF).
 
@@ -4643,7 +4667,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
         if nd_mask.any():
             mean_val = float(np.nanmean(block_f[~nd_mask])) if (~nd_mask).any() else 0.0
             block_f[nd_mask] = mean_val
-        svf = _kernel(block_f, n_directions, max_dist_px, resolution)
+        svf = _kernel(block_f, n_directions, max_dist_px, resolution, conv)
         svf[nd_mask] = 0.0
         return svf
 
@@ -4652,31 +4676,41 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
         profile = src.profile.copy()
 
     # ── Passe 1 : compilation Numba + percentiles globaux sur échantillon ──
-    # Sample réduit à 256×256 (+ halo) : suffit largement pour estimer p2/p98
-    # de manière stable (~65k pixels valides au centre). Avant on calculait un
-    # bloc complet (CHUNK²) qui coûtait ~7% du temps total — pure perte puisque
-    # le résultat ne sert qu'aux deux percentiles.
-    print("  SVF chunked — compilation Numba + percentiles (sample)...", flush=True)
-    SAMPLE = 256
-    cy = H // 2
-    cx = W // 2
+    # Les p2/p98 calibrent le stretch (point noir/blanc) appliqué à TOUTE
+    # l'image. Il faut donc un échantillon REPRÉSENTATIF de l'étendue : un seul
+    # crop central rend le stretch dépendant de ce que contient le centre (même
+    # terrain → rendu différent selon le cadrage). On échantillonne une grille
+    # 3×3 de petites fenêtres réparties sur l'image et on met en commun leurs
+    # valeurs SVF. ~9×192² ≈ 0.33 M px (moins cher que l'ancien bloc 2048²),
+    # mais couvre plateaux ouverts ET creux → percentiles stables.
+    print("  SVF chunked — compilation Numba + percentiles (grille)...", flush=True)
+    SAMPLE = 192
     s_half = SAMPLE // 2
-    s_r0 = max(0, cy - s_half - HALO)
-    s_c0 = max(0, cx - s_half - HALO)
-    s_r1 = min(H, cy + s_half + HALO)
-    s_c1 = min(W, cx + s_half + HALO)
+    _fracs = (0.2, 0.5, 0.8)
+    _pool = []
     with _rio.open(str(src_path)) as src:
-        sample = src.read(1, window=Window(s_c0, s_r0, s_c1 - s_c0, s_r1 - s_r0)).astype(np.float32)
-    svf_sample = _svf_block(sample)
-    valid = svf_sample[svf_sample >= 0]
+        for _fy in _fracs:
+            cy = int(H * _fy)
+            for _fx in _fracs:
+                cx = int(W * _fx)
+                s_r0 = max(0, cy - s_half - HALO)
+                s_c0 = max(0, cx - s_half - HALO)
+                s_r1 = min(H, cy + s_half + HALO)
+                s_c1 = min(W, cx + s_half + HALO)
+                if s_r1 - s_r0 < 8 or s_c1 - s_c0 < 8:
+                    continue
+                _win = src.read(1, window=Window(s_c0, s_r0, s_c1 - s_c0, s_r1 - s_r0)).astype(np.float32)
+                _sv = _svf_block(_win)
+                _pool.append(_sv[_sv >= 0])
+    valid = np.concatenate(_pool) if _pool else np.empty(0, dtype=np.float32)
     if len(valid) < 100:
         return False
     p2_g  = float(np.percentile(valid,  2))
     p98_g = float(np.percentile(valid, 98))
     if p98_g <= p2_g:
         p2_g, p98_g = 0.0, 1.0
-    del sample, svf_sample, valid
-    print(f"  SVF chunked — p2={p2_g:.3f}  p98={p98_g:.3f}", flush=True)
+    del _pool, valid
+    print(f"  SVF chunked — p2={p2_g:.3f}  p98={p98_g:.3f} (grille 3×3)", flush=True)
 
     out_profile = profile.copy()
     # Purger les clés héritées qui pourraient interférer :
@@ -4732,17 +4766,17 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     return True
 
 
-def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=False):
+def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=False, conv=0):
     """
     Sky-View Factor — pixel-level ray casting.
 
-    SVF(p) = 1 − (1/N) × Σ_k sin(γ_k),  γ_k = angle d'horizon dans la direction k
+    SVF(p) = (1/N) × Σ_k cos²(γ_k),  γ_k = angle d'horizon dans la direction k
 
-    Convention RVT (Kokalj & Hesse, Relief Visualization Toolbox) — le standard
-    archéo repris par QGIS. sin γ est calculé depuis tan γ = max(pente_horizon, 0)
-    via sin γ = tan γ / √(1+tan²γ). Privilégié à la variante flux cos²γ car
-    linéaire (et non quadratique) aux faibles angles → meilleur contraste sur le
-    micro-relief, et valeurs directement comparables à un SVF RVT/QGIS.
+    Convention flux : cos²γ = 1/(1+tan²γ), avec tan γ = max(pente_horizon, 0).
+    C'est la fraction de ciel hémisphérique pondérée par le cosinus (radiance).
+    Préférée ici à la variante archéo RVT 1−sin γ : la distribution tassée près
+    de 1 (terrain ouvert) donne, après stretch percentile + gamma 2.0, un
+    contraste plus marqué jugé meilleur à l'œil sur ce relief.
 
     Moteurs disponibles par ordre de préférence :
       1. Numba njit + prange  → ×15-50 vs numpy pur, compilation ~20s au 1er appel
@@ -4771,7 +4805,7 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     if _svf_kernel is not None:
         try:
             print("  SVF Numba JIT — compilation au 1er appel (~20s)...", flush=True)
-            svf = _svf_kernel(dem_f, n_directions, max_dist_px, resolution)
+            svf = _svf_kernel(dem_f, n_directions, max_dist_px, resolution, conv)
             _numba_ok = True
             print(f"\r  SVF Numba JIT — terminé{' ' * 30}")
         except Exception as e_nb:
@@ -4825,7 +4859,10 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
                 np.maximum(max_tan, tan_angle, out=max_tan)
 
             mt = np.maximum(max_tan, 0.0)
-            # SVF RVT (Kokalj/Hesse) : 1 − sin(γ), sin γ = mt/√(1+mt²)
+            if conv == 0:
+                # SVF flux : cos²γ = 1/(1+tan²γ) — contraste
+                return (1.0 / (1.0 + mt * mt)).astype(np.float32)
+            # SVF RVT (Kokalj/Hesse) : 1 − sin γ — archéo/openness
             return (1.0 - mt / np.sqrt(1.0 + mt * mt)).astype(np.float32)
 
         n_workers = min(n_directions, max(1, os.cpu_count() or 4))
@@ -4872,23 +4909,33 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     return svf
 
 
-def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False):
+def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None):
     """
     Génère les ombrages depuis le VRT/COG source (MNT EPSG:2154).
 
     Types gdaldem  : 315, 045, 135, 225, multi, slope
     Types numpy/scipy (sans WhiteboxTools) :
-        svf    — Sky-View Factor 20 m  : fossés, murs, structures ≤ 5 m (16 dir, rayon 20 m)
-        svf100 — Sky-View Factor 100 m : enceintes, voiries, grandes anomalies (16 dir, rayon 100 m)
-        rrim   — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
-        lrm    — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
+        svf  — Sky-View Factor paramétrique (conv flux cos²γ / rvt 1−sin γ,
+               distance svf_dist, gamma svf_gamma) : micro-relief, fossés, murs
+        rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
+        lrm  — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
 
-    elevation_soleil : angle solaire en degrés (défaut: 25° archéo, vs 45° usage général).
-    SVF/SVF100/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
+    elevation_soleil : angle solaire des hillshades directionnels (défaut: 25°).
+    svf_conv  : "flux" (cos²γ, contraste) ou "rvt" (1−sin γ, archéo).  Défaut flux.
+    svf_dist  : rayon SVF en mètres (10–200).  Défaut 20.
+    svf_gamma : gamma du SVF après stretch (défaut: SVF_GAMMA ; <1 éclaircit).
+    use_sweep : kernel sweep-horizon (SVF uniquement).
+    SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
     """
 
     if elevation_soleil is None:
         elevation_soleil = ELEVATION_SOLEIL
+    if svf_gamma is None:
+        svf_gamma = SVF_GAMMA
+    if svf_conv is None:
+        svf_conv = "flux"
+    if svf_dist is None:
+        svf_dist = 20.0
 
     if choix is None:
         choix = ["315", "045", "135", "225", "multi", "slope"]
@@ -4927,10 +4974,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     CATALOGUE_NUMPY = {
         # (suffix_fichier, moteur, params)
         # moteur=None → traitement numpy interne (pas de WBT)
-        "svf":    ("svf_ombrage",      None,
-                   {"max_dist_px": 40,  "n_directions": 16}),   # 40 px = 20 m à 0.5 m/px
-        "svf100": ("svf_100m_ombrage", None,
-                   {"max_dist_px": 200, "n_directions": 16}),   # 200 px = 100 m
+        # SVF paramétrique : conv/distance/gamma viennent des args (svf_conv,
+        # svf_dist, svf_gamma) — le suffixe de fichier est recalculé dynamiquement
+        # dans le dispatch. Les params ci-dessous ne sont que des valeurs de repli.
+        "svf":     ("svf_ombrage",      None,
+                    {"max_dist_px": 40,  "n_directions": 16, "conv": "flux"}),
         "lrm":    ("lrm_ombrage",      None,
                    {"sigma_px": 15}),                            # σ=15 px = 7.5 m — compromise structures 4-15 m
         "rrim":   ("rrim_ombrage",     None,
@@ -5087,6 +5135,19 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 print("  Interruption — ombrages restants ignorés.")
                 break
             sous_dossier_name, outil_numpy, params_numpy = CATALOGUE_NUMPY[cle]
+
+            # SVF paramétrique : conv/distance/gamma depuis les args, et nom de
+            # fichier encodant les params → un changement de réglage produit un
+            # nouveau fichier (pas de collision avec un cache au mauvais réglage).
+            if cle == "svf":
+                _svf_conv_str = "rvt" if str(svf_conv).lower() == "rvt" else "flux"
+                _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
+                _svf_dist_m   = float(svf_dist)
+                _svf_dist_px  = max(1, int(round(_svf_dist_m / RESOLUTION_M)))
+                _svf_g_tag    = f"{svf_gamma:.1f}".replace(".", "p")
+                sous_dossier_name = (f"svf_{_svf_conv_str}_{int(round(_svf_dist_m))}m"
+                                     f"_g{_svf_g_tag}_ombrage")
+
             nom_fichier  = nom_base + "_" + sous_dossier_name + ".tif"
             chemin_out   = dossier_ville / nom_fichier
 
@@ -5100,15 +5161,16 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
 
             t0_numpy = time.time()
 
-            if cle in ("svf", "svf100"):
+            if cle == "svf":
                 # ── Sky-View Factor chunked (RAM bornée) ─────────────────────
                 # Traitement par fenêtres 2048×2048 avec halo = max_dist_px.
                 # Permet de traiter des zones de département entier sans OOM.
-                max_dist_px  = params_numpy["max_dist_px"]
-                n_directions = params_numpy["n_directions"]
+                max_dist_px  = _svf_dist_px
+                n_directions = 16
+                conv = _svf_conv_i
                 dist_m = max_dist_px * RESOLUTION_M
                 print(f"  SVF chunked ({n_directions} dir, rayon {dist_m:.0f} m"
-                      f" = {max_dist_px} px)...", flush=True)
+                      f" = {max_dist_px} px, conv={_svf_conv_str}, gamma={svf_gamma:g})...", flush=True)
                 try:
                     ok = _svf_chunked(
                         src_path     = Path(src_str),
@@ -5116,8 +5178,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         max_dist_px  = max_dist_px,
                         n_directions = n_directions,
                         resolution   = RESOLUTION_M,
-                        gamma        = 2.0,
+                        gamma        = svf_gamma,
                         use_sweep    = use_sweep,
+                        conv         = conv,
                     )
                     if not ok:
                         # Repli pleine mémoire (numba absent ou échantillon
@@ -5126,7 +5189,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  SVF chunked KO → repli pleine mémoire", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                             RESOLUTION_M, use_sweep=use_sweep)
+                                             RESOLUTION_M, use_sweep=use_sweep, conv=conv)
                         svf_valid = arr_svf[arr_svf >= 0]
                         p2  = float(np.percentile(svf_valid, 2))
                         p98 = float(np.percentile(svf_valid, 98))
@@ -5134,7 +5197,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             arr_stretched = np.clip((arr_svf - p2) / (p98 - p2), 0, 1)
                         else:
                             arr_stretched = np.clip(arr_svf, 0, 1)
-                        arr_u8 = (arr_stretched ** 2.0 * 255).astype(np.uint8)
+                        arr_u8 = (arr_stretched ** svf_gamma * 255).astype(np.uint8)
                         _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
                     import traceback as _tb
@@ -7160,17 +7223,32 @@ Exemples :
     # Ombrages
     parser.add_argument("--ombrages", metavar="TYPE", nargs="+",
                         choices=["315", "045", "135", "225", "multi", "slope",
-                                 "svf", "svf100", "lrm", "rrim", "tous", "aucun"],
+                                 "svf", "lrm", "rrim", "tous", "aucun"],
                         help=(
                             "Ombrages à générer (défaut: interactif). "
-                            "Valeurs : 315 045 135 225 multi slope svf svf100 lrm rrim tous aucun. "
-                            "svf/svf100/lrm/rrim : calculés en numpy/scipy (scipy auto-installé). "
+                            "Valeurs : 315 045 135 225 multi slope svf lrm rrim tous aucun. "
+                            "Le SVF se paramètre via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
+                            "svf/lrm/rrim : calculés en numpy/scipy (scipy auto-installé). "
                             "Ex: --ombrages multi slope svf rrim"
                         ))
+    parser.add_argument("--svf-conv", choices=["flux", "rvt"], default="flux",
+                        dest="svf_conv",
+                        help=("Convention SVF : flux = cos²γ (tassé près de 1, "
+                              "contraste à l'œil) ; rvt = 1−sin γ (Kokalj/Hesse, "
+                              "standard archéo/openness). Défaut: flux."))
+    parser.add_argument("--svf-dist", type=float, default=20.0, metavar="M",
+                        dest="svf_dist",
+                        help=("Rayon SVF en mètres (10–200). Défaut: 20 "
+                              "(micro-relief). 100 = enceintes/voiries."))
     parser.add_argument("--ombrages-elevation", type=int, default=None, metavar="DEG",
                         help=(f"Angle solaire des hillshades directionnels en degrés "
                               f"(défaut: {ELEVATION_SOLEIL}° — archéo optimal). "
                               f"Usage général : 45°. Archéologie : 20-30°."))
+    parser.add_argument("--svf-gamma", type=float, default=None, metavar="G",
+                        dest="svf_gamma",
+                        help=(f"Gamma du SVF après stretch percentile (défaut: "
+                              f"{SVF_GAMMA}). <1 éclaircit (√), 1 = linéaire, >1 "
+                              f"assombrit. Ex: --svf-gamma 0.7 pour plus clair."))
 
     # Mode non-interactif
     parser.add_argument("--oui", action="store_true",
@@ -7196,13 +7274,15 @@ Exemples :
                         help="Écraser les dalles téléchargées existantes")
     parser.add_argument("--ombrages-ecraser", action="store_true", dest="ombrages_ecraser",
                         help="Écraser les ombrages existants")
-    parser.add_argument("--sweep-horizon", action="store_true", dest="sweep_horizon",
+    parser.add_argument("--svf-sweep", action=argparse.BooleanOptionalAction,
+                        default=True, dest="sweep_horizon",
                         help="Kernel SVF sweep-horizon avec running max sur deque "
                              "(upper convex hull). Complexité O(W·H·N) au lieu de "
                              "O(W·H·N·max_r). Speedup ~×5-15 pour SVF20m, ~×30-50 "
                              "pour SVF100m, plusieurs centaines pour grands rayons. "
                              "Léger aliasing NN aux faibles gradients, imperceptible "
-                             "pour structures > 1-2 px.")
+                             "pour structures > 1-2 px. Défaut: activé "
+                             "(--no-svf-sweep pour désactiver).")
     parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Écraser les tuiles/MBTiles/.map existants")
     parser.add_argument("--formats-fichier", nargs="+",
@@ -7880,7 +7960,7 @@ Exemples :
     # Ombrages
     # -------------------------------------------------------
     TOUS_OMBRAGES = ["315", "045", "135", "225", "multi", "slope",
-                     "svf", "svf100", "lrm", "rrim"]
+                     "svf", "lrm", "rrim"]
 
     # Dalles disponibles pour les ombrages :
     # 1. Seulement les dalles de la zone courante (filtre par nom)
@@ -8029,17 +8109,17 @@ Exemples :
         print(f"\n  Ombrages à générer :")
         print(f"  [1] Rapide     : multi + slope                                    (~1 min)")
         print(f"  [2] Archéo     : 315 + 045 + multi + slope                        (~2 min)")
-        print(f"  [3] Archéo+SVF : multi + slope + SVF (20m) + SVF100 (100m)        (~35 min)")
+        print(f"  [3] Archéo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
         print(f"  [4] Archéo+LRM : multi + slope + LRM gaussien                     (~8 min)")
         print(f"  [5] Archéo+RRIM: multi + slope + RRIM (composite couleur)         (~25 min)")
-        print(f"  [6] Complet    : 315 045 135 225 multi slope svf svf100 lrm rrim  (~80 min)")
+        print(f"  [6] Complet    : 315 045 135 225 multi slope svf lrm rrim         (~60 min)")
         print(f"  [7] Aucun")
         print(f"  [8] Choix manuel  ex: multi slope svf rrim")
         print(f"  SVF/LRM/RRIM : numpy/scipy (scipy auto-installé si absent)")
         rep = input("  Choix [1] : ").strip() or "1"
         if   rep == "1": choix_ombrages = ["multi", "slope"]
         elif rep == "2": choix_ombrages = ["315", "045", "multi", "slope"]
-        elif rep == "3": choix_ombrages = ["multi", "slope", "svf", "svf100"]
+        elif rep == "3": choix_ombrages = ["multi", "slope", "svf"]
         elif rep == "4": choix_ombrages = ["multi", "slope", "lrm"]
         elif rep == "5": choix_ombrages = ["multi", "slope", "rrim"]
         elif rep == "6": choix_ombrages = TOUS_OMBRAGES
@@ -8063,7 +8143,9 @@ Exemples :
         generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
                          ecraser_ombrages=args.ombrages_ecraser,
-                         use_sweep=args.sweep_horizon)
+                         use_sweep=args.sweep_horizon,
+                         svf_gamma=args.svf_gamma,
+                         svf_conv=args.svf_conv, svf_dist=args.svf_dist)
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     if args.mbtiles or args.rmap or args.sqlitedb:
@@ -8567,7 +8649,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
             if args.ombrages:
-                TOUS = ["315","045","135","225","multi","slope","svf","svf100","lrm","rrim"]
+                TOUS = ["315","045","135","225","multi","slope","svf","lrm","rrim"]
                 choix = (TOUS if "tous" in args.ombrages
                          else [] if "aucun" in args.ombrages
                          else args.ombrages)
@@ -8579,7 +8661,9 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                     generer_ombrages(dalles_ombrages, dossier_ville, choix,
                                      elevation_soleil=elev, nom_zone=nom_z,
                                      ecraser_ombrages=args.ombrages_ecraser,
-                                     use_sweep=args.sweep_horizon)
+                                     use_sweep=args.sweep_horizon,
+                                     svf_gamma=args.svf_gamma,
+                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Filtre identique à la fonction main : exclure les caches de
@@ -11715,7 +11799,10 @@ def _cfg_depuis_argv() -> dict:
         "no_omb":        bool(ombs) or _flag("--ombrages"),
         "ombrages":      ombs,
         "elevation":     _arg_int("--ombrages-elevation", 25),
-        "sweep_horizon": _flag("--sweep-horizon"),
+        "svf_conv":      _arg("--svf-conv") or "flux",
+        "svf_dist":      _arg_float("--svf-dist", 20.0),
+        "svf_gamma":     _arg_float("--svf-gamma", SVF_GAMMA),
+        "sweep_horizon": True,  # coché par défaut (sweep-horizon SVF)
         "ecraser_omb":   _flag("--ombrages-ecraser"),
         "mbtiles_l":     "mbtiles" in fmts,
         "rmap":          "rmap"    in fmts,
@@ -12194,8 +12281,15 @@ def lancer_gui():
                     if ombs: cmd += ["--ombrages"] + ombs
                     if cfg.get("elevation"):
                         cmd += ["--ombrages-elevation", str(cfg["elevation"])]
+                    if cfg.get("svf_conv"):
+                        cmd += ["--svf-conv", str(cfg["svf_conv"])]
+                    if cfg.get("svf_dist"):
+                        cmd += ["--svf-dist", str(cfg["svf_dist"])]
+                    if cfg.get("svf_gamma"):
+                        cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
                     if cfg.get("ecraser_omb"): cmd.append("--ombrages-ecraser")
-                    if cfg.get("sweep_horizon"): cmd.append("--sweep-horizon")
+                    # BooleanOptionalAction : émettre explicitement on/off
+                    cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
                 fmts = []
                 if cfg.get("mbtiles_l"): fmts.append("mbtiles")
                 if cfg.get("rmap"):      fmts.append("rmap")
@@ -12697,7 +12791,7 @@ input[type=number]{width:60px;flex:none}
 select{cursor:pointer}
 .cb-group{display:flex;flex-wrap:wrap;gap:4px 14px;max-width:100%}
 .cb-group label{display:flex;align-items:center;gap:4px;font-size:11px;
-  cursor:pointer;color:var(--fg);white-space:nowrap}
+  cursor:pointer;color:var(--fg);white-space:nowrap;min-width:auto}
 .seg{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden}
 .seg input{display:none}
 .seg label{padding:3px 10px;font-size:11px;cursor:pointer;
@@ -13006,7 +13100,7 @@ body.log-resizing *{
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-omb">  Écraser le fichier résultat</label>
     </div>
     <div class="section-body" id="body-omb">
-     <div class="row">
+     <div class="row" style="align-items:center;">
       <div class="cb-group">
        <label><input type="checkbox" name="omb" value="multi" checked> multi</label>
        <label><input type="checkbox" name="omb" value="slope"> slope</label>
@@ -13014,17 +13108,28 @@ body.log-resizing *{
        <label><input type="checkbox" name="omb" value="045"> 045°</label>
        <label><input type="checkbox" name="omb" value="135"> 135°</label>
        <label><input type="checkbox" name="omb" value="225"> 225°</label>
-       <label><input type="checkbox" name="omb" value="svf"> SVF</label>
-       <label><input type="checkbox" name="omb" value="svf100"> SVF100</label>
        <label><input type="checkbox" name="omb" value="lrm"> LRM</label>
        <label><input type="checkbox" name="omb" value="rrim"> RRIM</label>
       </div>
-      <span style="margin-left:12px;color:var(--dim)">☀</span>
-      <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short">
+      <span style="margin-left:12px;color:var(--dim)" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
+      <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
       <span style="color:var(--dim)">°</span>
-      <label style="margin-left:16px" title="Kernel SVF sweep-horizon avec running max sur deque (upper convex hull). Speedup ×2-3 pour SVF20m, ×15+ pour SVF100m. Léger aliasing NN aux faibles gradients, imperceptible pour structures > 1-2 px. Recommandé pour SVF100m et RRIM.">
-       <input type="checkbox" id="f-sweep-horizon"> sweep-horizon (×15 pour SVF100m)
-      </label>
+     </div>
+     <div class="row" style="align-items:center;">
+      <label style="min-width:auto" title="Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite."><input type="checkbox" name="omb" value="svf" id="f-svf" checked onchange="toggleSvfPanel()"> SVF</label>
+      <div id="svf-panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);">
+       <span style="color:var(--dim)" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
+       <select id="f-svf-conv" style="min-width:auto" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
+        <option value="flux">flux cos²γ</option>
+        <option value="rvt">RVT 1−sin γ</option>
+       </select>
+       <span style="margin-left:8px;color:var(--dim)" title="Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
+       <input type="number" id="f-svf-dist" value="20" min="10" max="200" step="5" class="inp-short">
+       <span style="color:var(--dim)">m</span>
+       <span style="margin-left:8px;color:var(--dim)" title="Gamma après stretch percentile. &lt;1 éclaircit (√), 1 = linéaire, &gt;1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.">γ</span>
+       <input type="number" id="f-svf-gamma" value="2.0" min="0.3" max="3.0" step="0.1" class="inp-short">
+       <label style="margin-left:8px" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
+      </div>
      </div>
     </div>
    </div>
@@ -14057,7 +14162,10 @@ function getConfig() {
     no_omb:        g('f-no-omb')?.checked,
     ombrages:      [...document.querySelectorAll('input[name=omb]:checked')].map(c=>c.value),
     elevation:     parseInt(g('f-elevation')?.value) || 25,
-    sweep_horizon: g('f-sweep-horizon')?.checked,
+    svf_conv:      g('f-svf-conv')?.value || 'flux',
+    svf_dist:      parseFloat(g('f-svf-dist')?.value) || 20,
+    svf_gamma:     parseFloat(g('f-svf-gamma')?.value) || 2.0,
+    sweep_horizon: g('f-svf-sweep')?.checked,
     ecraser_omb:   g('f-ecraser-omb')?.checked,
     mbtiles_l:     g('f-mbtiles-l')?.checked && g('f-mbtiles')?.checked,
     rmap:          g('f-mbtiles-l')?.checked && g('f-rmap')?.checked,
@@ -14197,7 +14305,10 @@ function loadConfig(cfg) {
   s('f-dossier-dalles', cfg.dossier_dalles);
   s('f-no-omb',         cfg.no_omb);
   s('f-elevation',      cfg.elevation);
-  s('f-sweep-horizon',  cfg.sweep_horizon);
+  s('f-svf-dist',       cfg.svf_dist);
+  s('f-svf-gamma',      cfg.svf_gamma);
+  s('f-svf-sweep',      cfg.sweep_horizon);
+  s('f-svf-conv',       cfg.svf_conv);
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
@@ -14312,6 +14423,14 @@ function loadConfig(cfg) {
   if (typeof window.applyToggles === 'function') window.applyToggles();
   if (typeof window.applyFmtL    === 'function') window.applyFmtL();
   if (typeof window.applyFmtS    === 'function') window.applyFmtS();
+  toggleSvfPanel();
+}
+
+// Affiche/masque le panneau de détail SVF selon la case SVF.
+function toggleSvfPanel() {
+  const on = document.getElementById('f-svf')?.checked;
+  const p  = document.getElementById('svf-panel');
+  if (p) p.style.display = on ? 'flex' : 'none';
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
