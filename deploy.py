@@ -80,6 +80,7 @@ MAP = {
     "setup_build_mac.sh":            "setup_build_mac.sh",
     # Doc + CI + meta
     "README_Github.md":              "README.md",
+    "README_Github.fr.md":           "README.fr.md",
     "README_LIDAR2MAP.md":           "BUILD.md",
     "ci_github.yml":                 ".github/workflows/ci.yml",
     "release_github.yml":            ".github/workflows/release.yml",
