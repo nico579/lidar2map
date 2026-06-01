@@ -50,7 +50,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*
 
-- **Outputs**: MBTiles (universal), RMAP (Locus-optimized), SQLiteDB (TwoNav), Mapsforge `.map` (OsmAnd / Locus)
+- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema — Locus Map / OsmAnd), Mapsforge `.map` (OsmAnd / Locus)
 
 ---
 

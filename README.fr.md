@@ -48,7 +48,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*
 
-- **Sorties** : MBTiles (universel), RMAP (Locus optimisé), SQLiteDB (TwoNav), Mapsforge `.map` (OsmAnd / Locus)
+- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (format RMaps — Locus Map / OsmAnd), Mapsforge `.map` (OsmAnd / Locus)
 
 ---
 
