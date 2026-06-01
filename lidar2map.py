@@ -11901,6 +11901,34 @@ def _historique_depuis_argv(duree_s: int, dossier_resultat: str = "",
 _HISTORIQUE_PATH = DOSSIER_TRAVAIL / "historique.json"
 _HISTORIQUE_MAX  = 50   # nombre max d'entrées conservées
 
+# ── Préférences UI (langue, etc.) ─────────────────────────────────────────────
+# Persistées dans l'app data, comme l'historique. Pas en localStorage : sous
+# QtWebEngine packagé, le localStorage peut être éphémère selon le profil du
+# webview — un desktop range ses prefs dans son dossier de données, pas dans le
+# navigateur. La langue est l'override manuel du toggle ; absente = auto-détection
+# par navigator.language côté JS.
+_PREFS_PATH = DOSSIER_TRAVAIL / "preferences.json"
+
+
+def _lire_prefs() -> dict:
+    try:
+        import json as _json
+        with open(_PREFS_PATH, "r", encoding="utf-8") as f:
+            d = _json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ecrire_pref(cle: str, valeur) -> bool:
+    prefs = _lire_prefs()
+    prefs[cle] = valeur
+    try:
+        _ecrire_json_atomique(_PREFS_PATH, prefs, indent=2)
+        return True
+    except Exception:
+        return False
+
 
 def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
                        run_id: str = "", statut: str = "ok"):
@@ -12137,6 +12165,7 @@ def lancer_gui():
                 "providers":  _discover_providers(),
                 "active_provider": PROVIDER.CODE,
                 "regions":    _regions_disponibles(),
+                "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
             }
 
         def get_historique(self):
@@ -12151,6 +12180,13 @@ def lancer_gui():
                 return {"ok": True}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
+
+        def set_lang(self, code):
+            """Persiste l'override manuel de langue de l'UI (toggle FR/EN).
+            'fr' ou 'en' ; toute autre valeur est ignorée."""
+            if code not in ("fr", "en"):
+                return {"ok": False, "error": "lang invalide"}
+            return {"ok": _ecrire_pref("lang", code)}
 
         # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
         # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
@@ -12800,6 +12836,9 @@ select{cursor:pointer}
 .btn{padding:4px 14px;border:none;border-radius:4px;cursor:pointer;
   font:12px var(--fnt);font-weight:600;letter-spacing:.3px}
 .btn-run{background:var(--ac);color:#fff;padding:6px 20px}
+.btn-lang{background:var(--bg3);color:var(--dim);border:none;padding:3px 9px;
+  font:11px var(--fnt);font-weight:600;cursor:pointer}
+.btn-lang.active{background:var(--ac);color:#fff}
 .btn-stop{background:var(--bg3);color:var(--ac2);border:1px solid var(--ac2)}
 .btn-sm{background:var(--bg3);color:var(--dim);border:1px solid var(--bd);
   padding:2px 8px;font-size:11px}
@@ -12941,35 +12980,40 @@ body.log-resizing *{
 <body>
 <div id="main">
 <div id="btn-bar">
- <button class="btn btn-run" id="btn-run" onclick="lancer()">▶ Lancer</button>
- <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled>■ Arrêter</button>
- <button class="btn" id="btn-hist" onclick="toggleHistorique()"
+ <button class="btn btn-run" id="btn-run" onclick="lancer()" data-i18n="btn.run">▶ Lancer</button>
+ <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled data-i18n="btn.stop">■ Arrêter</button>
+ <button class="btn" id="btn-hist" onclick="toggleHistorique()" data-i18n="btn.hist"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
- <button class="btn" id="btn-log" onclick="toggleLogPanel()"
+ <button class="btn" id="btn-log" onclick="toggleLogPanel()" data-i18n="btn.log"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📋 Logs</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
+ <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
+       title="Langue / Language">
+  <button class="btn-lang" data-lang-btn="fr" onclick="setLang('fr', true)">FR</button>
+  <button class="btn-lang" data-lang-btn="en" onclick="setLang('en', true)">EN</button>
+ </span>
 </div>
 <div id="form-inner">
 
   <!-- Projet -->
   <div class="section sec-projet">
-   <div class="section-hd">Projet</div>
+   <div class="section-hd" data-i18n="sec.projet">Projet</div>
    <div class="section-body">
      <div class="row">
-      <label style="min-width:auto;margin-right:4px">Nom *</label>
+      <label style="min-width:auto;margin-right:4px" data-i18n="f.name">Nom *</label>
       <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
-      <label style="min-width:auto;margin-left:12px">Dossier sortie</label>
+      <label style="min-width:auto;margin-left:12px" data-i18n="f.outdir">Dossier sortie</label>
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
       <label style="min-width:auto;margin-left:12px"
-             title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.">Provider</label>
+             data-i18n-title="tip.provider" title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.">Provider</label>
       <select id="f-provider" style="min-width:200px">
-       <option value="fr-ign">Chargement...</option>
+       <option value="fr-ign" data-i18n="loading">Chargement...</option>
       </select>
       <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
-       <span style="color:var(--dim)">Clé API :</span>
+       <span style="color:var(--dim)" data-i18n="apikey">Clé API :</span>
        <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
-              placeholder="clé OpenTopography">
+              placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
       </span>
      </div>
    </div>
@@ -12977,42 +13021,42 @@ body.log-resizing *{
 
   <!-- Zone géographique -->
   <div class="section sec-zone">
-   <div class="section-hd">Zone géographique</div>
+   <div class="section-hd" data-i18n="sec.zone">Zone géographique</div>
    <div class="section-body">
     <div class="row">
      <div class="seg">
       <input type="radio" name="mode" id="m-ville" value="ville" checked>
-      <label for="m-ville">Ville</label>
+      <label for="m-ville" data-i18n="mode.ville">Ville</label>
       <input type="radio" name="mode" id="m-gps" value="gps">
-      <label for="m-gps">GPS</label>
+      <label for="m-gps" data-i18n="mode.gps">GPS</label>
       <input type="radio" name="mode" id="m-bbox" value="bbox">
-      <label for="m-bbox">BBox</label>
+      <label for="m-bbox" data-i18n="mode.bbox">BBox</label>
       <input type="radio" name="mode" id="m-dep" value="dep">
-      <label for="m-dep">Département</label>
+      <label for="m-dep" data-i18n="mode.dep">Département</label>
       <input type="radio" name="mode" id="m-region" value="region">
-      <label for="m-region">Région</label>
+      <label for="m-region" data-i18n="mode.region">Région</label>
      </div>
     </div>
-    <div class="row z-zone" id="z-ville"><label>Ville</label>
+    <div class="row z-zone" id="z-ville"><label data-i18n="z.ville">Ville</label>
      <div class="ac-wrap">
        <input type="text" id="f-ville" placeholder="ex: Garéoult" autocomplete="off">
        <div id="f-ville-ac" class="ac-dropdown hidden" role="listbox"></div>
      </div>
-     <label style="min-width:auto;margin-left:8px">Rayon km</label>
+     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
      <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-gps"><label>GPS lat,lon</label>
+    <div class="row hidden z-zone" id="z-gps"><label data-i18n="z.gps">GPS lat,lon</label>
      <input type="text" id="f-gps" placeholder="43.3156,6.0423" style="max-width:160px">
-     <label style="min-width:auto;margin-left:8px">Rayon km</label>
+     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
      <input type="number" id="f-rayon-gps" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-bbox"><label>BBox W,S,E,N</label>
+    <div class="row hidden z-zone" id="z-bbox"><label data-i18n="z.bbox">BBox W,S,E,N</label>
      <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:200px"></div>
     <div class="hidden z-zone" id="z-dep">
      <div class="row">
-      <label>Département(s)</label>
+      <label data-i18n="z.deps">Département(s)</label>
       <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
              title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
      </div>
-     <div class="hint" style="margin-top:3px;margin-left:0">
+     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="dep.syntax">
       Syntaxe : <code>83</code> &nbsp;·&nbsp;
       <code>83,06,13</code> &nbsp;·&nbsp;
       <code>1-10</code> &nbsp;·&nbsp;
@@ -13023,10 +13067,10 @@ body.log-resizing *{
     </div>
     <div class="hidden z-zone" id="z-region">
      <div class="row">
-      <label>Région</label>
+      <label data-i18n="mode.region">Région</label>
       <select id="f-region" style="min-width:240px"></select>
      </div>
-     <div class="hint" style="margin-top:3px;margin-left:0">
+     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="region.hint">
       Région Geofabrik = bbox englobante de ses départements.
       &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
      </div>
@@ -13036,21 +13080,21 @@ body.log-resizing *{
 
   <!-- Type de carte -->
   <div class="section sec-type">
-   <div class="section-hd">Type de traitement de carte</div>
+   <div class="section-hd" data-i18n="sec.type">Type de traitement de carte</div>
    <div class="section-body">
     <div id="type-sel">
      <input type="radio" name="type" id="t-lidar"   value="lidar"   checked>
-     <label for="t-lidar">LiDAR MNT</label>
+     <label for="t-lidar" data-i18n="t.lidar">LiDAR MNT</label>
      <input type="radio" name="type" id="t-scan"    value="scan">
      <label for="t-scan" data-fr-only="1">IGN Raster</label>
      <input type="radio" name="type" id="t-vecteur" value="vecteur">
-     <label for="t-vecteur" data-fr-only="1">IGN Vectoriel</label>
+     <label for="t-vecteur" data-fr-only="1" data-i18n="t.vecteur">IGN Vectoriel</label>
      <input type="radio" name="type" id="t-osm"     value="osm">
-     <label for="t-osm">OSM Vectoriel</label>
+     <label for="t-osm" data-i18n="t.osm">OSM Vectoriel</label>
      <input type="radio" name="type" id="t-fusion"  value="fusion">
-     <label for="t-fusion">Fusion Vectoriel</label>
+     <label for="t-fusion" data-i18n="t.fusion">Fusion Vectoriel</label>
      <input type="radio" name="type" id="t-decoupe" value="decoupe">
-     <label for="t-decoupe">Découpage raster</label>
+     <label for="t-decoupe" data-i18n="t.decoupe">Découpage raster</label>
     </div>
    </div>
   </div>
@@ -13059,45 +13103,45 @@ body.log-resizing *{
   <div id="sec-lidar">
    <div class="section">
     <div class="section-hd">
-     <label>0 — Découpage à priori (grandes zones)</label>
+     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
     </div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label data-i18n="grid">Grille :</label>
       <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-priori-rows" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
-      <span class="hint" style="margin:0 4px">lignes</span>
-      <span class="hint" style="margin:0 6px;color:var(--dim)">ou rayon</span>
+      <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
       <input type="number" id="f-rayon-priori-l" value="0" min="0" step="10" class="inp-short" title="Rayon km par morceau (alternative à la grille)">
       <span class="hint" style="margin-left:4px">km</span>
-      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage"> Nettoyage intermédiaires</label>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
      </div>
      <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
-      <span style="padding-left:calc(var(--label-w) + 4px)">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
+      <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
      </div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tel" checked> 1 — Télécharger les dalles LiDAR HD IGN</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tel" checked> <span data-i18n="dl.lidar">1 — Télécharger les dalles LiDAR HD IGN</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel">
      <div class="row">
-      <label>Workers :</label>
+      <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-l" value="8" min="1" max="32" class="inp-short">
-      <label style="min-width:auto"><input type="checkbox" id="f-comp"> Compresser</label>
-      <label style="min-width:auto;margin-left:12px">Cache externe :</label>
-      <input type="text" id="f-dossier-dalles" placeholder="(cache auto)">
+      <label style="min-width:auto"><input type="checkbox" id="f-comp"> <span data-i18n="compress">Compresser</span></label>
+      <label style="min-width:auto;margin-left:12px" data-i18n="extcache">Cache externe :</label>
+      <input type="text" id="f-dossier-dalles" placeholder="(cache auto)" data-i18n-placeholder="ph.cacheauto">
       <button class="btn btn-sm" onclick="pickDir('f-dossier-dalles')">…</button>
      </div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-no-omb" checked> 2 — Calculer les ombrages archéologiques</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-omb">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-no-omb" checked> <span data-i18n="omb2">2 — Calculer les ombrages archéologiques</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-omb"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-omb">
      <div class="row" style="align-items:center;">
@@ -13111,51 +13155,51 @@ body.log-resizing *{
        <label><input type="checkbox" name="omb" value="lrm"> LRM</label>
        <label><input type="checkbox" name="omb" value="rrim"> RRIM</label>
       </div>
-      <span style="margin-left:12px;color:var(--dim)" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
-      <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
+      <span style="margin-left:12px;color:var(--dim)" data-i18n-title="tip.sun" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
+      <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" data-i18n-title="tip.elev" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
       <span style="color:var(--dim)">°</span>
      </div>
      <div class="row" style="align-items:center;">
-      <label style="min-width:auto" title="Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite."><input type="checkbox" name="omb" value="svf" id="f-svf" checked onchange="toggleSvfPanel()"> SVF</label>
+      <label style="min-width:auto" data-i18n-title="tip.svf" title="Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite."><input type="checkbox" name="omb" value="svf" id="f-svf" checked onchange="toggleSvfPanel()"> SVF</label>
       <div id="svf-panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);">
-       <span style="color:var(--dim)" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
-       <select id="f-svf-conv" style="min-width:auto" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
+       <span style="color:var(--dim)" data-i18n-title="tip.svftype" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
+       <select id="f-svf-conv" style="min-width:auto" data-i18n-title="tip.svfconv" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
         <option value="flux">flux cos²γ</option>
         <option value="rvt">RVT 1−sin γ</option>
        </select>
-       <span style="margin-left:8px;color:var(--dim)" title="Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfdist" title="Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
        <input type="number" id="f-svf-dist" value="20" min="10" max="200" step="5" class="inp-short">
        <span style="color:var(--dim)">m</span>
-       <span style="margin-left:8px;color:var(--dim)" title="Gamma après stretch percentile. &lt;1 éclaircit (√), 1 = linéaire, &gt;1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.">γ</span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfgamma" title="Gamma après stretch percentile. &lt;1 éclaircit (√), 1 = linéaire, &gt;1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.">γ</span>
        <input type="number" id="f-svf-gamma" value="2.0" min="0.3" max="3.0" step="0.1" class="inp-short">
-       <label style="margin-left:8px" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
+       <label style="margin-left:8px" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
       </div>
      </div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-mbtiles-l" checked> 3 — Calculer les tuiles</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-mbt">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-mbtiles-l" checked> <span data-i18n="tiles3">3 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-mbt"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body hidden" id="body-mbt">
      <div class="row">
-      <label>Zoom :</label>
+      <label data-i18n="zoom">Zoom :</label>
       <input type="number" id="f-zoom-min-l" value="8" min="8" max="20" class="inp-short">
       <span style="color:var(--dim)">–</span>
       <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
-      <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
+      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
        <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg" checked><label for="fl-jpeg">JPEG</label>
        <input type="radio" name="fmt-l" id="fl-png"  value="png"><label for="fl-png">PNG</label>
       </div>
       <span id="wrap-qualite-l">
-       <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
        <input type="number" id="f-qualite-l" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
       </span>
      </div>
      <div class="row">
-      <label>Format du fichier :</label>
+      <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-mbtiles" checked> MBTiles</label>
        <label><input type="checkbox" id="f-rmap"> RMAP</label>
@@ -13170,34 +13214,34 @@ body.log-resizing *{
   <div id="sec-scan" class="hidden">
    <div class="section">
     <div class="section-hd">
-     <label>0 — Découpage à priori (grandes zones)</label>
+     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
     </div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label data-i18n="grid">Grille :</label>
       <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-priori-rows-s" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
-      <span class="hint" style="margin:0 4px">lignes</span>
-      <span class="hint" style="margin:0 6px;color:var(--dim)">ou rayon</span>
+      <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
       <input type="number" id="f-rayon-priori-s" value="0" min="0" step="10" class="inp-short" title="Rayon km par morceau">
       <span class="hint" style="margin-left:4px">km</span>
-      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage-s"> Nettoyage intermédiaires</label>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage-s"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
      </div>
      <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
-      <span style="padding-left:calc(var(--label-w) + 4px)">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
+      <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
      </div>
     </div>
    </div>
    <div class="section">
-    <div class="section-hd">Couche IGN</div>
+    <div class="section-hd" data-i18n="sec.couche">Couche IGN</div>
     <div class="section-body">
      <div class="row">
-      <label>Couche :</label>
+      <label data-i18n="couche">Couche :</label>
       <select id="f-couche"></select>
-      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN"></span>
+      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)" data-i18n="apikey">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN" data-i18n-placeholder="ph.ignpro"></span>
      </div>
-     <div id="scan-restriction-warning" class="hidden" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
+     <div id="scan-restriction-warning" class="hidden" data-i18n-html="warn.scanpro" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
       ⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>
       Une clé API est requise — compte <a href="https://cartes.gouv.fr" target="_blank" style="color:#e07070">cartes.gouv.fr</a> avec SIRET.<br>
       Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).
@@ -13206,37 +13250,37 @@ body.log-resizing *{
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tel-s" checked> 1 — Télécharger</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-s">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tel-s" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel-s">
-     <div class="row"><label>Workers :</label>
+     <div class="row"><label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-s" value="8" min="1" max="32" class="inp-short"></div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-s" checked> 2 — Calculer les tuiles</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-s">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tuiles-s" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tuil-s">
      <div class="row">
-      <label>Zoom :</label>
+      <label data-i18n="zoom">Zoom :</label>
       <input type="number" id="f-zoom-min-s" value="12" min="1" max="20" class="inp-short">
       <span style="color:var(--dim)">–</span>
       <input type="number" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
-      <span style="margin-left:12px;color:var(--dim)">Format de l'image :</span>
+      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
       <div class="seg" style="margin-left:6px">
        <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg" checked><label for="fs-jpeg">JPEG</label>
        <input type="radio" name="fmt-s" id="fs-png"  value="png"><label for="fs-png">PNG</label>
       </div>
       <span id="wrap-qualite-s">
-       <span style="margin-left:8px;color:var(--dim)">Qualité Jpeg :</span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
        <input type="number" id="f-qualite-s" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
       </span>
      </div>
      <div class="row">
-      <label>Format du fichier :</label>
+      <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-mbtiles-s" checked> MBTiles</label>
        <label><input type="checkbox" id="f-rmap-s"> RMAP</label>
@@ -13251,30 +13295,30 @@ body.log-resizing *{
   <div id="sec-osm" class="hidden">
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tel-osm" checked> 1 — Télécharger</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-osm">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tel-osm" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel-osm">
      <div class="cb-group" id="osm-tag-checks"></div>
      <div class="row" style="margin-top:4px">
-      <label>Workers :</label>
+      <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-osm" value="4" min="1" max="16" class="inp-short">
-      <span class="hint" style="margin-left:6px">(parallélisme téléchargement PBF)</span>
+      <span class="hint" style="margin-left:6px" data-i18n="pbfpar">(parallélisme téléchargement PBF)</span>
      </div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-osm" checked> 2 — Calculer les tuiles</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-osm">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tuiles-osm" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tuil-osm">
      <div class="row">
-      <label>Format du fichier :</label>
+      <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-map" checked> Mapsforge (.map)</label>
        <label><input type="checkbox" id="f-osm-geojson" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-osm-geojson-raw"> .geojson (non compressé)</label>
+       <label><input type="checkbox" id="f-osm-geojson-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
       </div>
      </div>
     </div>
@@ -13285,37 +13329,37 @@ body.log-resizing *{
   <div id="sec-vecteur" class="hidden">
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tel-v" checked> 1 — Télécharger</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-v">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tel-v" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel-v">
      <div class="cb-group" id="wfs-checks"></div>
      <div class="row" style="margin-top:4px">
-      <label>Workers :</label>
+      <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-v" value="4" min="1" max="16" class="inp-short">
-      <span class="hint" style="margin-left:6px">(max 4 recommandé)</span>
+      <span class="hint" style="margin-left:6px" data-i18n="max4">(max 4 recommandé)</span>
      </div>
      <div class="row">
-      <label>Format du fichier :</label>
+      <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-fusion-gz" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-fusion-gz-raw"> .geojson (non compressé)</label>
+       <label><input type="checkbox" id="f-fusion-gz-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
       </div>
      </div>
     </div>
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-v"> 2 — Générer carte Mapsforge (.map)</label>
-     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-v">  Écraser le fichier résultat</label>
+     <label><input type="checkbox" id="f-tuiles-v"> <span data-i18n="gen.map">2 — Générer carte Mapsforge (.map)</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body hidden" id="body-map-v">
      <span class="hint">GeoJSON IGN → OSM XML → osmosis+mapwriter → .map</span>
      <div class="row" id="row-simplif-v" class="hidden" style="margin-top:6px">
-      <label>Simplification vecteur</label>
+      <label data-i18n="simplif">Simplification vecteur</label>
       <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
              style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
-      <span class="hint" style="margin-left:6px">m  (vide = auto : 3 m local → 40 m région)</span>
+      <span class="hint" style="margin-left:6px" data-i18n="simplif.hint1">m  (vide = auto : 3 m local → 40 m région)</span>
      </div>
     </div>
    </div>
@@ -13324,28 +13368,28 @@ body.log-resizing *{
   <!-- ═══ FUSION ═══ -->
   <div id="sec-fusion" class="hidden">
    <div class="section">
-    <div class="section-hd">Fichiers GeoJSON à fusionner</div>
+    <div class="section-hd" data-i18n="sec.fusion">Fichiers GeoJSON à fusionner</div>
     <div class="section-body">
      <div id="fusion-list"></div>
      <div class="row" style="margin-top:4px">
-      <button class="btn btn-sm" onclick="fusionAjouter()">＋ Ajouter…</button>
-      <button class="btn btn-sm" onclick="fusionSupprimer()">－ Supprimer</button>
-      <button class="btn btn-sm" onclick="fusionVider()">✕ Vider</button>
-      <span class="hint" style="margin-left:8px">Sélection étendue (Shift/Ctrl)</span>
+      <button class="btn btn-sm" onclick="fusionAjouter()" data-i18n="add">＋ Ajouter…</button>
+      <button class="btn btn-sm" onclick="fusionSupprimer()" data-i18n="remove">－ Supprimer</button>
+      <button class="btn btn-sm" onclick="fusionVider()" data-i18n="clear">✕ Vider</button>
+      <span class="hint" style="margin-left:8px" data-i18n="extsel">Sélection étendue (Shift/Ctrl)</span>
      </div>
      <div class="row">
-      <label>Format :</label>
+      <label data-i18n="fmt">Format :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-fusion-gz2" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-fusion-gz2-raw"> .geojson (non compressé)</label>
+       <label><input type="checkbox" id="f-fusion-gz2-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
        <label><input type="checkbox" id="f-fusion-map"> Mapsforge (.map)</label>
       </div>
      </div>
      <div class="row" id="row-simplif-fusion" class="hidden" style="margin-top:6px">
-      <label>Simplification vecteur</label>
+      <label data-i18n="simplif">Simplification vecteur</label>
       <input type="number" id="f-simplif-fusion" min="1" max="200" step="1" placeholder="auto"
              style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
-      <span class="hint" style="margin-left:6px">m  (vide = auto)</span>
+      <span class="hint" style="margin-left:6px" data-i18n="simplif.hint2">m  (vide = auto)</span>
      </div>
     </div>
    </div>
@@ -13355,20 +13399,20 @@ body.log-resizing *{
   <!-- ═══ DÉCOUPAGE RASTER ═══ -->
   <div id="sec-decoupe" class="hidden">
    <div class="section">
-    <div class="section-hd">Fichier source</div>
+    <div class="section-hd" data-i18n="sec.src">Fichier source</div>
     <div class="section-body">
      <div class="row">
       <label>Source MBTiles</label>
-      <input type="text" id="f-source-decoupe" placeholder="chemin vers le fichier .mbtiles">
+      <input type="text" id="f-source-decoupe" placeholder="chemin vers le fichier .mbtiles" data-i18n-placeholder="ph.mbtilespath">
       <button class="btn btn-sm" onclick="pickFile('f-source-decoupe',false,[])">…</button>
      </div>
     </div>
    </div>
    <div class="section">
-    <div class="section-hd">Découpage</div>
+    <div class="section-hd" data-i18n="sec.split">Découpage</div>
     <div class="section-body">
      <div class="row">
-      <label>Grille :</label>
+      <label data-i18n="grid">Grille :</label>
       <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" title="Colonnes (Est-Ouest)">
       <span class="hint" style="margin:0 4px">cols ×</span>
       <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" title="Lignes (Nord-Sud)">
@@ -13377,13 +13421,13 @@ body.log-resizing *{
       <span class="hint" style="margin-left:4px">km</span>
      </div>
      <div class="row">
-      <label>Format du fichier :</label>
+      <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-mbtiles-d" checked> MBTiles</label>
        <label><input type="checkbox" id="f-rmap-d"> RMAP</label>
        <label><input type="checkbox" id="f-sqlitedb-d"> SQLiteDB</label>
       </div>
-      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-ecraser-d">  Écraser</label>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-ecraser-d"> <span data-i18n="ovr.short">Écraser</span></label>
      </div>
     </div>
    </div>
@@ -13434,6 +13478,182 @@ let fusionSel = -1;
 let polling = null;
 let _initialized = false;
 
+// ── i18n ───────────────────────────────────────────────────────────────────────
+// Pattern web standard : dico inline par locale + attribut data-i18n sur les
+// nœuds. Zéro dépendance, pas de gettext (l'enclume pour 2 langues mono-mainteneur).
+// Le texte FR en dur dans le HTML reste le FALLBACK si une clé manque : pas de
+// page cassée. Variantes d'attribut : data-i18n (textContent), data-i18n-placeholder,
+// data-i18n-title. Détection : navigator.language (l'OS, via QtWebEngine) ;
+// override manuel persisté côté Python (pywebview.api.set_lang), appliqué dans
+// initAsync après get_init_data.
+// On ne tague que les chaînes qui DIFFÈRENT entre fr et en. Les tokens
+// identiques (cols ×, km, m, JPEG, GPS, SVF, MBTiles, multi, 315°…) ne sont
+// pas dans le dico ni taggés : t() renvoie alors le fallback fr (= le texte
+// en dur), donc rien ne change. data-i18n-title pour les infobulles.
+const I18N = {
+  fr: {
+    "btn.run":"▶ Lancer", "btn.stop":"■ Arrêter", "btn.hist":"⏱ Historique", "btn.log":"📋 Logs",
+    // Projet
+    "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
+    "loading":"Chargement...", "apikey":"Clé API :",
+    "tip.provider":"Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.",
+    // Zone
+    "sec.zone":"Zone géographique",
+    "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Département", "mode.region":"Région",
+    "z.ville":"Ville", "z.rayonkm":"Rayon km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
+    "z.deps":"Département(s)",
+    // Type de traitement
+    "sec.type":"Type de traitement de carte",
+    "t.lidar":"LiDAR MNT", "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
+    "t.fusion":"Fusion Vectoriel", "t.decoupe":"Découpage raster",
+    // Étapes communes
+    "split0":"0 — Découpage à priori (grandes zones)",
+    "grid":"Grille :", "rows":"lignes", "orradius":"ou rayon", "rows_orradius":"lignes  ou rayon",
+    "clean":"Nettoyage intermédiaires",
+    "split.hint":"1×1 = pas de découpage — reprise automatique via manifeste.json",
+    "dl":"1 — Télécharger", "dl.lidar":"1 — Télécharger les dalles LiDAR HD IGN",
+    "ovr":"Écraser le fichier résultat", "ovr.short":"Écraser",
+    "workers":"Workers :", "compress":"Compresser", "extcache":"Cache externe :",
+    "tiles2":"2 — Calculer les tuiles", "tiles3":"3 — Calculer les tuiles",
+    "omb2":"2 — Calculer les ombrages archéologiques",
+    "zoom":"Zoom :", "imgfmt":"Format de l'image :", "jpegq":"Qualité Jpeg :", "filefmt":"Format du fichier :",
+    // SVF
+    "tip.svf":"Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite.",
+    "tip.elev":"Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.",
+    // IGN Raster
+    "sec.couche":"Couche IGN", "couche":"Couche :",
+    // OSM / Vecteur / Fusion
+    "pbfpar":"(parallélisme téléchargement PBF)", "max4":"(max 4 recommandé)",
+    "geojson.raw":".geojson (non compressé)",
+    "gen.map":"2 — Générer carte Mapsforge (.map)",
+    "simplif":"Simplification vecteur",
+    "simplif.hint1":"m  (vide = auto : 3 m local → 40 m région)", "simplif.hint2":"m  (vide = auto)",
+    "sec.fusion":"Fichiers GeoJSON à fusionner",
+    "add":"＋ Ajouter…", "remove":"－ Supprimer", "clear":"✕ Vider",
+    "extsel":"Sélection étendue (Shift/Ctrl)", "fmt":"Format :",
+    // Découpage raster
+    "sec.src":"Fichier source", "sec.split":"Découpage",
+    // Placeholders
+    "ph.optopo":"clé OpenTopography", "ph.ignpro":"clé pro IGN",
+    "ph.cacheauto":"(cache auto)", "ph.mbtilespath":"chemin vers le fichier .mbtiles",
+    // Dynamiques (JS) — {x} = placeholders remplacés par tf()
+    "copied":"✓ copié dans le presse-papier", "copyfail":"✗ copie échouée",
+    "apiunavail":"API non disponible", "initerr":"Erreur init : ",
+    "hist.empty":"Aucun traitement enregistré.",
+    "hist.alreadyempty":"L'historique est déjà vide.",
+    "hist.confirm":"Supprimer {n} entrée(s) de l'historique ?\n\nCette action est définitive — les commandes passées ne pourront plus être rappelées.",
+    "hist.cleared":"✓ Historique vidé ({n} entrée(s) supprimée(s))",
+    "hist.recalled":"Paramètres rappelés : {nom} ({date})",
+    "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
+    "zoom.inverted":"⚠ Zooms d'historique inversés — corrigés au chargement",
+    "fusion.ignored":"Ignoré(s) : {files}\nSeuls .geojson et .geojson.gz sont acceptés.",
+    "req.name":"Le nom du projet est obligatoire.",
+    "req.source":"Le fichier source MBTiles est obligatoire.",
+    "req.field":"Le champ « {f} » est obligatoire.",
+    "running":"En cours...", "done":"✓ Terminé", "stopped":"⚠ Arrêté",
+    "err.code":"✗ Erreur (code {c})",
+    "fail.detail":"Le traitement a échoué (code {c}).\n\n{msg}\n\n(détails complets dans le panneau de log ci-dessous)",
+    "fail.generic":"Le traitement a échoué (code {c}).\n\nVoir le panneau de log ci-dessous pour les détails.",
+    // HTML riche (innerHTML) + infobulles SVF
+    "warn.scanpro":"⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>Une clé API est requise — compte <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> avec SIRET.<br>Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).",
+    "dep.syntax":"Syntaxe : <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; DOM : <code>2A</code> <code>971</code> &nbsp;—&nbsp; Multi-département : un fichier par département",
+    "region.hint":"Région Geofabrik = bbox englobante de ses départements. &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).",
+    "tip.sun":"Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.",
+    "tip.svftype":"Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.",
+    "tip.svfconv":"Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.",
+    "tip.svfdist":"Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.",
+    "tip.svfgamma":"Gamma après stretch percentile. <1 éclaircit (√), 1 = linéaire, >1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.",
+    "tip.svfsweep":"Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px.",
+  },
+  en: {
+    "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
+    "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
+    "loading":"Loading...", "apikey":"API key:",
+    "tip.provider":"LiDAR source (per country). The choice hides the IGN Raster/Vector tabs for non-FR providers.",
+    "sec.zone":"Geographic area",
+    "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
+    "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
+    "z.deps":"Department(s)",
+    "sec.type":"Map processing type",
+    "t.lidar":"LiDAR DEM", "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
+    "t.fusion":"Vector merge", "t.decoupe":"Raster split",
+    "split0":"0 — A priori split (large areas)",
+    "grid":"Grid:", "rows":"rows", "orradius":"or radius", "rows_orradius":"rows  or radius",
+    "clean":"Clean intermediates",
+    "split.hint":"1×1 = no split — automatic resume via manifeste.json",
+    "dl":"1 — Download", "dl.lidar":"1 — Download IGN LiDAR HD tiles",
+    "ovr":"Overwrite output file", "ovr.short":"Overwrite",
+    "workers":"Workers:", "compress":"Compress", "extcache":"External cache:",
+    "tiles2":"2 — Compute tiles", "tiles3":"3 — Compute tiles",
+    "omb2":"2 — Compute archaeological shadings",
+    "zoom":"Zoom:", "imgfmt":"Image format:", "jpegq":"Jpeg quality:", "filefmt":"File format:",
+    "tip.svf":"Sky-View Factor — openness of the celestial hemisphere. Options on the right.",
+    "tip.elev":"Sun angle of the directional hillshades. 25° = archaeology (micro-relief); 45° = general use.",
+    "sec.couche":"IGN layer", "couche":"Layer:",
+    "pbfpar":"(PBF download parallelism)", "max4":"(max 4 recommended)",
+    "geojson.raw":".geojson (uncompressed)",
+    "gen.map":"2 — Generate Mapsforge map (.map)",
+    "simplif":"Vector simplification",
+    "simplif.hint1":"m  (empty = auto: 3 m local → 40 m region)", "simplif.hint2":"m  (empty = auto)",
+    "sec.fusion":"GeoJSON files to merge",
+    "add":"＋ Add…", "remove":"－ Remove", "clear":"✕ Clear",
+    "extsel":"Extended selection (Shift/Ctrl)", "fmt":"Format:",
+    "sec.src":"Source file", "sec.split":"Split",
+    "ph.optopo":"OpenTopography key", "ph.ignpro":"IGN pro key",
+    "ph.cacheauto":"(auto cache)", "ph.mbtilespath":"path to .mbtiles file",
+    "copied":"✓ copied to clipboard", "copyfail":"✗ copy failed",
+    "apiunavail":"API unavailable", "initerr":"Init error: ",
+    "hist.empty":"No saved run.",
+    "hist.alreadyempty":"History is already empty.",
+    "hist.confirm":"Delete {n} history entry(ies)?\n\nThis is permanent — past commands can no longer be recalled.",
+    "hist.cleared":"✓ History cleared ({n} entry(ies) removed)",
+    "hist.recalled":"Parameters recalled: {nom} ({date})",
+    "del.error":"Error while deleting: ", "del.unknown":"unknown",
+    "zoom.inverted":"⚠ History zooms inverted — fixed on load",
+    "fusion.ignored":"Ignored: {files}\nOnly .geojson and .geojson.gz are accepted.",
+    "req.name":"Project name is required.",
+    "req.source":"Source MBTiles file is required.",
+    "req.field":"The « {f} » field is required.",
+    "running":"Running...", "done":"✓ Done", "stopped":"⚠ Stopped",
+    "err.code":"✗ Error (code {c})",
+    "fail.detail":"Processing failed (code {c}).\n\n{msg}\n\n(full details in the log panel below)",
+    "fail.generic":"Processing failed (code {c}).\n\nSee the log panel below for details.",
+    "warn.scanpro":"⚠ This layer is restricted to <strong>professionals</strong> (IGN terms of use).<br>An API key is required — a <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> account with a SIRET.<br>Individuals must use <strong>planign</strong> or <strong>ortho</strong> (no key required).",
+    "dep.syntax":"Syntax: <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; Overseas: <code>2A</code> <code>971</code> &nbsp;—&nbsp; Multi-department: one file per department",
+    "region.hint":"Geofabrik region = bounding box of its departments. &nbsp;—&nbsp; OSM: a single regional map (full PBF, no re-split).",
+    "tip.sun":"Sun angle of the directional hillshades (multi/315/045/135/225). No effect on SVF.",
+    "tip.svftype":"Flux cos²γ: compressed near 1, contrast to the eye. RVT 1−sin γ (Kokalj/Hesse): archaeology standard / openness, linear sensitivity at low angles.",
+    "tip.svfconv":"Flux cos²γ: contrast to the eye. RVT 1−sin γ: archaeology standard / openness.",
+    "tip.svfdist":"SVF horizon radius in metres. 20 = micro-relief (ditches, walls); 100 = enclosures/roads. Larger = slower.",
+    "tip.svfgamma":"Gamma after percentile stretch. <1 lightens (√), 1 = linear, >1 darkens. ~2.0 optimal for flux, ~1.0 for RVT.",
+    "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
+  },
+};
+let _lang = 'fr';
+function t(k){ return (I18N[_lang] && I18N[_lang][k]) || I18N.fr[k] || k; }
+function tf(k, v){ let s = t(k); for (const p in (v||{})) s = s.split('{'+p+'}').join(v[p]); return s; }
+function detectLang(){ return (navigator.language || 'en').toLowerCase().startsWith('fr') ? 'fr' : 'en'; }
+function applyI18n(){
+  document.documentElement.lang = _lang;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const v = t(el.dataset.i18n); if (v) el.textContent = v; });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const v = t(el.dataset.i18nPlaceholder); if (v) el.placeholder = v; });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const v = t(el.dataset.i18nTitle); if (v) el.title = v; });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const v = t(el.dataset.i18nHtml); if (v) el.innerHTML = v; });  // contenu statique de confiance
+  document.querySelectorAll('[data-lang-btn]').forEach(b =>
+    b.classList.toggle('active', b.dataset.langBtn === _lang));
+}
+function setLang(code, persist){
+  _lang = (code === 'en') ? 'en' : 'fr';
+  applyI18n();
+  if (persist && window.pywebview && pywebview.api && pywebview.api.set_lang) {
+    pywebview.api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
+  }
+}
+
 // ── Panneau de log ───────────────────────────────────────────────────────────
 function ajouterLigneLog(text, tag) {
   const c = document.getElementById('log-content');
@@ -13470,7 +13690,7 @@ function copierLog() {
     const st = document.getElementById('log-status');
     if (!st) return;
     const orig = st.textContent;
-    st.textContent = '✓ copié dans le presse-papier';
+    st.textContent = t('copied');
     setTimeout(() => { st.textContent = orig; }, 1500);
   }
 
@@ -13478,7 +13698,7 @@ function copierLog() {
     const st = document.getElementById('log-status');
     if (!st) return;
     const orig = st.textContent;
-    st.textContent = '✗ copie échouée';
+    st.textContent = t('copyfail');
     setTimeout(() => { st.textContent = orig; }, 2500);
   }
 
@@ -13657,6 +13877,7 @@ function setLogProgress(pct, cls) {
 // (sections visibles/cachées selon checkboxes). L'init async (couches, config)
 // est lancée séparément dès que pywebview.api est disponible.
 document.addEventListener('DOMContentLoaded', () => {
+  setLang(detectLang(), false);   // langue OS immédiate ; override sauvé appliqué dans initAsync
   bindAll();
   _acInstaller();
   // pywebview émet 'pywebviewready' sur window quand le bridge JS↔Python est
@@ -13677,7 +13898,7 @@ function waitForApi(tries=0) {
   } else if (tries < 600) {   // 600×50ms = 30s (au lieu de 10s)
     setTimeout(() => waitForApi(tries+1), 50);
   } else {
-    document.getElementById('footer-status').textContent = 'API non disponible';
+    document.getElementById('footer-status').textContent = t('apiunavail');
   }
 }
 
@@ -13686,6 +13907,7 @@ async function initAsync() {
   _initialized = true;
   try {
     const d = await pywebview.api.get_init_data();
+    if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
     buildProviders(d.providers || [], d.active_provider || 'fr-ign');
     buildRegions(d.regions || []);
     buildCouches(d.couches);
@@ -13702,7 +13924,7 @@ async function initAsync() {
     }).catch(e => console.error('get_historique init error:', e));
   } catch(e) {
     console.error('initAsync error:', e);
-    document.getElementById('footer-status').textContent = 'Erreur init: ' + e;
+    document.getElementById('footer-status').textContent = t('initerr') + e;
   }
 }
 
@@ -13789,7 +14011,7 @@ function buildHistorique(hist) {
   const list = document.getElementById('hist-list');
   if (!list) return;
   if (!_historique.length) {
-    list.innerHTML = '<div style="color:var(--dim);font-size:12px">Aucun traitement enregistré.</div>';
+    list.innerHTML = '<div style="color:var(--dim);font-size:12px">' + t('hist.empty') + '</div>';
     return;
   }
   const LABELS = {lidar:'LiDAR',scan:'IGN Raster',osm:'OSM Vectoriel',
@@ -13828,12 +14050,10 @@ function toggleHistorique() {
 async function viderHistorique() {
   const n = (_historique || []).length;
   if (n === 0) {
-    alert('L\'historique est déjà vide.');
+    alert(t('hist.alreadyempty'));
     return;
   }
-  if (!confirm(`Supprimer ${n} entrée(s) de l'historique ?\n\n`
-             + `Cette action est définitive — les commandes passées ne pourront plus `
-             + `être rappelées.`)) {
+  if (!confirm(tf('hist.confirm', {n}))) {
     return;
   }
   try {
@@ -13842,12 +14062,12 @@ async function viderHistorique() {
       _historique = [];
       buildHistorique([]);
       const fs = document.getElementById('footer-status');
-      if (fs) fs.textContent = `✓ Historique vidé (${n} entrée(s) supprimée(s))`;
+      if (fs) fs.textContent = tf('hist.cleared', {n});
     } else {
-      alert('Erreur lors de la suppression : ' + ((r && r.error) || 'inconnue'));
+      alert(t('del.error') + ((r && r.error) || t('del.unknown')));
     }
   } catch (e) {
-    alert('Erreur lors de la suppression : ' + e);
+    alert(t('del.error') + e);
   }
 }
 
@@ -13857,7 +14077,7 @@ function rappelHistorique(i) {
   loadConfig(e.params);
   toggleHistorique();
   document.getElementById('footer-status').textContent =
-    `Paramètres rappelés : ${e.nom||''} (${e.date})`;
+    tf('hist.recalled', {nom: e.nom||'', date: e.date});
 }
 
 function buildCouches(couches) {
@@ -14265,7 +14485,7 @@ function loadConfig(cfg) {
   }
   if (_swapped) {
     const fs = document.getElementById('footer-status');
-    if (fs) fs.textContent = '⚠ Zooms d\'historique inversés — corrigés au chargement';
+    if (fs) fs.textContent = t('zoom.inverted');
   }
 
   // Zone
@@ -14452,7 +14672,7 @@ async function fusionAjouter() {
   const all = Array.isArray(files) ? files : [files];
   const valid = all.filter(f => f.endsWith('.geojson') || f.endsWith('.gz'));
   const invalid = all.filter(f => !f.endsWith('.geojson') && !f.endsWith('.gz'));
-  if (invalid.length) alert(`Ignoré(s) : ${invalid.map(f=>f.split(/[\\/]/).pop()).join(', ')}\nSeuls .geojson et .geojson.gz sont acceptés.`);
+  if (invalid.length) alert(tf('fusion.ignored', {files: invalid.map(f=>f.split(/[\\/]/).pop()).join(', ')}));
   valid.forEach(f => { if (!fusionFiles.includes(f)) fusionFiles.push(f); });
   renderFusionList();
 }
@@ -14477,10 +14697,10 @@ function setFormLocked(locked) {
 
 async function lancer() {
   const nom = document.getElementById('f-nom').value.trim();
-  if (!nom) { alert('Le nom du projet est obligatoire.'); return; }
+  if (!nom) { alert(t('req.name')); return; }
   const cfg = getConfig();
   if (cfg.type === 'decoupe' && !cfg.source_decoupe) {
-    alert('Le fichier source MBTiles est obligatoire.');
+    alert(t('req.source'));
     return;
   }
   // Valider que la zone géographique est renseignée (sauf Fusion et Découpage raster)
@@ -14492,19 +14712,19 @@ async function lancer() {
                    (cfg.mode === 'region' && cfg.region) ||
                     false;
     if (!zoneOk) {
-      const labels = {ville:'Ville', gps:'GPS', bbox:'BBox', dep:'Département', region:'Région'};
-      alert(`Le champ "${labels[cfg.mode] || cfg.mode}" est obligatoire.`);
+      const labels = {ville:t('mode.ville'), gps:t('mode.gps'), bbox:t('mode.bbox'), dep:t('mode.dep'), region:t('mode.region')};
+      alert(tf('req.field', {f: labels[cfg.mode] || cfg.mode}));
       return;
     }
   }
   document.getElementById('btn-run').disabled = true;
   document.getElementById('btn-stop').disabled = false;
-  document.getElementById('footer-status').textContent = 'En cours...';
+  document.getElementById('footer-status').textContent = t('running');
   setFormLocked(true);
 
   // Vider le panneau de log et préparer la barre de progression
   viderLog();
-  document.getElementById('log-status').textContent = 'En cours...';
+  document.getElementById('log-status').textContent = t('running');
   setLogProgress(0, '');
 
   const res = await pywebview.api.launch(cfg);
@@ -14538,9 +14758,9 @@ async function lancer() {
     if (r.done) {
       clearInterval(polling); polling = null;
       document.getElementById('footer-status').textContent =
-        r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
+        r.code === 0 ? t('done') : tf('err.code', {c: r.code});
       document.getElementById('log-status').textContent =
-        r.code === 0 ? '✓ Terminé' : `✗ Erreur (code ${r.code})`;
+        r.code === 0 ? t('done') : tf('err.code', {c: r.code});
       setLogProgress(100, r.code === 0 ? 'ok' : 'err');
       // Récap d'erreur en fin de run via API dédiée (plus fiable que
       // le passage par poll_log : pywebview/WebView2 peut perdre des
@@ -14555,18 +14775,14 @@ async function lancer() {
         try {
           const err = await pywebview.api.get_last_error();
           if (err && err.msg) {
-            alert(`Le traitement a échoué (code ${err.retcode}).\n\n`
-                + err.msg
-                + `\n\n(détails complets dans le panneau de log ci-dessous)`);
+            alert(tf('fail.detail', {c: err.retcode, msg: err.msg}));
           } else {
             // Fallback générique si _modal_error_msg n'a pas été rempli
-            alert(`Le traitement a échoué (code ${r.code}).\n\n`
-                + `Voir le panneau de log ci-dessous pour les détails.`);
+            alert(tf('fail.generic', {c: r.code}));
           }
         } catch (e) {
           console.error('get_last_error:', e);
-          alert(`Le traitement a échoué (code ${r.code}).\n\n`
-              + `Voir le panneau de log ci-dessous pour les détails.`);
+          alert(tf('fail.generic', {c: r.code}));
         }
       }
       if (r.code === 0) {
@@ -14588,7 +14804,7 @@ async function lancer() {
 async function arreter() {
   await pywebview.api.stop();
   if (polling) { clearInterval(polling); polling = null; }
-  document.getElementById('footer-status').textContent = '⚠ Arrêté';
+  document.getElementById('footer-status').textContent = t('stopped');
   btnReset();
 }
 
