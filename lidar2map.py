@@ -13054,7 +13054,7 @@ body.log-resizing *{
      <div class="row">
       <label data-i18n="z.deps">Département(s)</label>
       <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
-             title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
+             data-i18n-title="tip.deps" title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
      </div>
      <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="dep.syntax">
       Syntaxe : <code>83</code> &nbsp;·&nbsp;
@@ -13108,12 +13108,12 @@ body.log-resizing *{
     <div class="section-body">
      <div class="row">
       <label data-i18n="grid">Grille :</label>
-      <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
+      <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
-      <input type="number" id="f-priori-rows" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
+      <input type="number" id="f-priori-rows" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns" title="Lignes Nord-Sud">
       <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
       <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
-      <input type="number" id="f-rayon-priori-l" value="0" min="0" step="10" class="inp-short" title="Rayon km par morceau (alternative à la grille)">
+      <input type="number" id="f-rayon-priori-l" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk1" title="Rayon km par morceau (alternative à la grille)">
       <span class="hint" style="margin-left:4px">km</span>
       <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
      </div>
@@ -13219,12 +13219,12 @@ body.log-resizing *{
     <div class="section-body">
      <div class="row">
       <label data-i18n="grid">Grille :</label>
-      <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" title="Colonnes Est-Ouest">
+      <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
       <span class="hint" style="margin:0 4px">cols ×</span>
-      <input type="number" id="f-priori-rows-s" value="1" min="1" max="50" class="inp-short" title="Lignes Nord-Sud">
+      <input type="number" id="f-priori-rows-s" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns" title="Lignes Nord-Sud">
       <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
       <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
-      <input type="number" id="f-rayon-priori-s" value="0" min="0" step="10" class="inp-short" title="Rayon km par morceau">
+      <input type="number" id="f-rayon-priori-s" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk2" title="Rayon km par morceau">
       <span class="hint" style="margin-left:4px">km</span>
       <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage-s"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
      </div>
@@ -13358,7 +13358,7 @@ body.log-resizing *{
      <div class="row" id="row-simplif-v" class="hidden" style="margin-top:6px">
       <label data-i18n="simplif">Simplification vecteur</label>
       <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
-             style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
+             style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
       <span class="hint" style="margin-left:6px" data-i18n="simplif.hint1">m  (vide = auto : 3 m local → 40 m région)</span>
      </div>
     </div>
@@ -13388,7 +13388,7 @@ body.log-resizing *{
      <div class="row" id="row-simplif-fusion" class="hidden" style="margin-top:6px">
       <label data-i18n="simplif">Simplification vecteur</label>
       <input type="number" id="f-simplif-fusion" min="1" max="200" step="1" placeholder="auto"
-             style="width:80px" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
+             style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
       <span class="hint" style="margin-left:6px" data-i18n="simplif.hint2">m  (vide = auto)</span>
      </div>
     </div>
@@ -13413,9 +13413,9 @@ body.log-resizing *{
     <div class="section-body">
      <div class="row">
       <label data-i18n="grid">Grille :</label>
-      <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" title="Colonnes (Est-Ouest)">
+      <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew2" title="Colonnes (Est-Ouest)">
       <span class="hint" style="margin:0 4px">cols ×</span>
-      <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" title="Lignes (Nord-Sud)">
+      <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns2" title="Lignes (Nord-Sud)">
       <span class="hint" style="margin:0 4px">lignes  ou rayon</span>
       <input type="number" id="f-rayon-decoupe-d" value="0" min="0" step="10" class="inp-short">
       <span class="hint" style="margin-left:4px">km</span>
@@ -13441,9 +13441,9 @@ body.log-resizing *{
      style="position:fixed;top:0;right:0;width:420px;height:100%;background:var(--bg2);
             border-left:1px solid var(--bd);overflow-y:auto;z-index:100;padding:12px;box-sizing:border-box">
  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-  <strong>Historique des traitements</strong>
+  <strong data-i18n="hist.title">Historique des traitements</strong>
   <div style="display:flex;gap:6px;align-items:center">
-   <button class="btn" onclick="viderHistorique()"
+   <button class="btn" onclick="viderHistorique()" data-i18n="clear"
            style="background:transparent;border:1px solid var(--red);color:var(--red);
                   font-size:11px;padding:3px 10px;cursor:pointer">🗑 Vider</button>
    <button class="btn" onclick="toggleHistorique()"
@@ -13456,14 +13456,14 @@ body.log-resizing *{
 
 <!-- ═══ PANNEAU DE LOG ═══ -->
 <div id="panneau-log" class="hidden">
-  <div id="log-resize-handle" title="Redimensionner verticalement"></div>
+  <div id="log-resize-handle" data-i18n-title="tip.logresize" title="Redimensionner verticalement"></div>
   <div id="log-header">
     <strong>📋 Log</strong>
     <span id="log-status" style="color:var(--dim)"></span>
     <div class="log-actions">
-      <button onclick="copierLog()" title="Copier le log dans le presse-papier">⎘ Copier</button>
-      <button onclick="viderLog()" title="Effacer le contenu du log">🗑 Vider</button>
-      <button onclick="toggleLogPanel()" title="Masquer le panneau (ré-affichable via le bouton Logs en haut)">✕</button>
+      <button onclick="copierLog()" data-i18n="log.copy" data-i18n-title="tip.logcopy" title="Copier le log dans le presse-papier">⎘ Copier</button>
+      <button onclick="viderLog()" data-i18n="clear" data-i18n-title="tip.logclear" title="Effacer le contenu du log">🗑 Vider</button>
+      <button onclick="toggleLogPanel()" data-i18n-title="tip.loghide" title="Masquer le panneau (ré-affichable via le bouton Logs en haut)">✕</button>
     </div>
   </div>
   <div id="log-progress"><div id="log-progress-bar"></div></div>
@@ -13564,6 +13564,18 @@ const I18N = {
     "tip.svfdist":"Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.",
     "tip.svfgamma":"Gamma après stretch percentile. <1 éclaircit (√), 1 = linéaire, >1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.",
     "tip.svfsweep":"Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px.",
+    // Infobulles de grille
+    "tip.deps":"Un ou plusieurs départements\nExemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
+    "tip.colsew":"Colonnes Est-Ouest", "tip.rowsns":"Lignes Nord-Sud",
+    "tip.colsew2":"Colonnes (Est-Ouest)", "tip.rowsns2":"Lignes (Nord-Sud)",
+    "tip.radiuschunk1":"Rayon km par morceau (alternative à la grille)", "tip.radiuschunk2":"Rayon km par morceau",
+    "tip.epsilon":"Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.",
+    // Panneaux historique / log
+    "hist.title":"Historique des traitements", "clear":"🗑 Vider", "log.copy":"⎘ Copier",
+    "tip.logresize":"Redimensionner verticalement", "tip.logcopy":"Copier le log dans le presse-papier",
+    "tip.logclear":"Effacer le contenu du log",
+    "tip.loghide":"Masquer le panneau (ré-affichable via le bouton Logs en haut)",
+    "status.running":"en cours",
   },
   en: {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
@@ -13627,6 +13639,16 @@ const I18N = {
     "tip.svfdist":"SVF horizon radius in metres. 20 = micro-relief (ditches, walls); 100 = enclosures/roads. Larger = slower.",
     "tip.svfgamma":"Gamma after percentile stretch. <1 lightens (√), 1 = linear, >1 darkens. ~2.0 optimal for flux, ~1.0 for RVT.",
     "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
+    "tip.deps":"One or more departments\nExamples: 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
+    "tip.colsew":"Columns East-West", "tip.rowsns":"Rows North-South",
+    "tip.colsew2":"Columns (East-West)", "tip.rowsns2":"Rows (North-South)",
+    "tip.radiuschunk1":"Radius km per chunk (alternative to the grid)", "tip.radiuschunk2":"Radius km per chunk",
+    "tip.epsilon":"Douglas-Peucker epsilon in metres. Empty = auto from area.",
+    "hist.title":"Processing history", "clear":"🗑 Clear", "log.copy":"⎘ Copy",
+    "tip.logresize":"Resize vertically", "tip.logcopy":"Copy the log to the clipboard",
+    "tip.logclear":"Clear the log content",
+    "tip.loghide":"Hide the panel (re-show via the Logs button at the top)",
+    "status.running":"running",
   },
 };
 let _lang = 'fr';
@@ -14014,8 +14036,8 @@ function buildHistorique(hist) {
     list.innerHTML = '<div style="color:var(--dim);font-size:12px">' + t('hist.empty') + '</div>';
     return;
   }
-  const LABELS = {lidar:'LiDAR',scan:'IGN Raster',osm:'OSM Vectoriel',
-                  vecteur:'IGN Vectoriel',fusion:'Fusion',decoupe:'Découpage'};
+  const LABELS = {lidar:'LiDAR',scan:'IGN Raster',osm:t('t.osm'),
+                  vecteur:t('t.vecteur'),fusion:t('t.fusion'),decoupe:t('t.decoupe')};
   // Marqueur visuel du statut : ✓ ok (vert), ✗ ko (rouge), ⚠ en cours (orange,
   // process probablement crashé — l'entrée n'a pas été finalisée).
   const BADGES = {
@@ -14037,7 +14059,7 @@ function buildHistorique(hist) {
         <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} — ${e.nom||'?'}</strong>
         <span style="color:var(--dim)">${e.date}</span>
       </div>
-      <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree||st}</div>
+      <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree || (st === 'en cours' ? t('status.running') : st)}</div>
     </div>`;
   }).join('');
 }
