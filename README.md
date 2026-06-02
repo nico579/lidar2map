@@ -12,7 +12,7 @@ A self-contained Python tool that downloads public LiDAR data from several natio
 
 > ⚠️ **Status**: personal project, publicly released. Heavily tested on Windows 10/11. Linux and macOS tested partially — known cases + cross-OS troubleshooting in the *Troubleshooting* section of [BUILD.md](BUILD.md). Feedback welcome via [GitHub issues](https://github.com/nico579/lidar2map/issues).
 >
-> **Note:** the CLI flags and the GUI are currently in French (this is a French-born hobby project). The flags shown below are the real ones the tool expects — they are intentionally left untranslated so the example commands actually work. An English UI is on the roadmap if there's demand.
+> **Note:** the GUI auto-detects your language (English/French, with a manual toggle) and the CLI flags and `--help` are in English. The former French flag names still work as aliases, so older example commands keep working.
 
 ---
 
@@ -186,62 +186,62 @@ Everything below applies to the binary as well as the script — just replace
 
 ### Command-line examples
 
-> Reminder: the flags are in French (e.g. `--zone-ville` = "town", `--ombrages` = "relief/shading", `--telechargement` = "download", `--formats-fichier` = "file formats", `--oui` = "yes/confirm"). They are the actual flags — copy them as-is.
+> The flags below are English. The former French flag names still work as aliases, so older commands keep working.
 
 **SVF relief + IGN topo map over a town (1 km² zone around Garéoult, France):**
 ```bash
-python lidar2map.py --lidar --zone-ville Gareoult --zone-rayon 1 \
-    --ombrages multi svf --formats-fichier mbtiles --oui
+python lidar2map.py --lidar --zone-city Gareoult --zone-radius 1 \
+    --shadings multi svf --file-formats mbtiles --yes
 ```
 
 **Relief over Amsterdam (Netherlands, AHN4):**
 ```bash
-python lidar2map.py --provider nl-ahn --lidar --telechargement \
-    --zone-bbox 120000,486000,122000,488000 --zone-nom amsterdam \
-    --ombrages multi --formats-fichier mbtiles --oui
+python lidar2map.py --provider nl-ahn --lidar --download \
+    --zone-bbox 120000,486000,122000,488000 --zone-name amsterdam \
+    --shadings multi --file-formats mbtiles --yes
 ```
 
 **Relief over Geneva (Switzerland, swissALTI3D):**
 ```bash
-python lidar2map.py --provider ch-swisstopo --lidar --telechargement \
-    --zone-ville Geneve --zone-rayon 1 \
-    --ombrages svf --formats-fichier mbtiles --oui
+python lidar2map.py --provider ch-swisstopo --lidar --download \
+    --zone-city Geneve --zone-radius 1 \
+    --shadings svf --file-formats mbtiles --yes
 ```
 
 **Relief over Oslo (Norway, Kartverket):**
 ```bash
-python lidar2map.py --provider no-kartverket --lidar --telechargement \
-    --zone-ville Oslo --zone-rayon 1 \
-    --ombrages multi --formats-fichier mbtiles --oui
+python lidar2map.py --provider no-kartverket --lidar --download \
+    --zone-city Oslo --zone-radius 1 \
+    --shadings multi --file-formats mbtiles --yes
 ```
 
 **Historical 1950-1965 orthophoto over an archaeological survey area:**
 ```bash
-python lidar2map.py --ignraster --zone-bbox 6.0,43.3,6.1,43.4 \
-    --couche ortho_1950 --zoom-min 14 --zoom-max 18 --oui
+python lidar2map.py --raster --zone-bbox 6.0,43.3,6.1,43.4 \
+    --layer ortho_1950 --zoom-min 14 --zoom-max 18 --yes
 ```
 
 **OSM vector map (Mapsforge .map) for Locus, whole département:**
 ```bash
-python lidar2map.py --osm --zone-departement 83 --formats-fichier map --oui
+python lidar2map.py --osm --zone-department 83 --file-formats map --yes
 ```
 
 **Whole region (`--zone-region`) — available for all modes:**
 ```bash
 # OSM: a single map for the whole region, no re-splitting
 # (the Geofabrik PBF IS already regional — far faster than looping per département)
-python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --oui
+python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --yes
 
 # IGN vector: paths/routes for the whole region as GeoJSON + Locus .map
-python lidar2map.py --ignvecteur --zone-region provence-alpes-cote-d-azur \
-    --couche chemins --formats-fichier gz map --oui
+python lidar2map.py --vector --zone-region provence-alpes-cote-d-azur \
+    --layer chemins --file-formats gz map --yes
 ```
 The slug is the one from [Geofabrik France](https://download.geofabrik.de/europe/france.html) (old-style regions: `provence-alpes-cote-d-azur`, `bretagne`, `corse`, `rhone-alpes`…). In OSM the region is processed as one block (the Geofabrik file is already regional, no per-département geocoding); for the raster/vector/lidar modes the area is the bbox enclosing all the départements of the region. An unknown slug lists the available regions.
 
 **IGN BD TOPO map (roads + buildings) as compressed GeoJSON + Mapsforge .map:**
 ```bash
-python lidar2map.py --ignvecteur --zone-departement 83 \
-    --couche routes batiments --formats-fichier gz map --oui
+python lidar2map.py --vector --zone-department 83 \
+    --layer routes batiments --file-formats gz map --yes
 ```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map / OsmAnd).
 
@@ -319,12 +319,12 @@ The header SVF and the triptych above (Rougiers area, dép. 83, France) were com
 
 ```bash
 python lidar2map.py \
-  --zone-gps <lat> <lon> --zone-rayon 1 --zone-nom hero \
-  --ignlidar --telechargement --workers 8 \
-  --ombrages svf --ombrages-elevation 25 \
+  --zone-gps <lat> <lon> --zone-radius 1 --zone-name hero \
+  --lidar --download --workers 8 \
+  --shadings svf --shading-elevation 25 \
   --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
-  --formats-fichier mbtiles --zoom-min 8 --zoom-max 18 \
-  --formats-image jpeg --qualite-image 85 --oui
+  --file-formats mbtiles --zoom-min 8 --zoom-max 18 \
+  --image-format jpeg --image-quality 85 --yes
 ```
 
 Replace `<lat> <lon>` with your own area; the SVF parameters above are the ones
@@ -336,7 +336,7 @@ anti-detecting disclaimer above).
 
 - **User README**: this file
 - **Build & deployment**: [BUILD.md](BUILD.md) — bundle architecture, per-OS build scripts, updating without rebuild, troubleshooting (including Linux- and macOS-specific cases)
-- **Built-in help**: `python lidar2map.py --help` (LiDAR), `--ignraster --help` (raster), `--ignvecteur --help` (vector), `--osm --help`, `--fusionner --help`
+- **Built-in help**: `python lidar2map.py --help` (LiDAR), `--raster --help` (raster), `--vector --help` (vector), `--osm --help`, `--merge --help`
 
 ## License
 

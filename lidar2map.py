@@ -983,7 +983,10 @@ def _bootstrap_venv_si_besoin():
     Flags utilisateur (lus directement depuis sys.argv pour bypasser argparse
     qui n'est pas encore initialisé à ce stade du démarrage) :
 
-      --bootstrap=auto    : venv automatique (défaut, recommandé)
+      --bootstrap=auto    : venv automatique (défaut, recommandé). Si un env
+                            isolé est déjà actif (conda / venv), s'arrête et
+                            oriente vers --bootstrap=pip|none au lieu de créer
+                            un venv parallèle.
       --bootstrap=pip     : install directe dans l'env Python courant
                             (utilise --break-system-packages si PEP 668)
       --bootstrap=none    : pas d'install — vérifie les imports et plante
@@ -1055,6 +1058,30 @@ def _bootstrap_venv_si_besoin():
             return
     except Exception:
         pass
+
+    # ── Garde : environnement Python actif (conda / venv) ────────────────
+    # Si l'utilisateur a déjà un env isolé actif, créer en silence un venv
+    # parallèle dans ~/.lidar2map/ le surprend (cas signalé par un
+    # utilisateur conda). On s'arrête et on l'oriente vers les modes adaptés
+    # plutôt que de piétiner son env. Détection par variables d'env standard
+    # (déterministe — contrairement à un scan des deps dans sys.path, cf.
+    # NB ci-dessous). Non atteint en ré-entrance : le check venv ci-dessus a
+    # déjà return quand sys.prefix == ~/.lidar2map/venv.
+    _env_actif = os.environ.get("CONDA_PREFIX") or os.environ.get("VIRTUAL_ENV")
+    if _env_actif:
+        print()
+        print("  ╔" + "═" * 62 + "╗")
+        print("  ║ " + "Environnement Python actif détecté (conda / venv)".ljust(60) + " ║")
+        print("  ╚" + "═" * 62 + "╝")
+        print(f"  Env actif : {_env_actif}")
+        print()
+        print("  Pour ne pas créer un venv parallèle dans ~/.lidar2map/ :")
+        print("    python lidar2map.py --bootstrap=pip    # installe les deps dans cet env")
+        print("    python lidar2map.py --bootstrap=none   # si les deps y sont déjà")
+        print()
+        print("  (ou désactive l'env actif pour utiliser le venv isolé par défaut)")
+        print()
+        sys.exit(1)
 
     # NB : on ne shortcut PAS sur "deps importables dans le Python courant".
     # Avant ce refactor, la présence des deps quelque part dans le sys.path
@@ -7163,7 +7190,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -9241,7 +9268,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -10862,7 +10889,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "

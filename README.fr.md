@@ -184,60 +184,62 @@ Tout ce qui suit vaut pour le binaire comme pour le script — remplacez simplem
 
 ### Exemples en ligne de commande
 
+> Les options ci-dessous sont en anglais. Les anciens noms français restent acceptés comme alias, les anciennes commandes continuent donc de fonctionner.
+
 **Ombrage SVF + carte topo IGN sur une commune (zone 1 km² autour de Garéoult, France) :**
 ```bash
-python lidar2map.py --lidar --zone-ville Gareoult --zone-rayon 1 \
-    --ombrages multi svf --formats-fichier mbtiles --oui
+python lidar2map.py --lidar --zone-city Gareoult --zone-radius 1 \
+    --shadings multi svf --file-formats mbtiles --yes
 ```
 
 **Ombrages sur Amsterdam (Pays-Bas, AHN4) :**
 ```bash
-python lidar2map.py --provider nl-ahn --lidar --telechargement \
-    --zone-bbox 120000,486000,122000,488000 --zone-nom amsterdam \
-    --ombrages multi --formats-fichier mbtiles --oui
+python lidar2map.py --provider nl-ahn --lidar --download \
+    --zone-bbox 120000,486000,122000,488000 --zone-name amsterdam \
+    --shadings multi --file-formats mbtiles --yes
 ```
 
 **Ombrages sur Genève (Suisse, swissALTI3D) :**
 ```bash
-python lidar2map.py --provider ch-swisstopo --lidar --telechargement \
-    --zone-ville Geneve --zone-rayon 1 \
-    --ombrages svf --formats-fichier mbtiles --oui
+python lidar2map.py --provider ch-swisstopo --lidar --download \
+    --zone-city Geneve --zone-radius 1 \
+    --shadings svf --file-formats mbtiles --yes
 ```
 
 **Ombrages sur Oslo (Norvège, Kartverket) :**
 ```bash
-python lidar2map.py --provider no-kartverket --lidar --telechargement \
-    --zone-ville Oslo --zone-rayon 1 \
-    --ombrages multi --formats-fichier mbtiles --oui
+python lidar2map.py --provider no-kartverket --lidar --download \
+    --zone-city Oslo --zone-radius 1 \
+    --shadings multi --file-formats mbtiles --yes
 ```
 
 **Orthophoto historique 1950-1965 sur une zone de chasse archéo :**
 ```bash
-python lidar2map.py --ignraster --zone-bbox 6.0,43.3,6.1,43.4 \
-    --couche ortho_1950 --zoom-min 14 --zoom-max 18 --oui
+python lidar2map.py --raster --zone-bbox 6.0,43.3,6.1,43.4 \
+    --layer ortho_1950 --zoom-min 14 --zoom-max 18 --yes
 ```
 
 **Carte OSM vectorielle (.map Mapsforge) pour Locus, département entier :**
 ```bash
-python lidar2map.py --osm --zone-departement 83 --formats-fichier map --oui
+python lidar2map.py --osm --zone-department 83 --file-formats map --yes
 ```
 
 **Région entière (`--zone-region`) — disponible pour tous les modes :**
 ```bash
 # OSM : une seule carte pour toute la région, sans re-découpe
 # (le PBF Geofabrik EST déjà régional — bien plus rapide qu'une boucle par département)
-python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --oui
+python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --yes
 
 # IGN vecteur : chemins/itinéraires de toute la région en GeoJSON + carte .map Locus
-python lidar2map.py --ignvecteur --zone-region provence-alpes-cote-d-azur \
-    --couche chemins --formats-fichier gz map --oui
+python lidar2map.py --vector --zone-region provence-alpes-cote-d-azur \
+    --layer chemins --file-formats gz map --yes
 ```
 Le slug est celui de [Geofabrik France](https://download.geofabrik.de/europe/france.html) (anciennes régions : `provence-alpes-cote-d-azur`, `bretagne`, `corse`, `rhone-alpes`…). En OSM la région est traitée d'un bloc (le fichier Geofabrik est déjà régional, aucun géocodage de département) ; pour les modes raster/vecteur/lidar la zone est la bbox englobant tous les départements de la région. Un slug inconnu liste les régions disponibles.
 
 **Carte IGN BD TOPO (routes + bâtiments) en GeoJSON compressé + carte .map Mapsforge :**
 ```bash
-python lidar2map.py --ignvecteur --zone-departement 83 \
-    --couche routes batiments --formats-fichier gz map --oui
+python lidar2map.py --vector --zone-department 83 \
+    --layer routes batiments --file-formats gz map --yes
 ```
 Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible Locus Map / OsmAnd).
 
@@ -316,12 +318,12 @@ Le SVF d'en-tête et du triptyque ci-dessus (secteur de Rougiers, 83) a été ca
 
 ```bash
 python lidar2map.py \
-  --zone-gps <lat> <lon> --zone-rayon 1 --zone-nom hero \
-  --ignlidar --telechargement --workers 8 \
-  --ombrages svf --ombrages-elevation 25 \
+  --zone-gps <lat> <lon> --zone-radius 1 --zone-name hero \
+  --lidar --download --workers 8 \
+  --shadings svf --shading-elevation 25 \
   --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
-  --formats-fichier mbtiles --zoom-min 8 --zoom-max 18 \
-  --formats-image jpeg --qualite-image 85 --oui
+  --file-formats mbtiles --zoom-min 8 --zoom-max 18 \
+  --image-format jpeg --image-quality 85 --yes
 ```
 
 Remplace `<lat> <lon>` par ta propre zone ; les paramètres SVF ci-dessus sont
@@ -333,7 +335,7 @@ disclaimer anti-détection ci-dessous).
 
 - **README de l'utilisateur** : ce fichier
 - **Build & déploiement** : [BUILD.md](BUILD.md) — architecture du bundle, scripts de build par OS, mise à jour sans rebuild, dépannage (incluant cas spécifiques Linux et macOS)
-- **Aide intégrée** : `python lidar2map.py --help` (LiDAR), `--ignraster --help` (raster), `--ignvecteur --help` (vecteur), `--osm --help`, `--fusionner --help`
+- **Aide intégrée** : `python lidar2map.py --help` (LiDAR), `--raster --help` (raster), `--vector --help` (vecteur), `--osm --help`, `--merge --help`
 
 ## Licence
 
