@@ -75,7 +75,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --zone-ville NOM            Géocodage Nominatim (ex: gareoult)
   --zone-gps   LAT,LON        Coordonnées WGS84  (ex: 43.3156,6.0423)
   --zone-bbox  W,S,E,N        BBox WGS84 en degrés
-  --zone-departement NUM      Département français (ex: 83)
+  --zone-departement NUM      Department français (ex: 83)
   --zone-rayon KM             Rayon autour du point (défaut: 10)
   --zone-nom   NOM            Nom du dossier de sortie (ex: aa)
 
@@ -114,7 +114,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --telechargement-compresser Compresser les dalles téléchargées (DEFLATE)
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
-    --ombrages TYPE...          Ombrages à générer :
+    --ombrages TYPE...          Shadings to generate:
                                   315 045 135 225 multi slope svf lrm rrim
                                   tous | aucun
     --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
@@ -404,7 +404,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   python lidar2map.py --ignlidar --zone-departement 83 \
       --telechargement --workers 8 --ombrages multi --formats-fichier mbtiles --oui
 
-  # Découpage à priori : grande zone en 4×4 morceaux avec nettoyage disque
+  # A-priori splitting: grande zone en 4×4 morceaux avec nettoyage disque
   python lidar2map.py --ignlidar --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
       --cols-decoupe 4 --rows-decoupe 4 --nettoyage --oui
@@ -477,7 +477,7 @@ for _std in ("stdout", "stderr"):
 # MODE LAUNCHER (build onefile)
 # ─────────────────────────────────────────────────────────────────────────────
 # Le même lidar2map.py est buildé en DEUX versions :
-#   1) onedir (lidar2map_win.spec)        : la vraie app, ~617 Mo, lente à packager
+#   1) onedir (lidar2map_win.spec)        : la vraie app, ~617 MB, lente à packager
 #      mais rapide à lancer. C'est ce qui tourne au final.
 #   2) onefile (lidar2map_win_launcher.spec) : un petit launcher qui contient le onedir
 #      zippé en ressource. À l'exécution il extrait dans %LOCALAPPDATA%\lidar2map
@@ -544,7 +544,7 @@ if getattr(sys, "frozen", False):
                     (_lidar2map_home / "jre",     "JRE Java"),
                 ]
                 print()
-                print("  ── Désinstallation lidar2map ──────────────────────────────────")
+                print("  ── lidar2map uninstall ──────────────────────────────────")
                 print()
                 _total_u = 0
                 for _c_u, _label_u in _cibles_u:
@@ -553,17 +553,17 @@ if getattr(sys, "frozen", False):
                             f.stat().st_size for f in _c_u.rglob("*") if f.is_file()
                         )
                         _total_u += _taille_u
-                        print(f"  Suppression {_label_u} ({_taille_u / 1e6:.0f} Mo)")
+                        print(f"  Suppression {_label_u} ({_taille_u / 1e6:.0f} MB)")
                         print(f"    {_c_u}")
                         _sh_u.rmtree(_c_u, ignore_errors=True)
-                        print(f"    {'✓ supprimé' if not _c_u.exists() else '⚠ partiel'}")
+                        print(f"    {'✓ removed' if not _c_u.exists() else '⚠ partial'}")
                     else:
                         print(f"  {_label_u} : absent ({_c_u})")
                 print()
-                print(f"  {_total_u / 1e6:.0f} Mo libérés.")
+                print(f"  {_total_u / 1e6:.0f} MB freed.")
                 print()
-                print("  Note : lidar2map.py, le .app/.exe et le zip ne sont pas supprimés.")
-                print("  Supprimez-les manuellement si nécessaire.")
+                print("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
+                print("  Remove them manually if needed.")
                 sys.exit(0)
 
             def _bundle_sha():
@@ -574,7 +574,7 @@ if getattr(sys, "frozen", False):
                 return h.hexdigest()
 
             # ── Détection de mise à jour avec cache mtime ─────────────────────
-            # Calculer le SHA256 d'un zip de 300 Mo prend ~0.5-1 s à chaque
+            # Calculer le SHA256 d'un zip de 300 MB prend ~0.5-1 s à chaque
             # lancement. On stocke le mtime du bundle dans le fichier SHA pour
             # éviter ce calcul quand le bundle n'a pas changé.
             # Format de _sha_file : "sha256hex\nmtime_float"
@@ -624,10 +624,10 @@ if getattr(sys, "frozen", False):
                     except Exception:
                         _lock_actif = False
                     if not _lock_actif:
-                        print("  Lockfile périmé détecté — nettoyage et reprise.", flush=True)
+                        print("  Stale lockfile detected - cleaning up and resuming.", flush=True)
                         _lock.unlink(missing_ok=True)
                 if _lock_actif:
-                    print("Installation en cours dans une autre instance — attente...",
+                    print("Installation in progress in another instance - waiting...",
                           flush=True)
                     for _ in range(60):
                         _time.sleep(1)
@@ -641,9 +641,9 @@ if getattr(sys, "frozen", False):
                     if _inner_check.exists() and _sha_file.exists():
                         _need_extract = False
                     else:
-                        print("  ⚠ Installation concurrente incomplète ou échouée.",
+                        print("  ⚠ Concurrent install incomplete or failed.",
                               flush=True)
-                        print("  Supprimez le lockfile et relancez :",
+                        print("  Remove the lockfile and relaunch:",
                               flush=True)
                         print(f"    {_lock}", flush=True)
                         sys.exit(1)
@@ -656,7 +656,7 @@ if getattr(sys, "frozen", False):
                             _sh.rmtree(_app_dir, ignore_errors=True)
                         _app_dir.mkdir(parents=True, exist_ok=True)
                         _bundle_size = _bundle.stat().st_size
-                        print(f"Premier lancement — installation ({_bundle_size // 1_000_000} Mo)...",
+                        print(f"First launch - installation ({_bundle_size // 1_000_000} MB)...",
                               flush=True)
                         # Suivi : ditto sur Mac préserve les permissions
                         # exécutables, mais zipfile.extractall (utilisé par le
@@ -741,15 +741,15 @@ if getattr(sys, "frozen", False):
                         _inner_resolved = _resolve_exe(_inner_exe)
                         if not _inner_resolved.exists():
                             raise RuntimeError(
-                                f"Extraction incomplète : {_inner_exe} introuvable")
+                                f"Extraction incomplète : {_inner_exe} not found")
 
                         _sha_file.write_text(
                             f"{_expected_sha}\n{_bundle.stat().st_mtime}",
                             encoding="utf-8")
-                        print("Installation terminée.", flush=True)
+                        print("Installation complete.", flush=True)
                     except Exception as _e_extract:
                         print(f"\n  ⚠ Erreur d'extraction : {_e_extract}", flush=True)
-                        print("  Relancez l'application pour réessayer.", flush=True)
+                        print("  Restart the application to try again.", flush=True)
                         sys.exit(1)
                     finally:
                         _lock.unlink(missing_ok=True)
@@ -797,9 +797,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COM
 
 # Vérification version Python
 if sys.version_info < (3, 8):
-    print("ERREUR : Python 3.8 minimum requis (version actuelle : "
+    print("ERROR: Python 3.8 minimum required (current version: "
           + str(sys.version_info.major) + "." + str(sys.version_info.minor) + ")")
-    print("Téléchargez Python 3.8+ sur https://www.python.org/downloads/")
+    print("Download Python 3.8+ from https://www.python.org/downloads/")
     sys.exit(1)
 
 # ============================================================
@@ -878,12 +878,12 @@ def _gui_deps_plateforme():
       Windows  WebView2 natif (EdgeHTML/Chromium), pré-installé depuis Win10.
                Aucune dépendance pip supplémentaire.
 
-      macOS    Backend natif Cocoa/WebKit via pyobjc (léger, ~20 Mo).
+      macOS    Backend natif Cocoa/WebKit via pyobjc (léger, ~20 MB).
                pyobjc est inclus avec Python installé depuis python.org, mais
                PAS avec Homebrew, conda, pyenv ou miniforge. Dans ce cas,
                pywebview ne trouve pas de backend et plante au lancement.
                → On installe pyobjc-framework-WebKit en priorité (natif).
-               → Si pyobjc est déjà présent, rien n'est installé (pas de Qt).
+               → Si pyobjc est already present, rien n'est installé (pas de Qt).
                → Qt (PyQt6) est en fallback uniquement si pyobjc échoue
                  (cas rare : macOS très ancien, architecture non supportée).
 
@@ -952,17 +952,17 @@ def _verifier_venv_linux():
     _py = f"python{sys.version_info.major}.{sys.version_info.minor}"
     print()
     print("  ╔══════════════════════════════════════════════════════════════╗")
-    print("  ║  ERREUR : module Python 'venv' absent                        ║")
+    print("  ║  ERROR: module Python 'venv' absent                        ║")
     print("  ╚══════════════════════════════════════════════════════════════╝")
     print()
-    print("  Sur Ubuntu/Debian, ce module est dans un paquet séparé.")
-    print("  Installez-le avec (une seule fois) :")
+    print("  On Ubuntu/Debian, this module is in a separate package.")
+    print("  Install it with (once):")
     print()
     print(f"    sudo apt install python3-venv")
-    print(f"    # ou, si vous utilisez Python {sys.version_info.major}.{sys.version_info.minor} explicitement :")
+    print(f"    # or, if you use Python {sys.version_info.major}.{sys.version_info.minor} explicitly:")
     print(f"    sudo apt install {_py}-venv")
     print()
-    print("  Puis relancez le script.")
+    print("  Then relaunch the script.")
     sys.exit(1)
 
 
@@ -1027,11 +1027,11 @@ def _bootstrap_venv_si_besoin():
             pkgs_pip = [pkg_map.get(m, m) for m in deps_critiques]
             print()
             print("  ╔══════════════════════════════════════════════════════════════╗")
-            print("  ║  Mode --bootstrap=none : auto-install désactivé              ║")
+            print("  ║  Mode --bootstrap=none: auto-install disabled              ║")
             print("  ╚══════════════════════════════════════════════════════════════╝")
             print(f"  Modules Python manquants : {', '.join(manquantes)}")
             print()
-            print("  Installez-les vous-même via votre méthode préférée :")
+            print("  Install them yourself with your preferred method:")
             print(f"    pip install {' '.join(pkgs_pip)} pywebview")
             print(f"    # ou : conda install -c conda-forge {' '.join(pkgs_pip)} pywebview")
             print()
@@ -1071,15 +1071,15 @@ def _bootstrap_venv_si_besoin():
     if _env_actif:
         print()
         print("  ╔" + "═" * 62 + "╗")
-        print("  ║ " + "Environnement Python actif détecté (conda / venv)".ljust(60) + " ║")
+        print("  ║ " + "Active Python environment detected (conda / venv)".ljust(60) + " ║")
         print("  ╚" + "═" * 62 + "╝")
         print(f"  Env actif : {_env_actif}")
         print()
-        print("  Pour ne pas créer un venv parallèle dans ~/.lidar2map/ :")
-        print("    python lidar2map.py --bootstrap=pip    # installe les deps dans cet env")
-        print("    python lidar2map.py --bootstrap=none   # si les deps y sont déjà")
+        print("  To avoid creating a parallel venv in ~/.lidar2map/:")
+        print("    python lidar2map.py --bootstrap=pip    # install the deps in this env")
+        print("    python lidar2map.py --bootstrap=none   # if the deps are already there")
         print()
-        print("  (ou désactive l'env actif pour utiliser le venv isolé par défaut)")
+        print("  (or deactivate the active env to use the isolated venv by default)")
         print()
         sys.exit(1)
 
@@ -1103,7 +1103,7 @@ def _bootstrap_venv_si_besoin():
                      "import " + ", ".join(deps_critiques)]
         r_check = subprocess.run(check_cmd, capture_output=True)
         if r_check.returncode == 0:
-            print(f"  Relance dans le venv : {venv_path}")
+            print(f"  Relaunching in venv : {venv_path}")
             _relancer_dans_venv(venv_python, is_windows)
             # Ne retourne pas — soit os.execv (Unix), soit sys.exit (Windows)
 
@@ -1115,23 +1115,23 @@ def _bootstrap_venv_si_besoin():
                      else "rm -rf ~/.lidar2map")
         print()
         print("  ╔══════════════════════════════════════════════════════════════╗")
-        print("  ║  Premier lancement — création d'un environnement Python      ║")
-        print("  ║  isolé (~50 Mo une fois les déps installées). Cet env est    ║")
-        print("  ║  local au projet et ne touche pas votre Python système.      ║")
-        print("  ║                                                              ║")
-        print(f"  ║  Pour le supprimer : {suppr_cmd}".ljust(63) + " ║")
-        print("  ║                                                              ║")
-        print("  ║  Pour passer en install directe (sans venv) :                ║")
-        print("  ║    python lidar2map.py --bootstrap=pip                       ║")
+        print("  ║  First launch - creating an isolated Python environment".ljust(63) + " ║")
+        print("  ║  (~50 MB once deps are installed). This env is local to".ljust(63) + " ║")
+        print("  ║  the project and does not touch your system Python.".ljust(63) + " ║")
+        print("  ║".ljust(63) + " ║")
+        print(f"  ║  To remove it: {suppr_cmd}".ljust(63) + " ║")
+        print("  ║".ljust(63) + " ║")
+        print("  ║  To use a direct install (no venv):".ljust(63) + " ║")
+        print("  ║    python lidar2map.py --bootstrap=pip".ljust(63) + " ║")
         print("  ╚══════════════════════════════════════════════════════════════╝")
-        print(f"  Création du venv {venv_path}...")
+        print(f"  Creating venv {venv_path}...")
         try:
             subprocess.run(
                 [sys.executable, "-m", "venv", str(venv_path)],
                 check=True)
         except subprocess.CalledProcessError as e:
-            print(f"  ERREUR création venv : {e}")
-            print("  Installez Python 3.8+ avec module venv.")
+            print(f"  ERROR creating venv: {e}")
+            print("  Install Python 3.8+ with the venv module.")
             sys.exit(1)
 
     # Déps installées dans le venv. numba est inclus systématiquement :
@@ -1148,7 +1148,7 @@ def _bootstrap_venv_si_besoin():
                        "rasterio", "fiona", "pywebview", "certifi"] + _gui_crit
     deps_optionnelles = ["osmium", "numba"] + _gui_opt
     deps_pip = deps_critiques + deps_optionnelles
-    print(f"  Installation des dépendances dans le venv (3-5 min)...")
+    print(f"  Installing dependencies in the venv (3-5 min)...")
 
     def _pip_install(pkgs):
         """Tente pip install. Retourne (success, stderr_msg)."""
@@ -1166,32 +1166,32 @@ def _bootstrap_venv_si_besoin():
         # Retry sans les deps optionnelles : si l'une d'elles est cassée
         # (cas pyrosm 0.6.2 sur Python 3.12), on garde au moins le pipeline
         # principal (LiDAR + raster).
-        print(f"  Install groupée échouée, retry sans les optionnelles...")
+        print(f"  Bulk install failed, retrying without optional deps...")
         install_ok, err_msg = _pip_install(deps_critiques)
         if install_ok:
             # Tenter ensuite chaque optionnelle individuellement.
-            print(f"  Deps critiques installées. Tentative deps optionnelles une par une...")
+            print(f"  Critical deps installed. Trying optional deps one by one...")
             opt_failed = []
             for opt in deps_optionnelles:
                 ok_one, _ = _pip_install([opt])
                 if not ok_one:
                     opt_failed.append(opt)
-                    print(f"    ⚠ {opt} : install échouée — pipeline associé indisponible")
+                    print(f"    ⚠ {opt} : install failed - associated pipeline unavailable")
                 else:
                     print(f"    ✓ {opt} : OK")
             if opt_failed:
-                print(f"  ⚠ Optionnelles non installées : {', '.join(opt_failed)}")
+                print(f"  ⚠ Optional deps not installed: {', '.join(opt_failed)}")
                 print(f"     Retry manuel possible : {venv_pip} install {' '.join(opt_failed)}")
         else:
-            print(f"  ERREUR installation déps critiques dans le venv :")
+            print(f"  ERROR installing critical deps in the venv:")
             print(f"  {err_msg}")
-            print(f"  Vérifiez votre connexion internet, puis essayez :")
+            print(f"  Check your internet connection, then try:")
             print(f"    {venv_pip} install {' '.join(deps_critiques)}")
             sys.exit(1)
-    print(f"  ✓ Dépendances installées.")
+    print(f"  ✓ Dependencies installed.")
 
     # Relancer le script avec le Python du venv
-    print(f"  Relance dans le venv...")
+    print(f"  Relaunching in venv...")
     _relancer_dans_venv(venv_python, is_windows)
 
 
@@ -1242,10 +1242,10 @@ def _bootstrap_pip():
     try:
         import ensurepip
         ensurepip.bootstrap(upgrade=True)
-        print("  pip installé.")
+        print("  pip installed.")
     except Exception as e:
         print(f"  ERREUR bootstrap pip : {e}")
-        print("  Installez pip manuellement : https://pip.pypa.io/en/stable/installation/")
+        print("  Install pip manually: https://pip.pypa.io/en/stable/installation/")
         sys.exit(1)
 
 
@@ -1322,7 +1322,7 @@ def _installer_deps():
     deps_crit = [d for d in deps if d not in DEPS_OPTIONNELLES]
     deps_opt  = [d for d in deps if d in DEPS_OPTIONNELLES]
 
-    print(f"  Installation des dépendances : {', '.join(deps)}...")
+    print(f"  Installing dependencies: {', '.join(deps)}...")
 
     # Détecter si on est dans un venv. Dans un venv, --user n'a aucun sens
     # (pip refuse) — il faut juste tenter l'install standard.
@@ -1349,7 +1349,7 @@ def _installer_deps():
         try:
             r = subprocess.run(cmd, capture_output=True, text=True)
         except (OSError, FileNotFoundError) as e:
-            last_stderr = f"pip introuvable : {e}"
+            last_stderr = f"pip not found : {e}"
             continue
         if r.returncode == 0:
             # Vérifier que les imports critiques fonctionnent.
@@ -1374,10 +1374,10 @@ def _installer_deps():
                     except ImportError:
                         rates.append(pkg)
             if not rates:
-                print(f"  ✓ Installation réussie ({label})")
+                print(f"  ✓ Install succeeded ({label})")
                 install_ok = True
                 break
-            print(f"  Tentative {label} : pip OK mais imports critiques échouent ({', '.join(rates)})")
+            print(f"  Tentative {label} : pip OK but critical imports fail ({', '.join(rates)})")
             last_stderr = f"installation faite mais imports {rates} indisponibles"
         else:
             last_stderr = (r.stderr or r.stdout or "").strip()
@@ -1390,7 +1390,7 @@ def _installer_deps():
     # cassé sur Python 3.12 → l'install groupée plante, mais les autres
     # deps critiques s'installent très bien seules.
     if not install_ok and deps_opt and deps_crit:
-        print(f"  Retry sans les deps optionnelles ({', '.join(deps_opt)})...")
+        print(f"  Retry without optional deps ({', '.join(deps_opt)})...")
         cmd_crit_only = base_cmd + deps_crit
         if in_venv:
             try:
@@ -1408,9 +1408,9 @@ def _installer_deps():
                         except ImportError:
                             rates.append(pkg)
                 if not rates:
-                    print(f"  ✓ Deps critiques installées (sans : {', '.join(deps_opt)})")
-                    print(f"  ⚠ Deps optionnelles non installées : pipelines associés indisponibles")
-                    print(f"     - osmium : --osm --formats-fichier geojson")
+                    print(f"  ✓ Critical deps installed (without: {', '.join(deps_opt)})")
+                    print(f"  ⚠ Optional deps not installed: associated pipelines unavailable")
+                    print(f"     - osmium : --osm --file-formats geojson")
                     print(f"     - numba  : SVF lent (×15 fois plus)")
                     install_ok = True
 
@@ -1423,7 +1423,7 @@ def _installer_deps():
     _is_linux = _plat.system() == "Linux"
     print()
     print("  ╔══════════════════════════════════════════════════════════════╗")
-    print("  ║  ERREUR : impossible d'installer les dépendances Python      ║")
+    print("  ║  ERROR: cannot install the Python dependencies      ║")
     print("  ╚══════════════════════════════════════════════════════════════╝")
     print(f"  Modules manquants : {', '.join(deps_crit)}")
     if last_stderr:
@@ -1431,19 +1431,19 @@ def _installer_deps():
     print()
     print("  Solutions possibles :")
     if _is_mac:
-        print("    1. Installer dans un venv :")
+        print("    1. Install in a venv:")
         print("       python3 -m venv ~/mon-venv-lidar")
         print("       source ~/mon-venv-lidar/bin/activate")
         print(f"       pip install {' '.join(deps_crit)}")
         print("       Puis relancer : python lidar2map.py --bootstrap=none")
         print()
-        print("    2. Forcer l'install système (déconseillé) :")
+        print("    2. Force a system install (not recommended):")
         print(f"       pip install --break-system-packages {' '.join(deps)}")
     elif _is_linux:
-        print("    1. Installer via le gestionnaire de paquets :")
+        print("    1. Install via the package manager:")
         print(f"       sudo apt install python3-{' python3-'.join(d.lower() for d in deps)}")
         print()
-        print("    2. Utiliser un venv :")
+        print("    2. Use a venv:")
         print("       python3 -m venv ~/mon-venv-lidar")
         print("       source ~/mon-venv-lidar/bin/activate")
         print(f"       pip install {' '.join(deps)}")
@@ -1523,7 +1523,7 @@ _bootstrap_environnement()
 # Le flag est préservé dans sys.argv lors du re-exec dans le venv, ce qui
 # garantit que l'install complète se fait bien DANS le venv cible.
 if _INSTALL_ALL_DEPS:
-    print("  Installation complète de toutes les dépendances...")
+    print("  Full install of all dependencies...")
     _pip_base = [sys.executable, "-m", "pip", "install", "-q"]
     _toutes_deps = [
         # Critiques
@@ -1562,14 +1562,14 @@ if _INSTALL_ALL_DEPS:
         _mod = _pkg_to_mod.get(_pkg, _pkg.replace("-", "_").lower())
         try:
             __import__(_mod)
-            print(f"    ✓ {_pkg} (déjà installé)")
+            print(f"    ✓ {_pkg} (already installed)")
         except ImportError:
             r = _sp_id.run(_pip_base + [_pkg], capture_output=True)
             if r.returncode == 0:
                 print(f"    ✓ {_pkg}")
             else:
-                print(f"    ⚠ {_pkg} (optionnel — ignoré)")
-    print("  Toutes les dépendances installées.")
+                print(f"    ⚠ {_pkg} (optional - skipped)")
+    print("  All dependencies installed.")
     sys.exit(0)
 
 # ── --desinstaller ────────────────────────────────────────────────────────────
@@ -1603,7 +1603,7 @@ if _DESINSTALLER:
     ]
 
     print()
-    print("  ── Désinstallation lidar2map ──────────────────────────────────")
+    print("  ── lidar2map uninstall ──────────────────────────────────")
     print()
 
     _total = 0
@@ -1612,18 +1612,18 @@ if _DESINSTALLER:
             # Calculer la taille avant suppression
             _taille = sum(f.stat().st_size for f in _chemin.rglob("*") if f.is_file())
             _total += _taille
-            print(f"  Suppression {_label} ({_taille / 1e6:.0f} Mo)")
+            print(f"  Suppression {_label} ({_taille / 1e6:.0f} MB)")
             print(f"    {_chemin}")
             _sh_uninst.rmtree(_chemin, ignore_errors=True)
             # Mêmes états ✓/⚠ que le bloc launcher pour cohérence
-            print(f"    {'✓ supprimé' if not _chemin.exists() else '⚠ partiel'}")
+            print(f"    {'✓ removed' if not _chemin.exists() else '⚠ partial'}")
         else:
             print(f"  {_label} : absent ({_chemin})")
     print()
-    print(f"  {_total / 1e6:.0f} Mo libérés.")
+    print(f"  {_total / 1e6:.0f} MB freed.")
     print()
-    print("  Note : lidar2map.py, le .app/.exe et le zip ne sont pas supprimés.")
-    print("  Supprimez-les manuellement si nécessaire.")
+    print("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
+    print("  Remove them manually if needed.")
     print()
     sys.exit(0)
 
@@ -1637,7 +1637,7 @@ if _DESINSTALLER:
 # hérité dans l'env → outputs dans <DOSSIER_TRAVAIL>/Projets/smoke/.
 #
 # Durée typique : ~1 min sur Windows (caches PBF/dalles présents), ~5 min
-# au premier run (DL Geofabrik 400 Mo).
+# au premier run (DL Geofabrik 400 MB).
 if _SMOKETEST:
     import shutil as _smk_sh
     from pathlib import Path as _smk_Path
@@ -1743,7 +1743,7 @@ if _SMOKETEST:
         print(f"  ✗ exit={rc} en {dur:.0f}s")
         return False
 
-    print(f"━━━ Smoke test : Garéoult 1 km ━━━")
+    print(f"━━━ Smoke test: Gareoult 1 km ━━━")
     print(f"  Binaire : {' '.join(_smk_cmd_base)}")
     print(f"  Outputs : {_smk_projets}")
     # Wipe Projets/smoke pour isoler les tests (caches dalles/tuiles préservés)
@@ -1756,7 +1756,7 @@ if _SMOKETEST:
                              _smk_run(_smk_name, _smk_extra, _smk_expected)))
     _smk_results.append(("Fusion", _smk_fusion()))
 
-    print(f"\n━━━ RÉSULTATS ━━━")
+    print(f"\n━━━ RESULTS ━━━")
     _smk_ok   = sum(1 for _, ok in _smk_results if ok is True)
     _smk_fail = sum(1 for _, ok in _smk_results if ok is False)
     _smk_skip = sum(1 for _, ok in _smk_results if ok is None)
@@ -1892,7 +1892,7 @@ def _activer_log():
         _probe.unlink()
     except OSError:
         # logs/ inaccessible → log console uniquement, pas de fichier système
-        print("  AVERTISSEMENT : dossier logs/ inaccessible, log console uniquement.")
+        print("  WARNING: logs/ folder inaccessible, console log only.")
         return
     nom = "lidar_" + time.strftime("%Y%m%d_%H%M%S") + ".log"
     log_path = log_dir / nom
@@ -1913,7 +1913,7 @@ def _activer_log():
     # ── Intercepter les exceptions non gérées → log avant exit ───────────────
     import traceback as _tb
     def _excepthook(exc_type, exc_value, exc_tb):
-        print("\nEXCEPTION NON GÉRÉE :")
+        print("\nUNHANDLED EXCEPTION:")
         print("".join(_tb.format_exception(exc_type, exc_value, exc_tb)))
         sys.__excepthook__(exc_type, exc_value, exc_tb)
     sys.excepthook = _excepthook
@@ -2042,7 +2042,7 @@ class Manifeste:
             # l'utilisateur sache que la reprise sera incohérente.
             if not Manifeste._warned_save_failed:
                 Manifeste._warned_save_failed = True
-                print(f"  ⚠ Manifeste {self.path.name} : échec d'écriture "
+                print(f"  ⚠ Manifeste {self.path.name} : write failure "
                       f"({type(e).__name__}: {e}). "
                       f"Reprise potentiellement incohérente.")
 
@@ -2070,7 +2070,7 @@ def _creer_fichier(path):
     """
     Déclare un fichier intermédiaire créé dans le pipeline.
 
-    Enregistré dans le manifest du morceau courant → supprimé par --nettoyage
+    Enregistré dans le manifest du morceau courant → removed par --nettoyage
     après le morceau (dalles, TIF ombrages, TIF warpé, VRT, data.bin, tuiles
     WMTS, etc.).
 
@@ -2096,7 +2096,7 @@ def _supprimer_fichiers(fichiers: list):
     chaque morceau libère son espace avant que le suivant démarre.
 
     Seuls les fichiers créés/téléchargés PAR ce morceau (enregistrés dans le
-    manifest via _creer_fichier) sont supprimés. Les fichiers déjà
+    manifest via _creer_fichier) sont removeds. Les fichiers déjà
     présents avant le début du morceau ne sont pas touchés.
     """
     suppr = 0
@@ -2120,7 +2120,7 @@ def _supprimer_fichiers(fichiers: list):
         except Exception:
             pass
     if suppr:
-        print(f"  Nettoyage : {suppr} fichier(s) intermédiaire(s) supprimé(s)")
+        print(f"  Cleanup: {suppr} intermediate file(s) removed")
 
 # ============================================================
 # CONFIGURATION
@@ -2182,7 +2182,7 @@ def _discover_providers():
                 "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
             })
         except Exception as e:
-            print(f"  [provider scan] {f.name} ignoré : {type(e).__name__}: {e}",
+            print(f"  [provider scan] {f.name} skipped: {type(e).__name__}: {e}",
                   file=sys.stderr)
     return result
 
@@ -2274,7 +2274,7 @@ WMS_LAYER = getattr(PROVIDER, "WMS_LAYER", None)
 WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 
 # ── Geofabrik : département → région (URL slug) ──────────────────────────────
-# Table statique (135 entrées) construite une seule fois à l'import au lieu
+# Table statique (135 entries) construite une seule fois à l'import au lieu
 # d'être recréée à chaque appel d'`if args.osm:` dans main().
 _GEOFABRIK = {
     # !! Geofabrik utilise les ANCIENNES régions administratives (pré-réforme 2016).
@@ -2421,7 +2421,7 @@ def _regions_disponibles():
 
 
 def _departements_de_region(slug):
-    """Départements (codes INSEE) appartenant à la région Geofabrik `slug`."""
+    """Departments (codes INSEE) appartenant à la région Geofabrik `slug`."""
     return sorted(d for d, s in _GEOFABRIK.items() if s == slug)
 
 # ── Rendu archéologique ───────────────────────────────────────────────────────
@@ -2538,12 +2538,12 @@ def _safe_zip_extractall(zf, target):
 
 
 def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
-    """Décompresse src_gz → dst_raw en streaming (1 Mo à la fois).
+    """Décompresse src_gz → dst_raw en streaming (1 MB à la fois).
 
     Remplace le pattern `fout.write(fin.read())` qui charge intégralement
     en RAM. Sur un GeoJSON dept-scale (1-3 Go en clair), la version naïve
     fait peser 1-3 Go de RAM Python pour zéro raison ; la version streamée
-    travaille avec ~1 Mo en pic.
+    travaille avec ~1 MB en pic.
 
     Écriture atomique via .tmp + replace : si la décompression est interrompue,
     le fichier final n'est jamais en état partiel.
@@ -2562,7 +2562,7 @@ def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
 
 
 def _gzip_depuis_fichier(src_raw, dst_gz, compresslevel=6, chunk=1 << 20):
-    """Compresse src_raw → dst_gz en streaming (1 Mo à la fois).
+    """Compresse src_raw → dst_gz en streaming (1 MB à la fois).
 
     Pendant écrite, le contenu va dans dst_gz.tmp puis replace : un Ctrl+C
     en cours de compression ne laisse pas un .gz tronqué à la place de
@@ -2604,11 +2604,11 @@ def _on_sigint(sig, frame):
     """
     if _stop_event.is_set():
         # 2ème Ctrl+C → sortie immédiate (code 128+SIGINT par convention POSIX)
-        print("\n\nForçage — sortie immédiate.", flush=True)
+        print("\n\nForcing - immediate exit.", flush=True)
         sys.exit(130)
     _stop_event.set()
-    print("\n\nInterruption demandée — finition de l'opération en cours.", flush=True)
-    print("  Pressez Ctrl+C à nouveau pour forcer la sortie.", flush=True)
+    print("\n\nInterruption requested - finishing the current operation.", flush=True)
+    print("  Press Ctrl+C again to force exit.", flush=True)
 _signal.signal(_signal.SIGINT, _on_sigint)
 
 # ============================================================
@@ -2714,7 +2714,7 @@ def geocoder_ville_wgs84(nom_ville):
         print(f"  ERREUR geocodage ({type(e).__name__}) : {e}")
         return None, None
     if not data:
-        print(f"  ERREUR : ville non trouvée : {nom_ville}")
+        print(f"  ERROR: town not found: {nom_ville}")
         return None, None
 
     # Validation du type de lieu retourné
@@ -2732,7 +2732,7 @@ def geocoder_ville_wgs84(nom_ville):
 
     # Rejet immédiat si pas un lieu (boutique, restaurant, route, etc.)
     if cat not in ("place", "boundary", "landuse"):
-        msg = (f"  ERREUR : lieu '{nom_ville}' non reconnu comme ville/village.\n"
+        msg = (f"  ERROR: lieu '{nom_ville}' non reconnu comme ville/village.\n"
                f"  Nominatim a renvoyé : {display} (type={cat}/{addrtype}).\n"
                f"  Précisez le nom de la commune.")
         print(msg)
@@ -2745,13 +2745,13 @@ def geocoder_ville_wgs84(nom_ville):
     if addrtype not in TYPES_OK:
         if addrtype in TYPES_DOUTE:
             # Lieu-dit ou hameau : signaler mais accepter
-            print(f"  ⚠ '{nom_ville}' résolu en {display} (type={addrtype}).")
-            print(f"  Vérifiez que c'est bien le lieu attendu.")
+            print(f"  ⚠ '{nom_ville}' resolved to {display} (type={addrtype}).")
+            print(f"  Check that this is the expected place.")
         else:
             # Type complètement inattendu (industrial, retail, etc.) : rejeter
-            print(f"  ERREUR : lieu '{nom_ville}' ambigu — Nominatim a renvoyé "
+            print(f"  ERROR: lieu '{nom_ville}' ambiguous - Nominatim returned "
                   f"{display} (type={addrtype}).")
-            print(f"  Précisez le nom complet (commune, pas POI).")
+            print(f"  Specify the full name (municipality, not POI).")
             return None, None
 
     print(f"  {nom_ville} -> lat={lat:.5f}, lon={lon:.5f}")
@@ -2768,7 +2768,7 @@ def geocoder_ville_l93(nom_ville):
         x, y = t.transform(lon, lat)
     except ImportError:
         x, y = wgs84_to_lamb93_approx(lon, lat)
-        print("  (pyproj absent, conversion approchée)")
+        print("  (pyproj missing, approximate conversion)")
     print(f"  Lambert 93 -> X={x:.0f}, Y={y:.0f}")
     return x, y
 
@@ -2792,7 +2792,7 @@ def geocoder_departement(num_dep):
     # Si en cache, retourner directement
     if num_dep in _cache:
         c = _cache[num_dep]
-        print(f"  Département {num_dep} — {c['nom']} (cache local)", flush=True)
+        print(f"  Department {num_dep} — {c['nom']} (local cache)", flush=True)
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
         try:
@@ -2806,7 +2806,7 @@ def geocoder_departement(num_dep):
         bx1 -= MARGE; by1 -= MARGE; bx2 += MARGE; by2 += MARGE
         surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
         print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Surface estimée : ~{surface_km2:.0f} km²")
+        print(f"  Estimated area: ~{surface_km2:.0f} km²")
         return c['nom'], bx1, by1, bx2, by2
 
     # Overpass : relation administrative de niveau département, identifiée par ref:INSEE
@@ -2839,15 +2839,15 @@ def geocoder_departement(num_dep):
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
                 OSError, TimeoutError) as e:
             if _tentative_ovp < 2:
-                print(f"  Overpass indisponible ({type(e).__name__}: {e}) — retry {_tentative_ovp+1}/3...",
+                print(f"  Overpass unavailable ({type(e).__name__}: {e}) - retry {_tentative_ovp+1}/3...",
                       flush=True)
                 time.sleep(5)
             else:
                 print(f"  ERREUR Overpass : {type(e).__name__}: {e}")
 
     if lat_min is None:
-        print(f"  ERREUR : impossible de géocoder le département {num_dep}.")
-        print(f"  Overpass API indisponible. Utilisez --bbox X1,Y1,X2,Y2 (Lambert 93).")
+        print(f"  ERROR: cannot geocode the department {num_dep}.")
+        print(f"  Overpass API unavailable. Use --zone-bbox X1,Y1,X2,Y2 (Lambert 93).")
         print(f"  Exemple Var 83 : --bbox 905000,6214000,1040000,6322000")
         return None, None, None, None, None
 
@@ -2861,7 +2861,7 @@ def geocoder_departement(num_dep):
     except Exception:
         pass  # cache non critique
 
-    print(f"  Département {num_dep} — {nom}")
+    print(f"  Department {num_dep} — {nom}")
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
     try:
@@ -2871,7 +2871,7 @@ def geocoder_departement(num_dep):
     except ImportError:
         bx1, by1 = wgs84_to_lamb93_approx(lon_min, lat_min)
         bx2, by2 = wgs84_to_lamb93_approx(lon_max, lat_max)
-        print("  (pyproj absent, conversion approchée)")
+        print("  (pyproj missing, approximate conversion)")
 
     # Marge de 500 m pour ne pas couper les dalles en bordure
     MARGE = 500
@@ -2880,7 +2880,7 @@ def geocoder_departement(num_dep):
 
     surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
     print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-    print(f"  Surface estimée : ~{surface_km2:.0f} km²")
+    print(f"  Estimated area: ~{surface_km2:.0f} km²")
     return nom, bx1, by1, bx2, by2
 
 
@@ -2894,22 +2894,22 @@ def geocoder_region(slug):
     slug = slug.strip().lower()
     deps = _departements_de_region(slug)
     if not deps:
-        print(f"  ERREUR : région '{slug}' inconnue.")
-        print(f"  Régions disponibles : {', '.join(_regions_disponibles())}")
+        print(f"  ERROR: region '{slug}' unknown.")
+        print(f"  Available regions: {', '.join(_regions_disponibles())}")
         return None, None, None, None, None
-    print(f"  Région {slug} — {len(deps)} départements : {', '.join(deps)}", flush=True)
+    print(f"  Region {slug} — {len(deps)} departments: {', '.join(deps)}", flush=True)
     bx1 = by1 = float("inf")
     bx2 = by2 = float("-inf")
     for d in deps:
         nom_d, dx1, dy1, dx2, dy2 = geocoder_departement(d)
         if nom_d is None:
-            print(f"  ERREUR : géocodage du département {d} échoué — région incomplète.")
+            print(f"  ERROR: geocoding of department {d} failed - incomplete region.")
             return None, None, None, None, None
         bx1, by1 = min(bx1, dx1), min(by1, dy1)
         bx2, by2 = max(bx2, dx2), max(by2, dy2)
     nom = slug.replace("-", " ").title()
     surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
-    print(f"  BBox région {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
+    print(f"  Region bbox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
     print(f"  Surface (bbox englobante) : ~{surface_km2:.0f} km²")
     return nom, bx1, by1, bx2, by2
 
@@ -2985,9 +2985,9 @@ def _rglob_tif_robuste(dossier):
                 elif sous_dossier.suffix.lower() == ".tif":
                     resultats.append(sous_dossier)
             except OSError as _e:
-                print(f"  AVERTISSEMENT : dossier inaccessible {sous_dossier.name} ({_e}) — ignoré")
+                print(f"  WARNING: inaccessible directory {sous_dossier.name} ({_e}) - skipped")
     except OSError as _e:
-        print(f"  AVERTISSEMENT : dossier dalles inaccessible ({_e})")
+        print(f"  WARNING: tiles folder inaccessible ({_e})")
     return resultats
 
 
@@ -3148,7 +3148,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
         if not ecraser:
             return "skip"
-        # Mode écrasement : supprimer l'existant pour forcer le retéléchargement.
+        # Mode overwrite : supprimer l'existant pour forcer le retéléchargement.
         # On évite de tirer dans une dalle valide qui pourrait servir de fallback
         # en cas d'échec — mais c'est explicitement ce que l'utilisateur demande.
         chemin.unlink()
@@ -3288,7 +3288,7 @@ def _telecharger_osmosis_local():
     OSMOSIS_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"  URL  : {URL}")
-    print("  Téléchargement osmosis (~35 Mo)...", flush=True)
+    print("  Downloading osmosis (~35 MB)...", flush=True)
     try:
         def _prog(n, bs, total):
             if total > 0:
@@ -3297,7 +3297,7 @@ def _telecharger_osmosis_local():
         urllib.request.urlretrieve(URL, zip_path, reporthook=_prog)
         print("  100%")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERREUR téléchargement osmosis : {type(e).__name__}: {e}")
+        print(f"  ERROR downloading osmosis: {type(e).__name__}: {e}")
         return None
 
     print(f"  Extraction osmosis...", flush=True)
@@ -3313,9 +3313,9 @@ def _telecharger_osmosis_local():
             if not WINDOWS:
                 import stat as _stat
                 candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
-            print(f"  osmosis installé : {candidate}")
+            print(f"  osmosis installed: {candidate}")
             return str(candidate)
-    print("  ERREUR : osmosis introuvable après extraction.")
+    print("  ERROR: osmosis not found after extraction.")
     return None
 
 
@@ -3350,7 +3350,7 @@ def _telecharger_jre_local():
     JRE_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"  URL  : {URL}")
-    print(f"  Téléchargement JRE Temurin 21 ({os_str}/{arch_str}, ~50 Mo)...",
+    print(f"  Downloading JRE Temurin 21 ({os_str}/{arch_str}, ~50 MB)...",
           flush=True)
     try:
         # L'API Adoptium fait une redirection 302 vers GitHub.
@@ -3382,7 +3382,7 @@ def _telecharger_jre_local():
                         print(f"  {pct:3d}%", end="\r", flush=True)
         print("  100%")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERREUR téléchargement JRE : {type(e).__name__}: {e}")
+        print(f"  ERROR downloading JRE: {type(e).__name__}: {e}")
         return None
 
     print("  Extraction JRE...", flush=True)
@@ -3407,10 +3407,10 @@ def _telecharger_jre_local():
             if not WINDOWS:
                 import stat as _stat
                 candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
-            print(f"  JRE installé : {candidate}")
+            print(f"  JRE installed: {candidate}")
             return str(candidate)
 
-    print("  ERREUR : binaire java introuvable après extraction.")
+    print("  ERROR: java binary not found after extraction.")
     return None
 
 
@@ -3435,10 +3435,10 @@ def _trouver_java():
         if candidate.exists():
             return str(candidate)
 
-    # 3) Absent : téléchargement automatique
+    # 3) Missing: téléchargement automatique
     java = _telecharger_jre_local()
     if not java:
-        print("  ERREUR : impossible d'obtenir un JRE.")
+        print("  ERROR: cannot obtain a JRE.")
         print("  Installez Java manuellement : https://adoptium.net/")
     return java
 
@@ -3465,7 +3465,7 @@ def _trouver_osmosis():
     if not WINDOWS and local_sh.exists():
         return str(local_sh)
 
-    # 3) Absent : téléchargement automatique
+    # 3) Missing: téléchargement automatique
     return _telecharger_osmosis_local()
 
 
@@ -3501,7 +3501,7 @@ def _verifier_mapwriter():
         return True
 
     print(f"  URL  : {_MAPWRITER_URL}")
-    print(f"  Plugin mapwriter absent — téléchargement ({_MAPWRITER_JAR})...",
+    print(f"  mapwriter plugin missing - downloading ({_MAPWRITER_JAR})...",
           flush=True)
     try:
         plugins_dir.mkdir(parents=True, exist_ok=True)
@@ -3514,12 +3514,12 @@ def _verifier_mapwriter():
         urllib.request.urlretrieve(_MAPWRITER_URL, jar_path, reporthook=_prog)
         print("  100%")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERREUR téléchargement mapwriter : {type(e).__name__}: {e}")
-        print(f"  Téléchargez manuellement :\n    {_MAPWRITER_URL}")
-        print(f"  et copiez-le dans :\n    {plugins_dir}")
+        print(f"  ERROR downloading mapwriter: {type(e).__name__}: {e}")
+        print(f"  Download manually:\n    {_MAPWRITER_URL}")
+        print(f"  and copy it into:\n    {plugins_dir}")
         return False
 
-    print(f"  Plugin installé : {jar_path}")
+    print(f"  Plugin installed: {jar_path}")
     return True
 
 
@@ -3529,26 +3529,26 @@ def _verifier_mapwriter():
 # le re-exec venv, mais exécuté ici pour que les fonctions soient disponibles.
 if _TELECHARGER_OUTILS:
     print()
-    print("  ── Téléchargement des outils (osmosis + JRE + mapwriter) ──────")
+    print("  ── Downloading tools (osmosis + JRE + mapwriter) ──────")
     print()
     _java = _trouver_java()
     if _java:
-        print(f"  ✓ JRE déjà présent : {_java}")
+        print(f"  ✓ JRE already present: {_java}")
     else:
-        print("  ⚠ JRE : échec du téléchargement")
+        print("  ⚠ JRE: download failed")
     _osmo = _trouver_osmosis()
     if _osmo:
-        print(f"  ✓ osmosis déjà présent : {_osmo}")
+        print(f"  ✓ osmosis already present: {_osmo}")
     else:
-        print("  ⚠ osmosis : échec du téléchargement")
+        print("  ⚠ osmosis: download failed")
     # Plugin mapsforge-map-writer : indispensable pour générer les .map OSM.
     # Sans lui, osmosis échoue avec "Task type mapfile-writer doesn't exist".
     # Le spec PyInstaller le récupère depuis ~/.openstreetmap/osmosis/plugins/
     # pour le bundler dans osmosis/lib/ du .app/.exe.
     if _verifier_mapwriter():
-        print(f"  ✓ mapwriter présent : ~/.openstreetmap/osmosis/plugins/{_MAPWRITER_JAR}")
+        print(f"  ✓ mapwriter present: ~/.openstreetmap/osmosis/plugins/{_MAPWRITER_JAR}")
     else:
-        print("  ⚠ mapwriter : échec du téléchargement — la génération .map échouera")
+        print("  ⚠ mapwriter: download failed - .map generation will fail")
     print()
     sys.exit(0)
 
@@ -3655,7 +3655,7 @@ def _lire_dem_rasterio(src_path):
     except ImportError:
         pass
     except Exception as e_rio:
-        print(f"  AVERTISSEMENT rasterio read ({e_rio}) — repli PIL", flush=True)
+        print(f"  WARNING rasterio read ({e_rio}) — repli PIL", flush=True)
 
     from PIL import Image as _Img
     return np.array(_Img.open(str(src_path)), dtype=np.float32), None
@@ -4427,7 +4427,7 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
         from rasterio.windows import Window
         from scipy.ndimage import gaussian_filter as _gf
     except ImportError as _ie:
-        print(f"  LRM chunked : import manquant ({_ie}) — repli pleine mémoire", flush=True)
+        print(f"  LRM chunked: missing import ({_ie}) — fallback to full memory", flush=True)
         return False
 
     CHUNK  = 2048
@@ -4528,7 +4528,7 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
                 print(f"\r  LRM chunked : {pct:3d} % ({n_done}/{total_chunks} blocs)   ",
                       end="", flush=True)
 
-    print(f"\r  LRM chunked : terminé ({total_chunks} blocs, σ={sigma_px} px)          ")
+    print(f"\r  LRM chunked: done ({total_chunks} blocs, σ={sigma_px} px)          ")
     return True
 
 
@@ -4577,7 +4577,7 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
         import rasterio as _rio
         from rasterio.windows import Window
     except ImportError as _ie:
-        print(f"  Hillshade chunked : import manquant ({_ie})", flush=True)
+        print(f"  Hillshade chunked: missing import ({_ie})", flush=True)
         return False
 
     CHUNK = 2048
@@ -4648,7 +4648,7 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
                 pct = n * 100 // total
                 print(f"\r  {mode} chunked : {pct:3d} % ({n}/{total} blocs)   ",
                       end="", flush=True)
-    print(f"\r  {mode} chunked : terminé ({total} blocs)                     ")
+    print(f"\r  {mode} chunked: done ({total} blocs)                     ")
     return True
 
 
@@ -4672,7 +4672,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
         import rasterio as _rio
         from rasterio.windows import Window
     except ImportError as _ie:
-        print(f"  SVF chunked : import manquant ({_ie})", flush=True)
+        print(f"  SVF chunked: missing import ({_ie})", flush=True)
         return False
 
     CHUNK = 2048
@@ -4683,7 +4683,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     # Si use_sweep : variante nearest-neighbor sans bilinéaire (~×2-3 plus rapide).
     _kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _kernel is None:
-        print("  numba absent — SVF chunked indisponible", flush=True)
+        print("  numba missing - SVF chunked unavailable", flush=True)
         return False
     if use_sweep:
         print("  SVF chunked : kernel sweep-horizon (deque/upper-hull)", flush=True)
@@ -4789,7 +4789,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
                 pct = n * 100 // total
                 print(f"\r  SVF chunked : {pct:3d} % ({n}/{total} blocs)   ",
                       end="", flush=True)
-    print(f"\r  SVF chunked : terminé ({total} blocs, halo={HALO} px)        ")
+    print(f"\r  SVF chunked: done ({total} blocs, halo={HALO} px)        ")
     return True
 
 
@@ -4834,11 +4834,11 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
             print("  SVF Numba JIT — compilation au 1er appel (~20s)...", flush=True)
             svf = _svf_kernel(dem_f, n_directions, max_dist_px, resolution, conv)
             _numba_ok = True
-            print(f"\r  SVF Numba JIT — terminé{' ' * 30}")
+            print(f"\r  SVF Numba JIT - done{' ' * 30}")
         except Exception as e_nb:
             print(f"  numba erreur ({e_nb}) — fallback numpy", flush=True)
     else:
-        print("  numba absent — fallback numpy vectorisé", flush=True)
+        print("  numba missing - vectorised numpy fallback", flush=True)
 
     # ── Fallback numpy ───────────────────────────────────────────────────────
     if not _numba_ok:
@@ -4976,7 +4976,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # poursuit avec les morceaux suivants. Le chunk ne produira pas
     # de .tif d'ombrage donc pas de mbtiles non plus.
     if not cogs:
-        print(f"  ⚠ Aucune dalle disponible dans ce chunk "
+        print(f"  ⚠ No tile available in this chunk "
               f"(hors couverture IGN LiDAR ou téléchargement échoué) — "
               f"ombrages skipés.", flush=True)
         return
@@ -5032,7 +5032,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     _vrt_tmpdir = None
     # ── Merge des dalles via rasterio (remplace gdalbuildvrt + gdal_translate) ──
     # Au lieu de produire un VRT puis de le convertir en GeoTIFF avec
-    # gdal_translate, on fait un merge direct rasterio en GeoTIFF compressé.
+    # gdal_translate, on fait un merge direct rasterio en GeoTIFF compressed.
     # Avantages : un seul passage, plus de dépendance à GDAL CLI, sortie
     # immédiatement utilisable par numpy (gdaldem reste pour les hillshades —
     # voir étape 4 du refactor).
@@ -5049,7 +5049,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         filelist_path.write_text(
             "\n".join(str(c) for c in cogs), encoding="utf-8")
         _creer_fichier(filelist_path)
-        print(f"  Construction VRT ({len(cogs)} dalles)...", flush=True)
+        print(f"  Building VRT ({len(cogs)} tiles)...", flush=True)
         _t0_vrt = time.time()
         try:
             _build_vrt_xml(cogs, vrt_path, RESOLUTION_M)
@@ -5122,7 +5122,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 cle, nom_fichier, statut, taille, errs = \
                     _generer_un_hillshade(choix_gdal[0])
                 if statut == "skip":
-                    print("  " + nom_fichier.ljust(56) + " -> déjà présent")
+                    print("  " + nom_fichier.ljust(56) + " -> already present")
                 elif statut == "erreur":
                     print(f"\n  ERREUR hillshade {nom_fichier}")
                     for e in errs[:10]:
@@ -5138,7 +5138,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     cle, nom_fichier, statut, taille, errs = \
                         _generer_un_hillshade(cle_h)
                     if statut == "skip":
-                        print("  " + nom_fichier.ljust(56) + " -> déjà présent")
+                        print("  " + nom_fichier.ljust(56) + " -> already present")
                     elif statut == "erreur":
                         print(f"\n  ERREUR hillshade {nom_fichier}")
                         for e in errs[:10]:
@@ -5159,7 +5159,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             # Ctrl+C pendant le précédent (kernel Numba intuable), l'ombrage
             # courant a été sauvegardé mais on n'enchaîne pas le suivant.
             if _stop_event.is_set():
-                print("  Interruption — ombrages restants ignorés.")
+                print("  Interruption - remaining shadings skipped.")
                 break
             sous_dossier_name, outil_numpy, params_numpy = CATALOGUE_NUMPY[cle]
 
@@ -5179,7 +5179,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             chemin_out   = dossier_ville / nom_fichier
 
             if chemin_out.exists() and not ecraser_ombrages:
-                print("  " + nom_fichier.ljust(56) + " -> déjà présent")
+                print("  " + nom_fichier.ljust(56) + " -> already present")
                 continue
             # Si on écrase, supprimer l'ancien : évite que rasterio_write
             # tombe sur un fichier figé (Windows file locking) ou demi-écrit.
@@ -5213,7 +5213,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         # Repli pleine mémoire (numba absent ou échantillon
                         # trop petit) — limité aux zones modestes.
                         import numpy as np
-                        print("  SVF chunked KO → repli pleine mémoire", flush=True)
+                        print("  SVF chunked KO → fallback to full memory", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
                                              RESOLUTION_M, use_sweep=use_sweep, conv=conv)
@@ -5229,19 +5229,19 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 except Exception as e_svf:
                     import traceback as _tb
                     print(f"  ERREUR SVF : {e_svf}")
-                    print("  --- traceback complète ---")
+                    print("  --- full traceback ---")
                     _tb.print_exc()
                     print("  ---------------------------")
                     # Supprimer le fichier partiellement écrit : _svf_chunked
                     # écrit chunk par chunk via rasterio. Si une exception
                     # survient au milieu, le TIF résultant est incomplet (ex :
-                    # 109 Mo au lieu de 300 Mo) mais structurellement valide.
+                    # 109 MB au lieu de 300 MB) mais structurellement valide.
                     # Sans suppression, le tuileur l'accepte et produit 0 tuile
                     # silencieusement. Sur le prochain lancement, le fichier
-                    # "déjà présent" est réutilisé → bug persistant.
+                    # "already present" est réutilisé → bug persistant.
                     if chemin_out.exists():
                         chemin_out.unlink()
-                        print(f"  Fichier partiel supprimé : {chemin_out.name}")
+                        print(f"  Partial file removed: {chemin_out.name}")
                     continue
 
             elif cle == "lrm":
@@ -5283,9 +5283,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         arr_u8[nodata_mask] = 128
                         _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                         _lrm_ok = True
-                        print(f"  LRM scipy (pleine mémoire) : σ={sigma_px} px, {clip_info}")
+                        print(f"  LRM scipy (full memory): σ={sigma_px} px, {clip_info}")
                     except ImportError:
-                        print("  scipy absent — LRM ignoré (pip install scipy)", flush=True)
+                        print("  scipy missing - LRM skipped (pip install scipy)", flush=True)
                         continue
                     except Exception as e_scipy:
                         print(f"  ERREUR scipy LRM : {e_scipy}")
@@ -5301,13 +5301,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 print("  RRIM — Red Relief Image Map (slope × LRM)"
                       " — peut prendre 5-10 min...", flush=True)
 
-                # Slope temporaire (réutilisé si déjà présent)
+                # Slope temporaire (réutilisé si already present)
                 slope_rrim_path = dossier_ville / (nom_base + "_slope_ombrage.tif")
                 slope_tmp_path  = dossier_ville / (nom_fichier.replace(".tif","_slope_tmp.tif"))
                 _slope_src = None
                 if slope_rrim_path.exists():
                     _slope_src = slope_rrim_path
-                    print("  RRIM : slope existant réutilisé", flush=True)
+                    print("  RRIM: existing slope reused", flush=True)
                 else:
                     # Slope numpy (remplace gdaldem slope CLI)
                     try:
@@ -5334,7 +5334,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             _dst_sl.write(_slope_u8, 1)
                         _slope_src = slope_tmp_path
                     except Exception as _e_sl:
-                        print(f"  ERREUR slope numpy pour RRIM : {_e_sl}")
+                        print(f"  ERROR slope numpy for RRIM: {_e_sl}")
                         continue
 
                 # Étape 3 : composite RGB numpy/PIL
@@ -5404,7 +5404,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         if _vrt_tmpdir and _vrt_tmpdir.exists():
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
 
-    print("\n  Ombrages dans : " + str(dossier_ville))
+    print("\n  Shadings in: " + str(dossier_ville))
 
 
 def _bbox_depuis_gdalinfo(chemin, env=None):
@@ -5448,8 +5448,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     try:
         import rasterio as _rio_check  # noqa
     except ImportError:
-        print("  ERREUR : rasterio absent — requis pour le tuilage MBTiles.")
-        print("  Installez-le : pip install rasterio")
+        print("  ERROR: rasterio missing - required for MBTiles tiling.")
+        print("  Install it: pip install rasterio")
         return None
 
     Image.MAX_IMAGE_PIXELS = None
@@ -5465,7 +5465,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         _use_jpeg = False
     _tile_fmt  = "JPEG" if _use_jpeg else "PNG"
     _tile_ext  = "jpg"  if _use_jpeg else "png"
-    print(f"  Format tuiles : {_tile_fmt}"
+    print(f"  Tile format: {_tile_fmt}"
           f"{'  Q=' + str(jpeg_quality) if _use_jpeg else '  lossless'}", flush=True)
 
     EARTH_CIRC = 20037508.3427892
@@ -5477,11 +5477,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     mbtiles  = dossier_ville / (nom_base + f"_z{zoom_min}-{zoom_max}.mbtiles")
 
     if mbtiles.exists() and not ecraser_tuiles:
-        print(f"  {mbtiles.name} → déjà présent")
+        print(f"  {mbtiles.name} → already present")
         return mbtiles
     if mbtiles.exists() and ecraser_tuiles:
         mbtiles.unlink()
-        print(f"  {mbtiles.name} → écrasement")
+        print(f"  {mbtiles.name} → overwrite")
 
     # Variables conservées pour compatibilité — après refactor rasterio
     # (étapes 1-7), gdalwarp/gdal_translate/gdal_addo ne sont plus appelés
@@ -5517,7 +5517,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # Si la zone est grande, warp par bandes horizontales pour éviter un
     # fichier intermédiaire > SEUIL_WARP_GO en temp.
     # Overlap d'une tuile (res_max × 256) entre bandes → pas de jointure visible.
-    # À 20×20 km / z18 : ~160 Mo warpé → seuil jamais atteint.
+    # À 20×20 km / z18 : ~160 MB warpé → seuil jamais atteint.
     # Protection transparente pour les zones > ~35×35 km.
     SEUIL_WARP_GO = 0.8   # Go non-compressé estimé
 
@@ -5539,7 +5539,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     res_max = 2 * EARTH_CIRC / (TILE_SIZE * 2 ** zoom_max)
 
     if taille_go_est > 0:
-        print(f"  Taille estimée : ~{taille_go_est:.1f} Go → warp unique"
+        print(f"  Estimated size: ~{taille_go_est:.1f} Go -> single warp"
               f" (GDAL streaming)", flush=True)
 
     # Warp unique — GDAL gère le streaming en interne, pas besoin de banding
@@ -5620,12 +5620,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         if source_already_warped:
             warped = tif_source
             warp_deja_fait = True
-            print(f"  Source déjà en EPSG:3857 — warp ignoré", flush=True)
+            print(f"  Source already in EPSG:3857 - warp skipped", flush=True)
         else:
             warp_deja_fait = warped.exists() and warped.stat().st_size > 1_000_000 and not ecraser_tuiles
             if warp_deja_fait:
                 print(f"  Warped cache : {warped.name}  "
-                      f"({warped.stat().st_size/1e6:.0f} Mo) — réutilisé", flush=True)
+                      f"({warped.stat().st_size/1e6:.0f} MB) — réutilisé", flush=True)
 
         # ── 1. Warp via rasterio ───────────────────────────────────────────
         # Plus de cmd_warp gdalwarp à construire — voir bloc rasterio.warp
@@ -5660,7 +5660,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             te_xmin, te_xmax = min(xs), max(xs)
             te_ymin, te_ymax = min(ys), max(ys)
         # NB : l'ancienne branche `elif y0_l is not None` référençait bb_src[0]
-        # alors que bb_src est None ici (TypeError garanti) — supprimée. Si
+        # alors que bb_src est None ici (TypeError garanti) — removede. Si
         # bb_src est None, te_* restent None et le warp retombe proprement sur
         # calculate_default_transform (étendue auto calculée depuis la source).
 
@@ -5764,7 +5764,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         ds_o.update_tags(ns="rio_overview", resampling="gauss")
                     print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
                 except Exception as _e_ovw:
-                    print(f"  AVERTISSEMENT overviews : {_e_ovw} — tuilage natif")
+                    print(f"  WARNING overviews : {_e_ovw} — tuilage natif")
 
         # ── 3. Bbox warped (EPSG:3857) ──────────────────────────────────────
         # Priorité : -te calculé lors du warp courant (pas besoin de proj.db).
@@ -5785,7 +5785,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         else:
             bb_w = _bbox_depuis_gdalinfo(warped, env)
         if bb_w is None:
-            print(f"  ERREUR : bbox introuvable pour {lbl}")
+            print(f"  ERROR: bbox not found for {lbl}")
             continue
         xmin_w, ymin_w, xmax_w, ymax_w = bb_w
 
@@ -5846,7 +5846,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         print(f"\r  z{zoom_min}-{zoom_max} [" +
                               "█" * int(pct/100*30) +
                               "░" * (30 - int(pct/100*30)) +
-                              f"] {pct:3d}%  {total_insere} tuiles  {_hms(elapsed)}{sfx}",
+                              f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}{sfx}",
                               end="", flush=True)
                         continue
 
@@ -5883,14 +5883,14 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     except Exception as _e_read:
                         nb_echecs_tr += 1
                         if nb_echecs_tr <= 3:
-                            print(f"\n  ⚠ rasterio read échec z{z} ty={ty}: "
+                            print(f"\n  ⚠ rasterio read failure z{z} ty={ty}: "
                                   f"{_e_read}", flush=True)
                         pct = int(rangees_done / total_rangees_tr * 100)
                         elapsed = int(time.time() - t_tile)
                         print(f"\r  z{zoom_min}-{zoom_max} [" +
                               "█" * int(pct/100*30) +
                               "░" * (30 - int(pct/100*30)) +
-                              f"] {pct:3d}%  {total_insere} tuiles  {_hms(elapsed)}",
+                              f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
                               end="", flush=True)
                         continue
 
@@ -5924,7 +5924,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 sfx = f"  [{i_tr+1}/{len(tranches)}]" if len(tranches) > 1 else ""
                 print(f"\r  z{zoom_min}-{zoom_max} [" +
                       "█"*bars + "░"*(30-bars) +
-                      f"] {pct:3d}%  {total_insere} tuiles  {_hms(elapsed)}{sfx}",
+                      f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}{sfx}",
                       end="", flush=True)
 
                 if len(batch) >= BATCH:
@@ -5941,7 +5941,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
         # warped conservé dans dossier_ville/ pour réutilisation future
         taille_w = warped.stat().st_size / 1e6 if warped.exists() else 0
-        print(f"  Cache tuilage conservé : {warped.name}  ({taille_w:.0f} Mo)"
+        print(f"  Tiling cache kept: {warped.name}  ({taille_w:.0f} MB)"
               f"  — supprimez-le manuellement si inutile")
 
     con.close()
@@ -5949,19 +5949,19 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         _pool.shutdown(wait=True)
     elapsed = int(time.time() - t0)
     taille_mb = mbtiles.stat().st_size / 1e6 if mbtiles.exists() else 0
-    print("\n  z" + str(zoom_min) + "-" + str(zoom_max) + " 100%  " + str(total_insere) + " tuiles  " + _hms(elapsed))
+    print("\n  z" + str(zoom_min) + "-" + str(zoom_max) + " 100%  " + str(total_insere) + " tiles  " + _hms(elapsed))
     if nb_echecs_tr > 0:
-        print(f"  ⚠ {nb_echecs_tr} rangées rasterio échouées (tuiles manquantes)")
-    print(f"  {mbtiles.name} : {total_insere} tuiles  ({taille_mb:.0f} Mo)")
+        print(f"  ⚠ {nb_echecs_tr} rasterio rows failed (missing tiles)")
+    print(f"  {mbtiles.name} : {total_insere} tiles  ({taille_mb:.0f} MB)")
     # Détection d'échec silencieux : 0 tuiles depuis une source non-triviale
     # indique typiquement un TIF source partiellement écrit (exception dans
     # un chunk SVF non détectée) ou une reprojection EPSG:3857 hors-bbox.
     # tif_source = paramètre de la fonction (chemin du TIF source).
     src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
     if total_insere == 0 and src_size_mb > 1:
-        print(f"  ⚠ AVERTISSEMENT : 0 tuiles générées depuis {src_size_mb:.0f} Mo source.")
-        print(f"    Le fichier source est peut-être partiellement écrit ou mal géoréférencé.")
-        print(f"    Supprimez {tif_source.name} et relancez pour forcer le recalcul.")
+        print(f"  ⚠ WARNING: 0 tiles generated from {src_size_mb:.0f} MB source.")
+        print(f"    The source file may be partially written or badly georeferenced.")
+        print(f"    Delete {tif_source.name} and relaunch to force recompute.")
     return mbtiles
 
 
@@ -6002,7 +6002,7 @@ COUCHES = {
     "ortho":         ("ORTHOIMAGERY.ORTHOPHOTOS",                  "normal", "image/jpeg", False),
     # Orthophotographies historiques métropole — clé pour archéo et exploration
     # (restanques avant déprise, anciens chemins encore parcourus, cabanons).
-    # Couverture variable selon les départements : tester avant de se fier dessus.
+    # Couverture variable selon les departments: tester avant de se fier dessus.
     "ortho_1950":    ("ORTHOIMAGERY.ORTHOPHOTOS.1950-1965",        "normal", "image/png",  False),
     "ortho_1965":    ("ORTHOIMAGERY.ORTHOPHOTOS.1965-1980",        "normal", "image/png",  False),
     "ortho_1980":    ("ORTHOIMAGERY.ORTHOPHOTOS.1980-1995",        "normal", "image/png",  False),
@@ -6062,7 +6062,7 @@ def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
         with urllib.request.urlopen(req, timeout=15) as r:
             xml_bytes = r.read()
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as e:
-        print(f"  ⚠ GetCapabilities WMTS inaccessible ({type(e).__name__}: {e}) — plafonnement zoom ignoré")
+        print(f"  ⚠ WMTS GetCapabilities unreachable ({type(e).__name__}: {e}) — zoom capping skipped")
         with _wmts_caps_lock:
             _wmts_caps_cache[cache_key] = None
         return None
@@ -6074,7 +6074,7 @@ def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
     try:
         root = _ET.fromstring(xml_bytes)
     except Exception as e:   # xml.etree.ElementTree.ParseError — pas importé directement
-        print(f"  ⚠ Parsing GetCapabilities échoué ({e})")
+        print(f"  ⚠ GetCapabilities parsing failed ({e})")
         with _wmts_caps_lock:
             _wmts_caps_cache[cache_key] = None
         return None
@@ -6226,11 +6226,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     """
 
     if chemin.exists() and not ecraser_tuiles:
-        print(f"  {chemin.name} → déjà présent")
+        print(f"  {chemin.name} → already present")
         return chemin
     if chemin.exists() and ecraser_tuiles:
         chemin.unlink()
-        print(f"  {chemin.name} → écrasement")
+        print(f"  {chemin.name} → overwrite")
 
     chemin.parent.mkdir(parents=True, exist_ok=True)
 
@@ -6288,7 +6288,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 
     _base_wmts = WMTS_URL if apikey_requis else WMTS_URL_PUB
     _log_req(f"{_base_wmts}?SERVICE=WMTS&LAYER={layer}&...", "WMTS IGN")
-    print(f"  Téléchargement {total:,} tuiles → {chemin.name}...", flush=True)
+    print(f"  Downloading {total:,} tiles -> {chemin.name}...", flush=True)
 
     _fmt_out = "jpeg" if _convert_png else fmt_ext   # format réel inséré
 
@@ -6447,7 +6447,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         except Exception: pass
 
     if abort_msg is not None:
-        # MBTiles supprimé : un fichier vide-presque ferait croire à un succès.
+        # MBTiles removed: un fichier vide-presque ferait croire à un succès.
         # Si l'utilisateur veut analyser le partiel, il rejouera et verra les
         # logs.
         try: chemin.unlink(missing_ok=True)
@@ -6459,14 +6459,14 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # Manifeste partiel : signaler à l'utilisateur que l'écriture est incomplète
         elapsed = int(time.time() - t0)
         taille_mo = chemin.stat().st_size / 1e6 if chemin.exists() else 0.0
-        print(f"\n  Interrompu — {ok} tuiles écrites avant arrêt  ({taille_mo:.0f} Mo)")
+        print(f"\n  Interrupted - {ok} tiles written before stop  ({taille_mo:.0f} MB)")
         raise KeyboardInterrupt("MBTiles WMTS interrompu par utilisateur")
 
     elapsed = int(time.time() - t0)
     taille_mo = chemin.stat().st_size / 1e6
     err_str = f"  ({erreurs} erreurs)" if erreurs else ""
-    print(f"\n  100%  {ok} tuiles  ({absentes} absentes){err_str}  {_hms(elapsed)}")
-    print(f"  {chemin.name} : {ok} tuiles  ({taille_mo:.0f} Mo)")
+    print(f"\n  100%  {ok} tiles  ({absentes} missing){err_str}  {_hms(elapsed)}")
+    print(f"  {chemin.name} : {ok} tiles  ({taille_mo:.0f} MB)")
     return chemin
 
 # ============================================================
@@ -6546,12 +6546,12 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
 
     rmap = mbtiles_path.with_suffix(".rmap")
     if rmap.exists() and not ecraser:
-        print(f"  {rmap.name} → déjà présent")
+        print(f"  {rmap.name} → already present")
         return rmap
     if rmap.exists() and ecraser:
         rmap.unlink()
     if not mbtiles_path.exists():
-        print(f"  ERREUR : {mbtiles_path.name} introuvable")
+        print(f"  ERROR: {mbtiles_path.name} not found")
         return None
 
     print(f"  RMAP ← {mbtiles_path.name}...", flush=True)
@@ -6566,7 +6566,7 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
         zooms = [r[0] for r in con.execute(
             "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level DESC").fetchall()]
         if not zooms:
-            print("  ERREUR : MBTiles vide")
+            print("  ERROR: MBTiles empty")
             return None
 
         # Étendue (x, y XYZ) par zoom
@@ -6599,7 +6599,7 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
         lat_max = _tile_to_geo(zd['x0'], zd['y0'], z_max)[3]
 
         total_tiles = sum(zm[z]['nx'] * zm[z]['ny'] for z in zooms)
-        print(f"  {n_zooms} zoom(s), {total_tiles:,} positions de tuiles", flush=True)
+        print(f"  {n_zooms} zoom(s), {total_tiles:,} tile positions", flush=True)
 
         # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──
         tile_off = {}
@@ -6709,7 +6709,7 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
 
         elapsed   = int(time.time() - t0)
         taille_mo = rmap.stat().st_size / 1e6
-        print(f"\n  {rmap.name} : {taille_mo:.0f} Mo  {_hms(elapsed)}")
+        print(f"\n  {rmap.name} : {taille_mo:.0f} MB  {_hms(elapsed)}")
         return rmap
     finally:
         # Garantit la fermeture de la connexion SQLite même sur exception
@@ -6736,12 +6736,12 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
 
     sqlitedb = mbtiles_path.with_suffix(".sqlitedb")
     if sqlitedb.exists() and not ecraser:
-        print(f"  {sqlitedb.name} → déjà présent")
+        print(f"  {sqlitedb.name} → already present")
         return sqlitedb
     if sqlitedb.exists() and ecraser:
         sqlitedb.unlink()
     if not mbtiles_path.exists():
-        print(f"  ERREUR : {mbtiles_path.name} introuvable")
+        print(f"  ERROR: {mbtiles_path.name} not found")
         return None
 
     con_mb = sqlite3.connect(str(mbtiles_path))
@@ -6804,7 +6804,7 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
 
         elapsed   = int(time.time() - t0)
         taille_mo = sqlitedb.stat().st_size / 1e6
-        print(f"\n  {sqlitedb.name} : {done:,} tuiles  ({taille_mo:.0f} Mo)"
+        print(f"\n  {sqlitedb.name} : {done:,} tiles  ({taille_mo:.0f} MB)"
               f"  {_hms(elapsed)}          ")
         return sqlitedb
     finally:
@@ -6872,14 +6872,14 @@ def _preparer_osmosis(dossier_hint=None):
     dossier_hint : Path optionnel pour la recherche de tagmapping-min.xml (non utilisé ici).
     """
     if not _verifier_mapwriter():
-        print("  ERREUR : plugin mapwriter manquant — carte .map impossible.")
+        print("  ERROR: mapwriter plugin missing - .map map impossible.")
         return None, None
     _java_exe = _trouver_java()
     if not _java_exe:
         return None, None
     _osmosis_exe = _trouver_osmosis()
     if not _osmosis_exe:
-        print("  ERREUR : osmosis introuvable")
+        print("  ERROR: osmosis not found")
         return None, None
     _java_home = str(Path(_java_exe).parent.parent)
     return _osmosis_exe, _java_home
@@ -6901,7 +6901,7 @@ def _run_osmosis_streaming(cmd_or_str, shell, env):
     """Lance osmosis en streaming live.
 
     Remplace `subprocess.run(capture_output=True)` qui buffer toute la sortie
-    en RAM (problème sur dept-scale où Java peut produire des Mo de logs).
+    en RAM (problème sur dept-scale où Java peut produire des MB de logs).
 
     Stratégie de filtrage : whitelist. Seules les lignes contenant un marqueur
     de _OSMOSIS_INTERESSANT (ERROR, WARNING, Exception, AVERTISSEMENT…) sont
@@ -7002,8 +7002,8 @@ def _nettoyer_osmosis_temp_orphelins(verbose=False, min_age_s=300):
             except (OSError, PermissionError):
                 pass   # verrouillé ou disparu — best-effort
     if nb and verbose:
-        print(f"  ✓ Nettoyé {nb} fichier(s) temp osmosis orphelin(s) "
-              f"({bytes_freed/1e6:.0f} Mo)")
+        print(f"  ✓ Cleaned {nb} orphan osmosis temp file(s) "
+              f"({bytes_freed/1e6:.0f} MB)")
     return nb, bytes_freed
 
 
@@ -7047,29 +7047,29 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     if chemin_map.exists() and ecraser_tuiles:
         chemin_map.unlink()
-        print(f"  Carte OSM : écrasement {chemin_map.name}")
+        print(f"  Carte OSM : overwrite {chemin_map.name}")
         # Supprimer aussi les geojson pour les recalculer
         for _gf in [chemin_geojson_gz, chemin_geojson_raw]:
             if _gf.exists(): _gf.unlink()
     if chemin_map.exists() and not ecraser_tuiles:
         if not export_geojson or geojson_present:
-            print(f"  Carte OSM déjà présente : {chemin_map.name} — ignorée")
+            print(f"  OSM map already present: {chemin_map.name} - skipped")
             return chemin_map
         else:
             # .map ok mais .geojson(.gz) manquant
             # Utiliser le PBF filtré (déjà extrait par osmosis) si disponible
-            print(f"  Carte OSM déjà présente : {chemin_map.name} — GeoJSON manquant, export...")
+            print(f"  OSM map already present: {chemin_map.name} - GeoJSON missing, exporting...")
             chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
             if pbf_src == chemin_pbf_filtre:
-                print(f"  PBF filtré existant : {chemin_pbf_filtre.name}")
+                print(f"  Existing filtered PBF: {chemin_pbf_filtre.name}")
             generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
                                 osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
                                 formats=geojson_formats)
             return chemin_map
 
     if not _verifier_mapwriter():
-        print("  ERREUR : plugin mapwriter manquant — carte .map impossible.")
+        print("  ERROR: mapwriter plugin missing - .map map impossible.")
         return None
 
     _osmosis_exe, _java_home = _preparer_osmosis()
@@ -7096,7 +7096,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             _tagmapping = str(cand)
             break
     if not _tagmapping:
-        print("  AVERTISSEMENT : tagmapping-min.xml introuvable — utilisation défaut osmosis")
+        print("  WARNING: tagmapping-min.xml not found - using osmosis default")
 
     t0 = time.time()
     print(f"  osmosis → {chemin_map.name}...", flush=True)
@@ -7152,7 +7152,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         if taille_b < 1_000_000:
             print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
         else:
-            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} Mo  {_hms(time.time()-t0)}")
+            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
         if export_geojson:
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
             generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
@@ -7167,7 +7167,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             lignes_err = [l for l in stderr_diag.splitlines()
                           if any(tok in l for tok in _OSMOSIS_INTERESSANT)]
             if lignes_err:
-                print("  Détail osmosis :")
+                print("  osmosis detail:")
                 for _l in lignes_err[:20]:
                     print(f"    {_l}")
             else:
@@ -7190,7 +7190,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -7379,7 +7379,7 @@ Examples:
         print("  Carte OSM vectorielle")
     else:
         print(f"  LiDAR : {PROVIDER.NAME}")
-        print("  Pipeline rasterio + numpy (numba pour SVF)")
+        print("  Pipeline rasterio + numpy (numba for SVF)")
     print("=" * 55)
     print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
     print()
@@ -7394,19 +7394,19 @@ Examples:
         if not src_path.exists():
             ext_src = Path(args.source).suffix.lower()
             if ext_src in (".tif", ".tiff"):
-                # TIF cache absent (warped supprimé) → ignorer, on recalcule depuis les dalles
-                print(f"  AVERTISSEMENT : source TIF introuvable : {Path(args.source).name}")
-                print(f"  Recalcul depuis les dalles...")
+                # TIF cache absent (warped removed) → ignorer, on recalcule depuis les dalles
+                print(f"  WARNING: source TIF not found : {Path(args.source).name}")
+                print(f"  Recompute from tiles...")
                 args.source = None
             else:
-                print(f"  ERREUR : fichier source introuvable : {args.source}")
+                print(f"  ERROR: source file not found: {args.source}")
                 sys.exit(1)
         ext = Path(args.source).suffix.lower() if args.source else ""
 
         if ext == ".mbtiles":
             # Conversion directe MBTiles → RMAP/SQLiteDB (exit immédiat, pas de zone requise)
             if not args.rmap and not args.sqlitedb:
-                print("  ERREUR : --rmap ou --sqlitedb requis pour la conversion MBTiles.")
+                print("  ERROR: --rmap or --sqlitedb required for MBTiles conversion.")
                 print(f"  Ex: --source {src_path.name} --rmap")
                 sys.exit(1)
             if args.rmap:
@@ -7418,8 +7418,8 @@ Examples:
         elif ext in (".pbf", ".osm"):
             # Source OSM : traitée plus loin dans la section --osm
             if not args.osm:
-                print("  ERREUR : --osm requis avec une source .pbf.")
-                print(f"  Ex: --source {src_path.name} --zone-ville gareoult --osm")
+                print("  ERROR: --osm required with a .pbf source.")
+                print(f"  E.g.: --source {src_path.name} --zone-city gareoult --osm")
                 sys.exit(1)
             # args.source est déjà défini, sera lu dans la section OSM
 
@@ -7432,16 +7432,16 @@ Examples:
                 if _epsg == 3857:
                     # Déjà en Mercator → tuilage direct, warp inutile
                     args._source_already_warped = True
-                    print(f"  Source TIF EPSG:3857 détecté → tuilage direct (pas de warp)")
+                    print(f"  Source TIF EPSG:3857 detected -> direct tiling (no warp)")
                 else:
                     args._source_already_warped = False
-                    print(f"  Source TIF EPSG:{_epsg} → warp L93→Mercator requis")
+                    print(f"  Source TIF EPSG:{_epsg} -> L93->Mercator warp required")
             except Exception as _e_crs:
-                print(f"  AVERTISSEMENT CRS non détecté ({_e_crs}) — warp appliqué par défaut")
+                print(f"  WARNING CRS not detected ({_e_crs}) — warp applied by default")
                 args._source_already_warped = False
         else:
-            print(f"  ERREUR : extension non reconnue pour --source : {ext}")
-            print("  Extensions acceptées : .tif .tiff .mbtiles .pbf")
+            print(f"  ERROR: unrecognised extension for --source: {ext}")
+            print("  Accepted extensions: .tif .tiff .mbtiles .pbf")
             sys.exit(1)
 
     # -------------------------------------------------------
@@ -7459,7 +7459,7 @@ Examples:
         not args.zone_ville and not args.zone_gps and
         not getattr(args, "zone_region", None))
     if _source_tif_sans_zone:
-        print("  ERREUR : --source TIF nécessite une zone : --zone-ville/--zone-rayon, --zone-bbox, --zone-departement ou --zone-region")
+        print("  ERROR: --source TIF requires a zone: --zone-city/--zone-radius, --zone-bbox, --zone-department or --zone-region")
         sys.exit(1)
     if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps and not getattr(args, "zone_region", None):
         # Mode migration pure : on n'a besoin que de dossier_dalles
@@ -7468,9 +7468,9 @@ Examples:
         dossier_dalles.mkdir(parents=True, exist_ok=True)
         a_migrer = [f for f in dossier_dalles.glob("*.tif")]
         if not a_migrer:
-            print("  Aucune dalle à migrer (dossier racine déjà vide ou structure OK).")
+            print("  No tile to migrate (root folder already empty or structure OK).")
         else:
-            print(f"  Migration : {len(a_migrer)} dalle(s) → sous-dossiers par colonne X...")
+            print(f"  Migration : {len(a_migrer)} tile(s) -> subfolders by column X...")
             migres = erreurs = 0
             for f in sorted(a_migrer):
                 m2 = re.match(r"LHD_FXX_(\d+)_", f.name)
@@ -7496,7 +7496,7 @@ Examples:
                     pct_mig = migres * 100 // max(len(a_migrer), 1)
                     print(f"\r  Migration : {pct_mig:3d}%  {migres}/{len(a_migrer)}...",
                           end="", flush=True)
-            print(f"\r  Migration terminée : {migres} dalles déplacées, {erreurs} erreurs.")
+            print(f"\r  Migration done: {migres} tiles moved, {erreurs} errors.")
         sys.exit(0)
 
     cx = cy = 0.0
@@ -7512,8 +7512,8 @@ Examples:
             # bbox de découpe dont on ne se sert pas → zéro appel Overpass.
             # La section OSM utilisera une bbox "monde" ; ce sentinel n'est jamais lu.
             if slug not in _regions_disponibles():
-                print(f"  ERREUR : région '{slug}' inconnue.")
-                print(f"  Régions disponibles : {', '.join(_regions_disponibles())}")
+                print(f"  ERROR: region '{slug}' unknown.")
+                print(f"  Available regions: {', '.join(_regions_disponibles())}")
                 sys.exit(1)
             dalles, bbox = [], (0.0, 0.0, 0.0, 0.0)
             print(f"  Dossier : {nom_zone}")
@@ -7552,11 +7552,11 @@ Examples:
             dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Surface : ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
+        print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
         elif args.oui:
-            print("  ERREUR : --nom requis avec --bbox en mode --oui")
+            print("  ERROR: --zone-name required with --zone-bbox in --yes mode")
             sys.exit(1)
         else:
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
@@ -7573,7 +7573,7 @@ Examples:
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
         elif args.oui:
-            print("  ERREUR : --nom requis avec --gps en mode --oui")
+            print("  ERROR: --zone-name required with --zone-gps in --yes mode")
             sys.exit(1)
         else:
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
@@ -7604,7 +7604,7 @@ Examples:
         # Mode interactif
         print("  Mode de saisie :")
         print("  [1] Nom de ville")
-        print("  [2] Coordonnées GPS (lat, lon)")
+        print("  [2] GPS coordinates (lat, lon)")
         mode = input("  Choix [1] : ").strip() or "1"
         if mode == "2":
             gps = input("  GPS (ex: 43.3156, 6.0423) : ").strip()
@@ -7648,7 +7648,7 @@ Examples:
                 rayon = 10.0
         dalles, bbox = calculer_grille(cx, cy, rayon)
 
-    # ── Découpage à priori : traitement séquentiel morceau par morceau ────────
+    # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
     _cols_pr = getattr(args, "cols_decoupe", 0) or 0
     _rows_pr = getattr(args, "rows_decoupe", 0) or 0
     if _cols_pr > 0 and _rows_pr > 0 and not _osm_seul:
@@ -7662,10 +7662,10 @@ Examples:
             n_total   = len(sous_zones)
             nb_done   = sum(1 for z in sous_zones
                             if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
-            print(f"\n  ══ Découpage à priori : {mode_desc} ══")
+            print(f"\n  ══ A-priori splitting: {mode_desc} ══")
             print(f"  Manifeste : {manifeste.path}")
             if nb_done:
-                print(f"  Reprise : {nb_done}/{n_total} morceaux déjà terminés")
+                print(f"  Resume: {nb_done}/{n_total} chunks already done")
 
             nb_ok = 0
             for i_z, (i_lat, i_lon, bx1_z, by1_z, bx2_z, by2_z) in enumerate(sous_zones):
@@ -7673,12 +7673,12 @@ Examples:
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — déjà terminé")
+                    print(f"  [{cle}] {nom_z} — already done")
                     nb_ok += 1
                     continue
 
                 surface = (bx2_z-bx1_z)/1000 * (by2_z-by1_z)/1000
-                print(f"\n  ── Morceau {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
+                print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
                 print(f"     BBox L93 : {bx1_z:.0f},{by1_z:.0f} → "
                       f"{bx2_z:.0f},{by2_z:.0f}  (~{surface:.0f} km²)")
                 manifeste.debut_morceau(cle, nom_z)
@@ -7687,7 +7687,7 @@ Examples:
                     _traiter_bbox_lidar(args, (bx1_z, by1_z, bx2_z, by2_z),
                                         nom_z, nom_zone, manifeste, cle)
                     manifeste.fin_morceau(cle, int(time.time() - t0_z))
-                    print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
+                    print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
                         # Si le chunk a produit un mbtiles vide OU aucun mbtiles
@@ -7702,16 +7702,16 @@ Examples:
                         _has_empty = (not _mbts) or any(
                             not _mbtiles_est_complete(mbt) for mbt in _mbts)
                         if _has_empty:
-                            print(f"  [{cle}] mbtiles vide ou absent — nettoyage skipé (intermédiaires conservés pour inspection)")
+                            print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
                         else:
                             _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
-                    print(f"  [{cle}] ✗ ERREUR : {_e_z} — relancez pour reprendre")
+                    print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
                     raise
 
-            print(f"\n  ══ Découpage à priori terminé : {nb_ok}/{n_total} morceaux ══")
+            print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
             return
-        print("  Découpage à priori : zone trop petite → traitement unique")
+        print("  A-priori splitting: zone too small -> single pass")
 
     nb = len(dalles)
     octets_par_dalle = (PX_PAR_DALLE * PX_PAR_DALLE * 4) + 513
@@ -7733,9 +7733,9 @@ Examples:
         if etape_cur[0] > 0:
             elap  = int(time.time() - etape_t0[0])
             cumul = int(time.time() - t_debut)
-            print(f"  ✓ Étape {etape_cur[0]} terminée en {_hms(elap)}  (cumul {_hms(cumul)})")
+            print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumulative)})")
         if _stop_event.is_set():
-            raise KeyboardInterrupt("Interruption demandée — étapes restantes ignorées")
+            raise KeyboardInterrupt("Interruption demandée — étapes restantes skipped")
         etape_cur[0] += 1
         etape_t0[0] = time.time()
         print("ETAPE:" + str(etape_cur[0]) + "/" + str(etapes_total) + " " + nom, flush=True)
@@ -7743,10 +7743,10 @@ Examples:
     if args.telechargement:
         print_etape("Téléchargement dalles")
     if not _osm_seul and not (not args.telechargement and not args.ombrages):
-        print(f"\n  Grille : {nb} dalle(s) de {DALLE_KM}x{DALLE_KM} km  (~{nb} km²)")
-        print(f"  Espace : ~{taille_brut} Mo brut  /  ~{taille_comp} Mo compressé")
+        print(f"\n  Grid: {nb} tile(s) of {DALLE_KM}x{DALLE_KM} km  (~{nb} km²)")
+        print(f"  Space: ~{taille_brut} MB raw  /  ~{taille_comp} MB compressed")
     if args.telechargement_forcer:
-        print(f"  Mise à jour : dalles existantes re-téléchargées")
+        print(f"  Update: existing tiles re-downloaded")
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
 
@@ -7756,12 +7756,12 @@ Examples:
     elif args.oui or not args.telechargement:
         compresser = False  # pas de compression si téléchargement non demandé
     else:
-        print(f"\n  Compression du cache :")
-        print(f"  [1] Non  -> rapide,  ~{taille_brut} Mo")
+        print(f"\n  Cache compression:")
+        print(f"  [1] No  -> fast,  ~{taille_brut} Mo")
         print(f"  [2] Oui  -> lent,    ~{taille_comp} Mo")
         compresser = (input("  Choix [1] : ").strip() or "1") == "2"
     if args.telechargement:
-        print(f"  -> {'Compression activée' if compresser else 'Stockage brut'}")
+        print(f"  -> {'Compression enabled' if compresser else 'Raw storage'}")
 
     if not args.oui and args.telechargement:
         if input(f"\n  Lancer le téléchargement ? [O/n] : ").strip().lower() == "n":
@@ -7776,9 +7776,9 @@ Examples:
         try:
             dossier_dalles.mkdir(parents=True, exist_ok=True)
         except (FileNotFoundError, OSError) as _e_dd:
-            print(f"  ERREUR : dossier dalles inaccessible : {dossier_dalles}")
+            print(f"  ERROR: tiles folder inaccessible: {dossier_dalles}")
             print(f"  ({_e_dd})")
-            print(f"  Vérifiez que le disque est connecté et relancez.")
+            print(f"  Check that the disk is connected and relaunch.")
             sys.exit(1)
     if not _osm_seul:
         dossier_ville.mkdir(parents=True, exist_ok=True)
@@ -7793,7 +7793,7 @@ Examples:
     if getattr(args, 'renommer_dalles', False) and dossier_dalles.exists():
         renommes = 0; ignores = 0
         tous = _rglob_tif_robuste(dossier_dalles)
-        print(f"  {len(tous)} fichiers .tif trouvés dans {dossier_dalles}")
+        print(f"  {len(tous)} .tif files found in {dossier_dalles}")
         if tous:
             print(f"  Exemple : {tous[0].name}")
         for f in sorted(tous):
@@ -7817,7 +7817,7 @@ Examples:
             else:
                 f.unlink()  # doublon
                 renommes += 1
-        print(f"  Renommage : {renommes} dalles renommées, {ignores} ignorées")
+        print(f"  Renaming: {renommes} tiles renamed, {ignores} skipped")
 
     # -------------------------------------------------------
     # Migration dalles à plat → sous-dossiers par colonne X
@@ -7825,9 +7825,9 @@ Examples:
     if getattr(args, 'migrer_dalles', False) and dossier_dalles.exists():
         a_migrer = [f for f in dossier_dalles.glob("*.tif")]  # uniquement racine
         if not a_migrer:
-            print("  Aucune dalle à migrer (dossier racine déjà vide ou structure OK).")
+            print("  No tile to migrate (root folder already empty or structure OK).")
         else:
-            print(f"  Migration : {len(a_migrer)} dalle(s) → sous-dossiers par colonne X...")
+            print(f"  Migration : {len(a_migrer)} tile(s) -> subfolders by column X...")
             migres = erreurs = 0
             for f in sorted(a_migrer):
                 m = re.match(r"LHD_FXX_(\d+)_", f.name)
@@ -7856,22 +7856,22 @@ Examples:
                     pct_mig = migres * 100 // max(len(a_migrer), 1)
                     print(f"\r  Migration : {pct_mig:3d}%  {migres}/{len(a_migrer)}...",
                           end="", flush=True)
-            print(f"  Migration terminée : {migres} dalles déplacées, {erreurs} erreurs.")
+            print(f"  Migration done: {migres} tiles moved, {erreurs} errors.")
 
     # -------------------------------------------------------
-    # Purge des dalles invalides (< 2 Mo = mer, erreurs)
+    # Purge des dalles invalides (< 2 MB = mer, erreurs)
     # -------------------------------------------------------
     if args.dalles_purger_invalides and dossier_dalles.exists():
         SEUIL_VALIDE = SEUIL_DALLE_VALIDE
         invalides = [f for f in _rglob_tif_robuste(dossier_dalles)
                      if f.stat().st_size < SEUIL_VALIDE]
         if invalides:
-            print(f"\n  Purge invalides : {len(invalides)} dalle(s) < 2 Mo...")
+            print(f"\n  Invalid purge: {len(invalides)} tile(s) < 2 MB...")
             for f in invalides:
                 f.unlink()
-            print(f"  Purge terminée. {len(invalides)} fichiers supprimés.")
+            print(f"  Purge done. {len(invalides)} files removed.")
         else:
-            print("  Aucune dalle invalide trouvée (toutes ≥ 50 Mo).")
+            print("  No invalid tile found (all >= 50 MB).")
 
     # -------------------------------------------------------
     # Purge des dalles hors zone courante
@@ -7882,28 +7882,28 @@ Examples:
         if dalles_zone_txt.exists():
             noms_zone_purge = set(dalles_zone_txt.read_text(encoding="utf-8").splitlines())
             noms_zone_purge = {n.strip() for n in noms_zone_purge if n.strip()}
-            print(f"  Purge hors-zone : référence {dalles_zone_txt.name}"
+            print(f"  Out-of-zone purge: reference {dalles_zone_txt.name}"
                   f" ({len(noms_zone_purge)} dalles zone)")
         else:
-            print(f"  ERREUR purge-hors-zone : {dalles_zone_txt.name} introuvable.")
-            print(f"  Relancez avec --telechargement pour reconstruire la liste.")
+            print(f"  ERROR out-of-zone purge: {dalles_zone_txt.name} not found.")
+            print(f"  Relaunch with --download to rebuild the list.")
             sys.exit(1)
         toutes = _rglob_tif_robuste(dossier_dalles)
         hors_zone = [f for f in toutes if f.name not in noms_zone_purge]
         if hors_zone:
             taille_go = sum(f.stat().st_size for f in hors_zone) / 1e9
-            print(f"\n  Purge hors-zone : {len(hors_zone)} dalle(s) — {taille_go:.1f} Go")
+            print(f"\n  Out-of-zone purge: {len(hors_zone)} tile(s) - {taille_go:.1f} Go")
             if not args.oui:
                 rep = input("  Confirmer la suppression ? [o/N] : ").strip().lower()
                 if rep != "o":
-                    print("  Purge annulée.")
+                    print("  Purge cancelled.")
                     hors_zone = []
             for f in hors_zone:
                 f.unlink()
             if hors_zone:
-                print(f"  {len(hors_zone)} dalles supprimées, {taille_go:.1f} Go libérés.")
+                print(f"  {len(hors_zone)} tiles removed, {taille_go:.1f} GB freed.")
         else:
-            print("  Aucune dalle hors zone trouvée.")
+            print("  No out-of-zone tile found.")
 
     # -------------------------------------------------------
     # Découverte des dalles via le provider — source de vérité unifiée
@@ -7952,9 +7952,9 @@ Examples:
         else:
             dalles_existantes = _rglob_tif_robuste(dossier_dalles) if dossier_dalles.exists() else []
             if not dalles_existantes:
-                print("\n  ATTENTION : --telechargement absent mais aucune dalle trouvée.")
+                print("\n  WARNING: --download missing but no tile found.")
                 print(f"  Dossier dalles : {dossier_dalles}")
-                print("  Ajoutez --telechargement pour télécharger les dalles manquantes.")
+                print("  Add --download to fetch the missing tiles.")
                 sys.exit(1)
             # Vérification zone-spécifique : parmi les dalles du cache, combien
             # couvrent réellement la zone demandée ? Le cache peut contenir des
@@ -7966,19 +7966,19 @@ Examples:
                                      if d.name in noms_attendus
                                      and d.stat().st_size > SEUIL_DALLE_VALIDE]
                 if not dalles_zone_cache:
-                    print(f"\n  ATTENTION : {len(dalles_existantes)} dalle(s) dans le cache,")
-                    print(f"              mais AUCUNE ne couvre la zone demandée.")
+                    print(f"\n  ATTENTION : {len(dalles_existantes)} tile(s) in cache,")
+                    print(f"              but NONE covers the requested zone.")
                     print(f"  Cache global : {dossier_dalles}")
                     libelle_zone = args.zone_ville or nom_zone
-                    print(f"  Zone demandée : {len(noms_attendus)} dalle(s) autour de "
+                    print(f"  Requested zone: {len(noms_attendus)} tile(s) around "
                           f"{libelle_zone}")
-                    print(f"  Ajoutez --telechargement pour télécharger les dalles manquantes.")
+                    print(f"  Add --download to fetch the missing tiles.")
                     sys.exit(1)
-                print(f"\n  Téléchargement ignoré "
+                print(f"\n  Download skipped "
                       f"({len(dalles_zone_cache)}/{len(noms_attendus)} dalle(s) de la zone trouvées en cache)")
             else:
                 # Provider sans index pour cette bbox (cas dégradé) : juste compter
-                print(f"\n  Téléchargement ignoré ({len(dalles_existantes)} dalle(s) en cache)")
+                print(f"\n  Download skipped ({len(dalles_existantes)} tile(s) in cache)")
             sauter_telechargement = True
 
     # -------------------------------------------------------
@@ -7997,7 +7997,7 @@ Examples:
 
     # Dalles disponibles pour les ombrages :
     # 1. Seulement les dalles de la zone courante (filtre par nom)
-    # 2. Seulement les fichiers valides (≥ 50 Mo)
+    # 2. Seulement les fichiers valides (≥ 50 MB)
     # Le dossier dalles est global — sans filtrage par zone, le VRT couvrirait
     # tous les départements présents et le hillshade serait énorme ou en erreur.
     if dossier_dalles.exists():
@@ -8009,7 +8009,7 @@ Examples:
             _bbox_courante = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
             _bbox_fichier  = _lignes[0].strip() if _lignes else ""
             if _bbox_fichier != _bbox_courante:
-                print(f"  Zone modifiée — reconstruction {dalles_zone_txt.name} depuis le cache...")
+                print(f"  Zone changed - rebuilding {dalles_zone_txt.name} from cache...")
                 print(f"    Ancienne bbox : {_bbox_fichier}")
                 print(f"    Nouvelle bbox : {_bbox_courante}")
                 # Reconstruire depuis le cache disque sans retélécharger.
@@ -8021,14 +8021,14 @@ Examples:
                     dalles_zone_txt.write_text(
                         _bbox_courante + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
                     _creer_fichier(dalles_zone_txt)
-                    print(f"  {dalles_zone_txt.name} reconstruit : {len(noms_zone)} dalle(s) en cache")
+                    print(f"  {dalles_zone_txt.name} rebuilt: {len(noms_zone)} tile(s) in cache")
                 else:
                     dalles_zone_txt.unlink(missing_ok=True)
-                    print(f"  Aucune dalle en cache pour cette zone — utilisez --telechargement")
+                    print(f"  No tile in cache for this zone - use --download")
                     noms_zone = set()
             else:
                 noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
-                print(f"  Liste dalles zone : {dalles_zone_txt.name} ({len(noms_zone)} dalles)")
+                print(f"  Zone tiles list: {dalles_zone_txt.name} ({len(noms_zone)} dalles)")
         elif not args.telechargement and noms_attendus:
             # Si seul --osm demandé, pas besoin des dalles
             if args.osm and not args.ombrages and not args.mbtiles:
@@ -8037,7 +8037,7 @@ Examples:
                 # dalles_zone.txt absent mais liste attendue connue → reconstruction
                 # depuis le cache disque (la vérification en amont garantit qu'on
                 # trouvera au moins une dalle).
-                print(f"  Reconstruction de {dalles_zone_txt.name} depuis le cache disque...")
+                print(f"  Rebuilding {dalles_zone_txt.name} from disk cache...")
                 toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
                 noms_zone = {d.name for d in toutes_dalles_dispo
                              if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
@@ -8046,19 +8046,19 @@ Examples:
                     dalles_zone_txt.write_text(
                         _bbox_hdr + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
                     _creer_fichier(dalles_zone_txt)
-                    print(f"  dalles_zone.txt reconstruit : {len(noms_zone)} dalle(s) trouvées sur disque")
+                    print(f"  dalles_zone.txt rebuilt: {len(noms_zone)} tile(s) found on disk")
                 else:
-                    print(f"  ERREUR : aucune dalle de la zone trouvée dans {dossier_dalles}")
-                    print(f"  Relancez avec --telechargement pour télécharger les dalles.")
+                    print(f"  ERROR: no tile of the zone found in {dossier_dalles}")
+                    print(f"  Relaunch with --download to fetch the tiles.")
                     sys.exit(1)
         else:
             if args.osm and not args.ombrages and not args.mbtiles:
                 pass  # mode OSM seul — pas besoin de dalles
             else:
-                print(f"\n  ERREUR : {dalles_zone_txt.name} introuvable dans {dossier_ville}/")
-                print(f"  Ce fichier est créé automatiquement lors du téléchargement.")
-                print(f"  Relancez avec --telechargement pour le reconstruire.")
-                print(f"  (Les dalles déjà présentes sur disque seront skippées, ~quelques secondes)")
+                print(f"\n  ERROR: {dalles_zone_txt.name} not found in {dossier_ville}/")
+                print(f"  This file is created automatically during download.")
+                print(f"  Relaunch with --download to rebuild it.")
+                print(f"  (Tiles already present on disk will be skipped, ~a few seconds)")
                 sys.exit(1)
         toutes_dalles    = sorted(_rglob_tif_robuste(dossier_dalles))
         dalles_zone      = [d for d in toutes_dalles if d.name in noms_zone]
@@ -8067,10 +8067,10 @@ Examples:
         nb_invalides     = len(dalles_zone)   - len(dalles_ombrages)
         if not _osm_seul:
             if nb_hors_zone:
-                print(f"  {nb_hors_zone} dalle(s) hors zone ignorées (autres départements)")
+                print(f"  {nb_hors_zone} out-of-zone tile(s) skipped (other departments)")
             if nb_invalides:
-                print(f"  {nb_invalides} dalle(s) invalides ignorées (< 2 Mo — mer ou hors couverture)")
-            print(f"  {len(dalles_ombrages)} dalle(s) retenues pour les ombrages")
+                print(f"  {nb_invalides} invalid tile(s) skipped (< 2 MB - sea or out of coverage)")
+            print(f"  {len(dalles_ombrages)} tile(s) kept for shadings")
     else:
         dalles_ombrages = []
     # -------------------------------------------------------
@@ -8081,19 +8081,19 @@ Examples:
         try:
             import rasterio as _rio_cmp
         except ImportError:
-            print("  ERREUR : rasterio absent — pip install rasterio")
+            print("  ERROR: rasterio absent — pip install rasterio")
         else:
             tifs_bruts = [
                 t for t in dossier_ville.glob("*.tif")
                 if not t.name.startswith("_")
                 and not re.search(r'_tuilage_z\d+\.tif$', t.name)
             ]
-            # Filtrer ceux non compressés (taille > seuil heuristique : >500 Mo)
+            # Filtrer ceux non compresseds (taille > seuil heuristique : >500 MB)
             tifs_a_compresser = [t for t in tifs_bruts if t.stat().st_size > 500e6]
             if not tifs_a_compresser:
-                print("  Aucun ombrage brut trouvé (> 500 Mo) à compresser.")
+                print("  No raw shading found (> 500 MB) to compress.")
             else:
-                print(f"  {len(tifs_a_compresser)} fichier(s) à compresser :")
+                print(f"  {len(tifs_a_compresser)} file(s) to compress:")
                 for chemin_out in sorted(tifs_a_compresser):
                     taille_brut = chemin_out.stat().st_size / 1e6
                     chemin_tmp  = chemin_out.with_suffix(".tmp.tif")
@@ -8123,8 +8123,8 @@ Examples:
                         taille_cmp = chemin_out.stat().st_size / 1e6
                         gain = int((1 - taille_cmp / taille_brut) * 100)
                         print("  " + chemin_out.name.ljust(56) +
-                              str(round(taille_brut)).rjust(6) + " Mo -> " +
-                              str(round(taille_cmp)).rjust(5) + " Mo  (-" +
+                              str(round(taille_brut)).rjust(6) + " MB -> " +
+                              str(round(taille_cmp)).rjust(5) + " MB  (-" +
                               str(gain) + "%)  " + _hms(elap))
                     except Exception as _e_cmp:
                         print(f"  ERREUR compression {chemin_out.name} : {_e_cmp}")
@@ -8139,16 +8139,16 @@ Examples:
             choix_ombrages = args.ombrages
     elif dalles_ombrages and not args.ombrages and not args.oui:
         # Mode interactif — pas de --ombrages, pas de --oui
-        print(f"\n  Ombrages à générer :")
+        print(f"\n  Shadings to generate:")
         print(f"  [1] Rapide     : multi + slope                                    (~1 min)")
-        print(f"  [2] Archéo     : 315 + 045 + multi + slope                        (~2 min)")
-        print(f"  [3] Archéo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
-        print(f"  [4] Archéo+LRM : multi + slope + LRM gaussien                     (~8 min)")
-        print(f"  [5] Archéo+RRIM: multi + slope + RRIM (composite couleur)         (~25 min)")
+        print(f"  [2] Archaeo     : 315 + 045 + multi + slope                        (~2 min)")
+        print(f"  [3] Archaeo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
+        print(f"  [4] Archaeo+LRM : multi + slope + LRM gaussien                     (~8 min)")
+        print(f"  [5] Archaeo+RRIM: multi + slope + RRIM (colour composite)         (~25 min)")
         print(f"  [6] Complet    : 315 045 135 225 multi slope svf lrm rrim         (~60 min)")
-        print(f"  [7] Aucun")
+        print(f"  [7] None")
         print(f"  [8] Choix manuel  ex: multi slope svf rrim")
-        print(f"  SVF/LRM/RRIM : numpy/scipy (scipy auto-installé si absent)")
+        print(f"  SVF/LRM/RRIM : numpy/scipy (scipy auto-installed if missing)")
         rep = input("  Choix [1] : ").strip() or "1"
         if   rep == "1": choix_ombrages = ["multi", "slope"]
         elif rep == "2": choix_ombrages = ["315", "045", "multi", "slope"]
@@ -8170,7 +8170,7 @@ Examples:
         print(f"  Ombrages : {', '.join(choix_ombrages)}")
         elev = args.ombrages_elevation if args.ombrages_elevation is not None else ELEVATION_SOLEIL
         print(f"  Angle solaire : {elev}°")
-        print(f"  Surface : ~{surface_km2} km²  — Durée estimée :"
+        print(f"  Area: ~{surface_km2} km²  — Estimated duration:"
               f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
               f" (selon le type d'ombrage et la machine)", flush=True)
         generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
@@ -8220,7 +8220,7 @@ Examples:
                                            ecraser_tuiles=_ecraser_l,
                                            tile_workers=args.workers)
             elif _mbt_path.exists():
-                print(f"  MBTiles existant : {_mbt_path.name} — découpage/conversion directe")
+                print(f"  Existing MBTiles: {_mbt_path.name} — direct split/conversion")
                 _mbt_out = _mbt_path
             _convertir_formats(_mbt_out, args, mbtiles_neuf=_mbt_requis)
         else:
@@ -8259,7 +8259,7 @@ Examples:
                     _mbt_path2 = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
                     _ecraser_l = args.tuiles_ecraser
                     if _mbt_path2.exists() and not _ecraser_l:
-                        print(f"  MBTiles existant : {_mbt_path2.name} — découpage/conversion directe")
+                        print(f"  Existing MBTiles: {_mbt_path2.name} — direct split/conversion")
                         _convertir_formats(_mbt_path2, args, mbtiles_neuf=False)
                         continue
                     _mbt_out = generer_mbtiles_lidar(tif, dossier_ville, nom_base,
@@ -8271,7 +8271,7 @@ Examples:
                                                tile_workers=args.workers)
                     _convertir_formats(_mbt_out, args, mbtiles_neuf=True)
             else:
-                print("  Aucun ombrage trouvé pour MBTiles (générez d'abord --ombrages)")
+                print("  No shading found for MBTiles (generate --shadings first)")
 
     # ── Carte OSM vectorielle de superposition ───────────────────────────────
     dossier_osm = None   # défini si on arrive jusqu'au generer_carte_osm
@@ -8285,7 +8285,7 @@ Examples:
         if args.source and Path(args.source).suffix.lower() in (".pbf", ".osm"):
             pbf = Path(args.source)
             if not pbf.exists():
-                print(f"  ERREUR : fichier PBF introuvable : {pbf}")
+                print(f"  ERROR: PBF file not found: {pbf}")
                 pbf = None
         else:
             # Téléchargement automatique — détecter le département depuis le centre
@@ -8293,7 +8293,7 @@ Examples:
             num_dep = getattr(args, "zone_departement", None)
 
             if _zone_region:
-                # Région explicite : slug Geofabrik direct, pas de détection
+                # Region explicite : slug Geofabrik direct, pas de détection
                 # ni de géocodage inverse (on traitera tout le PBF, skip_bbox).
                 region_slug = _zone_region.strip().lower()
             else:
@@ -8312,14 +8312,14 @@ Examples:
                             data_rev = json.loads(resp_rev.read())
                         if data_rev:
                             num_dep = data_rev[0].get("codeDepartement")
-                            print(f"  Département détecté : {num_dep}", flush=True)
+                            print(f"  Department detected: {num_dep}", flush=True)
                     except Exception as e_rev:
-                        print(f"  Géocodage inverse échoué ({e_rev})")
+                        print(f"  Reverse geocoding failed ({e_rev})")
 
                 region_slug = _GEOFABRIK.get(num_dep) if num_dep else None
             if not region_slug:
-                print(f"  Département {num_dep} non trouvé dans la table Geofabrik.")
-                print(f"  Repli sur le PBF national France (~4 Go).")
+                print(f"  Department {num_dep} not found in the Geofabrik table.")
+                print(f"  Falling back to the national France PBF (~4 GB).")
                 url_pbf = f"{_GEOFABRIK_BASE_URL_ROOT}/france-latest.osm.pbf"
                 osm_dir = DOSSIER_TRAVAIL / "cache" / "osm_vecteur"
                 osm_dir.mkdir(parents=True, exist_ok=True)
@@ -8331,16 +8331,16 @@ Examples:
                 pbf = osm_dir / f"{region_slug}-latest.osm.pbf"
 
             # Téléchargement PBF commun (national ou régional)
-            _SEUIL_PBF = 1_000_000  # 1 Mo minimum — PBF vide ou tronqué → re-télécharger
+            _SEUIL_PBF = 1_000_000  # 1 MB minimum — PBF vide ou tronqué → re-télécharger
             if pbf.exists() and pbf.stat().st_size >= _SEUIL_PBF:
                 print(f"  PBF existant : {pbf.name}  "
                       f"({pbf.stat().st_size/1e9:.1f} Go)")
             else:
                 if pbf.exists():
-                    print(f"  PBF tronqué ({pbf.stat().st_size} octets) — re-téléchargement.")
+                    print(f"  Truncated PBF ({pbf.stat().st_size} bytes) - re-downloading.")
                     pbf.unlink()
                 _log_req(str(url_pbf), 'Geofabrik')
-                print(f"  Téléchargement {url_pbf}...")
+                print(f"  Downloading {url_pbf}...")
                 print(f"  Destination : {pbf}", flush=True)
                 try:
                     taille_dl = 0
@@ -8366,30 +8366,30 @@ Examples:
                                 # Afficher seulement tous les 5%
                                 if pct >= _pct_last + 5:
                                     _pct_last = pct
-                                    line = f"  {mb:.0f} / {tot:.0f} Mo  {pct}%"
+                                    line = f"  {mb:.0f} / {tot:.0f} MB  {pct}%"
                                     # \r sur le terminal, nouvelle ligne dans le log
                                     sys.stdout.write(f"\r{line}")
                                     sys.stdout.flush()
                     # Effacer la ligne de progression
                     sys.stdout.write("\r" + " " * 40 + "\r")
                     print(f"  Telecharge : {pbf.name}  "
-                          f"({taille_dl/1e6:.0f} Mo)  "
+                          f"({taille_dl/1e6:.0f} MB)  "
                           f"{_hms(time.time()-t0_dl)}")
                     # Vérifier que le fichier n'est pas vide/tronqué
                     if taille_dl < _SEUIL_PBF:
-                        print(f"  ERREUR : PBF téléchargé trop petit ({taille_dl} octets)"
+                        print(f"  ERROR: downloaded PBF too small ({taille_dl} octets)"
                               f" — téléchargement échoué (réseau ? accès Geofabrik ?).")
                         pbf.unlink(missing_ok=True)
                         pbf = None
                 except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e_dl:
-                    print(f"\n  ERREUR téléchargement PBF ({type(e_dl).__name__}) : {e_dl}")
+                    print(f"\n  ERROR downloading PBF ({type(e_dl).__name__}) : {e_dl}")
                     pbf.unlink(missing_ok=True)
                     pbf = None
 
         if pbf and pbf.exists():
             _region_mode = bool(getattr(args, "zone_region", None))
             if _region_mode:
-                # Région : on traite TOUT le PBF régional. bbox "monde" → le .map
+                # Region : on traite TOUT le PBF régional. bbox "monde" → le .map
                 # ignore la bbox (skip_bbox) et l'export geojson ne découpe rien.
                 bbox_wgs = (-180.0, -90.0, 180.0, 90.0)
             else:
@@ -8423,11 +8423,11 @@ Examples:
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
         cumul = int(time.time() - t_debut)
-        print(f"  ✓ Étape {etape_cur[0]} terminée en {_hms(elap)}  (cumul {_hms(cumul)})")
+        print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumulative)})")
     total = int(time.time() - t_debut)
     m, s  = divmod(total, 60)
-    print(f"\n  Terminé ! Dossier : {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
-    print(f"  Durée totale : {m}m{s:02d}s")
+    print(f"\n  Done! Folder: {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
+    print(f"  Total time: {m}m{s:02d}s")
     dossier_res = str(dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville)
     _historique_depuis_argv(total, dossier_res)
 
@@ -8570,7 +8570,7 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
 
     if nb_total > 0:
         print()  # fin barre
-        print(f"  Téléchargées : {ok}  Cache : {skip}  Absent : {absent}  Erreurs : {erreur}")
+        print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
 
     # Persister dalles_zone.txt — utile pour --dalles-purger-hors-zone et la
     # reprise (cf. _lister_dalles_zone qui lit ce fichier).
@@ -8616,10 +8616,10 @@ def _mbtiles_a_regenerer(mbt_path, ecraser):
     - le fichier n'existe pas,
     - --tuiles-ecraser est passé,
     - le fichier existe mais contient 0 tuiles (artefact d'un run interrompu),
-    - le fichier existe mais est corrompu (SQLite illisible).
+    - le fichier existe mais est corrompu (SQLite unreadable).
 
     Sinon retourne False (mbtiles valide, on le réutilise). Logue la raison
-    de la régénération pour éviter les disparitions silencieuses.
+    de la regenerating pour éviter les disparitions silencieuses.
     """
     if not mbt_path.exists() or ecraser:
         return True
@@ -8628,10 +8628,10 @@ def _mbtiles_a_regenerer(mbt_path, ecraser):
         with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
             _n = _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
     except (sqlite3.DatabaseError, sqlite3.OperationalError) as _e:
-        print(f"  {mbt_path.name} → SQLite illisible ({type(_e).__name__}), régénération", flush=True)
+        print(f"  {mbt_path.name} → SQLite unreadable ({type(_e).__name__}), regenerating", flush=True)
         return True
     if _n == 0:
-        print(f"  {mbt_path.name} → existant mais vide (0 tuiles), régénération", flush=True)
+        print(f"  {mbt_path.name} → exists but empty (0 tiles), regenerating", flush=True)
         return True
     return False
 
@@ -8810,7 +8810,7 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
         return [src_mbtiles]
 
     if not src_mbtiles.exists():
-        print(f"  ERREUR découpage : {src_mbtiles.name} introuvable")
+        print(f"  ERROR splitting: {src_mbtiles.name} not found")
         return []
 
     out_dir = dossier or src_mbtiles.parent
@@ -8830,7 +8830,7 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             "SELECT MIN(tile_column), MAX(tile_column), MIN(tile_row), MAX(tile_row) "
             "FROM tiles WHERE zoom_level=?", (zoom_max,)).fetchone()
         if not rows or rows[0] is None:
-            print(f"  ERREUR : MBTiles vide")
+            print(f"  ERROR: MBTiles empty")
             con.close()
             return []
         n = 2 ** zoom_max
@@ -8867,11 +8867,11 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             lon0, lat0, lon1, lat1, n_morceaux, rayon_km, unite_m=False)
 
     if len(sous_zones) <= 1:
-        print(f"  Découpage : zone trop petite → fichier unique")
+        print(f"  Splitting: zone too small -> single file")
         con.close()
         return [src_mbtiles]
 
-    print(f"  Découpage : {mode_desc}")
+    print(f"  Splitting: {mode_desc}")
 
     # Nom de base : garder le suffixe _z{min}-{max} pour que les morceaux l'incluent
     stem_base = src_mbtiles.stem  # ex: 83_multi_ombrage_z8-18
@@ -8890,7 +8890,7 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
 
         if chemin_z.exists():
             if not ecraser:
-                print(f"  Morceau existant : {chemin_z.name} — ignoré")
+                print(f"  Existing chunk: {chemin_z.name} - skipped")
                 sorties.append(chemin_z)
                 continue
             chemin_z.unlink()
@@ -8919,7 +8919,7 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             con_z.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
         con_z.commit()
 
-        # Copier les tuiles dans la bbox
+        # Copier les tuiles in the bbox
         n_tuiles = 0
         batch    = []
         BATCH    = 500
@@ -8956,10 +8956,10 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
 
         if n_tuiles == 0:
             chemin_z.unlink()
-            print(f"  Sous-zone [{i_lat},{i_lon}] : vide — ignorée")
+            print(f"  Sub-zone [{i_lat},{i_lon}]: empty - skipped")
             continue
 
-        print(f"  Sous-zone [{i_lat},{i_lon}] : {n_tuiles:,} tuiles → {chemin_z.name}")
+        print(f"  Sub-zone [{i_lat},{i_lon}] : {n_tuiles:,} tuiles → {chemin_z.name}")
         sorties.append(chemin_z)
 
     con.close()
@@ -8971,16 +8971,16 @@ def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
 
     mbtiles_neuf=True : MBTiles fraîchement généré dans cette exécution.
         S'il n'a pas été demandé via --formats-fichier, il est traité comme
-        intermédiaire et supprimé après conversion.
+        intermédiaire et removed après conversion.
     mbtiles_neuf=False : MBTiles préexistant sur disque (run précédent ou
-        copié manuellement). JAMAIS supprimé — on respecte le travail de
+        copié manuellement). JAMAIS removed — on respecte le travail de
         l'utilisateur, même si seul --rmap/--sqlitedb a été demandé.
     """
     if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
     if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
     if mbtiles_neuf and not args.mbtiles and sf.exists():
         sf.unlink()
-        print(f"  MBTiles supprimé : {sf.name}")
+        print(f"  MBTiles removed: {sf.name}")
 
 
 def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
@@ -9013,7 +9013,7 @@ def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
             # toujours frais (sortie du découpage).
             if mbtiles_neuf and not args.mbtiles:
                 mbt_out.unlink()
-                print(f"  MBTiles source supprimé : {mbt_out.name}")
+                print(f"  Source MBTiles removed: {mbt_out.name}")
         for sf in sous_fichiers:
             _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
     elif r_dec > 0:
@@ -9023,7 +9023,7 @@ def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
         if mbt_out.exists() and sous_fichiers and sous_fichiers != [mbt_out]:
             if mbtiles_neuf and not args.mbtiles:
                 mbt_out.unlink()
-                print(f"  MBTiles source supprimé : {mbt_out.name}")
+                print(f"  Source MBTiles removed: {mbt_out.name}")
         for sf in sous_fichiers:
             _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
     else:
@@ -9037,7 +9037,7 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
     au parser fourni, en factorisant la duplication entre main(),
     main_wmts(), main_wfs(). Les divergences réelles sont :
 
-    - rayon_default : main() utilisait None (résolu en 10 plus tard),
+    - rayon_default : main() utilisait None (resolved to 10 plus tard),
       main_wmts/wfs utilisent 10.0 dès le parser.
     - bbox_metavar  : main() = "X1,Y1,X2,Y2" Lambert 93 en mètres ;
       main_wmts/wfs = "W,S,E,N" WGS84 en degrés.
@@ -9128,11 +9128,11 @@ def _resoudre_zone_wgs84(args):
             parts = [float(v.strip()) for v in args.zone_bbox.split(",")]
             lon_min, lat_min, lon_max, lat_max = parts
         except (ValueError, IndexError):
-            print("  Format bbox invalide. Exemple : --zone-bbox 5.9,43.1,6.6,43.8")
+            print("  Invalid bbox format. Example: --zone-bbox 5.9,43.1,6.6,43.8")
             sys.exit(1)
         if not nom_zone:
             if getattr(args, 'oui', False):
-                print("  ERREUR : --zone-nom requis avec --zone-bbox en mode --oui")
+                print("  ERROR: --zone-name required with --zone-bbox in --yes mode")
                 sys.exit(1)
             nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
 
@@ -9141,11 +9141,11 @@ def _resoudre_zone_wgs84(args):
             parts = [p.strip() for p in args.zone_gps.replace(";", ",").split(",")]
             lat_c, lon_c = float(parts[0]), float(parts[1])
         except (ValueError, IndexError):
-            print("  Format GPS invalide. Exemple : --zone-gps 43.3156,6.0423")
+            print("  Invalid GPS format. Example: --zone-gps 43.3156,6.0423")
             sys.exit(1)
         if not nom_zone:
             if getattr(args, 'oui', False):
-                print("  ERREUR : --zone-nom requis avec --zone-gps en mode --oui")
+                print("  ERROR: --zone-name required with --zone-gps in --yes mode")
                 sys.exit(1)
             nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
         r     = args.zone_rayon / 111.0
@@ -9155,7 +9155,7 @@ def _resoudre_zone_wgs84(args):
 
     elif args.zone_ville:
         nom_zone = nom_zone or normaliser_nom(args.zone_ville)
-        print(f"  Géocodage de '{args.zone_ville}'...")
+        print(f"  Geocoding '{args.zone_ville}'...")
         lat_c, lon_c = geocoder_ville_wgs84(args.zone_ville)
         if lat_c is None:
             sys.exit(1)
@@ -9166,7 +9166,7 @@ def _resoudre_zone_wgs84(args):
 
     else:
         if getattr(args, 'oui', False):
-            print("  ERREUR : une option de zone est requise en mode --oui")
+            print("  ERROR: a zone option is required in --yes mode")
             sys.exit(1)
         ville = input("  Ville (ou laisser vide pour GPS) : ").strip()
         if ville:
@@ -9227,19 +9227,19 @@ def main_decouper():
 
     src = Path(args.source)
     if not src.exists():
-        print(f"  ERREUR : fichier introuvable : {src}"); sys.exit(1)
+        print(f"  ERROR: file not found: {src}"); sys.exit(1)
     if src.suffix.lower() != ".mbtiles":
-        print(f"  ERREUR : --source attend un .mbtiles (reçu : {src.suffix})"); sys.exit(1)
+        print(f"  ERROR: --source expects a .mbtiles (got: {src.suffix})"); sys.exit(1)
 
     print("=" * 55)
-    print("  Découpage raster MBTiles")
+    print("  Raster MBTiles splitting")
     print("=" * 55)
     print(f"  Source  : {src}")
     print(f"  Formats : {' '.join(_ff)}")
     if args.cols > 0 and args.rows > 0:
         print(f"  Grille  : {args.cols} cols × {args.rows} lignes")
     elif args.rayon_decoupe:
-        print(f"  Rayon   : {args.rayon_decoupe} km/morceau")
+        print(f"  Radius  : {args.rayon_decoupe} km/chunk")
 
     sorties = decouper_mbtiles(src, rayon_km=args.rayon_decoupe,
                                n_cols=args.cols, n_rows=args.rows,
@@ -9249,7 +9249,7 @@ def main_decouper():
         if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
         if not args.mbtiles and sf != src and sf.exists():
             sf.unlink()
-    print("\n  Découpage terminé.")
+    print("\n  Splitting done.")
 
 
 def main_wmts():
@@ -9268,7 +9268,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -9362,13 +9362,13 @@ Examples:
     if args.source:
         p = Path(args.source)
         if not p.exists():
-            print(f"  ERREUR : fichier introuvable : {args.source}")
+            print(f"  ERROR: file not found: {args.source}")
             sys.exit(1)
         if p.suffix.lower() != ".mbtiles":
-            print(f"  ERREUR : --source attend un .mbtiles (reçu : {p.suffix})")
+            print(f"  ERROR: --source expects a .mbtiles (got: {p.suffix})")
             sys.exit(1)
         if not args.rmap and not args.sqlitedb:
-            print("  ERREUR : --rmap ou --sqlitedb requis.")
+            print("  ERROR: --rmap or --sqlitedb required.")
             print(f"  Ex: --source {p.name} --rmap")
             print(f"  Ex: --source {p.name} --sqlitedb")
             sys.exit(1)
@@ -9398,7 +9398,7 @@ Examples:
         img_fmt = "image/jpeg" if any(x in layer for x in
                   ["MAPS", "ORTHOIMAGERY", "ETATMAJOR"]) else "image/png"
         apikey_requis = any(x in layer for x in ["MAPS", "SCAN"])
-        print(f"  Couche : {layer} (identifiant direct)")
+        print(f"  Layer: {layer} (direct id)")
     # img_fmt = format DEMANDÉ AU SERVEUR (URL WMTS). DOIT rester sur le
     # format natif que l'IGN sert pour cette couche — sinon : HTTP 400
     # "Format image/X unknown" (planign ne sert PAS en JPEG, ortho ne sert
@@ -9410,7 +9410,7 @@ Examples:
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
 
-    # ── Découpage à priori : traitement séquentiel morceau par morceau ────────
+    # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
     _cols_pr = getattr(args, "cols_decoupe", 0) or 0
     _rows_pr = getattr(args, "rows_decoupe", 0) or 0
     if _cols_pr > 0 and _rows_pr > 0:
@@ -9424,10 +9424,10 @@ Examples:
             n_total   = len(sous_zones)
             nb_done   = sum(1 for z in sous_zones
                             if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
-            print(f"\n  ══ Découpage à priori : {mode_desc} ══")
+            print(f"\n  ══ A-priori splitting: {mode_desc} ══")
             print(f"  Manifeste : {manifeste.path}")
             if nb_done:
-                print(f"  Reprise : {nb_done}/{n_total} morceaux déjà terminés")
+                print(f"  Resume: {nb_done}/{n_total} chunks already done")
 
             nb_ok = 0
             for i_z, (i_lat, i_lon, lon_w, lat_s, lon_e, lat_n) in enumerate(sous_zones):
@@ -9435,13 +9435,13 @@ Examples:
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — déjà terminé")
+                    print(f"  [{cle}] {nom_z} — already done")
                     nb_ok += 1
                     continue
 
                 surface_km2 = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
                               ((lat_n-lat_s)*111)
-                print(f"\n  ── Morceau {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
+                print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
                 print(f"     BBox WGS84 : {lon_w:.4f},{lat_s:.4f} → "
                       f"{lon_e:.4f},{lat_n:.4f}  (~{surface_km2:.0f} km²)")
                 manifeste.debut_morceau(cle, nom_z)
@@ -9451,7 +9451,7 @@ Examples:
                                        nom_z, nom_zone, layer, style, img_fmt, fmt_ext,
                                        apikey_requis, manifeste, cle)
                     manifeste.fin_morceau(cle, int(time.time() - t0_z))
-                    print(f"  [{cle}] ✓ Terminé en {_hms(int(time.time() - t0_z))}")
+                    print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
                         # Cf. boucle LiDAR : si chunk vide ou aucun mbtiles, on
@@ -9465,18 +9465,18 @@ Examples:
                         _has_empty = (not _mbts) or any(
                             not _mbtiles_est_complete(mbt) for mbt in _mbts)
                         if _has_empty:
-                            print(f"  [{cle}] mbtiles vide ou absent — nettoyage skipé (intermédiaires conservés pour inspection)")
+                            print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
                         else:
                             _supprimer_fichiers(manifeste.fichiers_morceau(cle))
                 except Exception as _e_z:
-                    print(f"  [{cle}] ✗ ERREUR : {_e_z} — relancez pour reprendre")
+                    print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
                     raise
 
             elapsed = int(time.time() - t_debut)
-            print(f"\n  ══ Découpage à priori terminé : {nb_ok}/{n_total} morceaux ══")
-            print(f"  Durée totale : {_hms(elapsed)}")
+            print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
+            print(f"  Total time: {_hms(elapsed)}")
             return
-        print("  Découpage à priori : zone trop petite → traitement unique")
+        print("  A-priori splitting: zone too small -> single pass")
 
     # ── Calcul de la grille ───────────────────────────────────────────────────
     zoom_min = min(args.zoom_min, args.zoom_max)
@@ -9488,12 +9488,12 @@ Examples:
     if _limites_reel:
         _zmin_reel, _zmax_reel = _limites_reel
         if zoom_max > _zmax_reel:
-            print(f"  ⚠ Couche {args.couche} : zoom max IGN = {_zmax_reel} "
+            print(f"  ⚠ Layer {args.couche}: IGN max zoom = {_zmax_reel} "
                   f"— zoom_max ramené de {zoom_max} à {_zmax_reel}.")
             zoom_max = _zmax_reel
             zoom_min = min(zoom_min, zoom_max)
         if zoom_min < _zmin_reel:
-            print(f"  ⚠ Couche {args.couche} : zoom min IGN = {_zmin_reel} "
+            print(f"  ⚠ Layer {args.couche}: IGN min zoom = {_zmin_reel} "
                   f"— zoom_min ramené de {zoom_min} à {_zmin_reel}.")
             zoom_min = _zmin_reel
             zoom_max = max(zoom_max, zoom_min)
@@ -9504,12 +9504,12 @@ Examples:
     taille_est = estimer_taille(total, fmt_ext)
 
     print("=" * 55)
-    print(f"  Carte IGN — {args.couche} ({layer})")
+    print(f"  IGN map - {args.couche} ({layer})")
     print("=" * 55)
     print(f"  Zone    : {nom_zone}")
     print(f"  BBox    : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
     print(f"  Zooms   : {zoom_min}–{zoom_max}")
-    print(f"  Tuiles  : {total:,}  (~{taille_est} Mo estimés)")
+    print(f"  Tiles: {total:,}  (~{taille_est} MB estimated)")
     print(f"  Workers : {args.workers}")
 
     if not args.oui:
@@ -9528,7 +9528,7 @@ Examples:
     # Cache tuiles : dossier/dalles/<z>/<x>/<y>.<ext>
     dossier_cache = DOSSIER_TRAVAIL / "cache" / "ign_raster"
     dossier_cache.mkdir(parents=True, exist_ok=True)
-    print(f"  Cache dalles : {dossier_cache}")
+    print(f"  Tiles cache: {dossier_cache}")
 
     # ── Génération MBTiles ────────────────────────────────────────────────────
     # _jpeg_q : quand non-None, déclenche un re-encodage PNG → JPEG côté
@@ -9553,7 +9553,7 @@ Examples:
     _mbtiles_requis = _mbtiles_a_regenerer(chemin_mbtiles, _ecraser)
 
     if not _mbtiles_requis and chemin_mbtiles.exists():
-        print(f"  MBTiles existant : {chemin_mbtiles.name} — découpage/conversion directe")
+        print(f"  Existing MBTiles: {chemin_mbtiles.name} — direct split/conversion")
 
     if _mbtiles_requis:
         # ── Génération d'un seul MBTiles complet ──────────────────────────────
@@ -9585,8 +9585,8 @@ Examples:
 
     # ── Résumé ────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
-    print(f"\n  Terminé en {_hms(elapsed)}")
-    print(f"  Fichiers dans : {dossier}")
+    print(f"\n  Done in {_hms(elapsed)}")
+    print(f"  Files in: {dossier}")
     _historique_depuis_argv(elapsed, str(dossier))
 
 
@@ -9701,7 +9701,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
         for p in (sortie_gz, sortie):
             if p.exists():
                 p.unlink()
-                print(f"  {p.name} -> écrasement")
+                print(f"  {p.name} -> overwrite")
 
     # Vérification par format demandé : on ne skip que si TOUS sont présents.
     # Sinon, si l'un est présent, on reconstruit les manquants à partir de
@@ -9711,20 +9711,20 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
         manque_raw = ecrire_geojson and not sortie.exists()
         if not manque_gz and not manque_raw:
             present = sortie_gz if sortie_gz.exists() else sortie
-            print(f"  {present.name} -> déjà présent")
+            print(f"  {present.name} -> already present")
             return present
         # Reconstruction locale si une source existe
         if (sortie_gz.exists() or sortie.exists()):
             try:
                 if manque_raw and sortie_gz.exists():
                     _gunzip_vers_fichier(sortie_gz, sortie)
-                    print(f"  {sortie.name} -> reconstruit depuis {sortie_gz.name}")
+                    print(f"  {sortie.name} -> rebuilt from {sortie_gz.name}")
                 if manque_gz and sortie.exists():
                     _gzip_depuis_fichier(sortie, sortie_gz)
-                    print(f"  {sortie_gz.name} -> reconstruit depuis {sortie.name}")
+                    print(f"  {sortie_gz.name} -> rebuilt from {sortie.name}")
                 return sortie_gz if sortie_gz.exists() else sortie
             except OSError as e:
-                print(f"  ⚠ Reconstruction locale échouée ({e}) — re-téléchargement WFS")
+                print(f"  ⚠ Local rebuild failed ({e}) - WFS re-download")
 
     print(f"  WFS {typename}...", flush=True)
     _log_req(f"{WFS_URL}?SERVICE=WFS&TYPENAMES={typename}&...", "WFS IGN")
@@ -9782,7 +9782,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
         while True:
             if _stop_event.is_set():
                 if n_features:
-                    print(f"  WFS interrompu — {n_features} features récupérées (sortie .gz partielle)")
+                    print(f"  WFS interrupted - {n_features} features retrieved (partial .gz output)")
                 # Pas de finalisation : on supprime le tmp pour ne pas garder
                 # un .gz tronqué qui aurait l'air valide.
                 raise KeyboardInterrupt(f"WFS {typename} interrompu")
@@ -9818,7 +9818,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
 
             if data is None:
                 if n_features:
-                    print(f"  Résultat partiel : {n_features} features")
+                    print(f"  Partial result: {n_features} features")
                     # On finalise avec ce qu'on a (le client a écrit n_features
                     # valides, on les conserve plutôt que de tout perdre).
                     break
@@ -10011,7 +10011,7 @@ def _epsilon_depuis_surface_km2(surface_km2: float) -> float:
     < 1 000 km²    8 m        Arrondissement
     < 15 000 km²   15 m       Un département
     < 100 000 km²  25 m       Plusieurs départements
-    ≥ 100 000 km²  40 m       Région entière
+    ≥ 100 000 km²  40 m       Region entière
     """
     # Conversion mètres → degrés : 1° ≈ 111 000 m
     _M_PAR_DEG = 111_000.0
@@ -10067,7 +10067,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         try:
             import ijson
         except ImportError:
-            print("  ⚠ ijson absent — chargement RAM intégral du GeoJSON")
+            print("  ⚠ ijson missing - full RAM load of the GeoJSON")
             try:
                 if geojson_path.suffix == ".gz":
                     with gzip.open(geojson_path, "rt", encoding="utf-8") as f:
@@ -10252,7 +10252,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         ways_tmp.unlink(missing_ok=True)
         raise
     except Exception:
-        print("\n  ERREUR dans geojson_ign_vers_osm_xml :")
+        print("\n  ERROR in geojson_ign_vers_osm_xml:")
         _tb.print_exc()
         if out_nodes: out_nodes.close()
         if out_ways:  out_ways.close()
@@ -10261,7 +10261,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         return False
 
     if state["nb_nodes"] == 0:
-        print("  GeoJSON vide — rien à convertir.")
+        print("  Empty GeoJSON - nothing to convert.")
         nodes_tmp.unlink(missing_ok=True)
         ways_tmp.unlink(missing_ok=True)
         return False
@@ -10295,13 +10295,13 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         ways_tmp.unlink(missing_ok=True)
 
     sz = osm_xml_path.stat().st_size / 1e6
-    print(f"  OSM XML : {state['nb_nodes']} nœuds, {state['nb_ways']} ways "
-          f"→ {osm_xml_path.name} ({sz:.1f} Mo)")
+    print(f"  OSM XML: {state['nb_nodes']} nodes, {state['nb_ways']} ways "
+          f"→ {osm_xml_path.name} ({sz:.1f} MB)")
     if state["nb_inner_skipped"]:
         # Mapsforge mapwriter ne supporte pas les multi-polygones avec trous via
         # OSM XML (il faut des relations type=multipolygon, hors scope ici).
         # On documente la perte plutôt que de la cacher.
-        print(f"  ⚠ {state['nb_inner_skipped']} ring(s) intérieur(s) ignoré(s) "
+        print(f"  ⚠ {state['nb_inner_skipped']} inner ring(s) skipped "
               f"(trous de polygones — non supportés en sortie .map)")
     return True
 
@@ -10318,15 +10318,15 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
 
     if chemin_map.exists() and not ecraser:
         if chemin_map.stat().st_size == 0:
-            print(f"  Carte IGN .map existante vide — régénération forcée.")
+            print(f"  IGN .map exists but empty - forced regeneration.")
             chemin_map.unlink()
         else:
-            print(f"  Carte IGN .map déjà présente : {chemin_map.name} — ignorée")
+            print(f"  IGN .map already present: {chemin_map.name} - skipped")
             return chemin_map
 
     if chemin_map.exists() and ecraser:
         chemin_map.unlink()
-        print(f"  Carte IGN .map : écrasement {chemin_map.name}")
+        print(f"  Carte IGN .map : overwrite {chemin_map.name}")
 
     # ── Étape 1 : GeoJSON → OSM XML ──────────────────────────────────────────
     print(f"  Conversion GeoJSON → OSM XML...", flush=True)
@@ -10378,18 +10378,18 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         if taille_b < 1_000_000:
             print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
         else:
-            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} Mo  {_hms(time.time()-t0)}")
+            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
         return chemin_map
     elif chemin_map.exists() and chemin_map.stat().st_size == 0:
         chemin_map.unlink(missing_ok=True)
-        print(f"  ⚠ {chemin_map.name} créé mais vide — aucune feature reconnue par mapwriter.")
-        print(f"  {chemin_osm_xml.name} conservé pour diagnostic.")
+        print(f"  ⚠ {chemin_map.name} created but empty - no feature recognised by mapwriter.")
+        print(f"  {chemin_osm_xml.name} kept for diagnostics.")
         return None
     else:
         print(f"  ERREUR osmosis mapfile-writer IGN (code {rc})")
         if stderr_diag:
             print(f"  {stderr_diag.strip()[:2000]}")
-        print(f"  {chemin_osm_xml.name} conservé — relancez osmosis après correction.")
+        print(f"  {chemin_osm_xml.name} kept - rerun osmosis after fixing.")
         return None
 
 
@@ -10510,7 +10510,7 @@ def _decouvrir_url_bdtopo_gpkg(num_dep):
             except Exception:
                 continue
 
-    print(f"  ERREUR : archive BD TOPO GPKG introuvable pour {num_dep}")
+    print(f"  ERROR: BD TOPO GPKG archive not found for {num_dep}")
     return None, None
 
 
@@ -10523,25 +10523,25 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
 
     if gpkg_path.exists() and gpkg_path.stat().st_size > 10_000_000:
         print(f"  Cache GPKG : {gpkg_path.name} "
-              f"({gpkg_path.stat().st_size/1e6:.0f} Mo) — réutilisé", flush=True)
+              f"({gpkg_path.stat().st_size/1e6:.0f} MB) — réutilisé", flush=True)
         return gpkg_path
 
     # ── Vérifier que py7zr est disponible pour l'extraction ──────────────────
     try:
         import py7zr as _py7zr
     except ImportError:
-        print("  Installation py7zr pour extraction .7z...", flush=True)
+        print("  Installing py7zr for .7z extraction...", flush=True)
         r_pip = subprocess.run(
             [sys.executable, "-m", "pip", "install", "py7zr", "-q"],
             capture_output=True)
         if r_pip.returncode != 0:
-            print("  ERREUR : py7zr non installable — impossible d'extraire le .7z IGN")
+            print("  ERROR: py7zr not installable - cannot extract the IGN .7z")
             return None
         import py7zr as _py7zr
 
     # ── Téléchargement du .7z ────────────────────────────────────────────────
     sz_path = cache_dir / f"{nom_ressource}.7z"
-    print(f"  Téléchargement BD TOPO D{dep_padded} (~200-800 Mo)...", flush=True)
+    print(f"  Downloading BD TOPO D{dep_padded} (~200-800 MB)...", flush=True)
     _log_req(url, "IGN bulk GPKG")
     tmp = cache_dir / f"{nom_ressource}.7z.tmp"
     t0 = time.time()
@@ -10556,7 +10556,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             total = int(resp.headers.get("content-length") or 0)
             done = 0
             # Throttle d'affichage : on actualise au max toutes les 0.5s pour
-            # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 Mo.
+            # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 MB.
             _last_print = 0.0
             with open(tmp, "wb") as f:
                 while True:
@@ -10576,28 +10576,28 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
                         bar = ("█" * (pct // 5)).ljust(20)
                         sys.stdout.write(
                             f"\r  [{bar}] {pct:3d}%  "
-                            f"{done/1e6:.0f}/{total/1e6:.0f} Mo  {_hms(elapsed)}   ")
+                            f"{done/1e6:.0f}/{total/1e6:.0f} MB  {_hms(elapsed)}   ")
                     else:
                         sys.stdout.write(
-                            f"\r  {done/1e6:.0f} Mo  {_hms(elapsed)}   ")
+                            f"\r  {done/1e6:.0f} MB  {_hms(elapsed)}   ")
                     sys.stdout.flush()
         sys.stdout.write("\r" + " " * 70 + "\r"); sys.stdout.flush()
         tmp.replace(sz_path)
-        print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} Mo)  "
+        print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} MB)  "
               f"{_hms(int(time.time()-t0))}", flush=True)
     except (OSError, urllib.error.URLError) as e:
         tmp.unlink(missing_ok=True)
-        print(f"  ERREUR téléchargement ({type(e).__name__}): {e}")
+        print(f"  ERROR downloading ({type(e).__name__}): {e}")
         return None
 
     # ── Extraction du .gpkg depuis le .7z ────────────────────────────────────
-    print(f"  Extraction GPKG depuis {sz_path.name}...", flush=True)
+    print(f"  Extracting GPKG from {sz_path.name}...", flush=True)
     try:
         with _py7zr.SevenZipFile(sz_path, mode="r") as z:
             # Trouver le .gpkg dans l'archive
             gpkg_names = [n for n in z.getnames() if n.lower().endswith(".gpkg")]
             if not gpkg_names:
-                print("  ERREUR : aucun .gpkg dans l'archive 7z")
+                print("  ERROR: no .gpkg in the 7z archive")
                 sz_path.unlink(missing_ok=True)
                 return None
             # Extraire uniquement le .gpkg (peut être dans un sous-dossier)
@@ -10609,7 +10609,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         # donc tout .gpkg trouvé est forcément le résultat de l'extraction.
         extracted = next(cache_dir.rglob("*.gpkg"), None)
         if extracted is None:
-            print("  ERREUR : .gpkg introuvable après extraction")
+            print("  ERROR: .gpkg not found after extraction")
             return None
         if extracted != gpkg_path:
             extracted.replace(gpkg_path)
@@ -10622,7 +10622,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
 
         sz_path.unlink(missing_ok=True)   # libérer l'espace du .7z
         print(f"  ✓ GPKG extrait : {gpkg_path.name} "
-              f"({gpkg_path.stat().st_size/1e6:.0f} Mo)", flush=True)
+              f"({gpkg_path.stat().st_size/1e6:.0f} MB)", flush=True)
         return gpkg_path
 
     except Exception as e:
@@ -10662,7 +10662,7 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
         import ijson
     except ImportError:
         # Fallback non-streaming (peut faire OOM sur dept-scale — averti)
-        print("  ⚠ ijson absent — chargement RAM intégral (risque OOM sur dept-scale)")
+        print("  ⚠ ijson missing - full RAM load (OOM risk at dept-scale)")
         with open(src_geojson, encoding="utf-8") as f:
             gj = json.load(f)
         feats = gj.get("features", [])
@@ -10715,7 +10715,7 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
 
     Étape 7 du refactor : remplace ogr2ogr CLI par fiona+pyproj.
     Streaming feature par feature pour borner la RAM (un département entier
-    peut faire 200-800 Mo en JSON, soit 1-3 Go pic RAM avec json.load()).
+    peut faire 200-800 MB en JSON, soit 1-3 Go pic RAM avec json.load()).
     """
     sortie_gz  = Path(sortie_gz)
     sortie_raw = Path(str(sortie_gz)[:-3]) if str(sortie_gz).endswith(".gz") \
@@ -10733,33 +10733,33 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         for p in (sortie_gz, sortie_raw):
             if p.exists():
                 p.unlink()
-                print(f"  {p.name} -> écrasement")
+                print(f"  {p.name} -> overwrite")
 
     if not ecraser:
         manque_gz  = ecrire_gz      and not sortie_gz.exists()
         manque_raw = ecrire_geojson and not sortie_raw.exists()
         if not manque_gz and not manque_raw:
             present = sortie_gz if sortie_gz.exists() else sortie_raw
-            print(f"  {present.name} → déjà présent")
+            print(f"  {present.name} → already present")
             return present
         # Reconstruction locale entre formats — évite de relire le GPKG (lent).
         if (sortie_gz.exists() or sortie_raw.exists()):
             try:
                 if manque_raw and sortie_gz.exists():
                     _gunzip_vers_fichier(sortie_gz, sortie_raw)
-                    print(f"  {sortie_raw.name} → reconstruit depuis {sortie_gz.name}")
+                    print(f"  {sortie_raw.name} -> rebuilt from {sortie_gz.name}")
                 if manque_gz and sortie_raw.exists():
                     _gzip_depuis_fichier(sortie_raw, sortie_gz)
-                    print(f"  {sortie_gz.name} → reconstruit depuis {sortie_raw.name}")
+                    print(f"  {sortie_gz.name} -> rebuilt from {sortie_raw.name}")
                 return sortie_gz if sortie_gz.exists() else sortie_raw
             except OSError as e:
-                print(f"  ⚠ Reconstruction locale échouée ({e}) — extraction GPKG")
+                print(f"  ⚠ Local rebuild failed ({e}) — extraction GPKG")
 
     try:
         import fiona
         from fiona.transform import transform_geom as _xform_geom
     except ImportError:
-        print("  ERREUR : fiona absent — pip install fiona")
+        print("  ERROR: fiona absent — pip install fiona")
         return None
 
     tmp_geojson = sortie_gz.parent / (sortie_gz.name.replace(".geojson.gz", "_tmp.geojson"))
@@ -10807,7 +10807,7 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         return None
 
     if not tmp_geojson.exists() or tmp_geojson.stat().st_size == 0 or n_total == 0:
-        print(f"  ⚠ {layer_name} : aucune feature")
+        print(f"  ⚠ {layer_name}: no feature")
         tmp_geojson.unlink(missing_ok=True); return None
 
     try:
@@ -10816,7 +10816,7 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         src_name = sortie_gz.name.replace(".geojson.gz", "")
         n = _streamer_geojson_ajout_source(tmp_geojson, sortie_gz, src_name)
         if n == 0:
-            print(f"  ⚠ {layer_name} : 0 features après streaming")
+            print(f"  ⚠ {layer_name}: 0 features after streaming")
             sortie_gz.unlink(missing_ok=True)
             return None
         chemin_principal = None
@@ -10845,7 +10845,7 @@ def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
     formats : liste parmi ("gz","geojson") — propagé à _extraire_couche_bdtopo.
     Retourne list[Path] des GeoJSON(.gz) créés, ou None si échec critique.
     """
-    print(f"  Bulk BD TOPO GPKG département {num_dep} "
+    print(f"  Bulk BD TOPO GPKG department {num_dep} "
           f"(WFS serait trop lent à cette échelle)", flush=True)
     url, nom = _decouvrir_url_bdtopo_gpkg(num_dep)
     if not url:
@@ -10889,7 +10889,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
@@ -10955,8 +10955,8 @@ def main_wfs():
     print("=" * 56)
     print(f"  Zone     : {nom_zone}")
     print(f"  BBox     : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
-    print(f"  Couche(s): {', '.join(c[1] for c in couches_resolues)}")
-    print(f"  Sortie   : {dossier}")
+    print(f"  Layer(s): {', '.join(c[1] for c in couches_resolues)}")
+    print(f"  Output   : {dossier}")
 
     if not args.oui:
         rep = input("\n  Lancer ? [O/n] : ").strip().lower()
@@ -10983,7 +10983,7 @@ def main_wfs():
         if sorties_bulk is not None:
             sorties = sorties_bulk
         else:
-            print("  Repli sur WFS pagination...")
+            print("  Falling back to WFS pagination...")
 
     if not _bulk_tente or not sorties:
         # WFS standard (zone locale ou repli bulk échoué)
@@ -11023,18 +11023,18 @@ def main_wfs():
             _src_geojson = sorties[0]
 
         if _src_geojson is None or not Path(_src_geojson).exists():
-            print("\n  ⚠ Génération .map ignorée : aucun feature disponible.")
+            print("\n  ⚠ Map generation skipped: no feature available.")
         else:
             # Epsilon : paramètre explicite ou calcul automatique depuis surface bbox
             if getattr(args, "simplification_vecteur", None):
                 _eps_m = args.simplification_vecteur
-                print(f"\n  Simplification vecteur : epsilon={_eps_m:.1f} m (forcé)")
+                print(f"\n  Vector simplification: epsilon={_eps_m:.1f} m (forced)")
             else:
                 _surf = (lon_max - lon_min) * (lat_max - lat_min) * (111_000 ** 2) / 1e6
                 _eps_m = _epsilon_depuis_surface_km2(_surf) * 111_000
-                print(f"\n  Simplification vecteur : epsilon={_eps_m:.0f} m (auto, surface≈{_surf:.0f} km²)")
+                print(f"\n  Vector simplification: epsilon={_eps_m:.0f} m (auto, surface≈{_surf:.0f} km²)")
             _eps_deg = _eps_m / 111_000.0
-            print("  Génération carte Mapsforge (.map) depuis GeoJSON IGN...")
+            print("  Generating Mapsforge map (.map) from IGN GeoJSON...")
             generer_map_depuis_geojson_ign(
                 geojson_src   = _src_geojson,
                 dossier_ville = dossier,
@@ -11046,7 +11046,7 @@ def main_wfs():
 
     # ── Bilan ─────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
-    print(f"\n  Terminé en {_hms(elapsed)} — {len(sorties)}/{len(couches_resolues)} couches")
+    print(f"\n  Done in {_hms(elapsed)} — {len(sorties)}/{len(couches_resolues)} couches")
     for s in sorties:
         print(f"  → {s}")
     _historique_depuis_argv(elapsed, str(dossier))
@@ -11076,14 +11076,14 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     Avantages :
       - Maintenu activement (releases régulières)
-      - Wheels précompilés cp312/win_amd64 (~2 Mo)
+      - Wheels précompilés cp312/win_amd64 (~2 MB)
       - Pas de compilation Cython au runtime (contrairement à pyrosm)
       - API GeoJSONFactory directement utilisable
 
     Limites :
       - Le filtre bbox n'est pas natif côté libosmium : on filtre les nodes
         à la lecture, et on garde uniquement les ways/areas dont au moins
-        un node est dans la bbox (équivalent --spat de ogr2ogr).
+        un node est in the bbox (équivalent --spat de ogr2ogr).
       - Les relations non-multipolygon (route, boundary admin, etc.) ne
         produisent pas de géométrie GeoJSON directement (limitation libosmium).
 
@@ -11101,7 +11101,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         ecrire_gz = True
 
     # Cache check : on ne court-circuite que si TOUS les formats demandés
-    # sont déjà présents. Si l'utilisateur demande à la fois .gz et .geojson,
+    # sont already presents. Si l'utilisateur demande à la fois .gz et .geojson,
     # et qu'on n'a que le .gz, il faut quand même regénérer le .geojson.
     chemin_gz_attendu  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
     chemin_raw_attendu = dossier_ville / f"{nom_zone}_osm.geojson"
@@ -11114,15 +11114,15 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     if not formats_manquants and not ecraser_tuiles:
         # Tous les formats demandés sont déjà là
         present = chemin_gz_attendu if chemin_gz_attendu.exists() else chemin_raw_attendu
-        print(f"  GeoJSON OSM deja present : {present.name} — ignore")
+        print(f"  OSM GeoJSON already present: {present.name} - skipped")
         return present
 
     if ecraser_tuiles:
-        # Mode écrasement : supprimer les sorties existantes pour repartir clean
+        # Mode overwrite : supprimer les sorties existantes pour repartir clean
         for p in (chemin_gz_attendu, chemin_raw_attendu):
             if p.exists():
                 p.unlink()
-                print(f"  GeoJSON OSM : écrasement {p.name}")
+                print(f"  GeoJSON OSM : overwrite {p.name}")
         # Aussi supprimer les fichiers thématiques existants (per-clé)
         for p in dossier_ville.glob(f"{nom_zone}_osm_*.geojson*"):
             try:
@@ -11133,8 +11133,8 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     try:
         import osmium as _osm
     except ImportError:
-        print("  ERREUR : osmium absent — pip install osmium")
-        print("          (binding Python officiel libosmium, ~2 Mo, wheel précompilé)")
+        print("  ERROR: osmium absent — pip install osmium")
+        print("          (official libosmium Python binding, ~2 MB, precompiled wheel)")
         return None
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
@@ -11296,7 +11296,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         _fermer_streams_partiels()
         if isinstance(e_proc, KeyboardInterrupt):
             raise
-        print(f"  ERREUR PyOsmium : {type(e_proc).__name__} : {e_proc}")
+        print(f"  ERREUR PyOsmium: {type(e_proc).__name__} : {e_proc}")
         return None
 
     # Finaliser chaque stream par-clé : footer ']}' puis close puis replace atomique
@@ -11312,14 +11312,14 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         path_tmp, path_gz, _ = _streams_paths[cle]
         path_tmp.replace(path_gz)
 
-    print(f"  PyOsmium : {nb_total[0]} objets parcourus, {nb_kept[0]} dans la bbox", flush=True)
+    print(f"  PyOsmium: {nb_total[0]} objects scanned, {nb_kept[0]} in the bbox", flush=True)
 
     if nb_kept[0] == 0:
         # Aucune feature retenue — nettoyer les .gz vides éventuels et sortir
         for _, path_gz, _ in _streams_paths.values():
             try: path_gz.unlink(missing_ok=True)
             except Exception: pass
-        print("  Aucun feature OSM exporté")
+        print("  No OSM feature exported")
         return None
 
     # Dériver les .geojson raw par-clé si demandé (depuis le .gz, en streaming)
@@ -11447,7 +11447,7 @@ def _ecrire_geojson_gz(data_dict, chemin, compresser=True):
         if not str(p).endswith(".gz"):
             p = Path(str(p) + ".gz")
     else:
-        # Mode non compressé : retirer le .gz éventuel
+        # Mode non compressed : retirer le .gz éventuel
         if str(p).endswith(".gz"):
             p = Path(str(p)[:-3])
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -11563,12 +11563,12 @@ def fusionner_geojson(fichiers, sortie):
                         yield source, feat
                 return
             except (OSError, ValueError) as e:
-                print(f"  AVERTISSEMENT : {p.name} streaming échoué ({e}) — fallback RAM")
+                print(f"  WARNING: {p.name} streaming failed ({e}) - RAM fallback")
         # Fallback non-streaming
         try:
             data = _lire_geojson(p)
         except Exception as e:
-            print(f"  AVERTISSEMENT : {p.name} illisible ({e}) — ignoré")
+            print(f"  WARNING: {p.name} illisible ({e}) - skipped")
             return
         for feat in data.get("features", []):
             yield source, feat
@@ -11591,7 +11591,7 @@ def fusionner_geojson(fichiers, sortie):
                 if p_gz.exists():
                     p = p_gz
             if not p.exists():
-                print(f"  AVERTISSEMENT : {p.name} introuvable — ignoré")
+                print(f"  WARNING: {p.name} not found - skipped")
                 continue
 
             n_fichier = 0
@@ -11631,7 +11631,7 @@ def fusionner_geojson(fichiers, sortie):
 
     if n_total == 0:
         tmp.unlink(missing_ok=True)
-        print("  Aucun feature à fusionner")
+        print("  No feature to merge")
         return None, None
 
     tmp.replace(sortie)
@@ -11708,10 +11708,10 @@ Examples:
         if matches:
             fichiers.extend(sorted(matches))
         else:
-            fichiers.append(pattern)  # sera signalé introuvable à la fusion
+            fichiers.append(pattern)  # sera signalé not found à la fusion
 
     if not fichiers:
-        print("  ERREUR : aucun fichier source trouvé")
+        print("  ERROR: no source file found")
         sys.exit(1)
 
     # Sortie par défaut
@@ -11752,19 +11752,19 @@ Examples:
                 # bbox arrive déjà calculée par fusionner_geojson — pas de relecture.
                 if getattr(args, 'simplification_vecteur', None):
                     _eps_deg = args.simplification_vecteur / 111_000.0
-                    print(f"  Simplification vecteur : epsilon={args.simplification_vecteur:.1f} m (forcé)")
+                    print(f"  Vector simplification: epsilon={args.simplification_vecteur:.1f} m (forced)")
                 elif bbox:
                     _surf = (bbox[2]-bbox[0]) * (bbox[3]-bbox[1]) * (111_000**2) / 1e6
                     _eps_deg = _epsilon_depuis_surface_km2(_surf)
-                    print(f"  Simplification vecteur : epsilon={_eps_deg*111000:.0f} m (auto, surface≈{_surf:.0f} km²)")
+                    print(f"  Vector simplification: epsilon={_eps_deg*111000:.0f} m (auto, surface≈{_surf:.0f} km²)")
                 else:
                     _eps_deg = _IGN_SIMPLIFY_EPSILON
                 generer_map_depuis_geojson_ign(result, dossier_sortie, nom_zone,
                                                bbox_wgs84=bbox, ecraser=True,
                                                epsilon=_eps_deg)
             except Exception as _e:
-                print(f"  ERREUR génération .map : {_e}")
-        print(f"\n  Terminé en {_hms(int(time.time()-t_debut))}")
+                print(f"  ERROR generating .map: {_e}")
+        print(f"\n  Done in {_hms(int(time.time()-t_debut))}")
     _historique_depuis_argv(int(time.time()-t_debut))
 
 
@@ -11918,7 +11918,7 @@ def _historique_debut() -> str:
                            run_id=run_id, statut="en cours")
     except Exception as e:
         # Ne JAMAIS planter le pipeline parce que l'historique a échoué.
-        print(f"  Historique 'en cours' non sauvegardé : {e}", flush=True)
+        print(f"  History 'in progress' not saved: {e}", flush=True)
     return run_id
 
 
@@ -11935,7 +11935,7 @@ def _historique_fin_crash():
         _sauver_historique(_cfg_depuis_argv(), duree, "",
                            run_id=_HIST_RUN_ID, statut="ko")
     except Exception as e:
-        print(f"  Historique 'ko' non sauvegardé : {e}", flush=True)
+        print(f"  History 'ko' not saved: {e}", flush=True)
 
 
 def _historique_depuis_argv(duree_s: int, dossier_resultat: str = "",
@@ -12048,11 +12048,11 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
         # Log discret au début (l'utilisateur n'a pas besoin de savoir), plus
         # explicite à la fin pour confirmer la sauvegarde finale.
         if statut == "en cours":
-            print(f"  Historique : entrée '{entree['id']}' (en cours)", flush=True)
+            print(f"  History: entry '{entree['id']}' (in progress)", flush=True)
         else:
-            print(f"  Historique sauvegardé : {_HISTORIQUE_PATH}  ({len(historique)} entrées)", flush=True)
+            print(f"  History saved: {_HISTORIQUE_PATH}  ({len(historique)} entries)", flush=True)
     except Exception as e:
-        print(f"  Historique non sauvegardé : {e}", flush=True)
+        print(f"  History not saved: {e}", flush=True)
 
 
 def _lire_historique() -> list:
@@ -12088,7 +12088,7 @@ def lancer_gui():
     try:
         import webview
     except ImportError:
-        print("  PyWebView absent — installation automatique...")
+        print("  PyWebView missing - automatic install...")
         # PyWebView nécessite un backend natif :
         #   Windows : WebView2 (préinstallé Win10+)         → "pywebview"
         #   macOS   : Cocoa WebKit (préinstallé)            → "pywebview"
@@ -12116,8 +12116,8 @@ def lancer_gui():
             import webview
         except ImportError:
             if LINUX:
-                print("  ERREUR : pywebview installé mais sans backend fonctionnel.")
-                print("  Sur Linux, installez aussi les paquets système requis :")
+                print("  ERROR: pywebview installed but without a working backend.")
+                print("  On Linux, also install the required system packages:")
                 print("    Debian/Ubuntu : sudo apt install python3-pyqt6 python3-pyqt6.qtwebengine")
                 print("    Fedora/RHEL   : sudo dnf install python3-pyqt6 python3-pyqt6-webengine")
                 print("    Arch          : sudo pacman -S python-pyqt6 python-pyqt6-webengine")
@@ -12719,7 +12719,7 @@ def lancer_gui():
                     # échec — pour que l'entrée 'ko' soit horodatée correctement.
                     self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
                 except Exception as e:
-                    self._log_queue.put({"line": f"\nErreur : {e}\n", "tag": "err"})
+                    self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
                     with self._lock:
                         self._retcode = -1
                 finally:
@@ -12796,7 +12796,7 @@ def lancer_gui():
                         run_id=getattr(self, "_hist_run_id", ""),
                         statut=_statut,
                     )
-                    items.append({"line": f"  Historique sauvegardé : {_HISTORIQUE_PATH}\n",
+                    items.append({"line": f"  History saved: {_HISTORIQUE_PATH}\n",
                                   "tag": "ok"})
                 except Exception as _he:
                     items.append({"line": f"  ERREUR historique : {_he}\n", "tag": "err"})
@@ -13090,7 +13090,7 @@ body.log-resizing *{
       <input type="radio" name="mode" id="m-bbox" value="bbox">
       <label for="m-bbox" data-i18n="mode.bbox">BBox</label>
       <input type="radio" name="mode" id="m-dep" value="dep">
-      <label for="m-dep" data-i18n="mode.dep">Département</label>
+      <label for="m-dep" data-i18n="mode.dep">Department</label>
       <input type="radio" name="mode" id="m-region" value="region">
       <label for="m-region" data-i18n="mode.region">Région</label>
      </div>
@@ -13110,7 +13110,7 @@ body.log-resizing *{
      <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:200px"></div>
     <div class="hidden z-zone" id="z-dep">
      <div class="row">
-      <label data-i18n="z.deps">Département(s)</label>
+      <label data-i18n="z.deps">Department(s)</label>
       <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
              data-i18n-title="tip.deps" title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
      </div>
@@ -13129,7 +13129,7 @@ body.log-resizing *{
       <select id="f-region" style="min-width:240px"></select>
      </div>
      <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="region.hint">
-      Région Geofabrik = bbox englobante de ses départements.
+      Region Geofabrik = bbox englobante de ses départements.
       &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
      </div>
     </div>
@@ -13376,7 +13376,7 @@ body.log-resizing *{
       <div class="cb-group">
        <label><input type="checkbox" id="f-map" checked> Mapsforge (.map)</label>
        <label><input type="checkbox" id="f-osm-geojson" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-osm-geojson-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
+       <label><input type="checkbox" id="f-osm-geojson-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
       </div>
      </div>
     </div>
@@ -13401,7 +13401,7 @@ body.log-resizing *{
       <label data-i18n="filefmt">Format du fichier :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-fusion-gz" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-fusion-gz-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
+       <label><input type="checkbox" id="f-fusion-gz-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
       </div>
      </div>
     </div>
@@ -13439,7 +13439,7 @@ body.log-resizing *{
       <label data-i18n="fmt">Format :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-fusion-gz2" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-fusion-gz2-raw"> <span data-i18n="geojson.raw">.geojson (non compressé)</span></label>
+       <label><input type="checkbox" id="f-fusion-gz2-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
        <label><input type="checkbox" id="f-fusion-map"> Mapsforge (.map)</label>
       </div>
      </div>
@@ -13557,9 +13557,9 @@ const I18N = {
     "tip.provider":"Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.",
     // Zone
     "sec.zone":"Zone géographique",
-    "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Département", "mode.region":"Région",
+    "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
     "z.ville":"Ville", "z.rayonkm":"Rayon km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
-    "z.deps":"Département(s)",
+    "z.deps":"Department(s)",
     // Type de traitement
     "sec.type":"Type de traitement de carte",
     "t.lidar":"LiDAR MNT", "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
@@ -13582,7 +13582,7 @@ const I18N = {
     "sec.couche":"Couche IGN", "couche":"Couche :",
     // OSM / Vecteur / Fusion
     "pbfpar":"(parallélisme téléchargement PBF)", "max4":"(max 4 recommandé)",
-    "geojson.raw":".geojson (non compressé)",
+    "geojson.raw":".geojson (non compressed)",
     "gen.map":"2 — Générer carte Mapsforge (.map)",
     "simplif":"Simplification vecteur",
     "simplif.hint1":"m  (vide = auto : 3 m local → 40 m région)", "simplif.hint2":"m  (vide = auto)",
@@ -13600,7 +13600,7 @@ const I18N = {
     "hist.empty":"Aucun traitement enregistré.",
     "hist.alreadyempty":"L'historique est déjà vide.",
     "hist.confirm":"Supprimer {n} entrée(s) de l'historique ?\n\nCette action est définitive — les commandes passées ne pourront plus être rappelées.",
-    "hist.cleared":"✓ Historique vidé ({n} entrée(s) supprimée(s))",
+    "hist.cleared":"✓ Historique vidé ({n} entrée(s) removede(s))",
     "hist.recalled":"Paramètres rappelés : {nom} ({date})",
     "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
     "zoom.inverted":"⚠ Zooms d'historique inversés — corrigés au chargement",
@@ -13615,7 +13615,7 @@ const I18N = {
     // HTML riche (innerHTML) + infobulles SVF
     "warn.scanpro":"⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>Une clé API est requise — compte <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> avec SIRET.<br>Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).",
     "dep.syntax":"Syntaxe : <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; DOM : <code>2A</code> <code>971</code> &nbsp;—&nbsp; Multi-département : un fichier par département",
-    "region.hint":"Région Geofabrik = bbox englobante de ses départements. &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).",
+    "region.hint":"Region Geofabrik = bbox englobante de ses départements. &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).",
     "tip.sun":"Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.",
     "tip.svftype":"Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.",
     "tip.svfconv":"Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.",
@@ -14536,7 +14536,7 @@ function getConfig() {
   };
   // Remap scan rmap/sqlitedb
   // Remap scan : unifier les clés de format pour _build_cmd
-  // (supprimé — _build_cmd lit directement mbtiles_s/rmap_s/sqlitedb_s)
+  // (removed — _build_cmd lit directement mbtiles_s/rmap_s/sqlitedb_s)
   return cfg;
 }
 
@@ -15078,7 +15078,7 @@ if __name__ == "__main__":
                 for _n, _dep in enumerate(_deps, 1):
                     print()
                     print(_sep)
-                    print(f"  Département {_dep}  ({_n}/{len(_deps)})")
+                    print(f"  Department {_dep}  ({_n}/{len(_deps)})")
                     print(_sep)
                     sys.argv = _argv_base[:]
                     sys.argv[_dep_idx] = _dep
@@ -15093,7 +15093,7 @@ if __name__ == "__main__":
         # quand _stop_event a été set par Ctrl+C. Le finally restaure stdout
         # avant que Python imprime un message synthétique.
         _historique_fin_crash()   # marque l'entrée 'en cours' comme 'ko'
-        print("\n\n  Traitement interrompu par l'utilisateur.", flush=True)
+        print("\n\n  Processing interrupted by the user.", flush=True)
         sys.exit(130)
     except SystemExit as _e_sysexit:
         # sys.exit() avec code != 0 = échec → marquer l'entrée 'en cours' 'ko'.
