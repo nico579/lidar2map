@@ -7190,7 +7190,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -9268,7 +9268,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -10889,7 +10889,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.1 (2026-06) — multi-provider")
+                        version="lidar2map 1.5.2 (2026-06) — multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
@@ -12338,50 +12338,50 @@ def lancer_gui():
             # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
             # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
             if cfg.get("lidar_apikey"):
-                cmd += ["--apikey", cfg["lidar_apikey"]]
+                cmd += ["--api-key", cfg["lidar_apikey"]]
 
             # Zone (pas pour fusion / découpe)
             if t != "fusion" and t != "decoupe":
                 mode = cfg.get("mode", "ville")
                 if mode == "ville"  and cfg.get("ville"):
-                    cmd += ["--zone-ville", cfg["ville"]]
+                    cmd += ["--zone-city", cfg["ville"]]
                 elif mode == "gps"  and cfg.get("gps"):
                     cmd += ["--zone-gps", cfg["gps"]]
                 elif mode == "bbox" and cfg.get("bbox"):
                     cmd += ["--zone-bbox", cfg["bbox"]]
                 elif mode == "dep"  and cfg.get("dep"):
-                    cmd += ["--zone-departement", cfg["dep"]]
+                    cmd += ["--zone-department", cfg["dep"]]
                 elif mode == "region" and cfg.get("region"):
                     cmd += ["--zone-region", cfg["region"]]
                 if cfg.get("rayon") is not None and cfg["rayon"] != "":
-                    cmd += ["--zone-rayon", str(cfg["rayon"])]
+                    cmd += ["--zone-radius", str(cfg["rayon"])]
                 if cfg.get("nom"):
-                    cmd += ["--zone-nom", cfg["nom"]]
+                    cmd += ["--zone-name", cfg["nom"]]
                 if cfg.get("dossier"):
-                    cmd += ["--dossier", cfg["dossier"]]
+                    cmd += ["--output-dir", cfg["dossier"]]
 
             # ── LiDAR ────────────────────────────────────────────────────
             if t == "lidar":
-                cmd.append("--ignlidar")
-                if cfg.get("tel"):      cmd.append("--telechargement")
-                if cfg.get("comp"):     cmd.append("--telechargement-compresser")
-                if cfg.get("ecraser_tel"): cmd.append("--telechargement-ecraser")
+                cmd.append("--lidar")
+                if cfg.get("tel"):      cmd.append("--download")
+                if cfg.get("comp"):     cmd.append("--download-compress")
+                if cfg.get("ecraser_tel"): cmd.append("--download-overwrite")
                 if cfg.get("dossier_dalles"):
-                    cmd += ["--dossier-dalles", cfg["dossier_dalles"]]
+                    cmd += ["--tiles-dir", cfg["dossier_dalles"]]
                 if cfg.get("workers_l"):
                     cmd += ["--workers", str(cfg["workers_l"])]
                 if cfg.get("no_omb"):
                     ombs = cfg.get("ombrages", [])
-                    if ombs: cmd += ["--ombrages"] + ombs
+                    if ombs: cmd += ["--shadings"] + ombs
                     if cfg.get("elevation"):
-                        cmd += ["--ombrages-elevation", str(cfg["elevation"])]
+                        cmd += ["--shading-elevation", str(cfg["elevation"])]
                     if cfg.get("svf_conv"):
                         cmd += ["--svf-conv", str(cfg["svf_conv"])]
                     if cfg.get("svf_dist"):
                         cmd += ["--svf-dist", str(cfg["svf_dist"])]
                     if cfg.get("svf_gamma"):
                         cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
-                    if cfg.get("ecraser_omb"): cmd.append("--ombrages-ecraser")
+                    if cfg.get("ecraser_omb"): cmd.append("--shadings-overwrite")
                     # BooleanOptionalAction : émettre explicitement on/off
                     cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
                 fmts = []
@@ -12389,94 +12389,94 @@ def lancer_gui():
                 if cfg.get("rmap"):      fmts.append("rmap")
                 if cfg.get("sqlitedb"):  fmts.append("sqlitedb")
                 if fmts:
-                    cmd += ["--formats-fichier"] + fmts
+                    cmd += ["--file-formats"] + fmts
                     if cfg.get("zoom_min_l"): cmd += ["--zoom-min", str(cfg["zoom_min_l"])]
                     if cfg.get("zoom_max_l"): cmd += ["--zoom-max", str(cfg["zoom_max_l"])]
                     if cfg.get("fmt_l") and cfg["fmt_l"] != "auto":
-                        cmd += ["--formats-image", cfg["fmt_l"]]
-                    if cfg.get("qualite_l"): cmd += ["--qualite-image", str(cfg["qualite_l"])]
-                    if cfg.get("ecraser_mbt"): cmd.append("--tuiles-ecraser")
+                        cmd += ["--image-format", cfg["fmt_l"]]
+                    if cfg.get("qualite_l"): cmd += ["--image-quality", str(cfg["qualite_l"])]
+                    if cfg.get("ecraser_mbt"): cmd.append("--tiles-overwrite")
                     _cols = cfg.get("cols_decoupe", 1) or 1
                     _rows = cfg.get("rows_decoupe", 1) or 1
                     if _cols > 1 and _rows > 1:
-                        cmd += ["--cols-decoupe", str(_cols),
-                                "--rows-decoupe", str(_rows)]
+                        cmd += ["--split-cols", str(_cols),
+                                "--split-rows", str(_rows)]
                     elif cfg.get("rayon_decoupe_l", 0) > 0:
-                        cmd += ["--rayon-decoupe", str(cfg["rayon_decoupe_l"])]
-                    if cfg.get("nettoyage"): cmd.append("--nettoyage")
-                if cfg.get("purger_inv"):  cmd.append("--dalles-purger-invalides")
-                if cfg.get("purger_zone"): cmd.append("--dalles-purger-hors-zone")
+                        cmd += ["--split-radius", str(cfg["rayon_decoupe_l"])]
+                    if cfg.get("nettoyage"): cmd.append("--cleanup")
+                if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
+                if cfg.get("purger_zone"): cmd.append("--tiles-purge-out-of-zone")
 
             # ── IGN Raster ───────────────────────────────────────────────
             elif t == "scan":
-                cmd.append("--ignraster")
+                cmd.append("--raster")
                 couche = cfg.get("couche", "scan25")
-                cmd += ["--couche", couche]
-                if cfg.get("apikey"): cmd += ["--apikey", cfg["apikey"]]
+                cmd += ["--layer", couche]
+                if cfg.get("apikey"): cmd += ["--api-key", cfg["apikey"]]
                 if cfg.get("tel_s"):
                     if cfg.get("workers_s"):
                         cmd += ["--workers", str(cfg["workers_s"])]
-                    if cfg.get("ecraser_tel_s"): cmd.append("--telechargement-ecraser")
+                    if cfg.get("ecraser_tel_s"): cmd.append("--download-overwrite")
                 if cfg.get("tuiles_s"):
                     fmts = []
                     if cfg.get("mbtiles_s"): fmts.append("mbtiles")
                     if cfg.get("rmap_s"):    fmts.append("rmap")
                     if cfg.get("sqlitedb_s"):fmts.append("sqlitedb")
-                    if fmts: cmd += ["--formats-fichier"] + fmts
+                    if fmts: cmd += ["--file-formats"] + fmts
                     cmd += ["--zoom-min", str(cfg.get("zoom_min_s", 12)),
                             "--zoom-max", str(cfg.get("zoom_max_s", 16))]
                     if cfg.get("fmt_s") and cfg["fmt_s"] != "auto":
-                        cmd += ["--formats-image", cfg["fmt_s"]]
+                        cmd += ["--image-format", cfg["fmt_s"]]
                     if cfg.get("qualite_s"):
-                        cmd += ["--qualite-image", str(cfg["qualite_s"])]
-                    if cfg.get("ecraser_tuil_s"): cmd.append("--tuiles-ecraser")
+                        cmd += ["--image-quality", str(cfg["qualite_s"])]
+                    if cfg.get("ecraser_tuil_s"): cmd.append("--tiles-overwrite")
                     _cols = cfg.get("cols_decoupe_s", 0) or 0
                     _rows = cfg.get("rows_decoupe_s", 0) or 0
                     if _cols > 0 and _rows > 0:
-                        cmd += ["--cols-decoupe", str(_cols),
-                                "--rows-decoupe", str(_rows)]
+                        cmd += ["--split-cols", str(_cols),
+                                "--split-rows", str(_rows)]
                     elif cfg.get("rayon_decoupe_s", 0) > 0:
-                        cmd += ["--rayon-decoupe", str(cfg["rayon_decoupe_s"])]
-                    if cfg.get("nettoyage"): cmd.append("--nettoyage")
+                        cmd += ["--split-radius", str(cfg["rayon_decoupe_s"])]
+                    if cfg.get("nettoyage"): cmd.append("--cleanup")
 
             # ── OSM ──────────────────────────────────────────────────────
             elif t == "osm":
                 cmd.append("--osm")
                 tags = cfg.get("osm_tags_sel", [])
-                if tags: cmd += ["--couche"] + tags
+                if tags: cmd += ["--layer"] + tags
                 if cfg.get("tel_osm"):
                     if cfg.get("workers_osm", 4) != 4: cmd += ["--workers", str(cfg["workers_osm"])]
-                    if cfg.get("ecraser_tel_osm"): cmd.append("--telechargement-ecraser")
+                    if cfg.get("ecraser_tel_osm"): cmd.append("--download-overwrite")
                 if cfg.get("tuiles_osm"):
                     fmts = []
                     if cfg.get("map"):        fmts.append("map")
                     if cfg.get("osm_geojson"):     fmts.append("gz")
                     if cfg.get("osm_geojson_raw"): fmts.append("geojson")
-                    if fmts: cmd += ["--formats-fichier"] + fmts
-                    if cfg.get("ecraser_tuil_osm"): cmd.append("--tuiles-ecraser")
+                    if fmts: cmd += ["--file-formats"] + fmts
+                    if cfg.get("ecraser_tuil_osm"): cmd.append("--tiles-overwrite")
 
             # ── IGN Vectoriel ─────────────────────────────────────────────
             elif t == "vecteur":
-                cmd.append("--ignvecteur")
+                cmd.append("--vector")
                 couches = cfg.get("wfs_couches_sel", [])
-                if couches: cmd += ["--couche"] + couches
+                if couches: cmd += ["--layer"] + couches
                 if cfg.get("tel_v"):
                     cmd += ["--workers", str(cfg.get("workers_v", 4))]
-                    if cfg.get("ecraser_tel_v"): cmd.append("--telechargement-ecraser")
+                    if cfg.get("ecraser_tel_v"): cmd.append("--download-overwrite")
                 fmts = []
                 if cfg.get("fusion_gz", True):  fmts.append("gz")
                 if cfg.get("fusion_gz_raw"):     fmts.append("geojson")
                 if not fmts: fmts = ["gz"]  # défaut si rien coché
                 if cfg.get("tuiles_v"): fmts.append("map")
-                cmd += ["--formats-fichier"] + fmts
+                cmd += ["--file-formats"] + fmts
                 if cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
-                    cmd.append("--tuiles-ecraser")
+                    cmd.append("--tiles-overwrite")
                 if cfg.get("tuiles_v") and cfg.get("simplif_v"):
-                    cmd += ["--simplification-vecteur", str(cfg["simplif_v"])]
+                    cmd += ["--vector-simplify", str(cfg["simplif_v"])]
 
             # ── Fusion ────────────────────────────────────────────────────
             elif t == "fusion":
-                cmd.append("--fusionner")
+                cmd.append("--merge")
                 fichiers = cfg.get("fusion_fichiers", [])
                 if fichiers: cmd += ["--source"] + fichiers
                 nom = cfg.get("nom", "fusion") or "fusion"
@@ -12485,35 +12485,35 @@ def lancer_gui():
                 # Dossier de sortie automatique : <Projets>/<nom>/fusion
                 base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
                 sortie_dir = base / nom / "fusion"
-                cmd += ["--sortie", str(sortie_dir / f"{nom}_fusion{ext}")]
+                cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
                 fmts = []
                 if cfg.get("fusion_gz2", True):   fmts.append("gz")
                 if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
                 if cfg.get("fusion_map"):          fmts.append("map")
                 if not fmts: fmts = ["gz"]
-                cmd += ["--formats-fichier"] + fmts
+                cmd += ["--file-formats"] + fmts
                 if cfg.get("fusion_map") and cfg.get("simplif_fusion"):
-                    cmd += ["--simplification-vecteur", str(cfg["simplif_fusion"])]
+                    cmd += ["--vector-simplify", str(cfg["simplif_fusion"])]
 
             # ── Découpage raster (à posteriori) ──────────────────────────
             elif t == "decoupe":
-                cmd.append("--decouper")
+                cmd.append("--split")
                 src_d = cfg.get("source_decoupe", "")
                 if src_d: cmd += ["--source", src_d]
                 if cfg.get("cols_decoupe_d", 0) > 0 and cfg.get("rows_decoupe_d", 0) > 0:
                     cmd += ["--cols", str(cfg["cols_decoupe_d"]),
                             "--rows", str(cfg["rows_decoupe_d"])]
                 elif cfg.get("rayon_decoupe_d", 0) > 0:
-                    cmd += ["--rayon-decoupe", str(cfg["rayon_decoupe_d"])]
+                    cmd += ["--split-radius", str(cfg["rayon_decoupe_d"])]
                 fmts_d = []
                 if cfg.get("mbtiles_d"):  fmts_d.append("mbtiles")
                 if cfg.get("rmap_d"):     fmts_d.append("rmap")
                 if cfg.get("sqlitedb_d"): fmts_d.append("sqlitedb")
-                if fmts_d: cmd += ["--formats-fichier"] + fmts_d
-                if cfg.get("ecraser_d"):  cmd.append("--tuiles-ecraser")
+                if fmts_d: cmd += ["--file-formats"] + fmts_d
+                if cfg.get("ecraser_d"):  cmd.append("--tiles-overwrite")
 
 
-            cmd.append("--oui")
+            cmd.append("--yes")
             return cmd
 
         # ── Lancement ────────────────────────────────────────────────────
