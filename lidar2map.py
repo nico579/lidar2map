@@ -7155,166 +7155,172 @@ def main():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Exemples :
+Examples:
   python lidar2map.py
-  python lidar2map.py --ignlidar --zone-ville gareoult --telechargement --ombrages multi slope --mbtiles --oui
-  python lidar2map.py --ignlidar --zone-departement 83 --telechargement --ombrages multi --mbtiles --oui
-  python lidar2map.py --osm --zone-ville gareoult --oui
+  python lidar2map.py --lidar --zone-city gareoult --download --shadings multi slope --file-formats mbtiles --yes
+  python lidar2map.py --lidar --zone-department 83 --download --shadings multi --file-formats mbtiles --yes
+  python lidar2map.py --osm --zone-city gareoult --yes
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.2.0 (2026-05) — multi-provider")
+                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
-                        help="Mode LiDAR MNT IGN")
+                        help="IGN LiDAR DEM mode")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
     grp_priori = parser.add_argument_group(
-        "Découpage à priori — --ignlidar uniquement",
-        "Traitement séquentiel par morceaux avec reprise automatique (manifeste.json).\n"
-        "Les même paramètres contrôlent aussi le découpage des fichiers de sortie.")
-    grp_priori.add_argument("--cols-decoupe", type=int, default=0, metavar="N",
+        "A priori splitting — --lidar only",
+        "Sequential chunk processing with automatic resume (manifeste.json).\n"
+        "The same parameters also control the splitting of output files.")
+    grp_priori.add_argument("--split-cols", "--cols-decoupe", type=int, default=0, metavar="N",
                             dest="cols_decoupe",
-                            help="Nombre de colonnes de la grille (Est-Ouest).")
-    grp_priori.add_argument("--rows-decoupe", type=int, default=0, metavar="N",
+                            help="Number of grid columns (East-West).")
+    grp_priori.add_argument("--split-rows", "--rows-decoupe", type=int, default=0, metavar="N",
                             dest="rows_decoupe",
-                            help="Nombre de lignes de la grille (Nord-Sud).")
-    grp_priori.add_argument("--rayon-decoupe", type=float, default=0.0, metavar="KM",
+                            help="Number of grid rows (North-South).")
+    grp_priori.add_argument("--split-radius", "--rayon-decoupe", type=float, default=0.0, metavar="KM",
                             dest="rayon_decoupe",
-                            help="Alternative : découpe en carrés de ~KM km.")
-    grp_priori.add_argument("--nettoyage", action="store_true",
-                            help="Supprimer dalles + TIF intermédiaires après chaque morceau. "
-                                 "Indispensable pour les grandes zones (département entier).")
+                            help="Alternative: split into ~KM km squares.")
+    grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
+                            help="Delete intermediate tiles + TIFs after each chunk. "
+                                 "Essential for large areas (a whole department).")
 
     # Localisation + zone
     _ajouter_args_zone(
         parser,
         rayon_default=None,
         bbox_metavar="X1,Y1,X2,Y2",
-        bbox_help="BBox Lambert 93 en mètres ex: 880000,6210000,1080000,6360000",
+        bbox_help="Lambert 93 bbox in metres, e.g. 880000,6210000,1080000,6360000",
         avec_help_full=True,
     )
 
     # Chemins
-    parser.add_argument("--dossier", metavar="CHEMIN", default=None,
-                        help="Dossier racine de sortie (défaut: <script>/ign_lidar/). "
-                             "Peut être un disque externe.")
-    parser.add_argument("--dossier-dalles", metavar="CHEMIN", default=None,
-                        help="Dossier cache des dalles IGN (défaut: <dossier>/dalles/). "
-                             "Utile pour séparer cache et sorties sur disques différents.")
+    parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier",
+                        help="Root output folder (default: <script>/ign_lidar/). "
+                             "Can be an external drive.")
+    parser.add_argument("--tiles-dir", "--dossier-dalles", metavar="PATH", default=None, dest="dossier_dalles",
+                        help="IGN tiles cache folder (default: <output-dir>/dalles/). "
+                             "Useful to separate cache and outputs on different drives.")
 
     # Téléchargement
     parser.add_argument("--provider", default=None, metavar="CODE",
-                        help="Provider LiDAR (défaut: fr-ign). Codes disponibles : "
+                        help="LiDAR provider (default: fr-ign). Available codes: "
                              "fr-ign, nl-ahn, ch-swisstopo, no-kartverket, us-3dep. "
-                             "Voir providers/")
-    parser.add_argument("--apikey", default="", metavar="CLE",
-                        help="Clé API du provider quand requise. Pour us-3dep : "
+                             "See providers/")
+    parser.add_argument("--api-key", "--apikey", default="", metavar="KEY", dest="apikey",
+                        help="Provider API key when required. For us-3dep: "
                              "https://portal.opentopography.org/myopentopo. "
-                             "Pour IGN scan*: compte pro cartes.gouv.fr (cf. --ignraster). "
-                             "Peut aussi être définie via env IGN_APIKEY ou "
-                             "OPENTOPOGRAPHY_API_KEY selon le provider.")
+                             "For IGN scan*: cartes.gouv.fr pro account (see --raster). "
+                             "Can also be set via env IGN_APIKEY or "
+                             "OPENTOPOGRAPHY_API_KEY depending on the provider.")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
-                        help=f"Connexions parallèles (défaut: {NB_WORKERS})")
-    parser.add_argument("--telechargement-compresser", action="store_true",
-                        help="Compresser les dalles du cache (DEFLATE, ~x5)")
-    parser.add_argument("--telechargement-forcer", action="store_true",
-                        help="Re-télécharger les dalles déjà présentes")
+                        help=f"Parallel connections (default: {NB_WORKERS})")
+    parser.add_argument("--download-compress", "--telechargement-compresser", action="store_true",
+                        dest="telechargement_compresser",
+                        help="Compress cached tiles (DEFLATE, ~x5)")
+    parser.add_argument("--download-force", "--telechargement-forcer", action="store_true",
+                        dest="telechargement_forcer",
+                        help="Re-download tiles already present")
 
     # Ombrages
-    parser.add_argument("--ombrages", metavar="TYPE", nargs="+",
+    parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
                         choices=["315", "045", "135", "225", "multi", "slope",
                                  "svf", "lrm", "rrim", "tous", "aucun"],
                         help=(
-                            "Ombrages à générer (défaut: interactif). "
-                            "Valeurs : 315 045 135 225 multi slope svf lrm rrim tous aucun. "
-                            "Le SVF se paramètre via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
-                            "svf/lrm/rrim : calculés en numpy/scipy (scipy auto-installé). "
-                            "Ex: --ombrages multi slope svf rrim"
+                            "Shadings to generate (default: interactive). "
+                            "Values: 315 045 135 225 multi slope svf lrm rrim tous(all) aucun(none). "
+                            "SVF is tuned via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
+                            "svf/lrm/rrim: computed with numpy/scipy (scipy auto-installed). "
+                            "Ex: --shadings multi slope svf rrim"
                         ))
     parser.add_argument("--svf-conv", choices=["flux", "rvt"], default="flux",
                         dest="svf_conv",
-                        help=("Convention SVF : flux = cos²γ (tassé près de 1, "
-                              "contraste à l'œil) ; rvt = 1−sin γ (Kokalj/Hesse, "
-                              "standard archéo/openness). Défaut: flux."))
+                        help=("SVF convention: flux = cos²γ (compressed near 1, "
+                              "contrast to the eye); rvt = 1−sin γ (Kokalj/Hesse, "
+                              "archaeology standard/openness). Default: flux."))
     parser.add_argument("--svf-dist", type=float, default=20.0, metavar="M",
                         dest="svf_dist",
-                        help=("Rayon SVF en mètres (10–200). Défaut: 20 "
-                              "(micro-relief). 100 = enceintes/voiries."))
-    parser.add_argument("--ombrages-elevation", type=int, default=None, metavar="DEG",
-                        help=(f"Angle solaire des hillshades directionnels en degrés "
-                              f"(défaut: {ELEVATION_SOLEIL}° — archéo optimal). "
-                              f"Usage général : 45°. Archéologie : 20-30°."))
+                        help=("SVF radius in metres (10–200). Default: 20 "
+                              "(micro-relief). 100 = enclosures/roads."))
+    parser.add_argument("--shading-elevation", "--ombrages-elevation", type=int, default=None, metavar="DEG",
+                        dest="ombrages_elevation",
+                        help=(f"Sun angle of directional hillshades in degrees "
+                              f"(default: {ELEVATION_SOLEIL}°, archaeology optimal). "
+                              f"General use: 45°. Archaeology: 20-30°."))
     parser.add_argument("--svf-gamma", type=float, default=None, metavar="G",
                         dest="svf_gamma",
-                        help=(f"Gamma du SVF après stretch percentile (défaut: "
-                              f"{SVF_GAMMA}). <1 éclaircit (√), 1 = linéaire, >1 "
-                              f"assombrit. Ex: --svf-gamma 0.7 pour plus clair."))
+                        help=(f"SVF gamma after percentile stretch (default: "
+                              f"{SVF_GAMMA}). <1 lightens (√), 1 = linear, >1 "
+                              f"darkens. Ex: --svf-gamma 0.7 for lighter."))
 
     # Mode non-interactif
-    parser.add_argument("--oui", action="store_true",
-                        help="Répondre Oui à toutes les questions (non-interactif)")
-    parser.add_argument("--telechargement", action="store_true",
-                        help="Télécharger les dalles IGN manquantes.")
-    parser.add_argument("--dalles-purger-invalides", action="store_true",
-                        help="Supprimer les dalles < 2 Mo du cache (dalles en mer, erreurs partielles). "
-                             "Omettre --telechargement pour purger sans re-télécharger.")
-    parser.add_argument("--dalles-migrer", action="store_true",
-                        help="Réorganiser les dalles existantes en sous-dossiers par colonne X "
-                             "(ex: D:/Lidar/Dalles/0958/LHD_FXX_0958_....tif). "
-                             "À lancer une seule fois pour migrer l'ancienne structure à plat.")
-    parser.add_argument("--dalles-renommer", action="store_true",
-                        help="Renommer les dalles de l'ancienne convention (x2, ex: 0456_3107) "
-                             "vers la nouvelle (x1, ex: 0912_6214). A lancer une seule fois.")
-    parser.add_argument("--dalles-purger-hors-zone", action="store_true",
-                        help="Supprimer du cache les dalles hors de la zone courante (bbox/département). "
-                             "Utile pour libérer l'espace occupé par des dalles d'autres départements. "
-                             "Requiert --departement, --bbox, --ville ou --gps.")
-    parser.add_argument("--ombrages-compresser",  action="store_true", help="Compresser les ombrages bruts existants (DEFLATE)")
-    parser.add_argument("--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Écraser les dalles téléchargées existantes")
-    parser.add_argument("--ombrages-ecraser", action="store_true", dest="ombrages_ecraser",
-                        help="Écraser les ombrages existants")
+    parser.add_argument("--yes", "--oui", action="store_true", dest="oui",
+                        help="Answer Yes to all prompts (non-interactive)")
+    parser.add_argument("--download", "--telechargement", action="store_true", dest="telechargement",
+                        help="Download missing IGN tiles.")
+    parser.add_argument("--tiles-purge-invalid", "--dalles-purger-invalides", action="store_true",
+                        dest="dalles_purger_invalides",
+                        help="Delete cache tiles < 2 MB (sea tiles, partial errors). "
+                             "Omit --download to purge without re-downloading.")
+    parser.add_argument("--tiles-migrate", "--dalles-migrer", action="store_true", dest="dalles_migrer",
+                        help="Reorganise existing tiles into per-column-X subfolders "
+                             "(e.g. D:/Lidar/Dalles/0958/LHD_FXX_0958_....tif). "
+                             "Run once to migrate the old flat structure.")
+    parser.add_argument("--tiles-rename", "--dalles-renommer", action="store_true", dest="dalles_renommer",
+                        help="Rename tiles from the old convention (x2, e.g. 0456_3107) "
+                             "to the new one (x1, e.g. 0912_6214). Run once.")
+    parser.add_argument("--tiles-purge-out-of-zone", "--dalles-purger-hors-zone", action="store_true",
+                        dest="dalles_purger_hors_zone",
+                        help="Delete from cache the tiles outside the current zone (bbox/department). "
+                             "Useful to free space taken by tiles of other departments. "
+                             "Requires --zone-department, --zone-bbox, --zone-city or --zone-gps.")
+    parser.add_argument("--shadings-compress", "--ombrages-compresser",  action="store_true",
+                        dest="ombrages_compresser", help="Compress existing raw shadings (DEFLATE)")
+    parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
+                        help="Overwrite existing downloaded tiles")
+    parser.add_argument("--shadings-overwrite", "--ombrages-ecraser", action="store_true", dest="ombrages_ecraser",
+                        help="Overwrite existing shadings")
     parser.add_argument("--svf-sweep", action=argparse.BooleanOptionalAction,
                         default=True, dest="sweep_horizon",
-                        help="Kernel SVF sweep-horizon avec running max sur deque "
-                             "(upper convex hull). Complexité O(W·H·N) au lieu de "
-                             "O(W·H·N·max_r). Speedup ~×5-15 pour SVF20m, ~×30-50 "
-                             "pour SVF100m, plusieurs centaines pour grands rayons. "
-                             "Léger aliasing NN aux faibles gradients, imperceptible "
-                             "pour structures > 1-2 px. Défaut: activé "
-                             "(--no-svf-sweep pour désactiver).")
-    parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
-                        help="Écraser les tuiles/MBTiles/.map existants")
-    parser.add_argument("--formats-fichier", nargs="+",
+                        help="SVF sweep-horizon kernel with running max on a deque "
+                             "(upper convex hull). O(W·H·N) complexity instead of "
+                             "O(W·H·N·max_r). Speedup ~×5-15 for SVF20m, ~×30-50 "
+                             "for SVF100m, several hundred for large radii. "
+                             "Slight NN aliasing at low gradients, imperceptible "
+                             "for structures > 1-2 px. Default: enabled "
+                             "(--no-svf-sweep to disable).")
+    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
+                        help="Overwrite existing tiles/MBTiles/.map")
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["mbtiles","rmap","sqlitedb","map","gz","geojson"],
                         default=[], metavar="FMT",
-                        help="Formats de fichiers de sortie : mbtiles rmap sqlitedb (multi-valeurs).")
-    parser.add_argument("--source", metavar="CHEMIN", default=None,
-                        help="Fichier source existant — mode autonome, zone non requise. "
-                             ".tif/.tiff : ombrage existant → MBTiles/RMAP "
-                             "            (CRS auto-détecté : 3857=tuilage direct, autre=warp). "
-                             ".mbtiles   : conversion → RMAP (requiert --rmap). "
-                             ".pbf       : données OSM → carte (requiert --osm). "
-                             "Ex: --source var_83_hillshade_multi.tif --zone-bbox ... --mbtiles --rmap "
+                        help="Output file formats: mbtiles rmap sqlitedb (multi-value).")
+    parser.add_argument("--source", metavar="PATH", default=None,
+                        help="Existing source file (standalone mode, no zone required). "
+                             ".tif/.tiff: existing shading → MBTiles/RMAP "
+                             "            (CRS auto-detected: 3857=direct tiling, other=warp). "
+                             ".mbtiles  : conversion → RMAP (requires rmap format). "
+                             ".pbf      : OSM data → map (requires --osm). "
+                             "Ex: --source var_83_hillshade_multi.tif --zone-bbox ... --file-formats mbtiles rmap "
                              "Ex: --source provence-alpes-cote-d-azur-latest.osm.pbf --osm")
     parser.add_argument("--zoom-min", type=int, default=13, metavar="N",
-                        help="Zoom minimum des tuiles MBTiles (défaut: 13)")
+                        help="Minimum MBTiles zoom (default: 13)")
     parser.add_argument("--zoom-max", type=int, default=18, metavar="N",
-                        help="Zoom maximum des tuiles MBTiles (défaut: 18)")
-    parser.add_argument("--qualite-image", type=int, default=85, metavar="Q",
+                        help="Maximum MBTiles zoom (default: 18)")
+    parser.add_argument("--image-quality", "--qualite-image", type=int, default=85, metavar="Q",
                         dest="qualite_image",
-                        help="Qualité JPEG des images dans les tuiles (défaut: 85). "
-                             "75 = -35%% taille, quasi invisible. 60 = -55%%, léger flou.")
-    parser.add_argument("--formats-image", choices=["auto","jpeg","png"], default="auto",
+                        help="JPEG quality of tile images (default: 85). "
+                             "75 = -35%% size, almost invisible. 60 = -55%%, slight blur.")
+    parser.add_argument("--image-format", "--formats-image", choices=["auto","jpeg","png"], default="auto",
                         metavar="FMT", dest="formats_image",
-                        help="Format des images dans les tuiles : auto, jpeg ou png (défaut: auto).")
+                        help="Format of tile images: auto, jpeg or png (default: auto).")
     parser.add_argument("--osm", action="store_true",
-                        help="Générer un MBTiles vectoriel de superposition OSM "
-                             "(chemins, toponymie, hydrographie, sites historiques). "
-                             "Le PBF Geofabrik est téléchargé automatiquement si absent.")
-    parser.add_argument("--couche", metavar="TAGS", nargs="+", default=None,
-                        help="Pour --osm : tags OSM à inclure. "
-                             "Ex: --couche highway=* waterway=* natural=water")
+                        help="Generate a vector OSM overlay MBTiles "
+                             "(paths, place names, hydrography, historical sites). "
+                             "The Geofabrik PBF is downloaded automatically if absent.")
+    parser.add_argument("--layer", "--couche", metavar="TAGS", nargs="+", default=None, dest="couche",
+                        help="For --osm: OSM tags to include. "
+                             "Ex: --layer highway=* waterway=* natural=water")
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -9018,40 +9024,40 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
     """
     loc = parser.add_mutually_exclusive_group()
     if avec_help_full:
-        loc.add_argument("--zone-ville",  metavar="NOM",
-                         help="Nom de la ville (géocodage Nominatim)")
+        loc.add_argument("--zone-city", "--zone-ville",  metavar="NAME", dest="zone_ville",
+                         help="City name (Nominatim geocoding)")
         loc.add_argument("--zone-gps",    metavar="LAT,LON",
-                         help="Coordonnées GPS ex: 43.3156,6.0423")
+                         help="GPS coordinates, e.g. 43.3156,6.0423")
         loc.add_argument("--zone-bbox",   metavar=bbox_metavar,
                          help=bbox_help or "")
-        loc.add_argument("--zone-departement", metavar="NUM",
-                         help="Numéro de département ex: 83, 2A, 971. "
-                              "Récupère automatiquement la bbox depuis geo.api.gouv.fr. "
-                              "Le nom du dossier est défini automatiquement (ex: var_83).")
+        loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement",
+                         help="Department number, e.g. 83, 2A, 971. "
+                              "Automatically fetches the bbox from geo.api.gouv.fr. "
+                              "The folder name is set automatically (e.g. var_83).")
         loc.add_argument("--zone-region", metavar="SLUG",
-                         help="Région Geofabrik ex: provence-alpes-cote-d-azur. "
-                              "Traite toute la région = bbox englobante de ses départements. "
-                              "En --osm : carte régionale unique (PBF complet, sans re-clip).")
+                         help="Geofabrik region, e.g. provence-alpes-cote-d-azur. "
+                              "Processes the whole region = bounding box of its departments. "
+                              "With --osm: single regional map (full PBF, no re-clip).")
     else:
-        loc.add_argument("--zone-ville",       metavar="NOM")
+        loc.add_argument("--zone-city", "--zone-ville",       metavar="NAME", dest="zone_ville")
         loc.add_argument("--zone-gps",         metavar="LAT,LON")
         if bbox_help:
             loc.add_argument("--zone-bbox",    metavar=bbox_metavar, help=bbox_help)
         else:
             loc.add_argument("--zone-bbox",    metavar=bbox_metavar)
-        loc.add_argument("--zone-departement", metavar="NUM")
+        loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement")
         loc.add_argument("--zone-region", metavar="SLUG")
 
-    parser.add_argument("--zone-rayon", type=float, default=rayon_default,
-                        metavar="KM",
-                        help=f"Rayon en km autour du point "
-                             f"(défaut: {rayon_default if rayon_default is not None else 10})")
-    parser.add_argument("--zone-nom", metavar="NOM", default=None,
-                        help="Nom du dossier de sortie pour la zone traitée. "
-                             "Obligatoire pour --zone-gps et --zone-bbox.")
+    parser.add_argument("--zone-radius", "--zone-rayon", type=float, default=rayon_default,
+                        metavar="KM", dest="zone_rayon",
+                        help=f"Radius in km around the point "
+                             f"(default: {rayon_default if rayon_default is not None else 10})")
+    parser.add_argument("--zone-name", "--zone-nom", metavar="NAME", default=None, dest="zone_nom",
+                        help="Output folder name for the processed zone. "
+                             "Required for --zone-gps and --zone-bbox.")
     if avec_dossier:
-        parser.add_argument("--dossier", metavar="CHEMIN", default=None,
-                            help="Dossier racine de sortie.")
+        parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier",
+                            help="Root output folder.")
     return loc
 
 
@@ -9169,22 +9175,22 @@ def main_decouper():
     """
     import argparse
     parser = argparse.ArgumentParser(
-        prog="lidar2map.py --decouper",
-        description="Découpage a posteriori d'un MBTiles existant.")
-    parser.add_argument("--decouper", action="store_true")
-    parser.add_argument("--source", required=True, metavar="CHEMIN",
-                        help="Fichier .mbtiles source à découper.")
+        prog="lidar2map.py --split",
+        description="A posteriori splitting of an existing MBTiles.")
+    parser.add_argument("--split", "--decouper", action="store_true", dest="decouper")
+    parser.add_argument("--source", required=True, metavar="PATH",
+                        help="Source .mbtiles file to split.")
     parser.add_argument("--cols", type=int, default=0, metavar="N",
-                        help="Nombre de colonnes de la grille (Est-Ouest).")
+                        help="Number of grid columns (East-West).")
     parser.add_argument("--rows", type=int, default=0, metavar="N",
-                        help="Nombre de lignes de la grille (Nord-Sud).")
-    parser.add_argument("--rayon-decoupe", type=float, default=0.0, metavar="KM",
-                        dest="rayon_decoupe", help="Découpe en carrés de ~KM km.")
-    parser.add_argument("--formats-fichier", nargs="+",
+                        help="Number of grid rows (North-South).")
+    parser.add_argument("--split-radius", "--rayon-decoupe", type=float, default=0.0, metavar="KM",
+                        dest="rayon_decoupe", help="Split into ~KM km squares.")
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["mbtiles", "rmap", "sqlitedb"], default=["mbtiles"],
                         metavar="FMT")
-    parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
-    parser.add_argument("--oui", action="store_true")
+    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
+    parser.add_argument("--yes", "--oui", action="store_true", dest="oui")
     args = parser.parse_args()
     _valider_zooms(args, parser)
     _ff = args.formats_fichier
@@ -9226,87 +9232,87 @@ def main_wmts():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Exemples :
-  python lidar2map.py --ignraster --zone-ville gareoult --zoom-min 12 --zoom-max 16 --mbtiles --oui
-  python lidar2map.py --ignraster --couche ORTHOIMAGERY.ORTHOPHOTOS --zone-departement 83 --zoom-min 14 --zoom-max 17 --mbtiles --oui
-  python lidar2map.py --ignraster --couche GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2 --zone-ville gareoult --zoom-min 10 --zoom-max 16 --mbtiles --oui
-  python lidar2map.py --osm --couche "highway=* waterway=* natural=water" --zone-ville gareoult --oui
-  python lidar2map.py --ignraster --source gareoult_scan25_z12-16.mbtiles --rmap
+Examples:
+  python lidar2map.py --raster --zone-city gareoult --zoom-min 12 --zoom-max 16 --file-formats mbtiles --yes
+  python lidar2map.py --raster --layer ORTHOIMAGERY.ORTHOPHOTOS --zone-department 83 --zoom-min 14 --zoom-max 17 --file-formats mbtiles --yes
+  python lidar2map.py --raster --layer GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2 --zone-city gareoult --zoom-min 10 --zoom-max 16 --file-formats mbtiles --yes
+  python lidar2map.py --osm --layer "highway=* waterway=* natural=water" --zone-city gareoult --yes
+  python lidar2map.py --raster --source gareoult_scan25_z12-16.mbtiles --file-formats rmap
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.2.0 (2026-05) — multi-provider")
-    parser.add_argument("--ignraster", action="store_true",
-                        help="Mode raster IGN via WMTS. "
-                             "Utiliser --couche pour la couche (défaut: scan25). "
-                             "Ex: --ignraster --couche GEOGRAPHICALGRIDSYSTEMS.MAPS")
+                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
+    parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
+                        help="IGN raster mode via WMTS. "
+                             "Use --layer for the layer (default: scan25). "
+                             "Ex: --raster --layer GEOGRAPHICALGRIDSYSTEMS.MAPS")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
     grp_priori = parser.add_argument_group(
-        "Découpage à priori — --ignraster uniquement",
-        "Traitement séquentiel par morceaux avec reprise automatique (manifeste.json).\n"
-        "Les même paramètres contrôlent aussi le découpage des fichiers de sortie.")
-    grp_priori.add_argument("--cols-decoupe", type=int, default=0, metavar="N",
+        "A priori splitting — --raster only",
+        "Sequential chunk processing with automatic resume (manifeste.json).\n"
+        "The same parameters also control the splitting of output files.")
+    grp_priori.add_argument("--split-cols", "--cols-decoupe", type=int, default=0, metavar="N",
                             dest="cols_decoupe",
-                            help="Nombre de colonnes de la grille (Est-Ouest).")
-    grp_priori.add_argument("--rows-decoupe", type=int, default=0, metavar="N",
+                            help="Number of grid columns (East-West).")
+    grp_priori.add_argument("--split-rows", "--rows-decoupe", type=int, default=0, metavar="N",
                             dest="rows_decoupe",
-                            help="Nombre de lignes de la grille (Nord-Sud).")
-    grp_priori.add_argument("--rayon-decoupe", type=float, default=0.0, metavar="KM",
+                            help="Number of grid rows (North-South).")
+    grp_priori.add_argument("--split-radius", "--rayon-decoupe", type=float, default=0.0, metavar="KM",
                             dest="rayon_decoupe",
-                            help="Alternative : découpe en carrés de ~KM km.")
-    grp_priori.add_argument("--nettoyage", action="store_true",
-                            help="Supprimer dalles + TIF intermédiaires après chaque morceau. "
-                                 "Indispensable pour les grandes zones (département entier).")
+                            help="Alternative: split into ~KM km squares.")
+    grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
+                            help="Delete intermediate tiles + TIFs after each chunk. "
+                                 "Essential for large areas (a whole department).")
 
     # Zone
     _ajouter_args_zone(
         parser,
         rayon_default=10.0,
         bbox_metavar="W,S,E,N",
-        bbox_help="BBox WGS84 : lon_min,lat_min,lon_max,lat_max",
+        bbox_help="WGS84 bbox: lon_min,lat_min,lon_max,lat_max",
     )
 
     # Couche + clé
-    parser.add_argument("--couche",  default="planign",
+    parser.add_argument("--layer", "--couche",  default="planign", dest="couche",
                         choices=list(COUCHES.keys()),
-                        help="Couche WMTS (défaut: planign — public, sans clé). "
-                             "Couches pro restreintes : scan25 scan25tour scan100 scanoaci.")
-    parser.add_argument("--apikey",  default="", metavar="CLE",
-                        help="Clé API IGN pour les couches restreintes (scan25, scan100…). "
-                             "⚠ Accès professionnel uniquement (compte cartes.gouv.fr + SIRET). "
-                             "Les particuliers doivent utiliser les couches publiques (planign, ortho…). "
-                             "Peut aussi être définie via la variable d'env IGN_APIKEY.")
+                        help="WMTS layer (default: planign, public, no key). "
+                             "Restricted pro layers: scan25 scan25tour scan100 scanoaci.")
+    parser.add_argument("--api-key", "--apikey",  default="", metavar="KEY", dest="apikey",
+                        help="IGN API key for restricted layers (scan25, scan100…). "
+                             "⚠ Professional access only (cartes.gouv.fr account + SIRET). "
+                             "Individuals must use the public layers (planign, ortho…). "
+                             "Can also be set via the IGN_APIKEY env variable.")
 
     # Zooms
     parser.add_argument("--zoom-min", type=int, default=10, metavar="N")
     parser.add_argument("--zoom-max", type=int, default=16, metavar="N")
 
     # Sorties
-    parser.add_argument("--formats-fichier", nargs="+",
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["mbtiles","rmap","sqlitedb"],
                         default=[], metavar="FMT",
-                        help="Formats de fichiers de sortie : mbtiles rmap sqlitedb (multi-valeurs).")
-    parser.add_argument("--source",   metavar="CHEMIN", default=None,
-                        help="Fichier .mbtiles existant → conversion RMAP "
-                             "(mode autonome, zone non requise). Requiert --rmap. "
-                             "Ex: --source gareoult_scan25_z12-16.mbtiles --rmap")
-    parser.add_argument("--dossier",  metavar="CHEMIN", default=None,
-                        help="Dossier de sortie (défaut: ./ign_raster/)")
+                        help="Output file formats: mbtiles rmap sqlitedb (multi-value).")
+    parser.add_argument("--source",   metavar="PATH", default=None,
+                        help="Existing .mbtiles file → RMAP conversion "
+                             "(standalone mode, no zone required). Requires rmap format. "
+                             "Ex: --source gareoult_scan25_z12-16.mbtiles --file-formats rmap")
+    parser.add_argument("--output-dir", "--dossier",  metavar="PATH", default=None, dest="dossier",
+                        help="Output folder (default: ./ign_raster/)")
 
     # Comportement
     parser.add_argument("--workers",       type=int, default=NB_WORKERS, metavar="N")
-    parser.add_argument("--formats-image", choices=["auto","jpeg","png"], default="auto",
+    parser.add_argument("--image-format", "--formats-image", choices=["auto","jpeg","png"], default="auto",
                         metavar="FMT", dest="formats_image",
-                        help="Format des images dans les tuiles : auto, jpeg ou png (défaut: auto).")
-    parser.add_argument("--qualite-image", type=int, default=85, metavar="Q",
+                        help="Format of tile images: auto, jpeg or png (default: auto).")
+    parser.add_argument("--image-quality", "--qualite-image", type=int, default=85, metavar="Q",
                         dest="qualite_image",
-                        help="Qualité JPEG des images dans les tuiles (défaut: 85).")
-    parser.add_argument("--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Écraser les tuiles en cache (re-téléchargement forcé)")
-    parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
-                        help="Écraser les MBTiles existants")
-    parser.add_argument("--oui",           action="store_true")
+                        help="JPEG quality of tile images (default: 85).")
+    parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
+                        help="Overwrite cached tiles (force re-download)")
+    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
+                        help="Overwrite existing MBTiles")
+    parser.add_argument("--yes", "--oui",           action="store_true", dest="oui")
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -9566,50 +9572,68 @@ Exemples :
 # PIPELINE WFS IGN — VECTEUR (GeoJSON)
 # ============================================================
 
+# (typename WFS, label FR [GUI + logs runtime], label EN [--help CLI])
 COUCHES_WFS = {
     # ── Cadastre ──────────────────────────────────────────────────────────────
     "cadastre":        ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle",
-                        "Parcelles cadastrales (PCI)"),
+                        "Parcelles cadastrales (PCI)",
+                        "Cadastral parcels (PCI)"),
     # ── Hydrographie ──────────────────────────────────────────────────────────
     "cours_eau":       ("BDTOPO_V3:cours_d_eau",
-                        "Cours d'eau BD TOPO V3"),
+                        "Cours d'eau BD TOPO V3",
+                        "Watercourses BD TOPO V3"),
     "troncons_eau":    ("BDTOPO_V3:troncon_hydrographique",
-                        "Tronçons hydrographiques BD TOPO V3"),
+                        "Tronçons hydrographiques BD TOPO V3",
+                        "Hydrographic segments BD TOPO V3"),
     "plans_eau":       ("BDTOPO_V3:plan_d_eau",
-                        "Plans d'eau BD TOPO V3"),
+                        "Plans d'eau BD TOPO V3",
+                        "Water bodies BD TOPO V3"),
     "detail_hydro":    ("BDTOPO_V3:detail_hydrographique",
-                        "Détails hydrographiques (sources, cascades…)"),
+                        "Détails hydrographiques (sources, cascades…)",
+                        "Hydrographic details (springs, waterfalls…)"),
     # ── Bâti / structures ─────────────────────────────────────────────────────
     "batiments":       ("BDTOPO_V3:batiment",
-                        "Bâtiments BD TOPO V3"),
+                        "Bâtiments BD TOPO V3",
+                        "Buildings BD TOPO V3"),
     "constructions":   ("BDTOPO_V3:construction_surfacique",
-                        "Constructions surfaciques (murets, terrasses, enclos)"),
+                        "Constructions surfaciques (murets, terrasses, enclos)",
+                        "Surface constructions (low walls, terraces, enclosures)"),
     "cimetieres":      ("BDTOPO_V3:cimetiere",
-                        "Cimetières"),
+                        "Cimetières",
+                        "Cemeteries"),
     # ── Transport ─────────────────────────────────────────────────────────────
     "routes":          ("BDTOPO_V3:troncon_de_route",
-                        "Tronçons de routes BD TOPO V3"),
+                        "Tronçons de routes BD TOPO V3",
+                        "Road segments BD TOPO V3"),
     "chemins":         ("BDTOPO_V3:itineraire_autre",
-                        "Chemins et itinéraires anciens"),
+                        "Chemins et itinéraires anciens",
+                        "Tracks and old routes"),
     # ── Relief / orographie ───────────────────────────────────────────────────
     "lignes_orog":     ("BDTOPO_V3:ligne_orographique",
-                        "Lignes orographiques (talwegs, crêtes)"),
+                        "Lignes orographiques (talwegs, crêtes)",
+                        "Orographic lines (talwegs, ridges)"),
     "detail_orog":     ("BDTOPO_V3:detail_orographique",
-                        "Détails orographiques (rochers, grottes)"),
+                        "Détails orographiques (rochers, grottes)",
+                        "Orographic details (rocks, caves)"),
     # ── Végétation / milieu ───────────────────────────────────────────────────
     "forets":          ("BDTOPO_V3:foret_publique",
-                        "Forêts publiques"),
+                        "Forêts publiques",
+                        "Public forests"),
     "reserves":        ("BDTOPO_V3:parc_ou_reserve",
-                        "Parcs et réserves naturelles"),
+                        "Parcs et réserves naturelles",
+                        "Parks and nature reserves"),
     # ── Toponymie / lieux ─────────────────────────────────────────────────────
     "lieux_dits":      ("BDTOPO_V3:lieu_dit_non_habite",
-                        "Lieux-dits non habités (toponymie historique)"),
+                        "Lieux-dits non habités (toponymie historique)",
+                        "Uninhabited place names (historical toponymy)"),
     # ── Admin ─────────────────────────────────────────────────────────────────
     "communes":        ("BDTOPO_V3:commune",
-                        "Limites communales"),
+                        "Limites communales",
+                        "Municipal boundaries"),
     # ── Agriculture ───────────────────────────────────────────────────────────
     "rpg":             ("RPG.LATEST:parcelles_graphiques",
-                        "Registre Parcellaire Graphique (cultures)"),
+                        "Registre Parcellaire Graphique (cultures)",
+                        "Graphic Parcel Register (RPG, crops)"),
 }
 
 WFS_PAGE = 1000   # features par requête (limite serveur IGN — WFS_URL défini ligne ~1274)
@@ -10824,26 +10848,26 @@ def main_wfs():
     t_debut = time.time()
 
     parser = argparse.ArgumentParser(
-        prog="lidar2map.py --ignvecteur",
+        prog="lidar2map.py --vector",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="\n".join(
-            ["Couches disponibles :"] +
-            [f"  {k:<16} {v[1]}" for k, v in COUCHES_WFS.items()] +
+            ["Available layers:"] +
+            [f"  {k:<16} {v[2]}" for k, v in COUCHES_WFS.items()] +
             ["",
-             "Exemples :",
-             "  python lidar2map.py --ignvecteur --zone-ville gareoult --zone-rayon 5 --oui",
-             "  python lidar2map.py --ignvecteur --couche batiments routes --zone-ville gareoult --oui",
-             "  python lidar2map.py --ignvecteur --couche cadastre --zone-departement 83 --oui",
+             "Examples:",
+             "  python lidar2map.py --vector --zone-city gareoult --zone-radius 5 --yes",
+             "  python lidar2map.py --vector --layer batiments routes --zone-city gareoult --yes",
+             "  python lidar2map.py --vector --layer cadastre --zone-department 83 --yes",
             ]
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.2.0 (2026-05) — multi-provider")
-    parser.add_argument("--ignvecteur", action="store_true")
-    parser.add_argument("--couche", metavar="NOM", nargs="+", default=["cadastre"],
-                        help="Couche(s) WFS à télécharger (défaut: cadastre). "
-                             "Alias court ou typename complet. "
-                             "Plusieurs couches séparées par des espaces.")
+                        version="lidar2map 1.5.0 (2026-06) — multi-provider")
+    parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
+    parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
+                        help="WFS layer(s) to download (default: cadastre). "
+                             "Short alias or full typename. "
+                             "Multiple layers separated by spaces.")
 
     # Zone — même logique que --ignraster
     _ajouter_args_zone(
@@ -10851,26 +10875,26 @@ def main_wfs():
         rayon_default=10.0,
         bbox_metavar="W,S,E,N",
     )
-    parser.add_argument("--dossier",     metavar="CHEMIN", default=None,
-                        help="Dossier de sortie (défaut: ./ign_vecteur/)")
+    parser.add_argument("--output-dir", "--dossier",     metavar="PATH", default=None, dest="dossier",
+                        help="Output folder (default: ./ign_vecteur/)")
     parser.add_argument("--workers",  type=int, default=4, metavar="N",
-                        help="Connexions parallèles WFS (défaut: 4)")
-    parser.add_argument("--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Écraser les GeoJSON existants (re-téléchargement forcé)")
-    parser.add_argument("--formats-fichier", nargs="+",
+                        help="Parallel WFS connections (default: 4)")
+    parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
+                        help="Overwrite existing GeoJSON (force re-download)")
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["geojson","gz","map"],
                         default=["gz"], metavar="FMT",
-                        help="Formats de sortie : geojson gz map (défaut: gz). "
-                             "map génère une carte Mapsforge via osmosis.")
-    parser.add_argument("--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
-                        help="Écraser la carte .map existante")
-    parser.add_argument("--simplification-vecteur", type=float, default=None,
+                        help="Output formats: geojson gz map (default: gz). "
+                             "map generates a Mapsforge map via osmosis.")
+    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
+                        help="Overwrite existing .map")
+    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
                         metavar="M", dest="simplification_vecteur",
-                        help="Epsilon de simplification Douglas-Peucker en mètres. "
-                             "Sans ce paramètre, calculé automatiquement depuis la surface "
-                             "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, sinon→40 m).")
-    parser.add_argument("--oui",         action="store_true",
-                        help="Mode non-interactif")
+                        help="Douglas-Peucker simplification epsilon in metres. "
+                             "Without it, computed automatically from the area "
+                             "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
+    parser.add_argument("--yes", "--oui",         action="store_true", dest="oui",
+                        help="Non-interactive mode")
 
     args = parser.parse_args()
     _ff = getattr(args, "formats_fichier", ["gz"])
@@ -10884,7 +10908,8 @@ def main_wfs():
     couches_resolues = []
     for c in args.couche:
         if c in COUCHES_WFS:
-            couches_resolues.append(COUCHES_WFS[c])
+            # (typename, label FR) — desc runtime/logs en FR ; [2]=EN réservé au --help
+            couches_resolues.append((COUCHES_WFS[c][0], COUCHES_WFS[c][1]))
         else:
             # typename complet passé directement
             couches_resolues.append((c, c))
@@ -11613,35 +11638,35 @@ def main_fusionner():
 
     t_debut = time.time()
     parser = argparse.ArgumentParser(
-        prog="lidar2map.py --fusionner",
-        description="Fusionne plusieurs fichiers GeoJSON en un seul.",
+        prog="lidar2map.py --merge",
+        description="Merge several GeoJSON files into one.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Exemples :
-  python lidar2map.py --fusionner \\
+Examples:
+  python lidar2map.py --merge \\
       --source cadastre.geojson cours_eau.geojson osm_gareoult.geojson \\
-      --sortie gareoult_fusion.geojson
+      --output-file gareoult_fusion.geojson
 
-  python lidar2map.py --fusionner \\
+  python lidar2map.py --merge \\
       --source ign_vecteur/gareoult_*.geojson \\
-      --sortie gareoult_complet.geojson
+      --output-file gareoult_complet.geojson
         """
     )
-    parser.add_argument("--fusionner", action="store_true")
-    parser.add_argument("--source", nargs="+", metavar="FICHIER",
+    parser.add_argument("--merge", "--fusionner", action="store_true", dest="fusionner")
+    parser.add_argument("--source", nargs="+", metavar="FILE",
                         required=True,
-                        help="Fichiers GeoJSON à fusionner (glob accepté)")
-    parser.add_argument("--sortie", metavar="FICHIER", default=None,
-                        help="Fichier de sortie .geojson")
-    parser.add_argument("--dossier", metavar="CHEMIN", default=None)
+                        help="GeoJSON files to merge (glob accepted)")
+    parser.add_argument("--output-file", "--sortie", metavar="FILE", default=None, dest="sortie",
+                        help="Output .geojson file")
+    parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier")
     parser.add_argument("--no-gz", action="store_true",
-                        help="Sortie .geojson non compressé (défaut : .geojson.gz)")
-    parser.add_argument("--formats-fichier", nargs="+", default=["gz"],
+                        help="Uncompressed .geojson output (default: .geojson.gz)")
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", default=["gz"], dest="formats_fichier",
                         metavar="FMT", help="gz geojson map")
-    parser.add_argument("--simplification-vecteur", type=float, default=None,
+    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
                         metavar="M", dest="simplification_vecteur",
-                        help="Epsilon Douglas-Peucker en mètres (défaut: auto depuis surface).")
-    parser.add_argument("--oui", action="store_true")
+                        help="Douglas-Peucker epsilon in metres (default: auto from area).")
+    parser.add_argument("--yes", "--oui", action="store_true", dest="oui")
 
     args, _ = parser.parse_known_args()  # ignorer --zone-* et autres args globaux
 
@@ -11735,101 +11760,107 @@ def _cfg_depuis_argv() -> dict:
     """Construit le cfg JSON depuis sys.argv. Clés attendues par loadConfig() JS."""
     argv = sys.argv[1:]
 
-    def _arg(flag, default=""):
-        try: return argv[argv.index(flag) + 1]
-        except (ValueError, IndexError): return default
+    # Helpers variadiques : acceptent plusieurs orthographes du même flag
+    # (anglais canonique + alias français) et prennent la 1re présente dans argv.
+    def _arg(*flags, default=""):
+        for flag in flags:
+            try: return argv[argv.index(flag) + 1]
+            except (ValueError, IndexError): continue
+        return default
 
-    def _arg_int(flag, default=0):
-        v = _arg(flag, "")
+    def _arg_int(*flags, default=0):
+        v = _arg(*flags, default="")
         try: return int(v) if v else default
         except ValueError: return default
 
-    def _arg_float(flag, default=0.0):
-        v = _arg(flag, "")
+    def _arg_float(*flags, default=0.0):
+        v = _arg(*flags, default="")
         try: return float(v) if v else default
         except ValueError: return default
 
-    def _flag(flag): return flag in argv
+    def _flag(*flags): return any(f in argv for f in flags)
 
-    def _args_after(flag):
-        """Retourne tous les args après flag jusqu'au prochain -- ou fin."""
-        try:
-            i = argv.index(flag) + 1
-        except ValueError:
-            return []
-        result = []
-        while i < len(argv) and not argv[i].startswith("--"):
-            result.append(argv[i])
-            i += 1
-        return result
+    def _args_after(*flags):
+        """Retourne tous les args après le 1er flag présent jusqu'au prochain -- ou fin."""
+        for flag in flags:
+            try:
+                i = argv.index(flag) + 1
+            except ValueError:
+                continue
+            result = []
+            while i < len(argv) and not argv[i].startswith("--"):
+                result.append(argv[i])
+                i += 1
+            return result
+        return []
 
-    t = ("lidar"   if "--ignlidar"   in argv else
-         "scan"    if "--ignraster"  in argv else
-         "vecteur" if "--ignvecteur" in argv else
-         "osm"     if "--osm"        in argv else
-         "fusion"  if "--fusionner"  in argv else
-         "decoupe" if "--decouper"   in argv else "lidar")
+    t = ("lidar"   if _flag("--lidar", "--ignlidar")   else
+         "scan"    if _flag("--raster", "--ignraster")  else
+         "vecteur" if _flag("--vector", "--ignvecteur") else
+         "osm"     if _flag("--osm")        else
+         "fusion"  if _flag("--merge", "--fusionner")  else
+         "decoupe" if _flag("--split", "--decouper")   else "lidar")
 
-    mode = ("region" if "--zone-region"      in argv else
-            "dep"  if "--zone-departement" in argv else
-            "gps"  if "--zone-gps"         in argv else
-            "bbox" if "--zone-bbox"         in argv else "ville")
+    mode = ("region" if _flag("--zone-region")      else
+            "dep"  if _flag("--zone-department", "--zone-departement") else
+            "gps"  if _flag("--zone-gps")         else
+            "bbox" if _flag("--zone-bbox")         else "ville")
 
-    fmts = _args_after("--formats-fichier")
-    ombs = _args_after("--ombrages")
+    fmts = _args_after("--file-formats", "--formats-fichier")
+    ombs = _args_after("--shadings", "--ombrages")
 
     return {
         # Zone
         "type":    t,
         "mode":    mode,
-        "nom":     _arg("--zone-nom"),
-        "dossier": _arg("--dossier"),
-        "dep":     _arg("--zone-departement"),
+        "nom":     _arg("--zone-name", "--zone-nom"),
+        "dossier": _arg("--output-dir", "--dossier"),
+        "dep":     _arg("--zone-department", "--zone-departement"),
         "region":  _arg("--zone-region"),
-        "ville":   _arg("--zone-ville"),
+        "ville":   _arg("--zone-city", "--zone-ville"),
         "gps":     _arg("--zone-gps"),
         "bbox":    _arg("--zone-bbox"),
-        "rayon":   _arg_float("--zone-rayon", 10.0),
+        "rayon":   _arg_float("--zone-radius", "--zone-rayon", default=10.0),
         # LiDAR
-        "tel":           _flag("--telechargement"),
-        "comp":          _flag("--telechargement-compresser"),
-        "ecraser_tel":   _flag("--telechargement-ecraser"),
-        "workers_l":     _arg_int("--workers", 8),
-        "dossier_dalles":_arg("--dossier-dalles"),
-        "no_omb":        bool(ombs) or _flag("--ombrages"),
+        "tel":           _flag("--download", "--telechargement"),
+        "comp":          _flag("--download-compress", "--telechargement-compresser"),
+        "ecraser_tel":   _flag("--download-overwrite", "--telechargement-ecraser"),
+        "workers_l":     _arg_int("--workers", default=8),
+        "dossier_dalles":_arg("--tiles-dir", "--dossier-dalles"),
+        "no_omb":        bool(ombs) or _flag("--shadings", "--ombrages"),
         "ombrages":      ombs,
-        "elevation":     _arg_int("--ombrages-elevation", 25),
+        "elevation":     _arg_int("--shading-elevation", "--ombrages-elevation", default=25),
         "svf_conv":      _arg("--svf-conv") or "flux",
-        "svf_dist":      _arg_float("--svf-dist", 20.0),
-        "svf_gamma":     _arg_float("--svf-gamma", SVF_GAMMA),
+        "svf_dist":      _arg_float("--svf-dist", default=20.0),
+        "svf_gamma":     _arg_float("--svf-gamma", default=SVF_GAMMA),
         "sweep_horizon": True,  # coché par défaut (sweep-horizon SVF)
-        "ecraser_omb":   _flag("--ombrages-ecraser"),
+        "ecraser_omb":   _flag("--shadings-overwrite", "--ombrages-ecraser"),
         "mbtiles_l":     "mbtiles" in fmts,
         "rmap":          "rmap"    in fmts,
         "sqlitedb":      "sqlitedb" in fmts,
-        "zoom_min_l":    _arg_int("--zoom-min", 8),
-        "zoom_max_l":    _arg_int("--zoom-max", 18),
-        "qualite_l":     _arg_int("--qualite-image", 85),
-        "ecraser_mbt":   _flag("--tuiles-ecraser"),
-        "cols_decoupe":  _arg_int("--cols-decoupe", 1),
-        "rows_decoupe":  _arg_int("--rows-decoupe", 1),
-        "rayon_decoupe_l": _arg_float("--rayon-decoupe", 0.0),
-        "nettoyage":     _flag("--nettoyage"),
+        "zoom_min_l":    _arg_int("--zoom-min", default=8),
+        "zoom_max_l":    _arg_int("--zoom-max", default=18),
+        "qualite_l":     _arg_int("--image-quality", "--qualite-image", default=85),
+        "ecraser_mbt":   _flag("--tiles-overwrite", "--tuiles-ecraser"),
+        "cols_decoupe":  _arg_int("--split-cols", "--cols-decoupe", default=1),
+        "rows_decoupe":  _arg_int("--split-rows", "--rows-decoupe", default=1),
+        "rayon_decoupe_l": _arg_float("--split-radius", "--rayon-decoupe", default=0.0),
+        "nettoyage":     _flag("--cleanup", "--nettoyage"),
         # IGN Raster
-        "couche":        _arg("--couche"),
-        "zoom_min_s":    _arg_int("--zoom-min", 12),
-        "zoom_max_s":    _arg_int("--zoom-max", 16),
+        "couche":        _arg("--layer", "--couche"),
+        "zoom_min_s":    _arg_int("--zoom-min", default=12),
+        "zoom_max_s":    _arg_int("--zoom-max", default=16),
         "mbtiles_s":     "mbtiles" in fmts,
         "rmap_s":        "rmap"    in fmts,
         "sqlitedb_s":    "sqlitedb" in fmts,
-        "qualite_s":     _arg_int("--qualite-image", 85),
-        "workers_s":     _arg_int("--workers", 8),
+        "qualite_s":     _arg_int("--image-quality", "--qualite-image", default=85),
+        "workers_s":     _arg_int("--workers", default=8),
         # OSM
-        "osm_tags_sel":  _args_after("--couche") if t == "osm" else [],
-        "workers_osm":   _arg_int("--workers", 4),
+        "osm_tags_sel":  _args_after("--layer", "--couche") if t == "osm" else [],
+        "workers_osm":   _arg_int("--workers", default=4),
         # IGN Vectoriel
-        "wfs_couches_sel": _args_after("--couche") if t == "vecteur" else [],
-        "workers_v":     _arg_int("--workers", 4),
+        "wfs_couches_sel": _args_after("--layer", "--couche") if t == "vecteur" else [],
+        "workers_v":     _arg_int("--workers", default=4),
         # Argv complet pour debug
         "argv":    " ".join(argv),
     }
@@ -14972,33 +15003,34 @@ if __name__ == "__main__":
             # Note : `argparse` avec parse_known_args() consomme uniquement le
             # mode et laisse intact le reste de sys.argv pour le sub-main.
             _DISPATCH = {
-                "decouper":   main_decouper,
-                "ignraster":  main_wmts,
-                "ignvecteur": main_wfs,
-                "fusionner":  main_fusionner,
-                # Tous les autres modes (--ignlidar, --osm, ou cumulés) tombent
-                # sur main() qui sait les gérer.
+                # mode_key: (sous-main, [flags reconnus : anglais canonique + alias FR])
+                "decouper":   (main_decouper,  ["--split", "--decouper"]),
+                "ignraster":  (main_wmts,      ["--raster", "--ignraster"]),
+                "ignvecteur": (main_wfs,       ["--vector", "--ignvecteur"]),
+                "fusionner":  (main_fusionner, ["--merge", "--fusionner"]),
+                # Tous les autres modes (--lidar/--ignlidar, --osm, ou cumulés)
+                # tombent sur main() qui sait les gérer.
             }
             _pre = argparse.ArgumentParser(add_help=False)
-            for _flag in _DISPATCH:
-                _pre.add_argument(f"--{_flag}", action="store_true",
-                                  dest=f"_mode_{_flag}")
+            for _key, (_fn, _flags) in _DISPATCH.items():
+                _pre.add_argument(*_flags, action="store_true",
+                                  dest=f"_mode_{_key}")
             _ns_pre, _ = _pre.parse_known_args()
 
             def _dispatch():
                 # Priorité ordonnée : on prend le 1er mode trouvé dans la liste.
                 # Cet ordre matche celui de l'ancien dispatcher (decouper avant
                 # ignraster, etc.) pour préserver le comportement.
-                for _flag, _fn in _DISPATCH.items():
-                    if getattr(_ns_pre, f"_mode_{_flag}", False):
+                for _key, (_fn, _flags) in _DISPATCH.items():
+                    if getattr(_ns_pre, f"_mode_{_key}", False):
                         return _fn()
-                return main()    # --ignlidar / --osm / par défaut
+                return main()    # --lidar / --osm / par défaut
 
             # ── Résolution multi-département ─────────────────────────────────
             # --zone-departement accepte : 83 | 30,35,75 | 1-10 | 1-3,75,83
             _dep_idx = None
             for _i, _a in enumerate(sys.argv):
-                if _a == "--zone-departement" and _i + 1 < len(sys.argv):
+                if _a in ("--zone-departement", "--zone-department") and _i + 1 < len(sys.argv):
                     _dep_idx = _i + 1
                     break
 
