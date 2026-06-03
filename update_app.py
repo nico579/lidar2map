@@ -22,7 +22,7 @@
 #      --dry-run : exécute jusqu'au patch local (cache dans dist/release/)
 #      sans appeler DELETE/UPLOAD/PATCH sur GitHub.
 
-import sys, zipfile, hashlib, platform, os, io, json, tarfile, re
+import sys, zipfile, hashlib, platform, os, io, json, tarfile, re, time
 import urllib.request, urllib.error, subprocess
 from pathlib import Path
 
@@ -227,14 +227,38 @@ def _gh_api(method, url, token, *, json_body=None, binary=None, content_type=Non
             return e.code, {"raw": body.decode("utf-8", "replace")}
 
 
-def _download_with_progress(url, dest):
+def _download_with_progress(url, dest, tentatives=3):
+    """Télécharge url → dest avec barre de progression, robuste aux flakes
+    réseau. urlretrieve lève ContentTooShortError quand le download est
+    incomplet (Content-Length non atteint) ; sur les runners GitHub ce flake
+    arrive sur les gros assets (~485 Mo coupés en route) et faisait échouer
+    TOUT le patch release. On re-tente from scratch (le partiel est purgé) avec
+    un backoff borné. Les erreurs HTTP définitives (404/403) ne sont PAS
+    retentées."""
     print(f"  ↓ {url}")
     def prog(n, bs, total):
         if total > 0:
             pct = min(n * bs * 100 // total, 100)
             print(f"  {pct:3d}%", end="\r", flush=True)
-    urllib.request.urlretrieve(url, dest, reporthook=prog)
-    print("  100%")
+    for essai in range(1, tentatives + 1):
+        try:
+            urllib.request.urlretrieve(url, dest, reporthook=prog)
+            print("  100%")
+            return
+        except urllib.error.HTTPError:
+            raise   # 404/403/… : définitif, inutile de retenter
+        except (urllib.error.URLError, urllib.error.ContentTooShortError,
+                TimeoutError, ConnectionError) as e:
+            try:
+                os.remove(dest)          # purge le fichier partiel avant retry
+            except OSError:
+                pass
+            if essai >= tentatives:
+                raise
+            attente = min(5 * essai, 30)
+            print(f"\n  ⚠ Téléchargement interrompu ({type(e).__name__}) — "
+                  f"essai {essai}/{tentatives}, nouvelle tentative dans {attente}s...")
+            time.sleep(attente)
 
 
 # ── Mode --release ───────────────────────────────────────────────────────────
