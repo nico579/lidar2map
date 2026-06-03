@@ -2030,6 +2030,24 @@ class Manifeste:
     def fichiers_morceau(self, cle: str) -> list:
         return list(self._data["fichiers"].get(cle, []))
 
+    def eta_global(self, n_total: int):
+        """ETA *grossier* du run, à partir des duree_s déjà stockées par
+        morceau (fin_morceau). Retourne (nb_termine, eta_s) ; eta_s vaut None
+        tant qu'aucun morceau n'est terminé (pas de base de calcul).
+
+        Médiane × restants, PAS moyenne : les durées sont très hétérogènes
+        (chunk en mer ≈ 0, chunk en relief dense très cher), une moyenne plate
+        donnerait un ETA sauvage en début de run. La médiane absorbe ces
+        outliers. Reste un ordre de grandeur — étiqueté 'coarse' à l'affichage."""
+        durees = sorted(m["duree_s"] for m in self._data["morceaux"].values()
+                        if m.get("termine") and isinstance(m.get("duree_s"), (int, float)))
+        if not durees:
+            return 0, None
+        n = len(durees)
+        med = durees[n // 2] if n % 2 else (durees[n // 2 - 1] + durees[n // 2]) / 2
+        restants = max(0, n_total - n)
+        return n, int(med * restants)
+
     _warned_save_failed = False    # class-level : un seul warn par run
 
     def _sauver(self):
@@ -2121,6 +2139,50 @@ def _supprimer_fichiers(fichiers: list):
             pass
     if suppr:
         print(f"  Cleanup: {suppr} intermediate file(s) removed")
+
+
+# Code de sortie dédié au garde-fou disque (--min-free-gb). Permet à un
+# orchestrateur multi-département (boucle shell « lance et oublie ») de
+# distinguer un arrêt PROPRE « disque bas, relançable » d'une vraie erreur de
+# traitement (exit 1). Convention proche de rsync/borg qui réservent des codes
+# par catégorie d'arrêt.
+EXIT_DISK_LOW = 3
+
+
+def _espace_libre_go(chemin) -> float:
+    """Espace libre (Go) sur le volume de `chemin`. Sonde le premier parent
+    existant — au tout premier chunk le dossier cible n'existe pas encore.
+    Retourne inf si la sonde échoue : un échec de sonde ne doit JAMAIS bloquer
+    le run (le garde-fou est défensif, pas un point de défaillance)."""
+    p = Path(chemin)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    try:
+        return shutil.disk_usage(p).free / (1024 ** 3)
+    except OSError:
+        return float("inf")
+
+
+def _garde_disque(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int):
+    """Garde-fou disque proactif (--min-free-gb), appelé AVANT de démarrer un
+    chunk (avant debut_morceau / téléchargement). Si l'espace libre passe sous
+    le seuil, arrêt propre via sys.exit(EXIT_DISK_LOW).
+
+    Invariant de reprise : le chunk n'ayant pas été démarré (aucun
+    debut_morceau, aucun fichier enregistré), une relance le rejoue
+    proprement. C'est pour ça que le check est ici et pas au milieu du chunk.
+
+    seuil_go <= 0 : désactivé (défaut). Le seuil est fourni par l'opérateur,
+    pas auto-calculé : il doit couvrir le pic d'UN chunk (intermédiaires +
+    pyramide de tuiles, dominé par le PNG SVF), cf. aide CLI."""
+    if seuil_go <= 0:
+        return
+    libre = _espace_libre_go(chemin)
+    if libre < seuil_go:
+        print(f"\n  ⚠ Disk space low: {libre:.1f} GB free < {seuil_go:.0f} GB threshold.")
+        print(f"  Stopping cleanly before chunk {cle} — {nb_ok}/{n_total} chunks done. "
+              f"Free space and relaunch to resume.")
+        sys.exit(EXIT_DISK_LOW)
 
 # ============================================================
 # CONFIGURATION
@@ -7211,6 +7273,12 @@ Examples:
     grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
                             help="Delete intermediate tiles + TIFs after each chunk. "
                                  "Essential for large areas (a whole department).")
+    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=float, default=0.0, metavar="GB",
+                            dest="min_free_gb",
+                            help="Stop cleanly before a chunk if free disk space drops below GB "
+                                 "(0 = disabled). Set it ABOVE one chunk's peak footprint "
+                                 "(intermediates + tile pyramid). Exits with code 3 so a shell "
+                                 "loop can tell a resumable disk-stop from a real error.")
 
     # Localisation + zone
     _ajouter_args_zone(
@@ -7677,6 +7745,9 @@ Examples:
                     nb_ok += 1
                     continue
 
+                _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
+                              cle, nb_ok, n_total)
+
                 surface = (bx2_z-bx1_z)/1000 * (by2_z-by1_z)/1000
                 print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
                 print(f"     BBox L93 : {bx1_z:.0f},{by1_z:.0f} → "
@@ -7688,6 +7759,10 @@ Examples:
                                         nom_z, nom_zone, manifeste, cle)
                     manifeste.fin_morceau(cle, int(time.time() - t0_z))
                     print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
+                    _n_done, _eta = manifeste.eta_global(n_total)
+                    if _eta:
+                        print(f"  [{cle}] {_n_done}/{n_total} done — "
+                              f"ETA ~{_hms(_eta)} remaining (coarse)")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
                         # Si le chunk a produit un mbtiles vide OU aucun mbtiles
@@ -7709,7 +7784,9 @@ Examples:
                     print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
                     raise
 
+            elapsed = int(time.time() - t_debut)
             print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
+            print(f"  Total time: {_hms(elapsed)}")
             return
         print("  A-priori splitting: zone too small -> single pass")
 
@@ -9291,6 +9368,12 @@ Examples:
     grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
                             help="Delete intermediate tiles + TIFs after each chunk. "
                                  "Essential for large areas (a whole department).")
+    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=float, default=0.0, metavar="GB",
+                            dest="min_free_gb",
+                            help="Stop cleanly before a chunk if free disk space drops below GB "
+                                 "(0 = disabled). Set it ABOVE one chunk's peak footprint "
+                                 "(intermediates + tile pyramid). Exits with code 3 so a shell "
+                                 "loop can tell a resumable disk-stop from a real error.")
 
     # Zone
     _ajouter_args_zone(
@@ -9439,6 +9522,9 @@ Examples:
                     nb_ok += 1
                     continue
 
+                _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
+                              cle, nb_ok, n_total)
+
                 surface_km2 = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
                               ((lat_n-lat_s)*111)
                 print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
@@ -9452,6 +9538,10 @@ Examples:
                                        apikey_requis, manifeste, cle)
                     manifeste.fin_morceau(cle, int(time.time() - t0_z))
                     print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
+                    _n_done, _eta = manifeste.eta_global(n_total)
+                    if _eta:
+                        print(f"  [{cle}] {_n_done}/{n_total} done — "
+                              f"ETA ~{_hms(_eta)} remaining (coarse)")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
                         # Cf. boucle LiDAR : si chunk vide ou aucun mbtiles, on

@@ -368,6 +368,9 @@ def main():
                         help="nouveau tag git à créer → déclenche release.yml (rebuild complet)")
     parser.add_argument("--skip-push", action="store_true",
                         help="sauter push+détection, patcher directement la release")
+    parser.add_argument("--push-only", action="store_true",
+                        help="pousser les sources sur main SANS patcher les bundles "
+                             "(itération debug/mesure : récup VM via git pull + run direct)")
     parser.add_argument("--dry-run", action="store_true",
                         help="afficher le diff sans commit ni push")
     parser.add_argument("--repo", default=REPO_DEFAULT,
@@ -381,6 +384,10 @@ def main():
         fail("--new-tag et --patch-tag sont contradictoires (rebuild vs patch existant)")
     if args.dry_run and args.skip_push:
         fail("--dry-run et --skip-push sont contradictoires")
+    if args.push_only and args.skip_push:
+        fail("--push-only et --skip-push sont contradictoires (pousser sans patcher vs patcher sans pousser)")
+    if args.push_only and args.new_tag:
+        fail("--push-only et --new-tag sont contradictoires (push seul vs rebuild via tag)")
 
     # --- Mode --skip-push : patch direct, pas de push ni de détection ---
     if args.skip_push:
@@ -414,6 +421,12 @@ def main():
     cprint("\n==> Fichiers modifiés et poussés :", "cyan")
     for c in changed:
         print(f"    {c}")
+
+    # --- Mode --push-only : sources poussées, on saute le patch des bundles ---
+    if args.push_only:
+        cprint("\n==> --push-only : sources sur main, patch des bundles sauté.", "green")
+        cprint("    Récup VM : git pull && python lidar2map.py ...", "cyan")
+        return 0
 
     # --- Phase 2 : catégorisation -> action ---
     rebuild = [c for c in changed if is_rebuild_file(c)]
