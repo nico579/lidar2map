@@ -275,7 +275,7 @@ To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR):
 - **Memory streaming**: département-scale processing without saturating RAM (ijson, rasterio windowed reads, tile-by-tile MBTiles generation).
 - **Clean cancellation**: `Ctrl+C` once → stops after the current chunk. `Ctrl+C` twice → immediate stop.
 - **Resume after interruption**: the same command resumes where it stopped, via a `.json` manifest that tracks completed chunks.
-- **Up-front splitting**: for large areas, split into an N×N grid — useful so you don't have to regenerate the whole area if something crashes.
+- **Up-front splitting**: for large areas, split into an N×N grid **or ~K km squares** (`--split-radius`, bounded chunk size — recommended at national scale) — useful so you don't have to regenerate the whole area if something crashes. Per-chunk disk cleanup (`--cleanup`) and a free-space guard (`--min-free-gb`) for very large coverage.
 - **Crash-safe history**: each run is recorded *at startup* (status "running") then finalized to "ok" or "ko". A hard crash (kill -9, power loss) leaves the entry visible in the UI — the trace is kept for debugging.
 - **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any national LiDAR source. 4 providers shipped (FR/NL/CH/NO) covering 4 distinct API paradigms (TMS PBF, JSON FeatureCollection, STAC API, ArcGIS ImageServer). Adding a 5th country = ~50-150 lines in a new provider file.
 - **Interactive GUI**: 6 tabs (LiDAR, IGN raster, IGN vector, OSM, Merge, Splitting), provider selector at the top of the form (IGN Raster/Vector tabs hidden automatically for non-FR providers), history of the last 50 commands with status badges, parameter validation, live log, error modal.
