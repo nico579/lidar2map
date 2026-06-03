@@ -7811,7 +7811,7 @@ Examples:
         if etape_cur[0] > 0:
             elap  = int(time.time() - etape_t0[0])
             cumul = int(time.time() - t_debut)
-            print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumulative)})")
+            print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumul)})")
         if _stop_event.is_set():
             raise KeyboardInterrupt("Interruption demandée — étapes restantes skipped")
         etape_cur[0] += 1
