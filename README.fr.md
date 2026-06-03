@@ -275,9 +275,33 @@ Pour ajouter un 5e pays (ex. UK Environment Agency, Espagne PNOA-LiDAR, Italie P
 - **Reprise après interruption** : la même commande reprend où elle s'est arrêtée, via un manifeste `.json` qui suit les morceaux terminés.
 - **Découpage à priori** : pour les grandes zones, découper en grille N×N **ou en carrés de ~K km** (`--split-radius`, taille de chunk bornée — recommandé à l'échelle nationale) — utile pour ne pas avoir à régénérer la zone entière en cas de plantage. Nettoyage disque par morceau (`--cleanup`) et garde-fou d'espace libre (`--min-free-gb`) pour les très grandes couvertures.
 - **Historique crash-safe** : chaque exécution est enregistrée *au démarrage* (statut "en cours") puis finalisée en "ok" ou "ko". Un crash dur (kill -9, panne) laisse l'entrée visible dans l'UI — la trace est conservée pour debug.
-- **Multi-provider LiDAR** : abstraction `providers/<code>.py` permettant de plugger n'importe quelle source LiDAR nationale. 4 providers fournis (FR/NL/CH/NO) couvrant 4 paradigmes d'API distincts (TMS PBF, JSON FeatureCollection, STAC API, ArcGIS ImageServer). Ajout d'un 5e pays = ~50-150 lignes dans un nouveau fichier provider.
+- **Multi-provider LiDAR** : abstraction `providers/<code>.py` permettant de plugger n'importe quelle source LiDAR. Providers fournis : **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavière, NRW), **AT** (Tyrol, Osttirol) — couvrant des paradigmes d'API variés (TMS PBF, JSON FeatureCollection, STAC, ArcGIS ImageServer, Metalink/`index.json`, **WCS `GetCoverage` par dalle**). Ajout d'un pays = ~100-150 lignes dans un nouveau fichier provider (voir *Couverture & sources évaluées* plus bas).
 - **GUI interactive** : 6 onglets (LiDAR, IGN raster, IGN vecteur, OSM, Fusion, Découpage), sélecteur de provider en haut du formulaire (onglets IGN Raster/Vecteur masqués automatiquement pour les providers non-FR), historique des 50 dernières commandes avec badges de statut, validation des paramètres, log live, modal d'erreur.
 - **Cartes orthophotos historiques** : combo unique pour l'archéo — SVF 2024 (LiDAR actuel) + ortho 1950 (avant déprise) → révèle les structures encore lisibles 70 ans après.
+
+## Couverture LiDAR & sources évaluées
+
+Un provider s'intègre proprement si la source expose des **tuiles déterministes**
+(URL par tuile, ~1 km) **ou un WCS** (`GetCoverage` par bbox). Les sources livrées
+en **gros blocs** (provinces, feuilles 20–50 km), par **formulaire/email**, en
+**WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS** ne collent pas
+encore au modèle streamé 1 km — il manquerait une capacité « gros bloc » (download
+d'un zip volumineux + lecture par fenêtre), pas encore implémentée.
+
+Sources évaluées **non retenues** à ce stade (documenté pour éviter de re-creuser) :
+
+| Source | Raison |
+|---|---|
+| DE — BKG DGM1 national | payant (≥ 8 000 €) |
+| DE — Vorarlberg | WMS seul (pas d'altitude brute) |
+| AT — BEV national | tuiles 50 km via portail |
+| ES — CNIG MDT02 | 2 m (trop grossier) + feuilles MTN50 (gros blocs) |
+| BE — Wallonie | 0,5 m mais blocs provinciaux ~14 Go, pas de WCS |
+| IT — Val d'Aoste / régions | formulaire de portail |
+| IT — Tyrol du Sud | 0,5 m zones bâties seulement / 2,5 m ailleurs |
+| SI — Slovénie (ARSO) | URLs propres mais ASC sans CRS + index par bloc |
+
+D'autres Länder allemands (Basse-Saxe en COG, Bade-Wurtemberg, Saxe…) sont **ajoutables** sur le même modèle que la Bavière/NRW.
 
 ## Captures d'écran
 
