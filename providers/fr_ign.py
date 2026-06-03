@@ -55,9 +55,12 @@ WMS_LAYER = "IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93"
 
 # ── Conventions de nommage des dalles ────────────────────────────────────────
 def dalle_filename(x_km, y_km):
-    """Nom du fichier .tif pour la dalle (x_km, y_km) en coordonnées Lambert-93.
-    Convention IGN : LHD_FXX_XXXX_YYYY_MNT_O_0M50_LAMB93_IGN69.tif"""
-    return f"LHD_FXX_{x_km:04d}_{y_km:04d}_MNT_O_0M50_LAMB93_IGN69.tif"
+    """Nom du fichier .tif pour la dalle dont la bande Ymin = y_km (km).
+    Convention IGN : LHD_FXX_XXXX_YYYY = coin HAUT-GAUCHE = (Xmin, Ymax).
+    La dalle couvre Y[y_km, y_km+1] km → son Ymax = y_km+1, et c'est LUI que le
+    nom canonique encode (vérifié empiriquement : nom TMS = bord haut du raster).
+    Tous les appelants (dalle_url, fallback grille) passent y_km = bande Ymin."""
+    return f"LHD_FXX_{x_km:04d}_{(y_km + 1):04d}_MNT_O_0M50_LAMB93_IGN69.tif"
 
 
 def dalle_subdir(x_km):
@@ -79,6 +82,23 @@ def subdir_from_name(nom):
     ou None si le nom ne matche pas le format attendu."""
     m = _SUBDIR_FROM_NAME.match(nom)
     return m.group(1) if m else None
+
+
+_BBOX_FROM_NAME = _re.compile(r"_(\d{3,4})_(\d{3,4})_")
+
+
+def _bbox_l93_from_name(nom):
+    """Bbox L93 (x0,y0,x1,y1) en mètres déduite du NOM d'une dalle (qui encode
+    Xmin et Ymax en km, cf. dalle_filename), ou None si le nom ne matche pas.
+    Sert au filtre de discover_dalles quand une feature TMS n'a pas de bbox
+    exploitable, pour ne pas réintroduire des dalles hors-zone sans filtrage."""
+    m = _BBOX_FROM_NAME.search(nom)
+    if not m:
+        return None
+    span = DALLE_KM * 1000
+    xmin = int(m.group(1)) * span
+    ymax = int(m.group(2)) * span
+    return (xmin, ymax - span, xmin + span, ymax)
 
 
 # ── Construction URL WMS pour une dalle ──────────────────────────────────────
@@ -183,7 +203,15 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
     """
     _mvt = _import_mvt()
     if _mvt is None:
-        print("  ERREUR : mapbox-vector-tile non installable — repli WFS")
+        # Pas de TMS sans mvt — mais la grille pure (WMS GetMap) ne dépend que de
+        # maths stdlib : on bascule dessus plutôt que de renvoyer None (qui donnait
+        # zéro dalle → sortie vide, notamment sur binaire PyInstaller où mvt n'est
+        # pas bundlé et ne peut pas s'auto-installer, sys.executable étant l'exe gelé).
+        print("  mapbox-vector-tile indisponible — TMS sauté, repli grille pure WMS")
+        if bbox_natif is not None:
+            x1, y1, x2, y2 = bbox_natif
+            return {dalle_filename(x, y): dalle_url(x, y)
+                    for x, y in dalles_pour_bbox(x1, y1, x2, y2)}
         return None
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
@@ -238,9 +266,13 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                 done_fetch += 1
                 if err:
                     nb_erreurs += 1
-                    cache[f"{tx}/{ty}"] = []
+                    # NE PAS persister un échec réseau comme "0 dalle" : la tuile
+                    # resterait exclue de tuiles_a_fetcher aux runs suivants
+                    # (négatif définitif). On la laisse hors cache → re-tentée.
                 else:
                     cache[f"{tx}/{ty}"] = entries
+                if done_fetch % 200 == 0:
+                    _write_json_atomic(cache_path, cache)   # checkpoint région-scale
                 if done_fetch % 20 == 0 or done_fetch == len(tuiles_a_fetcher):
                     pct = done_fetch * 100 // max(len(tuiles_a_fetcher), 1)
                     print(f"\r  TMS : {pct:3d}%  {done_fetch}/{len(tuiles_a_fetcher)} "
@@ -254,14 +286,24 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
     for tx, ty in tuiles:
         for entry in cache.get(f"{tx}/{ty}", []):
             nom, url_dl, bbox_s = entry if len(entry) == 3 else (*entry, None)
-            if bbox_natif is not None and bbox_s:
-                try:
-                    _fx0, _fy0, _fx1, _fy1 = map(float, str(bbox_s).split(","))
+            if bbox_natif is not None:
+                # Bbox de la feature : depuis le champ TMS si exploitable, sinon
+                # dérivée du NOM (qui encode Xmin/Ymax). Sans ce fallback, une
+                # feature sans bbox était ajoutée SANS filtrage → réintroduisait
+                # les dalles hors-zone ramassées par la marge d'index (~5,5 km).
+                _fb = None
+                if bbox_s:
+                    try:
+                        _fb = tuple(map(float, str(bbox_s).split(",")))
+                    except Exception:
+                        _fb = None
+                if _fb is None:
+                    _fb = _bbox_l93_from_name(nom)
+                if _fb is not None:
+                    _fx0, _fy0, _fx1, _fy1 = _fb
                     _zx0, _zy0, _zx1, _zy1 = bbox_natif
                     if _fx1 < _zx0 or _fx0 > _zx1 or _fy1 < _zy0 or _fy0 > _zy1:
                         continue
-                except Exception:
-                    pass
             dalles[nom] = url_dl
 
     if nb_erreurs == nb_tuiles:
