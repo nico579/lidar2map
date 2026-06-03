@@ -277,7 +277,7 @@ To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR):
 - **Resume after interruption**: the same command resumes where it stopped, via a `.json` manifest that tracks completed chunks.
 - **Up-front splitting**: for large areas, split into an N×N grid **or ~K km squares** (`--split-radius`, bounded chunk size — recommended at national scale) — useful so you don't have to regenerate the whole area if something crashes. Per-chunk disk cleanup (`--cleanup`) and a free-space guard (`--min-free-gb`) for very large coverage.
 - **Crash-safe history**: each run is recorded *at startup* (status "running") then finalized to "ok" or "ko". A hard crash (kill -9, power loss) leaves the entry visible in the UI — the trace is kept for debugging.
-- **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any LiDAR source. Shipped providers: **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavaria, NRW), **AT** (Tyrol, East Tyrol) — covering varied API paradigms (TMS PBF, JSON FeatureCollection, STAC, ArcGIS ImageServer, Metalink/`index.json`, **per-tile WCS `GetCoverage`**). Adding a country = ~100-150 lines in a new provider file (see *LiDAR coverage & evaluated sources* below).
+- **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any LiDAR source. Shipped providers: **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavaria, NRW, Lower Saxony), **AT** (Tyrol, East Tyrol) — covering varied API paradigms (TMS PBF, JSON FeatureCollection, STAC, ArcGIS ImageServer, Metalink/`index.json`, **per-tile WCS `GetCoverage`**). Adding a country = ~100-150 lines in a new provider file (see *LiDAR coverage & evaluated sources* below).
 - **Interactive GUI**: 6 tabs (LiDAR, IGN raster, IGN vector, OSM, Merge, Splitting), provider selector at the top of the form (IGN Raster/Vector tabs hidden automatically for non-FR providers), history of the last 50 commands with status badges, parameter validation, live log, error modal.
 - **Historical orthophoto maps**: a unique combo for archaeology — SVF 2024 (current LiDAR) + 1950 ortho (before land abandonment) → reveals structures still legible 70 years later.
 
@@ -303,7 +303,7 @@ Sources **evaluated but not retained** so far (documented to avoid re-digging):
 | IT — South Tyrol | 0.5 m built-up areas only / 2.5 m elsewhere |
 | SI — Slovenia (ARSO) | clean URLs but ASC without CRS + per-block index |
 
-Other German states (Lower Saxony in COG, Baden-Württemberg, Saxony…) are **addable** on the same model as Bavaria/NRW.
+Other German states (Baden-Württemberg, Saxony, Hesse…) are **addable** on the same model.
 
 ## Screenshots
 
