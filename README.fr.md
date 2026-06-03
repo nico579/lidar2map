@@ -281,6 +281,8 @@ Pour ajouter un 5e pays (ex. UK Environment Agency, Espagne PNOA-LiDAR, Italie P
 
 ## Couverture LiDAR & sources évaluées
 
+🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub (clique sur le fichier). Glissable aussi dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
+
 Un provider s'intègre proprement si la source expose des **tuiles déterministes**
 (URL par tuile, ~1 km) **ou un WCS** (`GetCoverage` par bbox). Les sources livrées
 en **gros blocs** (provinces, feuilles 20–50 km), par **formulaire/email**, en

@@ -66,6 +66,8 @@ MAP = {
     "update_app.py":                 "update_app.py",
     "tagmapping-min.xml":            "tagmapping-min.xml",
     "deploy.py":                     "deploy.py",
+    "coverage_map.py":               "coverage_map.py",
+    "coverage.geojson":              "coverage.geojson",
     # Build Windows / Linux
     "lidar2map_win.spec":            "lidar2map_win.spec",
     "lidar2map_win_launcher.spec":   "lidar2map_win_launcher.spec",

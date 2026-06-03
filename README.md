@@ -283,6 +283,8 @@ To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR):
 
 ## LiDAR coverage & evaluated sources
 
+🗺️ **[Interactive coverage map](coverage.geojson)** — rendered directly by GitHub (click the file). Also droppable into [geojson.io](https://geojson.io) / QGIS to test a point.
+
 A source plugs in cleanly when it exposes **deterministic tiles** (one URL per
 ~1 km tile) **or a WCS** (`GetCoverage` by bbox). Sources delivered as **large
 blocks** (provinces, 20–50 km sheets), via **form/email order**, as **WMS only**
