@@ -124,13 +124,23 @@ def dalle_url(x_km, y_km):
 
 # ── Calcul de la liste des dalles couvrant une bbox ──────────────────────────
 def dalles_pour_bbox(x1, y1, x2, y2):
-    """Liste (x_km, y_km) des dalles couvrant la bbox Lambert-93.
-    Inclusive aux bords : une dalle dont le coin SW = (x2, y2) sera incluse."""
+    """Liste (x_km, y_km) des bandes Ymin des dalles couvrant la bbox Lambert-93.
+
+    Borne haute demi-ouverte quand x2/y2 tombe PILE sur une ligne de grille :
+    la dalle qui commence exactement à x2 (resp. y2) est entièrement HORS bbox
+    (ne la touche qu'au bord, mesure nulle) → on l'exclut. Sans ça, une bbox
+    alignée (ex. 880000..890000) générait une rangée + colonne en trop
+    (11×11 au lieu de 10×10). Si x2/y2 n'est pas sur une ligne, comportement
+    inchangé (la dalle de bord partiellement couverte reste incluse)."""
     step = DALLE_KM * 1000
     x_start = int(x1 // step)
     x_end   = int(x2 // step)
+    if x2 % step == 0 and x_end > x_start:
+        x_end -= 1
     y_start = int(y1 // step)
     y_end   = int(y2 // step)
+    if y2 % step == 0 and y_end > y_start:
+        y_end -= 1
     return [(x_km, y_km)
             for x_km in range(x_start, x_end + 1)
             for y_km in range(y_start, y_end + 1)]
