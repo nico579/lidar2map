@@ -7717,12 +7717,13 @@ Examples:
         dalles, bbox = calculer_grille(cx, cy, rayon)
 
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
-    _cols_pr = getattr(args, "cols_decoupe", 0) or 0
-    _rows_pr = getattr(args, "rows_decoupe", 0) or 0
-    if _cols_pr > 0 and _rows_pr > 0 and not _osm_seul:
+    _cols_pr  = getattr(args, "cols_decoupe", 0) or 0
+    _rows_pr  = getattr(args, "rows_decoupe", 0) or 0
+    _rayon_pr = getattr(args, "rayon_decoupe", 0.0) or 0.0
+    if ((_cols_pr > 0 and _rows_pr > 0) or _rayon_pr > 0) and not _osm_seul:
         sous_zones, mode_desc = _calculer_sous_zones_priori(
             bbox[0], bbox[1], bbox[2], bbox[3],
-            _cols_pr * _rows_pr, 0.0, unite_m=True)
+            0, _rayon_pr, unite_m=True, n_cols=_cols_pr, n_rows=_rows_pr)
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
                          else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
@@ -8519,19 +8520,42 @@ Examples:
 # ============================================================
 
 
-def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=True):
+def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=True,
+                                n_cols=0, n_rows=0):
     """
     Divise une bbox en sous-zones pour le découpage à priori.
 
     unite_m=True  : bbox en mètres  (Lambert 93)  — retourne (i_lat, i_lon, x1, y1, x2, y2)
     unite_m=False : bbox en degrés  (WGS84)        — retourne (i_lat, i_lon, lon_w, lat_s, lon_e, lat_n)
 
-    n_morceaux prime sur rayon_km.
+    Priorité des modes (du plus explicite au plus implicite) :
+      1. grille explicite n_cols × n_rows — respecte l'intention EXACTE de
+         l'utilisateur (un produit premier comme 1×7 reste 1×7, pas refactorisé).
+      2. rayon_km — carrés ~KM uniformes : taille de chunk BORNÉE quelle que soit
+         l'étendue. Méthode recommandée pour les grandes couvertures (le pic
+         RAM/disque par chunk ne dérive pas avec la bbox totale).
+      3. n_morceaux — compte seul → grille refactorisée par ratio d'aspect
+         (peut dégénérer en lanière si le compte est premier).
+      4. zone entière.
     """
     largeur = x2 - x1
     hauteur = y2 - y1
 
-    if n_morceaux > 1:
+    if n_cols > 0 and n_rows > 0:
+        dx = largeur / n_cols
+        dy = hauteur / n_rows
+        mode_desc = f"{n_cols * n_rows} morceaux ({n_rows}×{n_cols}, grille explicite)"
+    elif rayon_km > 0:
+        if unite_m:
+            dy = dx = rayon_km * 1000
+        else:
+            lat_c = (y1 + y2) / 2
+            dy = rayon_km / 111.0
+            dx = rayon_km / (111.0 * math.cos(math.radians(lat_c)))
+        n_rows = max(1, int(math.ceil(hauteur / dy)))
+        n_cols = max(1, int(math.ceil(largeur / dx)))
+        mode_desc = f"~{rayon_km:.0f} km/morceau ({n_rows}×{n_cols})"
+    elif n_morceaux > 1:
         best = (1, n_morceaux); best_ratio = float('inf')
         for r in range(1, int(math.sqrt(n_morceaux)) + 1):
             if n_morceaux % r == 0:
@@ -8543,16 +8567,6 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, rayon_km, unite_m=Tr
         dx = largeur / n_cols
         dy = hauteur / n_rows
         mode_desc = f"{n_morceaux} morceaux ({n_rows}×{n_cols})"
-    elif rayon_km > 0:
-        if unite_m:
-            dy = dx = rayon_km * 1000
-        else:
-            lat_c = (y1 + y2) / 2
-            dy = rayon_km / 111.0
-            dx = rayon_km / (111.0 * math.cos(math.radians(lat_c)))
-        n_rows = max(1, int(math.ceil(hauteur / dy)))
-        n_cols = max(1, int(math.ceil(largeur / dx)))
-        mode_desc = f"~{rayon_km:.0f} km/morceau ({n_rows}×{n_cols})"
     else:
         n_rows = n_cols = 1
         dx = largeur
@@ -9494,12 +9508,13 @@ Examples:
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
 
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
-    _cols_pr = getattr(args, "cols_decoupe", 0) or 0
-    _rows_pr = getattr(args, "rows_decoupe", 0) or 0
-    if _cols_pr > 0 and _rows_pr > 0:
+    _cols_pr  = getattr(args, "cols_decoupe", 0) or 0
+    _rows_pr  = getattr(args, "rows_decoupe", 0) or 0
+    _rayon_pr = getattr(args, "rayon_decoupe", 0.0) or 0.0
+    if (_cols_pr > 0 and _rows_pr > 0) or _rayon_pr > 0:
         sous_zones, mode_desc = _calculer_sous_zones_priori(
             lon_min, lat_min, lon_max, lat_max,
-            _cols_pr * _rows_pr, 0.0, unite_m=False)
+            0, _rayon_pr, unite_m=False, n_cols=_cols_pr, n_rows=_rows_pr)
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
                          else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
@@ -12494,6 +12509,8 @@ def lancer_gui():
                     elif cfg.get("rayon_decoupe_l", 0) > 0:
                         cmd += ["--split-radius", str(cfg["rayon_decoupe_l"])]
                     if cfg.get("nettoyage"): cmd.append("--cleanup")
+                    if cfg.get("min_free_gb", 0) > 0:
+                        cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
                 if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
                 if cfg.get("purger_zone"): cmd.append("--tiles-purge-out-of-zone")
 
@@ -12528,6 +12545,8 @@ def lancer_gui():
                     elif cfg.get("rayon_decoupe_s", 0) > 0:
                         cmd += ["--split-radius", str(cfg["rayon_decoupe_s"])]
                     if cfg.get("nettoyage"): cmd.append("--cleanup")
+                    if cfg.get("min_free_gb", 0) > 0:
+                        cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
 
             # ── OSM ──────────────────────────────────────────────────────
             elif t == "osm":
@@ -13264,6 +13283,9 @@ body.log-resizing *{
       <input type="number" id="f-rayon-priori-l" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk1" title="Rayon km par morceau (alternative à la grille)">
       <span class="hint" style="margin-left:4px">km</span>
       <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="minfree">min disque</span>
+      <input type="number" id="f-min-free" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.minfree" title="Arrêt propre avant un chunk si disque libre &lt; seuil (0 = désactivé)">
+      <span class="hint" style="margin-left:4px">GB</span>
      </div>
      <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
       <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
@@ -13375,6 +13397,9 @@ body.log-resizing *{
       <input type="number" id="f-rayon-priori-s" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk2" title="Rayon km par morceau">
       <span class="hint" style="margin-left:4px">km</span>
       <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage-s"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="minfree">min disque</span>
+      <input type="number" id="f-min-free-s" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.minfree" title="Arrêt propre avant un chunk si disque libre &lt; seuil (0 = désactivé)">
+      <span class="hint" style="margin-left:4px">GB</span>
      </div>
      <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
       <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
@@ -13658,6 +13683,7 @@ const I18N = {
     "split0":"0 — Découpage à priori (grandes zones)",
     "grid":"Grille :", "rows":"lignes", "orradius":"ou rayon", "rows_orradius":"lignes  ou rayon",
     "clean":"Nettoyage intermédiaires",
+    "minfree":"min disque", "tip.minfree":"Arrêt propre avant un chunk si disque libre < seuil (0 = désactivé)",
     "split.hint":"1×1 = pas de découpage — reprise automatique via manifeste.json",
     "dl":"1 — Télécharger", "dl.lidar":"1 — Télécharger les dalles LiDAR HD IGN",
     "ovr":"Écraser le fichier résultat", "ovr.short":"Écraser",
@@ -13740,6 +13766,7 @@ const I18N = {
     "split0":"0 — A priori split (large areas)",
     "grid":"Grid:", "rows":"rows", "orradius":"or radius", "rows_orradius":"rows  or radius",
     "clean":"Clean intermediates",
+    "minfree":"min free disk", "tip.minfree":"Stop cleanly before a chunk if free disk < threshold (0 = off)",
     "split.hint":"1×1 = no split — automatic resume via manifeste.json",
     "dl":"1 — Download", "dl.lidar":"1 — Download IGN LiDAR HD tiles",
     "ovr":"Overwrite output file", "ovr.short":"Overwrite",
@@ -14572,6 +14599,7 @@ function getConfig() {
     rayon_decoupe_l: parseFloat(g('f-rayon-priori-l')?.value) || 0,
     rayon_decoupe_s: parseFloat(g('f-rayon-priori-s')?.value) || 0,
     nettoyage:     g('f-nettoyage')?.checked || g('f-nettoyage-s')?.checked || false,
+    min_free_gb:   parseFloat(g('f-min-free')?.value) || parseFloat(g('f-min-free-s')?.value) || 0,
     purger_inv:    false, purger_zone: false,
     // Scan
     couche:        g('f-couche')?.value,
@@ -14719,6 +14747,8 @@ function loadConfig(cfg) {
   // FIX: f-nettoyage et f-nettoyage-s n'étaient jamais restaurés
   s('f-nettoyage',   cfg.nettoyage);
   s('f-nettoyage-s', cfg.nettoyage);
+  s('f-min-free',    cfg.min_free_gb);
+  s('f-min-free-s',  cfg.min_free_gb);
 
   // Clé API LiDAR (us-3dep) — persistée séparément de l'IGN scan
   s('f-lidar-apikey',   cfg.lidar_apikey);

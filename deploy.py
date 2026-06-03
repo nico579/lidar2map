@@ -370,7 +370,7 @@ def main():
                         help="sauter push+détection, patcher directement la release")
     parser.add_argument("--push-only", action="store_true",
                         help="pousser les sources sur main SANS patcher les bundles "
-                             "(itération debug/mesure : récup VM via git pull + run direct)")
+                             "(itération debug/mesure : récup via git pull + run direct)")
     parser.add_argument("--dry-run", action="store_true",
                         help="afficher le diff sans commit ni push")
     parser.add_argument("--repo", default=REPO_DEFAULT,
@@ -425,7 +425,7 @@ def main():
     # --- Mode --push-only : sources poussées, on saute le patch des bundles ---
     if args.push_only:
         cprint("\n==> --push-only : sources sur main, patch des bundles sauté.", "green")
-        cprint("    Récup VM : git pull && python lidar2map.py ...", "cyan")
+        cprint("    Récup : git pull && python lidar2map.py ...", "cyan")
         return 0
 
     # --- Phase 2 : catégorisation -> action ---
