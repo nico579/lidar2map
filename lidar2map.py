@@ -8501,7 +8501,7 @@ Examples:
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
         cumul = int(time.time() - t_debut)
-        print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumulative)})")
+        print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumul)})")
     total = int(time.time() - t_debut)
     m, s  = divmod(total, 60)
     print(f"\n  Done! Folder: {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
