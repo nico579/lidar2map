@@ -8591,6 +8591,17 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
     noms_attendus : iterable de noms de dalles attendus pour la zone
                     (typiquement les keys du dict retourné par discover_dalles).
     """
+    # Un SEUL scan disque + un SEUL stat() par fichier, mémorisés dans
+    # {nom: (path, size)}. Sur un cache départemental (milliers de .tif) ×
+    # des centaines de chunks à priori, le coût énumération+stat dominait
+    # (avant : _rglob_tif_robuste ×2, stat() jusqu'à 3×/dalle).
+    _index = {}
+    for d in _rglob_tif_robuste(dossier_dalles):
+        try:
+            _index[d.name] = (d, d.stat().st_size)
+        except OSError:
+            continue
+
     noms_zone = set()
     dalles_zone_txt = dossier_ville / "dalles_zone.txt"
     if dalles_zone_txt.exists():
@@ -8600,12 +8611,12 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
             noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
     if not noms_zone:
         noms_attendus_set = set(noms_attendus)
-        toutes = _rglob_tif_robuste(dossier_dalles)
-        noms_zone = {d.name for d in toutes
-                     if d.name in noms_attendus_set and d.stat().st_size > SEUIL_DALLE_VALIDE}
-    toutes_dalles   = sorted(_rglob_tif_robuste(dossier_dalles))
-    dalles_zone     = [d for d in toutes_dalles if d.name in noms_zone]
-    dalles_ombrages = [d for d in dalles_zone   if d.stat().st_size > SEUIL_DALLE_VALIDE]
+        noms_zone = {nom for nom, (_d, _sz) in _index.items()
+                     if nom in noms_attendus_set and _sz > SEUIL_DALLE_VALIDE}
+
+    dalles_ombrages = sorted(
+        _d for nom, (_d, _sz) in _index.items()
+        if nom in noms_zone and _sz > SEUIL_DALLE_VALIDE)
     return dalles_ombrages
 
 
@@ -15212,6 +15223,7 @@ if __name__ == "__main__":
                         _nom_idx  = _i + 1
                         _nom_base = _argv_base[_nom_idx]
                         break
+                _deps_ko = []
                 for _n, _dep in enumerate(_deps, 1):
                     print()
                     print(_sep)
@@ -15222,7 +15234,21 @@ if __name__ == "__main__":
                     # Suffixer le nom explicite avec le numéro de département
                     if _nom_idx is not None:
                         sys.argv[_nom_idx] = f"{_nom_base}_{_dep}"
-                    _dispatch()
+                    try:
+                        _dispatch()
+                    except Exception as _e_dep:
+                        # SystemExit (garde-fou disque, EXIT_DISK_LOW) et
+                        # KeyboardInterrupt dérivent de BaseException → NON captés
+                        # ici : ils arrêtent tout proprement. Seules les vraies
+                        # erreurs de traitement (Overpass HS, échec d'un dépt…)
+                        # sont absorbées → on logge et on continue (fire-and-forget).
+                        # Reprise idempotente via le manifeste chunk-level.
+                        _deps_ko.append(_dep)
+                        print(f"  ✗ Departement {_dep} echoue : "
+                              f"{type(_e_dep).__name__}: {_e_dep} — on continue.")
+                if _deps_ko:
+                    print(f"\n  ⚠ Departements en echec : {','.join(_deps_ko)} "
+                          f"(relance la commande pour les reprendre)")
             else:
                 # Mono-département : réécrire l'argv avec le code normalisé
                 # (5 → 05, 2a → 2A), sinon geocoder_departement interroge INSEE
