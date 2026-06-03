@@ -8967,9 +8967,13 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
     # Nom de base : garder le suffixe _z{min}-{max} pour que les morceaux l'incluent
     stem_base = src_mbtiles.stem  # ex: 83_multi_ombrage_z8-18
 
-    # Compter lignes/colonnes pour le padding
-    n_lats = i_lat
-    n_lons = i_lon
+    # Compter lignes/colonnes pour le padding. Dérivé de sous_zones (et pas de
+    # i_lat/i_lon de boucle) : robuste aux DEUX branches — la branche else
+    # (rayon / n_morceaux) ne lie jamais i_lat/i_lon → NameError sinon. Le +1
+    # donne le COMPTE (pas l'index max), donc pad correct jusqu'aux puissances
+    # exactes (1000 lignes → pad 4).
+    n_lats = max(z[0] for z in sous_zones) + 1
+    n_lons = max(z[1] for z in sous_zones) + 1
     pad = max(3, len(str(max(n_lats, n_lons))))
 
     sorties = []
@@ -15175,6 +15179,19 @@ if __name__ == "__main__":
 
             # ── Résolution multi-département ─────────────────────────────────
             # --zone-departement accepte : 83 | 30,35,75 | 1-10 | 1-3,75,83
+            # Normaliser la forme accolée --zone-departement=X en deux tokens :
+            # le scan + la réécriture par dépt supposent un token valeur séparé.
+            # Sans ça, `--zone-departement=1-3` n'est jamais expansé (silencieux)
+            # → argparse met "1-3" tel quel → geocoder_departement échoue.
+            # Transparent pour argparse, qui accepte déjà les deux formes.
+            _argv_norm = []
+            for _a in sys.argv:
+                if _a.startswith(("--zone-departement=", "--zone-department=")):
+                    _k, _v = _a.split("=", 1)
+                    _argv_norm += [_k, _v]
+                else:
+                    _argv_norm.append(_a)
+            sys.argv = _argv_norm
             _dep_idx = None
             for _i, _a in enumerate(sys.argv):
                 if _a in ("--zone-departement", "--zone-department") and _i + 1 < len(sys.argv):
@@ -15207,6 +15224,12 @@ if __name__ == "__main__":
                         sys.argv[_nom_idx] = f"{_nom_base}_{_dep}"
                     _dispatch()
             else:
+                # Mono-département : réécrire l'argv avec le code normalisé
+                # (5 → 05, 2a → 2A), sinon geocoder_departement interroge INSEE
+                # avec un code non paddé qui ne matche pas. Cohérent avec le
+                # chemin multi qui réécrit déjà sys.argv[_dep_idx]=_dep.
+                if _deps:
+                    sys.argv[_dep_idx] = _deps[0]
                 _dispatch()
     except KeyboardInterrupt:
         # Cancellation propre : raisée par print_etape() ou _svf_numpy()
