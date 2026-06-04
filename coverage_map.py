@@ -33,6 +33,7 @@ REGIONS = [
     ("Tirol, Österreich",      ["at-tirol", "at-osttirol"], "#eab308", None,
      "Autriche — Tyrol (Nordtirol + Osttirol)"),
     ("England",                ["gb-england"],       "#78350f", None, None),
+    ("Wales",                  ["gb-wales"],         "#78350f", None, None),
 ]
 
 
