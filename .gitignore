@@ -28,7 +28,8 @@ ENV/
 *.map
 *.osm
 *.geojson
-!coverage.geojson    # carte de couverture LiDAR — versionnée (exception au-dessus)
+# coverage.geojson : carte de couverture LiDAR, versionnée (exception ci-dessous)
+!coverage.geojson
 *.geojson.gz
 *.pbf
 *.gpkg
