@@ -283,6 +283,21 @@ Pour ajouter un 5e pays (ex. UK Environment Agency, Espagne PNOA-LiDAR, Italie P
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub (clique sur le fichier). Glissable aussi dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
+**Légende** — la couleur ↔ le code `--provider` (= l'entrée dans le sélecteur de provider de la GUI) :
+
+| Couleur | `--provider` | Zone |
+|:-:|---|---|
+| 🟦 | `fr-ign` | France métropolitaine |
+| 🟩 | `nl-ahn` | Pays-Bas |
+| 🟥 | `ch-swisstopo` | Suisse |
+| 🟪 | `no-kartverket` | Norvège |
+| 🟧 | `de-bayern` | Allemagne — Bavière |
+| 🟧 | `de-nrw` | Allemagne — Rhénanie-du-Nord-Westphalie |
+| 🟧 | `de-niedersachsen` | Allemagne — Basse-Saxe |
+| 🟨 | `at-tirol` · `at-osttirol` | Autriche — Tyrol + Osttirol |
+
+Au clic sur une zone, GitHub affiche son `NAME` (celui de la GUI) et son/ses code(s). La carte est régénérée par `coverage_map.py`, qui lit ces noms depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger.
+
 Un provider s'intègre proprement si la source expose des **tuiles déterministes**
 (URL par tuile, ~1 km) **ou un WCS** (`GetCoverage` par bbox). Les sources livrées
 en **gros blocs** (provinces, feuilles 20–50 km), par **formulaire/email**, en
