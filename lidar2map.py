@@ -5019,6 +5019,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
     """
 
+    _erreurs_ombrages = []   # erreurs non-fatales à remonter à la GUI
+
     if elevation_soleil is None:
         elevation_soleil = ELEVATION_SOLEIL
     if svf_gamma is None:
@@ -5410,7 +5412,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             _dst_sl.write(_slope_u8, 1)
                         _slope_src = slope_tmp_path
                     except Exception as _e_sl:
-                        print(f"  ERROR slope numpy for RRIM: {_e_sl}")
+                        msg = f"  ERROR slope numpy for RRIM: {_e_sl}"
+                        print(msg)
+                        _erreurs_ombrages.append(msg.strip())
                         continue
 
                 # Étape 3 : composite RGB numpy/PIL
@@ -5459,7 +5463,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     _sauver_array_georef(rgb, Path(src_str), chemin_out)
                     print(f"  RRIM : {chemin_out.name} — RGB 3 canaux")
                 except Exception as e_rrim:
-                    print(f"  ERREUR composite RRIM : {e_rrim}")
+                    msg = f"  ERREUR composite RRIM : {e_rrim}"
+                    print(msg)
+                    _erreurs_ombrages.append(msg.strip())
                     continue
                 finally:
                     if slope_tmp_path.exists():
@@ -5481,6 +5487,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
 
     print("\n  Shadings in: " + str(dossier_ville))
+    return _erreurs_ombrages
 
 
 def _bbox_depuis_gdalinfo(chemin, env=None):
@@ -8265,12 +8272,16 @@ Examples:
         print(f"  Area: ~{surface_km2} km²  — Estimated duration:"
               f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
               f" (selon le type d'ombrage et la machine)", flush=True)
-        generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
+        _errs_omb = generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
                          ecraser_ombrages=args.ombrages_ecraser,
                          use_sweep=args.sweep_horizon,
                          svf_gamma=args.svf_gamma,
                          svf_conv=args.svf_conv, svf_dist=args.svf_dist)
+        if _errs_omb:
+            for _e in _errs_omb:
+                print(f"  ERREUR OMBRAGE : {_e}")
+            sys.exit(1)
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     if args.mbtiles or args.rmap or args.sqlitedb:
@@ -8807,12 +8818,16 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                                           dossier_ville, bbox)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
                             else ELEVATION_SOLEIL)
-                    generer_ombrages(dalles_ombrages, dossier_ville, choix,
+                    _errs_omb2 = generer_ombrages(dalles_ombrages, dossier_ville, choix,
                                      elevation_soleil=elev, nom_zone=nom_z,
                                      ecraser_ombrages=args.ombrages_ecraser,
                                      use_sweep=args.sweep_horizon,
                                      svf_gamma=args.svf_gamma,
                                      svf_conv=args.svf_conv, svf_dist=args.svf_dist)
+                    if _errs_omb2:
+                        for _e in _errs_omb2:
+                            print(f"  ERREUR OMBRAGE : {_e}")
+                        sys.exit(1)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Filtre identique à la fonction main : exclure les caches de
@@ -14197,6 +14212,16 @@ function buildProviders(providers, activeCode) {
     sel.dataset.country = c;
     applyProviderCountry(c);
     applyProviderApiKey(o);
+    // Vider le cache autocomplete et fermer le dropdown : les résultats de
+    // l'ancien pays ne sont plus valides pour le nouveau provider.
+    _acCache.clear();
+    _acFermer();
+    // Si le champ ville contient déjà du texte, relancer l'autocomplétion
+    // pour le nouveau pays (sinon l'utilisateur doit effacer/retaper).
+    const inp = document.getElementById('f-ville');
+    if (inp && inp.value.trim().length >= _AC_MINLEN) {
+      _acDeclencher();
+    }
   });
 }
 

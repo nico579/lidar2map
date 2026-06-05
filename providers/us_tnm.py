@@ -26,6 +26,7 @@
 
 import os
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -130,7 +131,34 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.load(r)
+                raw = r.read()
+            data = json.loads(raw)
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read(300).decode("utf-8", "replace").strip()
+            except Exception:
+                pass
+            print(f"  ERREUR TNM API HTTP {e.code} {e.reason}"
+                  + (f" — {body[:200]}" if body else ""))
+            if e.code in (429, 503):
+                print("  TNM : rate limit ou service indisponible — réessayer dans quelques minutes.")
+            elif e.code == 403:
+                print("  TNM : accès refusé (IP bloquée ou service restreint).")
+            return None
+        except json.JSONDecodeError as e:
+            preview = ""
+            try:
+                preview = raw[:200].decode("utf-8", "replace")
+            except Exception:
+                pass
+            print(f"  ERREUR TNM API : réponse non-JSON ({e})"
+                  + (f"\n  Aperçu : {preview}" if preview else ""))
+            # Panne backend USGS : le serveur Lambda renvoie une erreur non-JSON
+            if preview and "errorMessage" in preview and "Connection aborted" in preview:
+                print("  TNM : panne backend USGS (connection aborted côté serveur).")
+                print("  → Réessayer dans quelques minutes : https://apps.nationalmap.gov/services-checker/")
+            return None
         except Exception as e:
             print(f"  ERREUR TNM API : {type(e).__name__}: {e}")
             return None
