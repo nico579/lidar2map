@@ -3672,7 +3672,12 @@ def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe=None, env=Non
     with rasterio.open(str(src_tif)) as src:
         profile = src.profile.copy()
 
+    # Purger les clés héritées incompatibles : si src_tif est un VRT
+    # (multi-dalles), profile hérite driver="VRT" → écriture GTiff impossible.
+    for k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        profile.pop(k, None)
     profile.update(
+        driver    = "GTiff",
         dtype     = "uint8",
         count     = n_bands,
         compress  = "deflate",
@@ -3682,9 +3687,6 @@ def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe=None, env=Non
         blockysize = 512,
         bigtiff   = "IF_SAFER",
     )
-    # Supprimer les clés incompatibles éventuelles
-    for k in ("nodata",):
-        profile.pop(k, None)
 
     _t0 = time.time()
     with rasterio.open(str(dst_tif), "w", **profile) as dst:
@@ -5247,6 +5249,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             # tombe sur un fichier figé (Windows file locking) ou demi-écrit.
             if chemin_out.exists() and ecraser_ombrages:
                 chemin_out.unlink()
+                # Nettoyer aussi le slope temporaire orphelin d'un run RRIM
+                # précédent : Windows le verrouille au run suivant → "Write failed"
+                _slope_orphan = dossier_ville / (nom_fichier.replace(".tif", "_slope_tmp.tif"))
+                if _slope_orphan.exists():
+                    _slope_orphan.unlink(missing_ok=True)
 
             t0_numpy = time.time()
 
@@ -5380,7 +5387,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             _profile_sl = _ds_sl.profile.copy()
                         _slope_u8 = _slope_numpy(_dem_sl, dx=RESOLUTION_M,
                                                  dy=RESOLUTION_M, nodata=_nd_sl_in)
+                        # Purger les clés héritées : src peut être un VRT
+                        # → driver="VRT" hérité → "Write failed"
+                        for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+                            _profile_sl.pop(_k, None)
                         _profile_sl.update({
+                            "driver":     "GTiff",
                             "dtype":      "uint8",
                             "count":      1,
                             "compress":   "deflate",
@@ -5390,8 +5402,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             "blockysize": 512,
                             "BIGTIFF":    "YES",
                         })
-                        for _k in ("nodata",):
-                            _profile_sl.pop(_k, None)
+                        # Supprimer si existant : Windows refuse l'overwrite
+                        # implicite (orphelin d'un run crashé avant le finally).
+                        if slope_tmp_path.exists():
+                            slope_tmp_path.unlink(missing_ok=True)
                         with _rio_sl.open(str(slope_tmp_path), "w", **_profile_sl) as _dst_sl:
                             _dst_sl.write(_slope_u8, 1)
                         _slope_src = slope_tmp_path
