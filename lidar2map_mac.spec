@@ -284,7 +284,8 @@ _excludes_mac = [
     "webview.platforms.cocoa",
     "webview.platforms.gtk",
     "clr_loader", "pythonnet",
-    "test", "unittest", "pydoc_data",
+    "test", "pydoc_data",
+    # "unittest" retiré : scipy.ndimage l'importe en interne → LRM/RRIM cassés
     "IPython", "jupyter",
 ]
 

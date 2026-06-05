@@ -296,7 +296,8 @@ hiddenimports += ["urllib3", "charset_normalizer", "idna", "certifi"]
 _excludes = [
     "tkinter", "matplotlib",
     "PyQt5", "PySide2", "PySide6",
-    "test", "unittest", "pydoc_data",
+    "test", "pydoc_data",
+    # "unittest" retiré : scipy.ndimage l'importe en interne → LRM/RRIM cassés
     "IPython", "jupyter",
 ]
 # Backend Qt sur Windows+Linux : on garde PyQt6, on exclut WinForms/Cocoa et
