@@ -34,6 +34,14 @@ REGIONS = [
      "Autriche — Tyrol (Nordtirol + Osttirol)"),
     ("England",                ["gb-england"],       "#78350f", None, None),
     ("Wales",                  ["gb-wales"],         "#78350f", None, None),
+    ("Vlaanderen",             ["be-flanders"],      "#a855f7", None, None),
+    ("Suomi",                  ["fi-maanmittauslaitos"], "#06b6d4", (19.0, 59.0, 32.0, 70.6), None),
+    ("Danmark",                ["dk-datafordeler"],  "#ec4899", (7.5, 54.4, 15.6, 58.0), None),
+    ("Ireland",                ["ie-gsi"],           "#0d9488", None, None),
+    ("Česko",                  ["cz-cuzk"],          "#84cc16", None, None),
+    ("España",                 ["es-cnig"],          "#fb923c", (-10.0, 35.5, 4.6, 44.5), None),
+    ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
+    ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
 ]
 
 
@@ -93,6 +101,78 @@ def simplify(geom, tol=0.01):
         return geom
 
 
+def render_png(features, out_png):
+    """Carte PNG colorée : Europe (principal) + encart Nouvelle-Zélande + légende.
+    Optionnel — nécessite matplotlib (outil dev `pip install matplotlib`, PAS le
+    bundle app). Les polygones geojson EUX-MÊMES sont les contours des pays
+    (Nominatim) → pas besoin de fond de carte/coastline."""
+    try:
+        import math
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"  (PNG non généré — matplotlib absent : {e})")
+        return
+    EU = (-11, 31, 35.5, 71.5)      # lon_min, lon_max, lat_min, lat_max
+    NZ = (165.5, 179.5, -47.5, -34)
+
+    def cen_lon(geom):
+        ring = (geom["coordinates"][0][0] if geom["type"] == "MultiPolygon"
+                else geom["coordinates"][0])
+        return sum(p[0] for p in ring) / len(ring)
+
+    def draw(ax, feats):
+        for ft in feats:
+            g = ft["geometry"]; col = ft["properties"]["fill"]
+            polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+            for poly in polys:
+                ext = poly[0]
+                ax.fill([p[0] for p in ext], [p[1] for p in ext],
+                        facecolor=col, edgecolor=col, alpha=0.55, linewidth=0.5)
+
+    eu = [f for f in features if cen_lon(f["geometry"]) < 100]
+    nz = [f for f in features if cen_lon(f["geometry"]) >= 100]
+
+    # Carte seule, sans bloc-légende (la liste des pays vit en texte dans le
+    # README, sous l'image). On étiquette juste les grands pays directement sur
+    # la carte (les petits du cluster Europe centrale restent identifiés par
+    # leur forme + la liste texte).
+    BIG = {"fr-ign", "no-kartverket", "fi-maanmittauslaitos", "es-cnig",
+           "pl-gugik", "gb-england", "se-lantmateriet"}
+    fig = plt.figure(figsize=(8.5, 9.2), dpi=120)
+    fig.patch.set_facecolor("#f8fafc")
+    ax = fig.add_axes([0.02, 0.02, 0.96, 0.93]); ax.set_facecolor("#eaf2fb")
+    draw(ax, eu)
+    for ft in eu:
+        codes = set(ft["properties"].get("providers", []))
+        if codes & BIG:
+            g = ft["geometry"]
+            ring = (g["coordinates"][0][0] if g["type"] == "MultiPolygon"
+                    else g["coordinates"][0])
+            cx = sum(p[0] for p in ring) / len(ring)
+            cy = sum(p[1] for p in ring) / len(ring)
+            ax.text(cx, cy, ft["properties"].get("label", ""), fontsize=8,
+                    ha="center", va="center", color="#1e293b", weight="bold")
+    ax.set_xlim(EU[0], EU[1]); ax.set_ylim(EU[2], EU[3])
+    ax.set_aspect(1 / math.cos(math.radians(53)))
+    ax.set_xticks([]); ax.set_yticks([])
+    for s in ax.spines.values():
+        s.set_edgecolor("#cbd5e1")
+    ax.set_title(f"lidar2map — couverture LiDAR sol-nu ({len(features)} zones, "
+                 f"15 pays + USA/Canada par projet)", fontsize=11, weight="bold")
+    if nz:
+        axn = ax.inset_axes([0.70, 0.0, 0.29, 0.32]); axn.set_facecolor("#eaf2fb")
+        draw(axn, nz)
+        axn.set_xlim(NZ[0], NZ[1]); axn.set_ylim(NZ[2], NZ[3])
+        axn.set_aspect(1 / math.cos(math.radians(41)))
+        axn.set_xticks([]); axn.set_yticks([])
+        axn.set_title("Nouvelle-Zélande", fontsize=7)
+    fig.savefig(out_png, dpi=120, facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"coverage.png : {os.path.getsize(out_png) // 1024} Ko")
+
+
 def main():
     prov = load_providers()
     # Garde-fou : tout code de REGIONS doit exister comme provider (anti-drift).
@@ -116,6 +196,7 @@ def main():
             "type": "Feature",
             "properties": {
                 "title": title,
+                "label": group or query,
                 "providers": region_codes,
                 "description": "Provider(s) : " + ", ".join(region_codes),
                 "fill": color, "fill-opacity": 0.35,
@@ -130,6 +211,7 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False)
     print(f"\ncoverage.geojson : {len(features)} zones, {os.path.getsize(out)//1024} Ko")
+    render_png(features, os.path.join(HERE, "coverage.png"))
     return 0 if len(features) == len(REGIONS) else 1
 
 

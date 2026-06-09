@@ -68,6 +68,7 @@ MAP = {
     "deploy.py":                     "deploy.py",
     "coverage_map.py":               "coverage_map.py",
     "coverage.geojson":              "coverage.geojson",
+    "coverage.png":                  "coverage.png",
     # Build Windows / Linux
     "lidar2map_win.spec":            "lidar2map_win.spec",
     "lidar2map_win_launcher.spec":   "lidar2map_win_launcher.spec",

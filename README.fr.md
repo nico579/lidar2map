@@ -316,28 +316,17 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 ## Couverture LiDAR & sources évaluées
 
-🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub (clique sur le fichier). Glissable aussi dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
+![Carte de couverture LiDAR lidar2map](coverage.png)
 
-**Légende** — la couleur ↔ le code `--provider` (= l'entrée dans le sélecteur de provider de la GUI) :
+*16 pays avec du LiDAR sol-nu national. USA & Canada sont aussi supportés (3DEP / HRDEM) mais leur couverture est par projet/population → non tracés.*
 
-| Couleur | `--provider` | Zone |
-|:-:|---|---|
-| 🟦 | `fr-ign` | France métropolitaine |
-| 🟩 | `nl-ahn` | Pays-Bas |
-| 🟥 | `ch-swisstopo` | Suisse |
-| 🟪 | `no-kartverket` | Norvège |
-| 🟧 | `de-bayern` | Allemagne — Bavière |
-| 🟧 | `de-nrw` | Allemagne — Rhénanie-du-Nord-Westphalie |
-| 🟧 | `de-niedersachsen` | Allemagne — Basse-Saxe |
-| 🟨 | `at-tirol` · `at-osttirol` | Autriche — Tyrol + Osttirol |
-| 🟫 | `gb-england` | Royaume-Uni — Angleterre |
-| 🟫 | `gb-wales` | Royaume-Uni — Pays de Galles |
+🗺️ **[Carte de couverture interactive](coverage.geojson)** — aussi rendue directement par GitHub (clique sur le fichier), ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-Au clic sur une zone, GitHub affiche son `NAME` (celui de la GUI) et son/ses code(s). La carte est régénérée par `coverage_map.py`, qui lit ces noms depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles) · Belgique (Flandre) · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
-**Pas encore tracés sur la carte** : `be-flanders`, `fi-maanmittauslaitos`, `dk-datafordeler`, `ie-gsi`, `ca-nrcan`, `cz-cuzk`, `es-cnig`, `pl-gugik` et `nz-linz` sont fonctionnels (cf. liste ci-dessus) mais n'ont pas encore de polygone de couverture — la carte montre pour l'instant les 10 zones les plus anciennes ; elle sera étendue.
+La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
-**🇺🇸 USA** : supportée — 3DEP 1 m via `us-tnm` (sans compte, tuiles S3 directes) ou `us-3dep` (via OpenTopography, clé gratuite). **Absente de la carte** ci-dessus car la couverture 3DEP 1 m est **par projet** (pas tout le territoire) : un polygone « USA » sur-revendiquerait. Vérifie ta zone sur le [TNM Downloader](https://apps.nationalmap.gov/downloader/). NB : les tuiles 1 m USGS font 10×10 km (~150–300 Mo) — gros volume pour une petite zone archéo.
+**🇺🇸 USA & 🇨🇦 Canada — supportés et fonctionnels, juste non tracés.** `us-tnm` / `us-3dep` (3DEP 1 m) et `ca-nrcan` (HRDEM 1 m) marchent, mais leur couverture est **par projet/population** (pas mur-à-mur national) : un polygone plein sur-revendiquerait — d'où la note plutôt qu'une forme. Vérifie ta zone US sur le [TNM Downloader](https://apps.nationalmap.gov/downloader/). NB : les tuiles 1 m USGS font 10×10 km (~150–300 Mo).
 
 Un provider s'intègre proprement si la source expose des **tuiles déterministes**
 (URL par tuile, ~1 km), **un WCS** (`GetCoverage` par bbox), des **COG mosaïques**
