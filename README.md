@@ -16,6 +16,14 @@ A self-contained Python tool that downloads public LiDAR data from national port
 
 ---
 
+**Is your country covered?** — 16 countries with national bare-earth LiDAR (+ USA & Canada, project-based). Check your area before diving in:
+
+![lidar2map LiDAR coverage map](coverage.png)
+
+*Resolutions, codes and evaluated sources: see the [LiDAR coverage](#lidar-coverage--evaluated-sources) section below.*
+
+---
+
 ## Who is it for?
 
 - **Amateur archaeologists** interested in LiDAR prospection — the tool works across **16 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Finland, Denmark, Ireland, Czechia, Spain, Poland, Canada, New Zealand) with more in progress. The relief computations (multi, SVF, LRM, RRIM) are identical from one country to the next.
@@ -318,11 +326,9 @@ To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS I
 
 ## LiDAR coverage & evaluated sources
 
-![lidar2map LiDAR coverage map](coverage.png)
+The colour map is [at the top of the README](#lidar2map). Interactive version (click = `NAME` + code):
 
-*16 countries with national bare-earth LiDAR. USA & Canada are supported too (3DEP / HRDEM) but their coverage is project/population-based, so they're not drawn.*
-
-🗺️ **[Interactive coverage map](coverage.geojson)** — also rendered directly by GitHub (click the file), or droppable into [geojson.io](https://geojson.io) / QGIS to test a point.
+🗺️ **[Interactive coverage map](coverage.geojson)** — rendered directly by GitHub, or droppable into [geojson.io](https://geojson.io) / QGIS to test a point.
 
 **Countries on the map** (national bare-earth LiDAR): France · Netherlands · Switzerland · Norway · Germany (Bavaria · NRW · Lower Saxony) · Austria (Tyrol) · United Kingdom (England · Wales) · Belgium (Flanders) · Finland · Denmark · Ireland · Czechia · Spain *(5 m)* · Poland · New Zealand. Resolutions 0.5–1 m unless noted — see the provider list above for codes and details.
 

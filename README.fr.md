@@ -14,6 +14,14 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ---
 
+**Ton pays est-il couvert ?** — 16 pays en LiDAR sol-nu national (+ USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
+
+![Carte de couverture LiDAR lidar2map](coverage.png)
+
+*Détails, résolutions et sources évaluées : section [Couverture LiDAR](#couverture-lidar--sources-évaluées) plus bas.*
+
+---
+
 ## Pour qui ?
 
 - **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **16 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
@@ -316,11 +324,9 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 ## Couverture LiDAR & sources évaluées
 
-![Carte de couverture LiDAR lidar2map](coverage.png)
+La carte colorée est [en haut du README](#lidar2map). Version interactive (clic = `NAME` + code) :
 
-*16 pays avec du LiDAR sol-nu national. USA & Canada sont aussi supportés (3DEP / HRDEM) mais leur couverture est par projet/population → non tracés.*
-
-🗺️ **[Carte de couverture interactive](coverage.geojson)** — aussi rendue directement par GitHub (clique sur le fichier), ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
+🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
 **Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles) · Belgique (Flandre) · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
