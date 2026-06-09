@@ -1,21 +1,27 @@
 # providers/nz_linz.py — Nouvelle-Zélande, LiDAR 1m DEM via LINZ S3 + STAC
 #
 # Source : Toitū Te Whenua Land Information New Zealand (LINZ)
-#   National Elevation Programme — https://www.linz.govt.nz/guidance/data-service/linz-data-service-guide/elevation-data
+#   National Elevation Programme — https://www.linz.govt.nz/products-services/data/types-linz-data/elevation-data
 #
-# Paradigme : STAC API + COG sur bucket S3 public AWS ap-southeast-2
-#   (même paradigme que ch_swisstopo + de_niedersachsen).
+# Paradigme : STAC statique + COG seamless national sur bucket S3 public.
 #   - CRS natif EPSG:2193 (NZGD2000 / NZTM2000)
-#   - Résolution 1m → dalle 1 km = 1000×1000 px
-#   - Bucket S3 public : s3://nz-elevation (ap-southeast-2, sans auth)
-#   - STAC catalog : https://nz-elevation.s3-ap-southeast-2.amazonaws.com/catalog.json
-#   - Dédup par (x_km, y_km) sur le millésime le plus récent
+#   - On cible le DEM 1m NATIONAL composite (seamless, dédupliqué par LINZ) :
+#       .../new-zealand/new-zealand/dem_1m/2193/collection.json  (424 feuilles)
+#     plutôt que les ~100 levés régionaux qui se recouvrent (sinon doublons +
+#     parcours de ~30 000 items). Les feuilles sont des dalles 1:50k (~24×36 km)
+#     → grosses COG → on lit la FENÊTRE bbox via /vsicurl/ (COG_WINDOWED), comme
+#     ca-nrcan, au lieu de rapatrier la feuille entière.
+#   - Bucket S3 public : s3://nz-elevation (ap-southeast-2, sans auth).
+#
+# L'index {feuille: bbox+url} est construit une fois (~424 fetches, parallèle)
+# puis caché sur disque : les requêtes suivantes ne touchent plus le réseau.
 #
 # Self-contained : stdlib uniquement.
 
 import json
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
@@ -33,36 +39,32 @@ RESOLUTION_M       = 1.0
 DALLE_KM           = 1
 PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)  # 1000
 SEUIL_DALLE_VALIDE = 200_000
+# Feuilles nationales = grosses dalles 1:50k → lecture COG fenêtrée /vsicurl/.
+COG_WINDOWED       = True
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 S3_BASE    = "https://nz-elevation.s3-ap-southeast-2.amazonaws.com"
-STAC_ROOT  = f"{S3_BASE}/catalog.json"
-# Structure réelle du catalogue (confirmée) :
-# catalog.json → links[rel=child] → ./<region>/<survey>/dem_1m/2193/collection.json
-# Exemple: ./auckland/auckland-north_2016-2018/dem_1m/2193/collection.json
-# COG: s3://nz-elevation/<region>/<survey>/dem_1m/2193/<tile>.tiff
+NATIONAL_COLLECTION = f"{S3_BASE}/new-zealand/new-zealand/dem_1m/2193/collection.json"
 HTTP_UA    = "lidar2map/1.0 (LINZ NZ Elevation)"
 
-# Étendue NZ en EPSG:2193
-COVERAGE_EXTENT = (1050000, 4700000, 2100000, 6200000)
+
+# ── Nommage (par code de feuille Topo50, ex. AS21 / BA31) ─────────────────────
+def dalle_filename(code):
+    return f"nz_dem1m_{code}.tif"
 
 
-# ── Nommage ──────────────────────────────────────────────────────────────────
-def dalle_filename(x_km, y_km):
-    return f"nz_dem1m_{x_km}_{y_km}.tif"
-
-
-def dalle_subdir(x_km):
-    return f"{x_km}"
+def dalle_subdir(code):
+    m = re.match(r"([A-Za-z]{2}\d{2})", str(code))
+    return m.group(1).upper() if m else str(code)[:4]
 
 
 def subdir_from_name(nom):
-    m = re.match(r"nz_dem1m_(\d+)_", nom)
-    return m.group(1) if m else None
+    m = re.match(r"nz_dem1m_([A-Za-z]{2}\d{2})", nom)
+    return m.group(1).upper() if m else None
 
 
-def dalle_url(x_km, y_km):
+def dalle_url(code):
     raise NotImplementedError("NZ : URL via STAC COG → utiliser discover_dalles()")
 
 
@@ -70,133 +72,100 @@ def dalles_pour_bbox(x1, y1, x2, y2):
     raise NotImplementedError("NZ : utiliser discover_dalles()")
 
 
-# ── Découverte via STAC récursif ─────────────────────────────────────────────
-def _stac_items_bbox(catalog_url, bbox_natif, depth=0, max_depth=4):
-    """Parcourt récursivement le catalog STAC et collecte les items dans bbox."""
-    if depth > max_depth:
-        return []
+# ── Helpers STAC ─────────────────────────────────────────────────────────────
+def _get_json(url):
     try:
-        req = urllib.request.Request(catalog_url, headers={"User-Agent": HTTP_UA})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            data = json.load(r)
-    except Exception as e:
-        return []
-
-    items = []
-    for link in data.get("links", []):
-        rel = link.get("rel", "")
-        href = link.get("href", "")
-        if not href:
-            continue
-        # Résoudre URL relative depuis l'URL du catalogue courant (pas S3_BASE)
-        # Ex: catalog_url = .../auckland/.../collection.json
-        #     href = ./AY30_10000_0405.json → .../auckland/.../AY30_10000_0405.json
-        if not href.startswith("http"):
-            base = catalog_url.rsplit("/", 1)[0]
-            if href.startswith("./"):
-                href = base + "/" + href[2:]
-            else:
-                href = base + "/" + href
-
-        if rel == "item":
-            items.append(href)
-        elif rel == "child":
-            # Pré-filtrage géographique sur le bbox du sous-catalogue
-            child_bbox = link.get("bbox")
-            if child_bbox and bbox_natif:
-                # child_bbox est en WGS84 (STAC standard)
-                # On ne peut pas filtrer précisément sans pyproj ici
-                # → on descend dans tous les enfants (filtrage a posteriori)
-                pass
-            items.extend(_stac_items_bbox(href, bbox_natif, depth + 1, max_depth))
-    return items
+        req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except Exception:
+        return None
 
 
-def _bbox_intersects(item_bbox_wgs84, bbox_natif):
-    """Vérification approximative intersection WGS84 bbox ↔ NZTM bbox.
-    NZ : EPSG:2193 X≈1050000-2100000, Y≈4700000-6200000.
-    WGS84 lon≈166-178, lat≈-47 à -34.
-    Conversion approx : x_nztm ≈ (lon-173)*90000+1600000, y_nztm ≈ (lat+90)*111000."""
-    if bbox_natif is None:
-        return True
-    lon1, lat1, lon2, lat2 = item_bbox_wgs84
-    # Conversion approx WGS84 → NZTM
-    def to_nztm(lon, lat):
-        x = (lon - 173.0) * 90000 + 1600000
-        y = (lat + 90.0) * 111000
-        return x, y
-    x1, y1 = to_nztm(lon1, lat1)
-    x2, y2 = to_nztm(lon2, lat2)
-    zx0, zy0, zx1, zy1 = bbox_natif
-    return not (x2 < zx0 or x1 > zx1 or y2 < zy0 or y1 > zy1)
+def _resolve(base, href):
+    if href.startswith("http"):
+        return href
+    return base + "/" + (href[2:] if href.startswith("./") else href.lstrip("/"))
 
 
-def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
-    """Parcourt le STAC catalog NZ et retourne {nom: url_cog} pour bbox."""
-    cache_path = Path(cache_path)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+def _intersecte(bbox_a, qlon_min, qlat_min, qlon_max, qlat_max):
+    """bbox_a = [lon_min, lat_min, lon_max, lat_max] (WGS84)."""
+    if not bbox_a or len(bbox_a) < 4:
+        return False
+    alon_min, alat_min, alon_max, alat_max = bbox_a[:4]
+    return not (alon_max < qlon_min or alon_min > qlon_max
+                or alat_max < qlat_min or alat_min > qlat_max)
 
-    # Cache items JSON
-    items_cached = []
+
+# ── Index national (construit une fois, caché) ───────────────────────────────
+def _construire_index(cache_path, workers):
+    """{feuille: {"bbox":[lon_min,lat_min,lon_max,lat_max], "url":cog}}.
+    Retourne None si le réseau échoue totalement."""
     if cache_path.exists():
         try:
-            items_cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            idx = json.loads(cache_path.read_text(encoding="utf-8"))
+            if idx:
+                return idx
         except Exception:
             pass
+    col = _get_json(NATIONAL_COLLECTION)
+    if not col:
+        print("  LINZ NZ : collection nationale inaccessible")
+        return None
+    cbase = NATIONAL_COLLECTION.rsplit("/", 1)[0]
+    item_urls = [_resolve(cbase, l.get("href", ""))
+                 for l in col.get("links", []) if l.get("rel") == "item"]
+    print(f"  LINZ NZ : indexation du DEM 1m national "
+          f"({len(item_urls)} feuilles, une fois)...", flush=True)
 
-    if not items_cached:
-        print(f"  LINZ NZ : parcours STAC catalog (peut prendre 30-60s)...", flush=True)
-        item_urls = _stac_items_bbox(STAC_ROOT, bbox_natif)
-        print(f"  {len(item_urls)} item URLs trouvés")
-        # Charger chaque item pour récupérer l'asset COG
-        items_cached = []
-        for iu in item_urls[:500]:  # limite de sécurité
-            try:
-                req = urllib.request.Request(iu, headers={"User-Agent": HTTP_UA})
-                with urllib.request.urlopen(req, timeout=15) as r:
-                    it = json.load(r)
-                it["_item_url"] = iu  # conserver l'URL source pour résolution hrefs relatifs
-                items_cached.append(it)
-            except Exception:
-                pass
-        try:
-            cache_path.write_text(json.dumps(items_cached), encoding="utf-8")
-        except Exception:
-            pass
+    def _fetch(iu):
+        it = _get_json(iu)
+        if not it or not it.get("bbox"):
+            return None
+        ibase = iu.rsplit("/", 1)[0]
+        url = None
+        for _k, a in (it.get("assets") or {}).items():
+            h = a.get("href", "")
+            if h.endswith(".tiff") or h.endswith(".tif"):
+                url = _resolve(ibase, h)
+                break
+        if not url:
+            return None
+        code = iu.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        return (code, it["bbox"][:4], url)
 
-    # Extraire COG 1m + dédup par (x_km, y_km)
-    _year_re = re.compile(r"(\d{4})")
-    candidats = {}
-    for it in items_cached:
-        # Filtre géo
-        bbox_item = it.get("bbox")
-        if bbox_item and not _bbox_intersects(bbox_item, bbox_natif):
-            continue
-        # Asset COG 1m
-        for k, asset in (it.get("assets") or {}).items():
-            href = asset.get("href", "")
-            if not href.endswith(".tiff") and not href.endswith(".tif"):
-                continue
-            if "1m" not in href and "1m" not in k:
-                continue
-            # Extraire x_km, y_km depuis la bbox de l'item
-            if bbox_item:
-                lon_c = (bbox_item[0] + bbox_item[2]) / 2
-                lat_c = (bbox_item[1] + bbox_item[3]) / 2
-                x_m = int((lon_c - 173.0) * 90000 + 1600000)
-                y_m = int((lat_c + 90.0) * 111000)
-                x_km = x_m // 1000
-                y_km = y_m // 1000
-            else:
-                continue
-            # Millésime
-            yr_m = _year_re.search(href)
-            year = int(yr_m.group(1)) if yr_m else 0
-            key = (x_km, y_km)
-            prev = candidats.get(key)
-            if prev is None or year > prev[0]:
-                candidats[key] = (year, dalle_filename(x_km, y_km), href)
+    index = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for res in ex.map(_fetch, item_urls):
+            if res:
+                index[res[0]] = {"bbox": res[1], "url": res[2]}
+    try:
+        cache_path.write_text(json.dumps(index), encoding="utf-8")
+    except Exception:
+        pass
+    print(f"  LINZ NZ : {len(index)} feuilles indexées")
+    return index
 
-    dalles = {nom: href for (_, nom, href) in candidats.values()}
-    print(f"  LINZ NZ : {len(dalles)} dalle(s)")
+
+# ── Découverte ───────────────────────────────────────────────────────────────
+def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=8):
+    """Retourne {nom.tif: url_cog} pour les feuilles DEM 1m intersectant la bbox.
+    Lecture fenêtrée ensuite (COG_WINDOWED) : seule la fenêtre bbox est lue."""
+    if bbox_wgs84 is None:
+        return {}
+    lo1, la1, lo2, la2 = bbox_wgs84
+    qlon_min, qlon_max = min(lo1, lo2), max(lo1, lo2)
+    qlat_min, qlat_max = min(la1, la2), max(la1, la2)
+
+    cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    index = _construire_index(cache_path, workers)
+    if index is None:
+        return None
+
+    dalles = {}
+    for code, info in index.items():
+        if _intersecte(info["bbox"], qlon_min, qlat_min, qlon_max, qlat_max):
+            dalles[dalle_filename(code)] = info["url"]
+    print(f"  LINZ NZ : {len(dalles)} feuille(s) dans la bbox")
     return dalles

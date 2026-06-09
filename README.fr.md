@@ -4,7 +4,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **13 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Canada), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **16 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -16,7 +16,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **13 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Canada), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **16 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) — les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -53,13 +53,18 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   - **Danemark** (`dk-datafordeler`) — DHM DTM, 0.4 m, couverture nationale (WCS Datafordeler, clé API gratuite requise)
   - **Irlande** (`ie-gsi`) — LiDAR DTM, 1 m, ~60% du territoire (GSI, CC BY 4.0)
   - **Tchéquie** (`cz-cuzk`) — DMR 5G, 1 m, couverture nationale (Atom feed ČÚZK ; LAZ → GeoTIFF, nécessite `lazrs`)
+  - **Espagne** (`es-cnig`) — MDT 5 m, couverture nationale (WCS INSPIRE IGN). NB : 5 m = échelle paysage ; le LiDAR 2 m sol-nu n'est accessible que via le portail à session CNIG (non intégrable proprement)
+  - **Pologne** (`pl-gugik`) — NMT 1 m LiDAR (projet ISOK), couverture nationale (WCS GUGiK, données ouvertes)
 
   *Amériques*
   - **Canada** (`ca-nrcan`) — HRDEM Mosaic, 1 m, ~95% couverture population (STAC NRCan ; lecture COG fenêtrée /vsicurl/)
   - **USA** (`us-tnm`, `us-3dep`) — 3DEP 1 m (TNMAccess S3 direct, sans compte ; ou OpenTopography avec clé gratuite)
 
-  *En cours* (providers ébauchés, découverte des tuiles à finaliser — pas encore fonctionnels) :
-  - Nouvelle-Zélande (`nz-linz`), Suède (`se-lantmateriet`), Espagne (`es-cnig`), Australie (`au-ga`, à écrire)
+  *Océanie*
+  - **Nouvelle-Zélande** (`nz-linz`) — DEM 1 m national seamless (STAC LINZ S3 ; lecture COG fenêtrée)
+
+  *En cours* (providers ébauchés, non encore fonctionnels) :
+  - Suède (`se-lantmateriet`, compte Lantmäteriet requis), Australie (`au-ga`, à écrire)
 
 - **Cartes raster IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
 
@@ -289,6 +294,9 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `cz-cuzk` | Tchéquie | EPSG:5514 (S-JTSK/Krovak) | 1 m | Atom INSPIRE 2 niveaux → LAZ (post_fetch) |
 | `ca-nrcan` | Canada | EPSG:3979 (LCC Canada) | 1 m | STAC + COG mosaïque (lecture fenêtrée) |
 | `us-tnm` · `us-3dep` | USA | EPSG:3857 | 1 m | TNMAccess S3 / OpenTopography |
+| `es-cnig` | Espagne | EPSG:25830 (UTM30N) | 5 m | WCS 2.0.1 INSPIRE (MDT) |
+| `pl-gugik` | Pologne | EPSG:2180 (PUWG 1992) | 1 m | WCS 2.0.1 (NMT ISOK) |
+| `nz-linz` | Nouvelle-Zélande | EPSG:2193 (NZTM2000) | 1 m | STAC + COG national (lecture fenêtrée) |
 
 Sélection : flag `--provider <code>` (CLI), variable d'env `LIDAR2MAP_PROVIDER`, ou dropdown en haut de la GUI.
 
@@ -327,7 +335,7 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 Au clic sur une zone, GitHub affiche son `NAME` (celui de la GUI) et son/ses code(s). La carte est régénérée par `coverage_map.py`, qui lit ces noms depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger.
 
-**Pas encore tracés sur la carte** : `be-flanders`, `fi-maanmittauslaitos`, `dk-datafordeler`, `ie-gsi`, `ca-nrcan` et `cz-cuzk` sont fonctionnels (cf. liste ci-dessus) mais n'ont pas encore de polygone de couverture — la carte montre pour l'instant les 10 zones les plus anciennes ; elle sera étendue.
+**Pas encore tracés sur la carte** : `be-flanders`, `fi-maanmittauslaitos`, `dk-datafordeler`, `ie-gsi`, `ca-nrcan`, `cz-cuzk`, `es-cnig`, `pl-gugik` et `nz-linz` sont fonctionnels (cf. liste ci-dessus) mais n'ont pas encore de polygone de couverture — la carte montre pour l'instant les 10 zones les plus anciennes ; elle sera étendue.
 
 **🇺🇸 USA** : supportée — 3DEP 1 m via `us-tnm` (sans compte, tuiles S3 directes) ou `us-3dep` (via OpenTopography, clé gratuite). **Absente de la carte** ci-dessus car la couverture 3DEP 1 m est **par projet** (pas tout le territoire) : un polygone « USA » sur-revendiquerait. Vérifie ta zone sur le [TNM Downloader](https://apps.nationalmap.gov/downloader/). NB : les tuiles 1 m USGS font 10×10 km (~150–300 Mo) — gros volume pour une petite zone archéo.
 
@@ -442,6 +450,9 @@ Données utilisées :
 - **Geological Survey Ireland** — LiDAR DTM 1m (Irlande), CC BY 4.0
 - **Natural Resources Canada** — HRDEM Mosaic 1m (Canada), Open Government Licence
 - **ČÚZK** (office tchèque de cartographie et cadastre) — DMR 5G 1m (Tchéquie), Open Data
+- **IGN España / CNIG** — MDT 5m (Espagne), CC BY 4.0
+- **GUGiK** (office polonais de géodésie et cartographie) — NMT 1m LiDAR ISOK (Pologne), données ouvertes
+- **LINZ** (Land Information New Zealand) — DEM 1m (Nouvelle-Zélande), CC BY 4.0
 - **OpenStreetMap** — données vectorielles sous licence ODbL, distribuées par Geofabrik
 - **Apache JMapsforge / mapsforge-map-writer** — moteur de rendu vectoriel offline
 
