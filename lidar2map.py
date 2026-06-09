@@ -2326,6 +2326,7 @@ NB_WORKERS     = 8    # workers parallèles par défaut (téléchargement dalles
 
 # ── MBTiles / WMTS — paramètres de batch ─────────────────────────────────────
 SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne systémique)
+SEUIL_HORS_COUVERTURE = 300  # tuiles toutes en 204 avec 0 succès → bbox hors couche
 BATCH_MBTILES_INSERT  = 500  # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
@@ -6703,6 +6704,18 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                         # de reset du compteur consécutif (on ne veut pas que
                         # 100 tuiles hors couverture entrecoupées masquent une
                         # panne transitoire qui revient).
+                        # Garde-fou couverture : si AUCUNE tuile n'est dans la
+                        # couche après un échantillon significatif, la zone est
+                        # hors couverture — typiquement bbox hors zone, ou ordre
+                        # --zone-bbox inversé (W,S,E,N = longitude d'abord). On
+                        # abort tôt au lieu de tenter 100k tuiles vides en silence.
+                        if (absentes >= SEUIL_HORS_COUVERTURE
+                                and ok * 50 < absentes and abort_msg is None):
+                            abort_msg = (
+                                f"{absentes} tuiles hors couverture (204) pour "
+                                f"seulement {ok} dans la couche. Zone hors de la "
+                                f"couche, ou ordre de --zone-bbox inversé : il attend "
+                                f"W,S,E,N (longitude d'abord, ex. -5.0,47.8,-2.6,49.0).")
 
                     if len(batch) >= BATCH:
                         cur.executemany(
@@ -6728,6 +6741,15 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # Sans ça la WAL reste ouverte, le .mbtiles-wal/-shm traîne.
         try: con.close()
         except Exception: pass
+
+    # Garde-fou couverture (petites zones sous le seuil mi-parcours) : aucune
+    # tuile dans la couche → même diagnostic. Évite un MBTiles vide "0 tiles"
+    # présenté comme un succès.
+    if (abort_msg is None and not _stop_event.is_set()
+            and absentes > 0 and ok * 50 < absentes):
+        abort_msg = (f"{ok} tuile(s) dans la couverture pour {absentes} hors couche "
+                     f"(204). Zone hors de la couche, ou ordre de --zone-bbox inversé "
+                     f": il attend W,S,E,N (longitude d'abord, ex. -5.0,47.8,-2.6,49.0).")
 
     if abort_msg is not None:
         # MBTiles removed: un fichier vide-presque ferait croire à un succès.
