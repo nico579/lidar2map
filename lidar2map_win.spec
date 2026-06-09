@@ -223,12 +223,17 @@ hiddenimports += [
     "PIL.TiffImagePlugin", "PIL.WebPImagePlugin",
 ]
 
-# ── laspy (lecture LAS/LAZ — lazy) ───────────────────────────────────────────
-try:
-    d, b, h = collect_all("laspy")
-    datas += d; binaries += b; hiddenimports += h
-except Exception:
-    pass
+# ── laspy + lazrs (lecture LAS/LAZ — lazy) ───────────────────────────────────
+# lazrs = backend de décompression LAZ (extension Rust) requis par laspy pour
+# lire les .laz des providers LiDAR (cz, se, es…). Sans lui, le bundle lève
+# "No LazBackend selected, cannot decompress data". collect_all embarque le
+# binaire compilé.
+for _laz_pkg in ("laspy", "lazrs"):
+    try:
+        d, b, h = collect_all(_laz_pkg)
+        datas += d; binaries += b; hiddenimports += h
+    except Exception:
+        pass
 
 # ── py7zr (BD TOPO bulk — lazy) ──────────────────────────────────────────────
 try:

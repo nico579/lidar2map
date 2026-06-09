@@ -1533,7 +1533,8 @@ if _INSTALL_ALL_DEPS:
         *([p for p in ["PyQt6", "PyQt6-WebEngine", "qtpy"]
            if __import__("platform").system() in ("Darwin", "Linux")]),
         # Optionnelles / lazy (non installées par le bootstrap standard)
-        "osmium", "numba", "laspy", "py7zr", "mapbox-vector-tile",
+        # lazrs = backend décompression LAZ pour laspy (providers LiDAR cz/se/es)
+        "osmium", "numba", "laspy", "lazrs", "py7zr", "mapbox-vector-tile",
     ]
     import subprocess as _sp_id
     # Table de correspondance explicite pkg pip → nom de module importable.
@@ -1555,6 +1556,7 @@ if _INSTALL_ALL_DEPS:
         "osmium":             "osmium",
         "numba":              "numba",
         "laspy":              "laspy",
+        "lazrs":              "lazrs",
         "py7zr":              "py7zr",
         "mapbox-vector-tile": "mapbox_vector_tile",
     }
@@ -2297,6 +2299,7 @@ def _load_provider():
         _p.subdir_from_name = lambda nom: None
         # post_download / set_apikey : no-op silencieux
         _p.post_download    = lambda chemin: None
+        _p.post_fetch       = None   # None = pas de conversion pre-validation
         _p.set_apikey       = lambda key:    None
         return _p
 
@@ -3125,8 +3128,14 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     # `with` ferme la connexion HTTP même sur exception → pas de fuite de FD
     # (cas observé avec 8 workers parallèles × centaines de dalles).
     with resp:
-        ct = resp.headers.get("content-type", "")
-        if "xml" in ct or "html" in ct:
+        ct = resp.headers.get("content-type", "").lower()
+        # Rejeter les réponses d'erreur WMS/WCS (page XML/HTML) → dalle absente.
+        # MAIS un conteneur WCS 2.0 multipart/related annonce type="text/xml"
+        # dans ses paramètres (la partie GML) tout en transportant le GeoTIFF
+        # binaire — ne pas le confondre avec une erreur (sinon Digitaal
+        # Vlaanderen & co. seraient rejetés à tort). Le désencapsulage a lieu
+        # ensuite dans _extraire_tiff_multipart.
+        if not ct.startswith("multipart") and ("xml" in ct or "html" in ct):
             return 0
 
         try:
@@ -3225,6 +3234,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 chemin_tmp.unlink(missing_ok=True)
                 return "absent"
             chemin_tmp.replace(chemin)
+            _post_fetch_si_besoin(chemin)
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
                 raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
@@ -3254,6 +3264,71 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 time.sleep(DELAI_RETRY)
             else:
                 print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
+                return "erreur"
+    return "erreur"
+
+
+def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
+    """Lecture FENÊTRÉE d'un COG distant (mosaïque régionale) via /vsicurl/.
+
+    Pour les providers servant de grandes mosaïques COG (ex. ca-nrcan : un COG
+    par levé couvrant des centaines de km²), télécharger le fichier entier pour
+    une petite zone est prohibitif (Go + heures). Un COG (Cloud-Optimized
+    GeoTIFF) supporte les requêtes HTTP par plage (range requests) + le tuilage
+    interne : rasterio/GDAL lisent UNIQUEMENT la fenêtre bbox sans rapatrier le
+    reste. On écrit un GeoTIFF local clippé à l'intersection (bbox zone ∩ COG).
+
+    bbox : (x_min, y_min, x_max, y_max) en CRS natif du provider (= CRS du COG).
+    Retourne "ok" / "skip" / "absent" (pas d'intersection) / "erreur".
+    """
+    import rasterio
+    from rasterio.windows import from_bounds as _win_from_bounds
+
+    chemin = chemin_dalle(dossier_dalles, nom)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
+        if not ecraser:
+            return "skip"
+        chemin.unlink(missing_ok=True)
+
+    bx1, by1, bx2, by2 = bbox
+    vsi = "/vsicurl/" + url
+    for tentative in range(1, MAX_TENTATIVES + 1):
+        try:
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
+                              CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.tiff",
+                              VSI_CACHE=True, GDAL_HTTP_TIMEOUT="60"):
+                with rasterio.open(vsi) as src:
+                    b = src.bounds
+                    # Intersection bbox zone ∩ étendue du COG
+                    l = max(bx1, b.left);   r = min(bx2, b.right)
+                    bot = max(by1, b.bottom); t = min(by2, b.top)
+                    if l >= r or bot >= t:
+                        return "absent"          # le COG ne couvre pas la zone
+                    win = _win_from_bounds(l, bot, r, t, src.transform)
+                    data = src.read(window=win)
+                    if data.size == 0:
+                        return "absent"
+                    profil = src.profile.copy()
+                    profil.update(
+                        driver="GTiff",
+                        height=data.shape[1], width=data.shape[2],
+                        transform=src.window_transform(win),
+                        compress="deflate", predictor=2, tiled=True,
+                        blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
+                    with rasterio.open(chemin, "w", **profil) as dst:
+                        dst.write(data)
+            if not _valider_tif_dalle(chemin):
+                chemin.unlink(missing_ok=True)
+                raise IOError("COG fenêtré invalide après écriture")
+            _creer_fichier(chemin)
+            return "ok"
+        except (OSError, IOError, rasterio.errors.RasterioIOError) as _e:
+            chemin.unlink(missing_ok=True)
+            if tentative < MAX_TENTATIVES:
+                time.sleep(DELAI_RETRY)
+            else:
+                print(f"\n  ERREUR fenêtre {nom} ({type(_e).__name__}) : {_e}")
                 return "erreur"
     return "erreur"
 
@@ -3302,6 +3377,7 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
             else:
                 chemin_tmp.replace(chemin)
 
+            _post_fetch_si_besoin(chemin)
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
                 raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
@@ -3672,12 +3748,7 @@ def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe=None, env=Non
     with rasterio.open(str(src_tif)) as src:
         profile = src.profile.copy()
 
-    # Purger les clés héritées incompatibles : si src_tif est un VRT
-    # (multi-dalles), profile hérite driver="VRT" → écriture GTiff impossible.
-    for k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
-        profile.pop(k, None)
     profile.update(
-        driver    = "GTiff",
         dtype     = "uint8",
         count     = n_bands,
         compress  = "deflate",
@@ -3687,6 +3758,9 @@ def _sauver_array_georef(arr, src_tif, dst_tif, gdal_translate_exe=None, env=Non
         blockysize = 512,
         bigtiff   = "IF_SAFER",
     )
+    # Supprimer les clés incompatibles éventuelles
+    for k in ("nodata",):
+        profile.pop(k, None)
 
     _t0 = time.time()
     with rasterio.open(str(dst_tif), "w", **profile) as dst:
@@ -5000,7 +5074,141 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     return svf
 
 
-def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None):
+
+_TIFF_MAGICS = (b'II\x2a\x00', b'MM\x00\x2a', b'II\x2b\x00', b'MM\x00\x2b')
+
+
+def _extraire_tiff_multipart(chemin):
+    """Désencapsule un GeoTIFF d'une réponse WCS 2.0 multipart/related.
+
+    Certains serveurs WCS 2.0 (MapServer : Digitaal Vlaanderen, etc.) renvoient
+    GetCoverage en multipart/related : une partie GML (text/xml) puis le GeoTIFF
+    binaire, séparés par une frontière MIME (--<boundary>). urllib sauve le flux
+    brut tel quel → le fichier n'est pas un TIFF valide. On extrait la partie
+    binaire (du magic TIFF jusqu'à la frontière suivante) et on réécrit le
+    fichier en GeoTIFF pur. No-op si le fichier est déjà un TIFF brut ou n'est
+    pas du multipart. Réponse OGC standard, pas un cas spécifique provider.
+    """
+    try:
+        with open(chemin, "rb") as _f:
+            entete = _f.read(2)
+        if entete in (b'II', b'MM'):
+            return  # déjà un TIFF brut
+        if entete != b'--':
+            return  # pas une frontière multipart
+        data = Path(chemin).read_bytes()
+        nl = data.find(b'\n')
+        if nl < 0:
+            return
+        boundary = data[2:nl].strip()                # ex. b'wcs'
+        for magic in _TIFF_MAGICS:
+            i = data.find(magic)
+            if i < 0:
+                continue
+            fin = data.find(b'--' + boundary, i)     # frontière de clôture
+            tiff = data[i:fin] if fin > i else data[i:]
+            tiff = tiff.rstrip(b'\r\n')               # CRLF avant la frontière
+            Path(chemin).write_bytes(tiff)
+            return
+    except Exception as _e_mp:
+        print(f"  multipart {Path(chemin).name} : {type(_e_mp).__name__}: {_e_mp}",
+              flush=True)
+
+
+def _post_fetch_si_besoin(chemin):
+    """Prépare le fichier brut téléchargé avant la validation GeoTIFF :
+      1. désencapsulation multipart/related (générique WCS 2.0) ;
+      2. PROVIDER.post_fetch(chemin) si défini (LAZ/ZIP → GeoTIFF, reproject…).
+    No-op si rien ne s'applique.
+    """
+    _extraire_tiff_multipart(chemin)
+    pf = getattr(PROVIDER, "post_fetch", None)
+    if pf is None:
+        return
+    try:
+        pf(chemin)
+    except Exception as _e_pf:
+        print(f"  post_fetch {chemin.name} : {type(_e_pf).__name__}: {_e_pf}",
+              flush=True)
+
+
+def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
+                              ecraser_ombrages, provides_shadings):
+    """Telecharge les ombrages precalcules fournis par le provider via WCS.
+    Modifie `choix` en place : retire les cles traitees avec succes.
+    provides_shadings : {cle: (coverage_id, resolution_m)} ou
+                        {cle: (coverage_id, resolution_m, wcs_url)}
+    """
+    import urllib.request as _urlreq
+    import urllib.parse   as _urlparse
+    nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
+    _SUFFIX = {
+        "svf":"svf_ombrage","multi":"multi_ombrage","slope":"slope_ombrage",
+        "lrm":"lrm_ombrage","rrim":"rrim_ombrage","315":"315_ombrage",
+        "045":"045_ombrage","135":"135_ombrage","225":"225_ombrage",
+    }
+    for cle, spec in provides_shadings.items():
+        if cle not in choix:
+            continue
+        coverage_id  = spec[0]
+        resolution_m = float(spec[1])
+        wcs_url      = spec[2] if len(spec) > 2 else getattr(PROVIDER, "WCS_URL", None)
+        if not wcs_url:
+            continue
+        nom_fichier = f"{nom_base}_{_SUFFIX.get(cle, cle+'_ombrage')}.tif"
+        chemin_out  = dossier_ville / nom_fichier
+        if chemin_out.exists() and not ecraser_ombrages:
+            print(f"  {nom_fichier.ljust(56)} -> already present (provider pre-computed)")
+            choix.remove(cle)
+            continue
+        if chemin_out.exists() and ecraser_ombrages:
+            chemin_out.unlink(missing_ok=True)
+        x1, y1, x2, y2 = bbox_natif
+        print(f"  {cle} -> provider pre-computed ({coverage_id}, {resolution_m}m)...",
+              flush=True)
+        t0 = time.time()
+        success = False
+        # Labels d'axe WCS : variables selon le serveur (x/y minuscules pour
+        # MapServer Digitaal Vlaanderen, E/N ou X/Y ailleurs). On lit ceux
+        # déclarés par le provider puis on tente des fallbacks courants.
+        _ax_prov = getattr(PROVIDER, "WCS_AXIS_LABELS", None)
+        _axes = ([tuple(_ax_prov)] if _ax_prov else []) + \
+                [("x","y"),("E","N"),("X","Y")]
+        for ax1, ax2 in _axes:
+            params = _urlparse.urlencode({
+                "service":"WCS","version":"2.0.1","request":"GetCoverage",
+                "coverageId":coverage_id,"format":"image/tiff",
+                "subset":f"{ax1}({x1},{x2})",
+            })
+            url = f"{wcs_url}?{params}&subset={ax2}({y1},{y2})"
+            try:
+                ssl_ctx = getattr(PROVIDER, "_SSL_CTX", None)
+                req = _urlreq.Request(url, headers={"User-Agent":"lidar2map/1.0"})
+                with _urlreq.urlopen(req, timeout=180, context=ssl_ctx) as r:
+                    data = r.read()
+                chemin_out.write_bytes(data)
+                # WCS 2.0 multipart/related → extraire le GeoTIFF binaire
+                _extraire_tiff_multipart(chemin_out)
+                with open(chemin_out, "rb") as _fv:
+                    if _fv.read(4) not in _TIFF_MAGICS:
+                        chemin_out.unlink(missing_ok=True)
+                        continue
+                _creer_fichier(chemin_out)
+                _taille = chemin_out.stat().st_size
+                print(f"  {nom_fichier} ({_taille/1e6:.1f} Mo,"
+                      f" {_hms(time.time()-t0)})",flush=True)
+                choix.remove(cle)
+                success = True
+                break
+            except Exception:
+                chemin_out.unlink(missing_ok=True)
+                continue
+        if not success:
+            print(f"  {cle}: provider pre-computed failed -> calcul normal depuis DEM",
+                  flush=True)
+
+
+def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None, bbox_natif=None):
     """
     Génère les ombrages depuis le VRT/COG source (MNT EPSG:2154).
 
@@ -5018,8 +5226,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     use_sweep : kernel sweep-horizon (SVF uniquement).
     SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
     """
-
-    _erreurs_ombrages = []   # erreurs non-fatales à remonter à la GUI
 
     if elevation_soleil is None:
         elevation_soleil = ELEVATION_SOLEIL
@@ -5083,6 +5289,17 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
           "-co", "TILED=YES", "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
           "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
           "--config", "GDAL_CACHEMAX", "2048"]
+
+    # Ombrages precalcules fournis par le provider (PROVIDES_SHADINGS) :
+    # telecharges directement depuis le WCS du provider (ex. Digitaal Vlaanderen
+    # SVF/Hillshade 25cm) AVANT de deriver choix_gdal/choix_numpy, pour que les
+    # cles ainsi servies soient retirees de choix et NON recalculees localement.
+    if bbox_natif is not None and hasattr(PROVIDER, "PROVIDES_SHADINGS") and choix:
+        choix = list(choix)
+        _fetch_provider_shadings(
+            choix, bbox_natif, dossier_ville, nom_zone, ecraser_ombrages,
+            PROVIDER.PROVIDES_SHADINGS
+        )
 
     choix_gdal = [c for c in choix if c in CATALOGUE_GDAL]
     choix_numpy  = [c for c in choix if c in CATALOGUE_NUMPY]
@@ -5251,11 +5468,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             # tombe sur un fichier figé (Windows file locking) ou demi-écrit.
             if chemin_out.exists() and ecraser_ombrages:
                 chemin_out.unlink()
-                # Nettoyer aussi le slope temporaire orphelin d'un run RRIM
-                # précédent : Windows le verrouille au run suivant → "Write failed"
-                _slope_orphan = dossier_ville / (nom_fichier.replace(".tif", "_slope_tmp.tif"))
-                if _slope_orphan.exists():
-                    _slope_orphan.unlink(missing_ok=True)
 
             t0_numpy = time.time()
 
@@ -5389,12 +5601,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             _profile_sl = _ds_sl.profile.copy()
                         _slope_u8 = _slope_numpy(_dem_sl, dx=RESOLUTION_M,
                                                  dy=RESOLUTION_M, nodata=_nd_sl_in)
-                        # Purger les clés héritées : src peut être un VRT
-                        # → driver="VRT" hérité → "Write failed"
-                        for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
-                            _profile_sl.pop(_k, None)
                         _profile_sl.update({
-                            "driver":     "GTiff",
                             "dtype":      "uint8",
                             "count":      1,
                             "compress":   "deflate",
@@ -5404,17 +5611,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             "blockysize": 512,
                             "BIGTIFF":    "YES",
                         })
-                        # Supprimer si existant : Windows refuse l'overwrite
-                        # implicite (orphelin d'un run crashé avant le finally).
-                        if slope_tmp_path.exists():
-                            slope_tmp_path.unlink(missing_ok=True)
+                        for _k in ("nodata",):
+                            _profile_sl.pop(_k, None)
                         with _rio_sl.open(str(slope_tmp_path), "w", **_profile_sl) as _dst_sl:
                             _dst_sl.write(_slope_u8, 1)
                         _slope_src = slope_tmp_path
                     except Exception as _e_sl:
-                        msg = f"  ERROR slope numpy for RRIM: {_e_sl}"
-                        print(msg)
-                        _erreurs_ombrages.append(msg.strip())
+                        print(f"  ERROR slope numpy for RRIM: {_e_sl}")
                         continue
 
                 # Étape 3 : composite RGB numpy/PIL
@@ -5463,9 +5666,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     _sauver_array_georef(rgb, Path(src_str), chemin_out)
                     print(f"  RRIM : {chemin_out.name} — RGB 3 canaux")
                 except Exception as e_rrim:
-                    msg = f"  ERREUR composite RRIM : {e_rrim}"
-                    print(msg)
-                    _erreurs_ombrages.append(msg.strip())
+                    print(f"  ERREUR composite RRIM : {e_rrim}")
                     continue
                 finally:
                     if slope_tmp_path.exists():
@@ -5487,7 +5688,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
 
     print("\n  Shadings in: " + str(dossier_ville))
-    return _erreurs_ombrages
 
 
 def _bbox_depuis_gdalinfo(chemin, env=None):
@@ -8272,16 +8472,13 @@ Examples:
         print(f"  Area: ~{surface_km2} km²  — Estimated duration:"
               f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
               f" (selon le type d'ombrage et la machine)", flush=True)
-        _errs_omb = generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
+        generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
                          ecraser_ombrages=args.ombrages_ecraser,
                          use_sweep=args.sweep_horizon,
                          svf_gamma=args.svf_gamma,
-                         svf_conv=args.svf_conv, svf_dist=args.svf_dist)
-        if _errs_omb:
-            for _e in _errs_omb:
-                print(f"  ERREUR OMBRAGE : {_e}")
-            sys.exit(1)
+                         svf_conv=args.svf_conv, svf_dist=args.svf_dist,
+                         bbox_natif=tuple(bbox))
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     if args.mbtiles or args.rmap or args.sqlitedb:
@@ -8680,11 +8877,19 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         print(f"\r  Dalles LIDAR [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
               end="", flush=True)
 
+    # Providers servant de grandes mosaïques COG (ca-nrcan…) : lecture fenêtrée
+    # /vsicurl/ sur la bbox zone au lieu de rapatrier le COG entier.
+    _cog_windowed = getattr(PROVIDER, "COG_WINDOWED", False)
     if a_telecharger:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
-            futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
-                                 args.telechargement_ecraser): (nom,)
-                       for nom, url in a_telecharger}
+            if _cog_windowed:
+                futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
+                                     bbox, args.telechargement_ecraser): (nom,)
+                           for nom, url in a_telecharger}
+            else:
+                futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
+                                     args.telechargement_ecraser): (nom,)
+                           for nom, url in a_telecharger}
             for fut in as_completed(futures):
                 nom = futures[fut][0]
                 res = fut.result()
@@ -8818,16 +9023,13 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                                           dossier_ville, bbox)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
                             else ELEVATION_SOLEIL)
-                    _errs_omb2 = generer_ombrages(dalles_ombrages, dossier_ville, choix,
+                    generer_ombrages(dalles_ombrages, dossier_ville, choix,
                                      elevation_soleil=elev, nom_zone=nom_z,
                                      ecraser_ombrages=args.ombrages_ecraser,
                                      use_sweep=args.sweep_horizon,
                                      svf_gamma=args.svf_gamma,
-                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist)
-                    if _errs_omb2:
-                        for _e in _errs_omb2:
-                            print(f"  ERREUR OMBRAGE : {_e}")
-                        sys.exit(1)
+                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist,
+                                     bbox_natif=tuple(bbox))
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Filtre identique à la fonction main : exclure les caches de
@@ -14212,16 +14414,6 @@ function buildProviders(providers, activeCode) {
     sel.dataset.country = c;
     applyProviderCountry(c);
     applyProviderApiKey(o);
-    // Vider le cache autocomplete et fermer le dropdown : les résultats de
-    // l'ancien pays ne sont plus valides pour le nouveau provider.
-    _acCache.clear();
-    _acFermer();
-    // Si le champ ville contient déjà du texte, relancer l'autocomplétion
-    // pour le nouveau pays (sinon l'utilisateur doit effacer/retaper).
-    const inp = document.getElementById('f-ville');
-    if (inp && inp.value.trim().length >= _AC_MINLEN) {
-      _acDeclencher();
-    }
   });
 }
 

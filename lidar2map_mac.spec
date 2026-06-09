@@ -218,12 +218,17 @@ try:
 except Exception as _e:
     print(f"  [WARN] copie osmium.libs/ echouee : {_e}")
 
-# laspy (lecture LAS/LAZ — lazy dans le script)
-try:
-    d, b, h = collect_all("laspy")
-    datas += d; binaries += b; hiddenimports += h
-except Exception:
-    pass
+# laspy + lazrs (lecture LAS/LAZ — lazy dans le script)
+# lazrs = backend de décompression LAZ (extension Rust) requis par laspy pour
+# lire les .laz des providers LiDAR (cz, se, es…). Sans lui, le bundle lève
+# "No LazBackend selected, cannot decompress data". collect_all embarque le
+# binaire compilé.
+for _laz_pkg in ("laspy", "lazrs"):
+    try:
+        d, b, h = collect_all(_laz_pkg)
+        datas += d; binaries += b; hiddenimports += h
+    except Exception:
+        pass
 
 # py7zr (BD TOPO bulk — lazy dans le script)
 try:

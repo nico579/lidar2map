@@ -4,7 +4,7 @@
 
 **Offline archaeological LiDAR maps, multi-country + IGN raster/vector + OSM, for Locus Map / OsmAnd / TwoNav**
 
-A self-contained Python tool that downloads public LiDAR data from several national portals (IGN France, AHN Netherlands, swisstopo Switzerland, Kartverket Norway), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
+A self-contained Python tool that downloads public LiDAR data from national portals across **13 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Finland, Denmark, Ireland, Czechia, Canada), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
 
 ![Same place: satellite, OpenStreetMap, then LiDAR relief (SVF)](screenshots/hero.png)
 
@@ -18,7 +18,7 @@ A self-contained Python tool that downloads public LiDAR data from several natio
 
 ## Who is it for?
 
-- **Amateur archaeologists** interested in LiDAR prospection — the tool works in France (IGN HD), the Netherlands (AHN4), Switzerland (swissALTI3D) and Norway (Nasjonal Høydemodell). The relief computations (multi, SVF, LRM, RRIM) are identical from one country to the next.
+- **Amateur archaeologists** interested in LiDAR prospection — the tool works across **13 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Finland, Denmark, Ireland, Czechia, Canada) with more in progress. The relief computations (multi, SVF, LRM, RRIM) are identical from one country to the next.
 - **French hikers** who want offline IGN topo maps on their phone (Locus Map Pro, OsmAnd+) — the IGN raster/vector tabs remain France-only.
 - **Landscape surveyors** who combine historical orthophotos (1950-1995, France) with a DEM to spot human remains before agricultural land abandonment erases them.
 - **Cavers / explorers** who need accurate base maps in areas not covered by mainstream apps.
@@ -41,10 +41,27 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   - RRIM (Red Relief Image Map) — color composite (slope + LRM)
 
   Supported LiDAR sources (via the `--provider <code>` flag):
+
+  *Europe*
   - **France** (`fr-ign`, default) — IGN LiDAR HD, 0.5 m, national coverage
-  - **Netherlands** (`nl-ahn`) — AHN4, 0.5 m, national coverage
+  - **Netherlands** (`nl-ahn`) — AHN4/5, 0.5 m, national coverage
   - **Switzerland** (`ch-swisstopo`) — swissALTI3D, 0.5 m, national coverage
   - **Norway** (`no-kartverket`) — Nasjonal Høydemodell, 1 m, national coverage
+  - **Germany** (`de-nrw`, `de-bayern`, `de-niedersachsen`) — DGM1, 1 m (3 Länder, open data)
+  - **Austria** (`at-tirol`, `at-osttirol`) — DGM 0.5 m (Tyrol + East Tyrol, tiris WCS)
+  - **United Kingdom** (`gb-england`, `gb-wales`) — LIDAR Composite DTM, 1 m (EA/NRW)
+  - **Belgium** (`be-flanders`) — DHMV II DTM, 1 m, Flandre+Bruxelles (Digitaal Vlaanderen WCS) — also exposes pre-computed SVF 25 cm and multi-hillshade 25 cm
+  - **Finland** (`fi-maanmittauslaitos`) — Elevation Model, 2 m, national coverage (NLS WCS, API key required)
+  - **Denmark** (`dk-datafordeler`) — DHM DTM, 0.4 m, national coverage (Datafordeler WCS, API key required)
+  - **Ireland** (`ie-gsi`) — LiDAR DTM, 1 m, ~60% coverage (GSI, CC BY 4.0)
+  - **Czechia** (`cz-cuzk`) — DMR 5G, 1 m, national coverage (ČÚZK Atom feed; LAZ → GeoTIFF, requires `lazrs`)
+
+  *Americas*
+  - **Canada** (`ca-nrcan`) — HRDEM Mosaic, 1 m, ~95% population coverage (NRCan STAC; windowed COG reads /vsicurl/)
+  - **USA** (`us-tnm`, `us-3dep`) — 3DEP 1 m (TNMAccess direct S3, no account; or OpenTopography with free key)
+
+  *In progress* (providers drafted, tile discovery not finalized — not yet functional):
+  - New Zealand (`nz-linz`), Sweden (`se-lantmateriet`), Spain (`es-cnig`), Australia (`au-ga`, to be written)
 
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
 
@@ -264,10 +281,20 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `nl-ahn` | Netherlands | EPSG:28992 (RD New) | 0.5 m | ATOM feed + JSON FeatureCollection |
 | `ch-swisstopo` | Switzerland | EPSG:2056 (CH1903+/LV95) | 0.5 m | STAC REST API |
 | `no-kartverket` | Norway | EPSG:25833 (UTM33N) | 1 m | ArcGIS ImageServer exportImage |
+| `de-bayern` · `de-nrw` · `de-niedersachsen` | Germany (3 Länder) | EPSG:25832 (UTM32N) | 1 m | metalink / index.json / STAC COG |
+| `at-tirol` · `at-osttirol` | Austria (Tyrol) | EPSG:31254/31255 (MGI M28/M31) | 0.5 m | WCS 1.0.0 GetCoverage |
+| `gb-england` · `gb-wales` | United Kingdom | EPSG:27700 (OSGB36) | 1 m | WCS 2.0.1 / WFS catalogue |
+| `be-flanders` | Belgium (Flanders) | EPSG:31370 (Lambert 1972) | 1 m | WCS 2.0.1 (+ pre-computed 25 cm shadings) |
+| `fi-maanmittauslaitos` | Finland | EPSG:3067 (TM35FIN) | 2 m | WCS 2.0.1 (free API key) |
+| `dk-datafordeler` | Denmark | EPSG:25832 (UTM32N) | 0.4 m | WCS 1.0.0 (free API key) |
+| `ie-gsi` | Ireland | EPSG:2157 (ITM) | 1 m | ArcGIS FeatureServer → ZIP (post_fetch) |
+| `cz-cuzk` | Czechia | EPSG:5514 (S-JTSK/Krovak) | 1 m | Atom INSPIRE 2-level → LAZ (post_fetch) |
+| `ca-nrcan` | Canada | EPSG:3979 (LCC Canada) | 1 m | STAC + mosaic COG (windowed read) |
+| `us-tnm` · `us-3dep` | USA | EPSG:3857 | 1 m | TNMAccess S3 / OpenTopography |
 
 Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI.
 
-To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR): copy the provider closest in paradigm and adapt URLs/CRS/naming format. The first completed provider takes ~½ a day, the next ones ~1-2h each.
+To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS ImageServer, direct COG, FeatureServer catalogue…) and adapt URLs/CRS/naming format. The first provider for a new paradigm takes ~½ day; subsequent ones with the same pattern take ~1–2 h. A [provider roadmap](docs/lidar_providers_roadmap.md) documents ~40 evaluated sources across 25+ countries.
 
 ## Main features
 
@@ -277,7 +304,7 @@ To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR):
 - **Resume after interruption**: the same command resumes where it stopped, via a `.json` manifest that tracks completed chunks.
 - **Up-front splitting**: for large areas, split into an N×N grid **or ~K km squares** (`--split-radius`, bounded chunk size — recommended at national scale) — useful so you don't have to regenerate the whole area if something crashes. Per-chunk disk cleanup (`--cleanup`) and a free-space guard (`--min-free-gb`) for very large coverage.
 - **Crash-safe history**: each run is recorded *at startup* (status "running") then finalized to "ok" or "ko". A hard crash (kill -9, power loss) leaves the entry visible in the UI — the trace is kept for debugging.
-- **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any LiDAR source. Shipped providers: **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavaria, NRW, Lower Saxony), **AT** (Tyrol, East Tyrol), **GB** (England, Wales), **US** (3DEP 1m, no account) — covering varied API paradigms (TMS PBF, JSON FeatureCollection, STAC, ArcGIS ImageServer, Metalink/`index.json`, **per-tile WCS `GetCoverage`**). Adding a country = ~100-150 lines in a new provider file (see *LiDAR coverage & evaluated sources* below).
+- **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any LiDAR source. Shipped providers: **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavaria, NRW, Lower Saxony), **AT** (Tyrol, East Tyrol), **GB** (England, Wales), **BE** (Flanders WCS), **FI** (NLS WCS), **DK** (Datafordeler WCS), **IE** (GSI catalogue), **CA** (NRCan STAC), **NZ** (LINZ S3), **AU** (Geoscience Australia WCS), **US** (3DEP 1m, no account) — covering varied API paradigms (TMS PBF, JSON FeatureCollection, STAC, ArcGIS FeatureServer/ImageServer, Metalink/`index.json`, **per-tile WCS `GetCoverage`**, S3 public COG). Providers can also expose **pre-computed shadings** (`PROVIDES_SHADINGS`) — the pipeline downloads them directly instead of computing from the DEM (e.g. BE Flanders SVF 25 cm, multi-hillshade 25 cm). Adding a country = ~100–150 lines (see *LiDAR coverage & evaluated sources* below).
 - **Interactive GUI**: 6 tabs (LiDAR, IGN raster, IGN vector, OSM, Merge, Splitting), provider selector at the top of the form (IGN Raster/Vector tabs hidden automatically for non-FR providers), history of the last 50 commands with status badges, parameter validation, live log, error modal.
 - **Historical orthophoto maps**: a unique combo for archaeology — SVF 2024 (current LiDAR) + 1950 ortho (before land abandonment) → reveals structures still legible 70 years later.
 
@@ -287,29 +314,33 @@ To add a 5th country (e.g. UK Environment Agency, Spain PNOA-LiDAR, Italy PNRR):
 
 **Legend** — colour ↔ the `--provider` code (= the entry in the GUI's provider selector):
 
-| Colour | `--provider` | Area |
-|:-:|---|---|
-| 🟦 | `fr-ign` | France (mainland) |
-| 🟩 | `nl-ahn` | Netherlands |
-| 🟥 | `ch-swisstopo` | Switzerland |
-| 🟪 | `no-kartverket` | Norway |
-| 🟧 | `de-bayern` | Germany — Bavaria |
-| 🟧 | `de-nrw` | Germany — North Rhine-Westphalia |
-| 🟧 | `de-niedersachsen` | Germany — Lower Saxony |
-| 🟨 | `at-tirol` · `at-osttirol` | Austria — Tyrol + East Tyrol |
-| 🟫 | `gb-england` | United Kingdom — England |
-| 🟫 | `gb-wales` | United Kingdom — Wales |
+| Colour | `--provider` | Area | Resolution |
+|:-:|---|---|---|
+| 🟦 | `fr-ign` | France (mainland) | 0.5 m |
+| 🟩 | `nl-ahn` | Netherlands | 0.5 m |
+| 🟥 | `ch-swisstopo` | Switzerland | 0.5 m |
+| 🟪 | `no-kartverket` | Norway | 1 m |
+| 🟧 | `de-bayern` | Germany — Bavaria | 1 m |
+| 🟧 | `de-nrw` | Germany — North Rhine-Westphalia | 1 m |
+| 🟧 | `de-niedersachsen` | Germany — Lower Saxony | 1 m |
+| 🟨 | `at-tirol` · `at-osttirol` | Austria — Tyrol + East Tyrol | 0.5 m |
+| 🟫 | `gb-england` | United Kingdom — England | 1 m |
+| 🟫 | `gb-wales` | United Kingdom — Wales | 1 m |
 
 Clicking an area shows its `NAME` (the GUI's) and its code(s). The map is regenerated by `coverage_map.py`, which reads those names from `providers/*.py` — so the map and the GUI can't drift.
 
+**Not yet drawn on the map**: `be-flanders`, `fi-maanmittauslaitos`, `dk-datafordeler`, `ie-gsi`, `ca-nrcan` and `cz-cuzk` are functional (see the list above) but don't have a coverage polygon yet — the map currently shows the 10 oldest zones and will be extended.
+
 **🇺🇸 USA**: supported — 3DEP 1m via `us-tnm` (no account, direct S3 tiles) or `us-3dep` (via OpenTopography, free key). **Not on the map** above because 3DEP 1m coverage is **project-based** (not the whole country): a "USA" polygon would over-claim. Check your area on the [TNM Downloader](https://apps.nationalmap.gov/downloader/). Note: USGS 1m tiles are 10×10 km (~150–300 MB) — a lot for a small archaeology area.
 
+**🇧🇪 Belgium (Flanders)**: a bonus — the WCS also exposes `DHMV_II_SVF_25cm` (Sky-View Factor at 25 cm, 16 directions, r=2.5 m) and `DHMV_II_HILL_25cm` (multidirectional hillshade at 25 cm, pre-computed by Digitaal Vlaanderen). When one of those shadings is requested, lidar2map downloads it directly instead of computing it from the 1 m DEM — both faster and at higher resolution.
+
 A source plugs in cleanly when it exposes **deterministic tiles** (one URL per
-~1 km tile) **or a WCS** (`GetCoverage` by bbox). Sources delivered as **large
-blocks** (provinces, 20–50 km sheets), via **form/email order**, as **WMS only**
-(rendered, no raw elevation) or as **ASC without a CRS** don't fit the 1 km
-streamed model yet — that would need a "large-block" capability (download a big
-zip + windowed read), not implemented yet.
+~1 km tile), **a WCS** (`GetCoverage` by bbox), **mosaic COGs** (windowed
+`/vsicurl/` read on the bbox, see `ca-nrcan`) or **LAZ/ZIP tiles** (`post_fetch`
+hook: unzip + point-cloud→GeoTIFF via `laspy`+`lazrs`, see `cz-cuzk`, `ie-gsi`).
+Still a poor fit: sources via **form/email order**, **WMS only** (rendered, no raw
+elevation) or **ASC without a CRS**.
 
 Sources **evaluated but not retained** so far (documented to avoid re-digging):
 
@@ -321,12 +352,16 @@ Sources **evaluated but not retained** so far (documented to avoid re-digging):
 | DE — Baden-Württemberg | XYZ (ASCII) + JS portal, no clear tiled GeoTIFF |
 | AT — BEV national | 50 km tiles via portal |
 | AT — Vorarlberg | WMS only (no raw elevation) |
-| ES — CNIG MDT02 | 2 m (too coarse) + MTN50 sheets (large blocks) |
-| BE — Wallonia | 0.5 m but ~14 GB provincial blocks, no WCS |
-| GB — Scotland | 1 m fragmented **per phase** ; seamless composite = 2 m (coarse) |
+| ES — CNIG MDT02 | LAZ blocks + 2 m (coarse) — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
+| SE — Lantmäteriet | LAZ tiles (CC0) — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
+| CZ — ČÚZK DMR 5G | LAZ zipped — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
+| BE — Wallonia | 0.5 m but large provincial blocks; WCS availability unconfirmed |
+| GB — Scotland | per-phase fragmentation; AWS S3 accessible but index complex |
 | IT — Aosta Valley / regions | portal order form |
 | IT — South Tyrol | 0.5 m built-up areas only / 2.5 m elsewhere |
-| SI — Slovenia (ARSO) | clean URLs but ASC without CRS + per-block index |
+| SI — Slovenia (ARSO) | ASC without CRS + per-block index |
+| LV — LGIA | DTM/DSM 0.4 m; download API not publicly accessible (WMS only) |
+| PT — DGT | 0.5 m national 2024; API to be validated |
 
 Germany is covered as far as cleanly possible (3 clean states + Tyrol on the Alps side); the remaining states have no clean programmatic access so far (see table). This table is maintained by hand as sources are probed — it exists to avoid re-digging the same dead ends.
 
@@ -401,6 +436,19 @@ Designed and architected by **Nicolas Martin** ([@nico579](https://github.com/ni
 
 Data used:
 - **IGN** (French National Institute of Geographic and Forest Information) — LiDAR HD, BD ORTHO (including the historical 1950-1995 versions), BD TOPO, under the Etalab 2.0 license
+- **AHN** (Actueel Hoogtebestand Nederland) — AHN4/5 0.5m (Netherlands), CC BY 4.0
+- **swisstopo** (Swiss Federal Office of Topography) — swissALTI3D 0.5m (Switzerland), free open data © swisstopo
+- **Kartverket** — Nasjonal Høydemodell 1m (Norway), CC BY 4.0
+- **Geobasis NRW · LDBV Bayern · LGLN Niedersachsen** — DGM1 1m (Germany, 3 Länder), Datenlizenz Deutschland Namensnennung 2.0
+- **Land Tirol** (tiris) — DGM 0.5m (Austria, Tyrol), CC BY 4.0
+- **Environment Agency** (England) & **DataMapWales / Natural Resources Wales** — LIDAR Composite DTM 1m (UK), Open Government Licence v3
+- **USGS** — 3DEP / The National Map 1m (USA), public domain
+- **Digitaal Vlaanderen** — DHMV II DTM/SVF/Hillshade (Belgium Flanders), Open Data Licentie Vlaanderen
+- **Maanmittauslaitos** — Elevation Model 2m (Finland), CC BY 4.0
+- **Klimadatastyrelsen / Datafordeler** — DHM DTM 0.4m (Denmark), CC BY
+- **Geological Survey Ireland** — LiDAR DTM 1m (Ireland), CC BY 4.0
+- **Natural Resources Canada** — HRDEM Mosaic 1m (Canada), Open Government Licence
+- **ČÚZK** (Czech Office for Surveying, Mapping and Cadastre) — DMR 5G 1m (Czechia), Open Data
 - **OpenStreetMap** — vector data under the ODbL license, distributed by Geofabrik
 - **Apache JMapsforge / mapsforge-map-writer** — offline vector rendering engine
 
