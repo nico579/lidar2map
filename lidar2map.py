@@ -3300,10 +3300,30 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
                               CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.tiff",
                               VSI_CACHE=True, GDAL_HTTP_TIMEOUT="60"):
                 with rasterio.open(vsi) as src:
+                    # La bbox arrive dans PROVIDER.CRS_NATIF ; le COG peut être
+                    # dans un AUTRE CRS (ex. 3DEP : tuiles en UTM local alors que
+                    # CRS_NATIF=3857). On reprojette la bbox vers le CRS réel du
+                    # COG avant de fenêtrer (identité si même CRS, ex. ca-nrcan).
+                    rbx1, rby1, rbx2, rby2 = bx1, by1, bx2, by2
+                    try:
+                        _se = src.crs.to_epsg() if src.crs else None
+                        _ne = (int(PROVIDER.CRS_NATIF.split(":")[1])
+                               if ":" in getattr(PROVIDER, "CRS_NATIF", "") else None)
+                        if _se and _ne and _se != _ne:
+                            _tf = _get_transformer(PROVIDER.CRS_NATIF, f"EPSG:{_se}")
+                            _xs = []; _ys = []
+                            for _px, _py in ((bx1, by1), (bx1, by2),
+                                             (bx2, by1), (bx2, by2)):
+                                _tx, _ty = _tf.transform(_px, _py)
+                                _xs.append(_tx); _ys.append(_ty)
+                            rbx1, rby1 = min(_xs), min(_ys)
+                            rbx2, rby2 = max(_xs), max(_ys)
+                    except Exception:
+                        pass
                     b = src.bounds
-                    # Intersection bbox zone ∩ étendue du COG
-                    l = max(bx1, b.left);   r = min(bx2, b.right)
-                    bot = max(by1, b.bottom); t = min(by2, b.top)
+                    # Intersection bbox zone ∩ étendue du COG (dans le CRS du COG)
+                    l = max(rbx1, b.left);   r = min(rbx2, b.right)
+                    bot = max(rby1, b.bottom); t = min(rby2, b.top)
                     if l >= r or bot >= t:
                         return "absent"          # le COG ne couvre pas la zone
                     win = _win_from_bounds(l, bot, r, t, src.transform)
@@ -3322,6 +3342,14 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
                 raise IOError("COG fenêtré invalide après écriture")
+            # Hook post-download (ex. us-tnm : reproject UTM local -> CRS_NATIF),
+            # comme le chemin de download direct.
+            if hasattr(PROVIDER, "post_download"):
+                try:
+                    PROVIDER.post_download(chemin)
+                except Exception as _e_pd:
+                    print(f"  ⚠ post_download {nom} : {type(_e_pd).__name__}: {_e_pd}",
+                          flush=True)
             _creer_fichier(chemin)
             return "ok"
         except (OSError, IOError, rasterio.errors.RasterioIOError) as _e:

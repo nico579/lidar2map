@@ -47,7 +47,11 @@ CRS_NATIF          = "EPSG:3857"
 RESOLUTION_M       = 1                  # 1 m natif
 DALLE_KM           = 10                 # tiles TNM = 10x10 km
 PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)   # 10000 px
-SEUIL_DALLE_VALIDE = 1_000_000          # 10000x10000 float32 compressé : 100-300 Mo
+SEUIL_DALLE_VALIDE = 200_000            # tuiles fenêtrées (pas les 295 Mo entiers)
+# Les tuiles 3DEP StagedProducts sont des COG → lecture FENÊTRÉE /vsicurl/ sur
+# la bbox (le pipeline reprojette la bbox vers l'UTM du COG, puis post_download
+# UTM->3857). Évite de rapatrier 100-300 Mo par tuile 10×10 km pour une zone archéo.
+COG_WINDOWED       = True
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────

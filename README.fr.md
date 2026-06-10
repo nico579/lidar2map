@@ -335,7 +335,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
-**🇺🇸 USA & 🇨🇦 Canada — supportés et fonctionnels, juste non tracés.** `us-tnm` / `us-3dep` (3DEP 1 m) et `ca-nrcan` (HRDEM 1 m) marchent, mais leur couverture est **par projet/population** (pas mur-à-mur national) : un polygone plein sur-revendiquerait — d'où la note plutôt qu'une forme. Vérifie ta zone US sur le [TNM Downloader](https://apps.nationalmap.gov/downloader/). NB : les tuiles 1 m USGS font 10×10 km (~150–300 Mo).
+**🇺🇸 USA & 🇨🇦 Canada — supportés et fonctionnels, juste non tracés.** `us-tnm` / `us-3dep` (3DEP 1 m) et `ca-nrcan` (HRDEM 1 m) marchent, mais leur couverture est **par projet/population** (pas mur-à-mur national) : un polygone plein sur-revendiquerait — d'où la note plutôt qu'une forme. Vérifie ta zone US sur le [TNM Downloader](https://apps.nationalmap.gov/downloader/). Les tuiles 1 m USGS sont des COG 10×10 km **lues en fenêtré** sur ta bbox via `/vsicurl/` — pas de download de la tuile entière.
 
 Un provider s'intègre proprement si la source expose des **tuiles déterministes**
 (URL par tuile, ~1 km), **un WCS** (`GetCoverage` par bbox), des **COG mosaïques**
