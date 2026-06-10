@@ -3842,6 +3842,70 @@ def _lire_dem_rasterio(src_path):
     return np.array(_Img.open(str(src_path)), dtype=np.float32), None
 
 
+def _nodata_mask(arr, nodata=None):
+    """Masque nodata unifié : sentinelles hors plage altimétrique (|z| > 9000 m,
+    couvre le -9999 IGN comme les ±3.4e38) + valeur nodata déclarée du raster.
+
+    Convention unique partagée par hillshade/SVF/LRM/RRIM — avant ce helper,
+    les trois fonctions chunked utilisaient chacune une variante différente
+    (magique seul, déclaré seul, ou les deux), donc un provider avec un nodata
+    déclaré dans [-9000, 9000] passait au travers du SVF mais pas du LRM.
+    """
+    import numpy as np
+    mask = (arr < -9000) | (arr > 9000)
+    if nodata is not None:
+        if np.isnan(nodata):
+            mask |= np.isnan(arr)
+        else:
+            mask |= (arr == nodata)
+    return mask
+
+
+def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
+    """Percentiles globaux estimés sur une grille 3×3 de fenêtres réparties
+    sur toute l'étendue du raster (fractions 0.2/0.5/0.8 en x et y).
+
+    calc_block : fenêtre float32 (avec halo) → array de valeurs, NaN aux
+    pixels invalides (nodata). Les valeurs finies de toutes les fenêtres
+    sont mises en commun avant le calcul des percentiles.
+
+    Un crop unique rendrait le stretch dépendant de ce que contient ce crop
+    (même terrain → rendu différent selon le cadrage) — régression de rendu
+    silencieuse déjà rencontrée sur le SVF, d'où la grille. Partagé par
+    SVF / LRM / RRIM.
+
+    Retourne (lo, hi, n_valides) ou None si trop peu de pixels valides.
+    """
+    import numpy as np
+    import rasterio as _rio
+    from rasterio.windows import Window
+    SAMPLE = 192
+    s_half = SAMPLE // 2
+    _fracs = (0.2, 0.5, 0.8)
+    pool = []
+    with _rio.open(str(src_path)) as src:
+        H, W = src.height, src.width
+        for _fy in _fracs:
+            cy = int(H * _fy)
+            for _fx in _fracs:
+                cx = int(W * _fx)
+                r0 = max(0, cy - s_half - halo)
+                c0 = max(0, cx - s_half - halo)
+                r1 = min(H, cy + s_half + halo)
+                c1 = min(W, cx + s_half + halo)
+                if r1 - r0 < 8 or c1 - c0 < 8:
+                    continue
+                win = src.read(1, window=Window(c0, r0, c1 - c0, r1 - r0)).astype(np.float32)
+                vals = calc_block(win)
+                pool.append(vals[np.isfinite(vals)])
+    valid = np.concatenate(pool) if pool else np.empty(0, dtype=np.float32)
+    if len(valid) < 100:
+        return None
+    return (float(np.percentile(valid, p_lo)),
+            float(np.percentile(valid, p_hi)),
+            len(valid))
+
+
 # ── Hillshade et slope numpy (remplacent gdaldem CLI) ─────────────────────────
 
 # Cache des kernels Numba (compilation paresseuse au 1er appel, partagée entre
@@ -3881,11 +3945,28 @@ def _get_numba_horn_kernels():
                 rm = row - 1 if row > 0 else 0
                 rp = row + 1 if row < h - 1 else h - 1
                 for col in range(w):
+                    z0 = dem[row, col]
+                    if has_nodata and z0 == nodata:
+                        out[row, col] = 0
+                        continue
                     cm = col - 1 if col > 0 else 0
                     cp = col + 1 if col < w - 1 else w - 1
                     a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
                     d = dem[row, cm];                  f = dem[row, cp]
                     g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    if has_nodata:
+                        # Voisin nodata remplacé par la valeur centrale
+                        # (convention gdaldem) : sans ça, un voisin à -9999
+                        # produit un gradient énorme → halo noir/blanc d'1 px
+                        # autour des zones hors couverture.
+                        if a  == nodata: a  = z0
+                        if b  == nodata: b  = z0
+                        if c  == nodata: c  = z0
+                        if d  == nodata: d  = z0
+                        if f  == nodata: f  = z0
+                        if g  == nodata: g  = z0
+                        if hv == nodata: hv = z0
+                        if i  == nodata: i  = z0
                     dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
                     dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
                     g2 = dz_dx * dz_dx + dz_dy * dz_dy
@@ -3899,10 +3980,7 @@ def _get_numba_horn_kernels():
                         hs = 0.0
                     elif hs > 1.0:
                         hs = 1.0
-                    v = int(hs * 254.0 + 1.0)
-                    if has_nodata and dem[row, col] == nodata:
-                        v = 0
-                    out[row, col] = v
+                    out[row, col] = int(hs * 254.0 + 1.0)
             return out
 
         @_nb.njit(parallel=True, fastmath=True)
@@ -3923,11 +4001,25 @@ def _get_numba_horn_kernels():
                 rm = row - 1 if row > 0 else 0
                 rp = row + 1 if row < h - 1 else h - 1
                 for col in range(w):
+                    z0 = dem[row, col]
+                    if has_nodata and z0 == nodata:
+                        out[row, col] = 0
+                        continue
                     cm = col - 1 if col > 0 else 0
                     cp = col + 1 if col < w - 1 else w - 1
                     a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
                     d = dem[row, cm];                  f = dem[row, cp]
                     g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    if has_nodata:
+                        # Voisin nodata → valeur centrale (cf. _hillshade_kernel)
+                        if a  == nodata: a  = z0
+                        if b  == nodata: b  = z0
+                        if c  == nodata: c  = z0
+                        if d  == nodata: d  = z0
+                        if f  == nodata: f  = z0
+                        if g  == nodata: g  = z0
+                        if hv == nodata: hv = z0
+                        if i  == nodata: i  = z0
                     dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
                     dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
                     g2 = dz_dx * dz_dx + dz_dy * dz_dy
@@ -3970,10 +4062,7 @@ def _get_numba_horn_kernels():
                         hs_avg = 0.0
                     elif hs_avg > 1.0:
                         hs_avg = 1.0
-                    v = int(hs_avg * 254.0 + 1.0)
-                    if has_nodata and dem[row, col] == nodata:
-                        v = 0
-                    out[row, col] = v
+                    out[row, col] = int(hs_avg * 254.0 + 1.0)
             return out
 
         @_nb.njit(parallel=True, fastmath=True)
@@ -3986,11 +4075,25 @@ def _get_numba_horn_kernels():
                 rm = row - 1 if row > 0 else 0
                 rp = row + 1 if row < h - 1 else h - 1
                 for col in range(w):
+                    z0 = dem[row, col]
+                    if has_nodata and z0 == nodata:
+                        out[row, col] = 0
+                        continue
                     cm = col - 1 if col > 0 else 0
                     cp = col + 1 if col < w - 1 else w - 1
                     a = dem[rm, cm]; b = dem[rm, col]; c = dem[rm, cp]
                     d = dem[row, cm];                  f = dem[row, cp]
                     g = dem[rp, cm]; hv = dem[rp, col]; i = dem[rp, cp]
+                    if has_nodata:
+                        # Voisin nodata → valeur centrale (cf. _hillshade_kernel)
+                        if a  == nodata: a  = z0
+                        if b  == nodata: b  = z0
+                        if c  == nodata: c  = z0
+                        if d  == nodata: d  = z0
+                        if f  == nodata: f  = z0
+                        if g  == nodata: g  = z0
+                        if hv == nodata: hv = z0
+                        if i  == nodata: i  = z0
                     dz_dx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) * inv_8dx
                     dz_dy = ((g + 2.0 * hv + i) - (a + 2.0 * b + c)) * inv_8dy
                     slope_deg = _math.degrees(_math.atan(_math.sqrt(dz_dx * dz_dx + dz_dy * dz_dy)))
@@ -3998,10 +4101,10 @@ def _get_numba_horn_kernels():
                         slope_deg = 0.0
                     elif slope_deg > 90.0:
                         slope_deg = 90.0
-                    v = int(slope_deg)
-                    if has_nodata and dem[row, col] == nodata:
-                        v = 0
-                    out[row, col] = v
+                    # Étalement 0–90° → 1–255 (0 réservé nodata, comme les
+                    # hillshades). Sans ça, le TIF stocke des degrés bruts
+                    # (max 90/255) → tuiles quasi noires.
+                    out[row, col] = int(slope_deg * (254.0 / 90.0) + 1.0)
             return out
 
         kernels = (_hillshade_kernel, _multi_kernel, _slope_kernel)
@@ -4324,7 +4427,7 @@ def _get_numba_svf_sweep_kernel():
 
             # Normalisation : moyenne sur n_dir
             inv_n = 1.0 / n_dir
-            for r in range(h):
+            for r in _nb.prange(h):
                 for c in range(w):
                     out[r, c] *= inv_n
             return out
@@ -4338,6 +4441,42 @@ def _get_numba_svf_sweep_kernel():
         print(f"  Numba kernel SVF sweep : erreur compilation ({_e})", flush=True)
         _NUMBA_KERNELS_CACHE["svf_sweep"] = None
         return None
+
+
+def _appliquer_z_factor(dem_f, z_factor, nodata):
+    """Multiplie le DEM par z_factor en préservant les valeurs nodata.
+
+    Sans cette précaution, nodata × z ≠ nodata et la détection nodata des
+    kernels (comparaison d'égalité) échoue silencieusement dès que z ≠ 1.
+    """
+    import numpy as np
+    if z_factor == 1.0:
+        return dem_f
+    if nodata is None:
+        return dem_f * np.float32(z_factor)
+    m = _nodata_mask(dem_f, nodata)
+    out = dem_f * np.float32(z_factor)
+    out[m] = dem_f[m]
+    return out
+
+
+def _remplir_nodata_moyenne(dem_f, nodata):
+    """(fallback numpy sans numba) Remplit les nodata par la moyenne des
+    pixels valides avant le calcul de gradient Horn — supprime le halo
+    noir/blanc d'1 px autour des trous de couverture (les kernels Numba
+    appliquent la convention gdaldem exacte : voisin nodata → centre).
+
+    Retourne (dem_rempli, mask_nodata).
+    """
+    import numpy as np
+    m = _nodata_mask(dem_f, nodata)
+    if not m.any():
+        return dem_f, m
+    valid = dem_f[~m]
+    fill = float(valid.mean()) if valid.size else 0.0
+    out = dem_f.copy()
+    out[m] = fill
+    return out, m
 
 
 def _calc_slope_aspect(dem, dx=0.5, dy=0.5):
@@ -4396,8 +4535,7 @@ def _hillshade_numpy(dem, azimuth_deg, altitude_deg, z_factor=1.0, dx=0.5, dy=0.
     import numpy as np
 
     dem_f = dem.astype(np.float32, copy=False)
-    if z_factor != 1.0:
-        dem_f = dem_f * np.float32(z_factor)
+    dem_f = _appliquer_z_factor(dem_f, z_factor, nodata)
 
     zenith_rad  = math.radians(90.0 - altitude_deg)
     az_math_rad = math.radians(360.0 - azimuth_deg + 90.0)
@@ -4410,13 +4548,13 @@ def _hillshade_numpy(dem, azimuth_deg, altitude_deg, z_factor=1.0, dx=0.5, dy=0.
                          az_math_rad, zenith_rad, nd_val, nodata is not None)
 
     # ── Fallback numpy ───────────────────────────────────────────────────────
-    slope, aspect = _calc_slope_aspect(dem_f, dx, dy)
+    dem_calc, nd_m = _remplir_nodata_moyenne(dem_f, nodata)
+    slope, aspect = _calc_slope_aspect(dem_calc, dx, dy)
     hs = (np.cos(zenith_rad) * np.cos(slope)
           + np.sin(zenith_rad) * np.sin(slope) * np.cos(az_math_rad - aspect))
     hs = np.clip(hs, 0.0, 1.0)
     hs_u8 = (hs * 254.0 + 1.0).astype(np.uint8)
-    if nodata is not None:
-        hs_u8[dem_f == nodata] = 0
+    hs_u8[nd_m] = 0
     return hs_u8
 
 
@@ -4435,8 +4573,7 @@ def _hillshade_multi_numpy(dem, altitude_deg=45.0, z_factor=1.0, dx=0.5, dy=0.5,
     import numpy as np
 
     dem_f = dem.astype(np.float32, copy=False)
-    if z_factor != 1.0:
-        dem_f = dem_f * np.float32(z_factor)
+    dem_f = _appliquer_z_factor(dem_f, z_factor, nodata)
 
     zenith_rad = math.radians(90.0 - altitude_deg)
 
@@ -4448,7 +4585,8 @@ def _hillshade_multi_numpy(dem, altitude_deg=45.0, z_factor=1.0, dx=0.5, dy=0.5,
                             zenith_rad, nd_val, nodata is not None)
 
     # ── Fallback numpy ───────────────────────────────────────────────────────
-    slope, aspect = _calc_slope_aspect(dem_f, dx, dy)
+    dem_calc, nd_m = _remplir_nodata_moyenne(dem_f, nodata)
+    slope, aspect = _calc_slope_aspect(dem_calc, dx, dy)
     cos_z = np.cos(zenith_rad)
     sin_z = np.sin(zenith_rad)
     azimuths = [225.0, 270.0, 315.0, 360.0]
@@ -4466,24 +4604,23 @@ def _hillshade_multi_numpy(dem, altitude_deg=45.0, z_factor=1.0, dx=0.5, dy=0.5,
     weight_sum = np.where(weight_sum < 1e-6, 1e-6, weight_sum)
     hs_avg = hs_sum / weight_sum
     hs_u8  = (hs_avg * 254.0 + 1.0).astype(np.uint8)
-    if nodata is not None:
-        hs_u8[dem_f == nodata] = 0
+    hs_u8[nd_m] = 0
     return hs_u8
 
 
 def _slope_numpy(dem, z_factor=1.0, dx=0.5, dy=0.5, scale=1.0, nodata=None):
-    """Slope en degrés — formule GDAL standard.
+    """Slope — formule GDAL standard (Horn 1981), encodage visuel.
 
-    Renvoie un array uint8 où chaque pixel est l'angle de pente en degrés
-    (0-90), clampé à 90.
+    Renvoie un array uint8 : pente 0–90° étalée linéairement sur 1–255
+    (0 réservé au nodata, même convention que les hillshades).
+    Décodage : degrés = (v − 1) × 90 / 254.
 
     Moteur Numba (1 passe, uint8 direct) si dispo, sinon fallback numpy.
     """
     import numpy as np
 
     dem_f = dem.astype(np.float32, copy=False)
-    if z_factor != 1.0:
-        dem_f = dem_f * np.float32(z_factor)
+    dem_f = _appliquer_z_factor(dem_f, z_factor, nodata)
 
     kernels = _get_numba_horn_kernels()
     if kernels is not None:
@@ -4493,11 +4630,11 @@ def _slope_numpy(dem, z_factor=1.0, dx=0.5, dy=0.5, scale=1.0, nodata=None):
                             nd_val, nodata is not None)
 
     # ── Fallback numpy ───────────────────────────────────────────────────────
-    slope, _ = _calc_slope_aspect(dem_f, dx, dy)
+    dem_calc, nd_m = _remplir_nodata_moyenne(dem_f, nodata)
+    slope, _ = _calc_slope_aspect(dem_calc, dx, dy)
     slope_deg = np.degrees(slope)
-    slope_u8 = np.clip(slope_deg, 0.0, 90.0).astype(np.uint8)
-    if nodata is not None:
-        slope_u8[dem_f == nodata] = 0
+    slope_u8 = (np.clip(slope_deg, 0.0, 90.0) * (254.0 / 90.0) + 1.0).astype(np.uint8)
+    slope_u8[nd_m] = 0
     return slope_u8
 
 
@@ -4597,7 +4734,10 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
       - Chaque bloc est lu depuis le disque, filtré, puis la zone centrale
         (sans la marge) est écrite dans le TIF de sortie.
       - La normalisation percentile est calculée en deux passes :
-          passe 1 (échantillon)  → p5 / p95 globaux sur ~5 % des pixels
+          passe 1 (échantillon)  → p5 / p95 globaux sur grille 3×3
+                                   (_percentiles_grille — même garde-fou que le
+                                   SVF : un crop unique rend le stretch dépendant
+                                   du cadrage, régression de rendu silencieuse)
           passe 2 (traitement)   → applique la normalisation bloc par bloc
 
     Retourne True si succès, False si fallback requis (ex: rasterio absent).
@@ -4619,27 +4759,31 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
         profile = src.profile.copy()
         nodata  = src.nodata
 
-    # ── Passe 1 : estimation percentiles p5/p95 sur échantillon (~1 chunk) ──
-    sample_rows = min(CHUNK, H)
-    sample_cols = min(CHUNK, W)
-    with _rio.open(str(src_path)) as src:
-        sample = src.read(1, window=Window(0, 0, sample_cols, sample_rows)).astype(np.float32)
+    # ── Passe 1 : percentiles p5/p95 globaux sur grille 3×3 ─────────────────
+    # On accumule aussi somme/effectif des altitudes valides : la moyenne
+    # globale sert de valeur de remplissage nodata UNIQUE en passe 2 (un
+    # remplissage par moyenne de bloc créait une couture dans la gaussienne
+    # quand du nodata se trouve à < 4σ d'une frontière de bloc).
+    _acc = [0.0, 0]   # [somme, n]
+    def _lrm_vals(win):
+        nd = _nodata_mask(win, nodata)
+        v = win[~nd]
+        if v.size:
+            _acc[0] += float(v.sum()); _acc[1] += v.size
+        fill = float(v.mean()) if v.size else 0.0
+        lrm = win - _gf(np.where(nd, fill, win), sigma=sigma_px)
+        lrm[nd] = np.nan
+        return lrm
 
-    _nd_mask = (sample < -9000) | (sample > 9000)
-    if nodata is not None:
-        _nd_mask |= (sample == nodata)
-    sample_fill = np.where(_nd_mask, float(np.nanmean(sample[~_nd_mask])) if _nd_mask.any() else 0.0, sample)
-    smooth_s    = _gf(sample_fill, sigma=sigma_px)
-    lrm_s       = sample - smooth_s
-    lrm_s[_nd_mask] = np.nan
-    valid_s = lrm_s[np.isfinite(lrm_s)]
-    if len(valid_s) < 100:
+    _pcts = _percentiles_grille(src_path, MARGIN, _lrm_vals, 5, 95)
+    if _pcts is None:
         return False  # raster trop petit / vide
-    p1_g  = float(np.percentile(valid_s,  5))
-    p99_g = float(np.percentile(valid_s, 95))
-    if p99_g <= p1_g:
-        p1_g, p99_g = float(np.nanmin(lrm_s)), float(np.nanmax(lrm_s))
-    del sample, sample_fill, smooth_s, lrm_s, valid_s
+    p5_g, p95_g, _n_valid = _pcts
+    mean_g = _acc[0] / _acc[1] if _acc[1] else 0.0
+    if p95_g <= p5_g:
+        return False  # relief dégénéré (tout plat / tout nodata)
+    print(f"  LRM chunked — p5={p5_g:.2f} m  p95={p95_g:.2f} m (grille 3×3)",
+          flush=True)
 
     # ── Profil de sortie ────────────────────────────────────────────────────
     out_profile = profile.copy()
@@ -4679,19 +4823,18 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
                 win_read  = Window(c0, r0, c1 - c0, r1 - r0)
                 block     = src.read(1, window=win_read).astype(np.float32)
 
-                nd_mask = (block < -9000) | (block > 9000)
-                if nodata is not None:
-                    nd_mask |= (block == nodata)
-                mean_val  = float(np.nanmean(block[~nd_mask])) if nd_mask.any() else 0.0
-                block_fill = np.where(nd_mask, mean_val, block)
+                nd_mask = _nodata_mask(block, nodata)
+                # Remplissage par la moyenne GLOBALE (passe 1) — pas celle du
+                # bloc, qui varierait d'un bloc à l'autre → couture gaussienne.
+                block_fill = np.where(nd_mask, mean_g, block)
 
                 smooth    = _gf(block_fill, sigma=sigma_px)
                 lrm_block = block - smooth
                 lrm_block[nd_mask] = np.nan
 
                 # Normalisation avec les percentiles globaux
-                arr_f = np.clip((lrm_block - p1_g) / (p99_g - p1_g), 0.0, 1.0) * 255.0
-                arr_u8 = arr_f.astype(np.uint8)
+                arr_f = np.clip((lrm_block - p5_g) / (p95_g - p5_g), 0.0, 1.0) * 255.0
+                arr_u8 = np.nan_to_num(arr_f, nan=128.0).astype(np.uint8)
                 arr_u8[nd_mask] = 128   # valeur neutre pour les nodata
 
                 # Découpe de la marge (on ne garde que la zone centrale)
@@ -4730,9 +4873,7 @@ def _lrm_array(dem, nodata_val, sigma_px):
     """
     import numpy as np
     from scipy.ndimage import gaussian_filter as _gf
-    nodata_mask = (dem < -9000) | (dem > 9000)
-    if nodata_val is not None:
-        nodata_mask |= (dem == nodata_val)
+    nodata_mask = _nodata_mask(dem, nodata_val)
     mean_val = float(np.nanmean(dem[~nodata_mask])) if (~nodata_mask).any() else 0.0
     dem_fill = np.where(nodata_mask, mean_val, dem)
     lrm = dem - _gf(dem_fill, sigma=sigma_px)
@@ -4740,15 +4881,22 @@ def _lrm_array(dem, nodata_val, sigma_px):
     return lrm, nodata_mask
 
 
-def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
+def _hillshade_chunked_multi(src_path, jobs, dx=0.5, dy=0.5):
     """
-    Hillshade / hillshade-multi / slope par fenêtres avec halo = 1 px (Horn 3x3).
+    Hillshade / hillshade-multi / slope par fenêtres avec halo = 1 px (Horn 3x3)
+    — N sorties calculées en UNE seule passe de lecture.
 
-    mode   : "hillshade" | "hillshade_multi" | "slope"
-    params : dict — clés selon le mode
-        hillshade        : {"azimuth_deg": float, "altitude_deg": float}
-        hillshade_multi  : {"altitude_deg": float}
-        slope            : {} (vide)
+    jobs : liste de (mode, params, dst_path)
+        mode   : "hillshade" | "hillshade_multi" | "slope"
+        params : dict — clés selon le mode
+            hillshade        : {"azimuth_deg": float, "altitude_deg": float}
+            hillshade_multi  : {"altitude_deg": float}
+            slope            : {} (vide)
+
+    Sur une grande zone, le coût dominant est l'I/O + la décompression deflate
+    des dalles derrière le VRT, pas les kernels Horn : lire chaque bloc une
+    fois pour tous les types demandés divise le temps total par ~le nombre de
+    types (vs une passe complète par type).
 
     Borne la RAM indépendamment de la taille du raster (chunks 2048×2048 px).
     Retourne True si succès, False si import manquant.
@@ -4784,13 +4932,18 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
 
     total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
     n = 0
+    lbl = "+".join(m for m, _, _ in jobs)
 
-    with _rio.open(str(src_path)) as src, \
-         _rio.open(str(dst_path), "w", **out_profile) as dst:
+    src_ds = _rio.open(str(src_path))
+    dsts = []
+    try:
+        for _mode, _params, _dst_path in jobs:
+            dsts.append(_rio.open(str(_dst_path), "w", **out_profile))
+
         for row_off in range(0, H, CHUNK):
             for col_off in range(0, W, CHUNK):
                 if _stop_event.is_set():
-                    raise KeyboardInterrupt(f"{mode} chunked interrompu")
+                    raise KeyboardInterrupt(f"{lbl} chunked interrompu")
                 row_end = min(row_off + CHUNK, H)
                 col_end = min(col_off + CHUNK, W)
 
@@ -4800,37 +4953,58 @@ def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
                 c1 = min(W, col_end + HALO)
 
                 win_read = Window(c0, r0, c1 - c0, r1 - r0)
-                block = src.read(1, window=win_read).astype(np.float32)
+                block = src_ds.read(1, window=win_read).astype(np.float32)
 
-                if mode == "hillshade":
-                    out = _hillshade_numpy(
-                        block, params["azimuth_deg"], params["altitude_deg"],
-                        z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
-                elif mode == "hillshade_multi":
-                    out = _hillshade_multi_numpy(
-                        block, altitude_deg=params["altitude_deg"],
-                        z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
-                elif mode == "slope":
-                    out = _slope_numpy(
-                        block, z_factor=1.0, dx=dx, dy=dy, nodata=nodata)
+                # Canonicalisation nodata : sentinelles magiques ET nodata
+                # déclaré ramenés à une seule valeur connue des kernels.
+                nd_mask = _nodata_mask(block, nodata)
+                if nd_mask.any():
+                    block[nd_mask] = np.float32(-9999.0)
+                    nd_eff = -9999.0
                 else:
-                    raise ValueError(f"Mode hillshade inconnu : {mode}")
+                    nd_eff = None
 
                 dr0 = row_off - r0
                 dc0 = col_off - c0
                 dr1 = dr0 + (row_end - row_off)
                 dc1 = dc0 + (col_end - col_off)
-                centre = out[dr0:dr1, dc0:dc1]
+                win_write = Window(col_off, row_off,
+                                   col_end - col_off, row_end - row_off)
 
-                win_write = Window(col_off, row_off, col_end - col_off, row_end - row_off)
-                dst.write(centre[np.newaxis, :, :], window=win_write)
+                for (mode, params, _dst_path), dst in zip(jobs, dsts):
+                    if mode == "hillshade":
+                        out = _hillshade_numpy(
+                            block, params["azimuth_deg"], params["altitude_deg"],
+                            z_factor=1.0, dx=dx, dy=dy, nodata=nd_eff)
+                    elif mode == "hillshade_multi":
+                        out = _hillshade_multi_numpy(
+                            block, altitude_deg=params["altitude_deg"],
+                            z_factor=1.0, dx=dx, dy=dy, nodata=nd_eff)
+                    elif mode == "slope":
+                        out = _slope_numpy(
+                            block, z_factor=1.0, dx=dx, dy=dy, nodata=nd_eff)
+                    else:
+                        raise ValueError(f"Mode hillshade inconnu : {mode}")
+
+                    centre = out[dr0:dr1, dc0:dc1]
+                    dst.write(centre[np.newaxis, :, :], window=win_write)
 
                 n += 1
                 pct = n * 100 // total
-                print(f"\r  {mode} chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                print(f"\r  {lbl} chunked : {pct:3d} % ({n}/{total} blocs)   ",
                       end="", flush=True)
-    print(f"\r  {mode} chunked: done ({total} blocs)                     ")
+    finally:
+        src_ds.close()
+        for dst in dsts:
+            dst.close()
+    print(f"\r  {lbl} chunked: done ({total} blocs)                     ")
     return True
+
+
+def _hillshade_chunked(src_path, dst_path, mode, params, dx=0.5, dy=0.5):
+    """Wrapper mono-sortie de _hillshade_chunked_multi (compat appels existants)."""
+    return _hillshade_chunked_multi(src_path, [(mode, params, dst_path)],
+                                    dx=dx, dy=dy)
 
 
 def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
@@ -4869,55 +5043,37 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     if use_sweep:
         print("  SVF chunked : kernel sweep-horizon (deque/upper-hull)", flush=True)
 
-    def _svf_block(block):
-        nd_mask = (block < -9000) | (block > 9000)
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+        nodata  = src.nodata
+
+    def _svf_block(block, nd_to=0.0):
+        # nd_to : valeur posée sur les pixels nodata — 0.0 pour la sortie
+        # (noir), NaN pour l'échantillonnage percentile (un 0.0 dans le pool
+        # tirerait p2 vers 0 → stretch délavé dès qu'une fenêtre d'échantillon
+        # chevauche du nodata).
+        nd_mask = _nodata_mask(block, nodata)
         block_f = block.astype(np.float32, copy=True)
         if nd_mask.any():
             mean_val = float(np.nanmean(block_f[~nd_mask])) if (~nd_mask).any() else 0.0
             block_f[nd_mask] = mean_val
         svf = _kernel(block_f, n_directions, max_dist_px, resolution, conv)
-        svf[nd_mask] = 0.0
+        svf[nd_mask] = nd_to
         return svf
 
-    with _rio.open(str(src_path)) as src:
-        H, W    = src.height, src.width
-        profile = src.profile.copy()
-
-    # ── Passe 1 : compilation Numba + percentiles globaux sur échantillon ──
+    # ── Passe 1 : compilation Numba + percentiles globaux (grille 3×3) ──────
     # Les p2/p98 calibrent le stretch (point noir/blanc) appliqué à TOUTE
-    # l'image. Il faut donc un échantillon REPRÉSENTATIF de l'étendue : un seul
-    # crop central rend le stretch dépendant de ce que contient le centre (même
-    # terrain → rendu différent selon le cadrage). On échantillonne une grille
-    # 3×3 de petites fenêtres réparties sur l'image et on met en commun leurs
-    # valeurs SVF. ~9×192² ≈ 0.33 M px (moins cher que l'ancien bloc 2048²),
-    # mais couvre plateaux ouverts ET creux → percentiles stables.
+    # l'image — échantillonnage réparti via _percentiles_grille (helper
+    # partagé SVF/LRM/RRIM).
     print("  SVF chunked — compilation Numba + percentiles (grille)...", flush=True)
-    SAMPLE = 192
-    s_half = SAMPLE // 2
-    _fracs = (0.2, 0.5, 0.8)
-    _pool = []
-    with _rio.open(str(src_path)) as src:
-        for _fy in _fracs:
-            cy = int(H * _fy)
-            for _fx in _fracs:
-                cx = int(W * _fx)
-                s_r0 = max(0, cy - s_half - HALO)
-                s_c0 = max(0, cx - s_half - HALO)
-                s_r1 = min(H, cy + s_half + HALO)
-                s_c1 = min(W, cx + s_half + HALO)
-                if s_r1 - s_r0 < 8 or s_c1 - s_c0 < 8:
-                    continue
-                _win = src.read(1, window=Window(s_c0, s_r0, s_c1 - s_c0, s_r1 - s_r0)).astype(np.float32)
-                _sv = _svf_block(_win)
-                _pool.append(_sv[_sv >= 0])
-    valid = np.concatenate(_pool) if _pool else np.empty(0, dtype=np.float32)
-    if len(valid) < 100:
+    _pcts = _percentiles_grille(src_path, HALO,
+                                lambda w: _svf_block(w, nd_to=np.nan), 2, 98)
+    if _pcts is None:
         return False
-    p2_g  = float(np.percentile(valid,  2))
-    p98_g = float(np.percentile(valid, 98))
+    p2_g, p98_g, _n_valid = _pcts
     if p98_g <= p2_g:
         p2_g, p98_g = 0.0, 1.0
-    del _pool, valid
     print(f"  SVF chunked — p2={p2_g:.3f}  p98={p98_g:.3f} (grille 3×3)", flush=True)
 
     out_profile = profile.copy()
@@ -4974,7 +5130,8 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     return True
 
 
-def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=False, conv=0):
+def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=False,
+               conv=0, nodata=None):
     """
     Sky-View Factor — pixel-level ray casting.
 
@@ -4999,10 +5156,10 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     import numpy as np
 
     h, w = dem.shape
-    nodata_mask = (dem < -9000) | (dem > 9000)
+    nodata_mask = _nodata_mask(dem, nodata)
     dem_f = dem.astype(np.float32)
     if nodata_mask.any():
-        mean_val = float(np.nanmean(dem_f[~nodata_mask]))
+        mean_val = float(np.nanmean(dem_f[~nodata_mask])) if (~nodata_mask).any() else 0.0
         dem_f[nodata_mask] = mean_val
 
     # ── Tentative Numba ──────────────────────────────────────────────────────
@@ -5116,6 +5273,137 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     svf[nodata_mask] = 0.0
     return svf
 
+
+def _rrim_chunked(src_path, slope_path, dst_path, sigma_px):
+    """
+    Red Relief Image Map par blocs — RAM bornée (c'était le dernier ombrage
+    qui chargeait encore le DEM entier en mémoire : OOM garanti à l'échelle
+    d'un département).
+
+    R     = pente décodée du TIF slope (uint8 1–255 → 0–90°), rampe ABSOLUE
+            0–45° + gamma 0.7. Rampe fixe (Chiba et al. 2008) et non stretch
+            percentile : deux zones adjacentes gardent le même rouge — l'ancien
+            code cumulait clip(slope/45) PUIS stretch percentile, le second
+            annulant le premier et rendant le rouge relatif au dataset.
+    G = B = LRM (DEM − gaussienne σ) normalisé p5–p95 globaux (grille 3×3,
+            cf. _percentiles_grille), gamma 0.8.
+    Nodata → pixel noir (0,0,0).
+
+    slope_path : TIF slope uint8 produit par _hillshade_chunked (même grille
+    que le DEM source). Retourne True si succès, False si fallback requis.
+    """
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+        from scipy.ndimage import gaussian_filter as _gf
+    except ImportError as _ie:
+        print(f"  RRIM chunked: missing import ({_ie}) — fallback pleine mémoire",
+              flush=True)
+        return False
+
+    CHUNK  = 2048
+    MARGIN = max(4 * sigma_px, 64)
+
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+        nodata  = src.nodata
+    with _rio.open(str(slope_path)) as srcsl_chk:
+        if (srcsl_chk.width, srcsl_chk.height) != (W, H):
+            print(f"  RRIM chunked: slope {srcsl_chk.width}×{srcsl_chk.height}"
+                  f" ≠ DEM {W}×{H} — fallback pleine mémoire", flush=True)
+            return False
+
+    # ── Passe 1 : percentiles LRM p5/p95 + moyenne de remplissage globale ───
+    _acc = [0.0, 0]
+    def _lrm_vals(win):
+        nd = _nodata_mask(win, nodata)
+        v = win[~nd]
+        if v.size:
+            _acc[0] += float(v.sum()); _acc[1] += v.size
+        fill = float(v.mean()) if v.size else 0.0
+        lrm = win - _gf(np.where(nd, fill, win), sigma=sigma_px)
+        lrm[nd] = np.nan
+        return lrm
+
+    _pcts = _percentiles_grille(src_path, MARGIN, _lrm_vals, 5, 95)
+    if _pcts is None:
+        return False
+    p5_g, p95_g, _n_valid = _pcts
+    mean_g = _acc[0] / _acc[1] if _acc[1] else 0.0
+    if p95_g <= p5_g:
+        return False
+    print(f"  RRIM chunked — LRM p5={p5_g:.2f} m  p95={p95_g:.2f} m (grille 3×3)",
+          flush=True)
+
+    out_profile = profile.copy()
+    for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        out_profile.pop(_k, None)
+    out_profile.update(
+        driver="GTiff",
+        dtype="uint8", count=3, compress="deflate", predictor=2,
+        tiled=True, blockxsize=512, blockysize=512,
+        bigtiff="YES", nodata=None)
+
+    # ── Passe 2 : traitement bloc par bloc ──────────────────────────────────
+    total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
+    n = 0
+    with _rio.open(str(src_path)) as src, \
+         _rio.open(str(slope_path)) as srcsl, \
+         _rio.open(str(dst_path), "w", **out_profile) as dst:
+        for row_off in range(0, H, CHUNK):
+            for col_off in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("RRIM chunked interrompu")
+                row_end = min(row_off + CHUNK, H)
+                col_end = min(col_off + CHUNK, W)
+
+                r0 = max(0, row_off - MARGIN)
+                c0 = max(0, col_off - MARGIN)
+                r1 = min(H, row_end + MARGIN)
+                c1 = min(W, col_end + MARGIN)
+
+                win_read = Window(c0, r0, c1 - c0, r1 - r0)
+                block = src.read(1, window=win_read).astype(np.float32)
+
+                nd_mask    = _nodata_mask(block, nodata)
+                block_fill = np.where(nd_mask, mean_g, block)
+                lrm_block  = block - _gf(block_fill, sigma=sigma_px)
+
+                dr0 = row_off - r0
+                dc0 = col_off - c0
+                dr1 = dr0 + (row_end - row_off)
+                dc1 = dc0 + (col_end - col_off)
+                lrm_c = lrm_block[dr0:dr1, dc0:dc1]
+                nd_c  = nd_mask[dr0:dr1, dc0:dc1]
+
+                win_write = Window(col_off, row_off,
+                                   col_end - col_off, row_end - row_off)
+
+                # R : pente décodée (1–255 → 0–90°), rampe absolue 0–45°
+                sl_enc = srcsl.read(1, window=win_write).astype(np.float32)
+                slope_deg = np.clip(sl_enc - 1.0, 0.0, None) * (90.0 / 254.0)
+                r_chan = (np.clip(slope_deg / 45.0, 0.0, 1.0) ** 0.7
+                          * 255.0).astype(np.uint8)
+
+                # G = B : LRM normalisé p5–p95 globaux
+                lrm_n = np.clip((lrm_c - p5_g) / (p95_g - p5_g), 0.0, 1.0)
+                gb_chan = (np.nan_to_num(lrm_n) ** 0.8 * 255.0).astype(np.uint8)
+
+                r_chan[nd_c]  = 0
+                gb_chan[nd_c] = 0
+                r_chan[sl_enc == 0] = 0   # nodata du slope
+
+                rgb = np.stack([r_chan, gb_chan, gb_chan], axis=0)
+                dst.write(rgb, window=win_write)
+
+                n += 1
+                pct = n * 100 // total
+                print(f"\r  RRIM chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                      end="", flush=True)
+    print(f"\r  RRIM chunked: done ({total} blocs, σ={sigma_px} px)          ")
+    return True
 
 
 _TIFF_MAGICS = (b'II\x2a\x00', b'MM\x00\x2a', b'II\x2b\x00', b'MM\x00\x2b')
@@ -5397,78 +5685,67 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
 
     try:
-        # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked) ─
+        # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked_multi)
         # Traitement par fenêtres 2048×2048 px avec halo 1 px (Horn 3x3).
-        # Le DEM source n'est plus chargé en entier en RAM : permet le
-        # traitement de zones LiDAR de taille arbitraire (département entier).
-
-        def _generer_un_hillshade(cle):
-            suffix, args_dem = CATALOGUE_GDAL[cle]
-            nom_fichier = nom_base + "_" + suffix + ".tif"
-            chemin_out  = dossier_ville / nom_fichier
-
-            if chemin_out.exists() and not ecraser_ombrages:
-                return cle, nom_fichier, "skip", 0, []
-            if chemin_out.exists() and ecraser_ombrages:
-                chemin_out.unlink()
-
-            try:
+        # Tous les types demandés sont calculés en UNE passe de lecture :
+        # sur une grande zone le coût dominant est l'I/O + décompression
+        # deflate des dalles derrière le VRT, pas les kernels.
+        if choix_gdal:
+            jobs_h = []
+            for cle_h in choix_gdal:
+                suffix, args_dem = CATALOGUE_GDAL[cle_h]
+                nom_fichier = nom_base + "_" + suffix + ".tif"
+                chemin_out  = dossier_ville / nom_fichier
+                if chemin_out.exists() and not ecraser_ombrages:
+                    print("  " + nom_fichier.ljust(56) + " -> already present")
+                    continue
+                if chemin_out.exists():
+                    chemin_out.unlink()
                 mode = args_dem[0]
                 if mode == "hillshade":
                     if "-multidirectional" in args_dem:
-                        params = {"altitude_deg": float(elevation_soleil)}
-                        ok = _hillshade_chunked(
-                            Path(str(source)), chemin_out, "hillshade_multi",
-                            params, dx=RESOLUTION_M, dy=RESOLUTION_M)
+                        jobs_h.append(("hillshade_multi",
+                                       {"altitude_deg": float(elevation_soleil)},
+                                       chemin_out))
                     else:
                         i_az  = args_dem.index("-az")
                         i_alt = args_dem.index("-alt")
-                        params = {"azimuth_deg":  float(args_dem[i_az + 1]),
-                                  "altitude_deg": float(args_dem[i_alt + 1])}
-                        ok = _hillshade_chunked(
-                            Path(str(source)), chemin_out, "hillshade",
-                            params, dx=RESOLUTION_M, dy=RESOLUTION_M)
+                        jobs_h.append(("hillshade",
+                                       {"azimuth_deg":  float(args_dem[i_az + 1]),
+                                        "altitude_deg": float(args_dem[i_alt + 1])},
+                                       chemin_out))
                 elif mode == "slope":
-                    ok = _hillshade_chunked(
-                        Path(str(source)), chemin_out, "slope", {},
-                        dx=RESOLUTION_M, dy=RESOLUTION_M)
+                    jobs_h.append(("slope", {}, chemin_out))
                 else:
-                    return cle, nom_fichier, "erreur", 0, [f"mode inconnu : {mode}"]
+                    print(f"\n  ERREUR hillshade {nom_fichier} : mode inconnu {mode}")
 
-                if not ok:
-                    return cle, nom_fichier, "erreur", 0, ["chunked failed (rasterio absent ?)"]
-
-                _creer_fichier(chemin_out)
-                return cle, nom_fichier, "ok", chemin_out.stat().st_size / 1e6, []
-            except Exception as e:
-                return cle, nom_fichier, "erreur", 0, [str(e)]
-
-        if choix_gdal:
-            if len(choix_gdal) == 1:
-                cle, nom_fichier, statut, taille, errs = \
-                    _generer_un_hillshade(choix_gdal[0])
-                if statut == "skip":
-                    print("  " + nom_fichier.ljust(56) + " -> already present")
-                elif statut == "erreur":
-                    print(f"\n  ERREUR hillshade {nom_fichier}")
-                    for e in errs[:10]:
-                        print(f"    {e}")
-            else:
-                # Plusieurs types : séquentiel (chaque chunked itère ses
-                # propres windows ; paralléliser ici multiplierait la pression
-                # I/O sur le DEM source sans bénéfice — le bottleneck devient
-                # le disque, pas le CPU).
-                print(f"  Hillshades chunked ({len(choix_gdal)} types)...",
-                      flush=True)
-                for cle_h in choix_gdal:
-                    cle, nom_fichier, statut, taille, errs = \
-                        _generer_un_hillshade(cle_h)
-                    if statut == "skip":
-                        print("  " + nom_fichier.ljust(56) + " -> already present")
-                    elif statut == "erreur":
-                        print(f"\n  ERREUR hillshade {nom_fichier}")
-                        for e in errs[:10]:
-                            print(f"    {e}")
+            if jobs_h:
+                print(f"  Hillshades chunked — {len(jobs_h)} type(s),"
+                      f" une seule passe de lecture...", flush=True)
+                t0_hill = time.time()
+                try:
+                    ok_h = _hillshade_chunked_multi(
+                        Path(str(source)), jobs_h,
+                        dx=RESOLUTION_M, dy=RESOLUTION_M)
+                    if not ok_h:
+                        raise RuntimeError("chunked failed (rasterio absent ?)")
+                    for _, _, chemin_out in jobs_h:
+                        _creer_fichier(chemin_out)
+                        print(f"  {chemin_out.name.ljust(56)}"
+                              f"  {_hms(int(time.time() - t0_hill))}"
+                              f"  {chemin_out.stat().st_size / 1e6:.0f} Mo")
+                except BaseException as e_hill:
+                    # Fichiers partiellement écrits (structurellement valides
+                    # mais incomplets) → supprimer, sinon ils seraient pris
+                    # pour des caches sains au prochain lancement (même
+                    # logique que le SVF).
+                    for _, _, chemin_out in jobs_h:
+                        if chemin_out.exists():
+                            chemin_out.unlink()
+                            print(f"  Partial file removed: {chemin_out.name}")
+                    if isinstance(e_hill, (KeyboardInterrupt, SystemExit)):
+                        raise
+                    print(f"\n  ERREUR hillshades chunked : {e_hill}")
 
         # ── SVF, LRM, RRIM — numpy/scipy (pas de WBT pour SVF) ──────────────
         if not choix_numpy:
@@ -5542,8 +5819,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  SVF chunked KO → fallback to full memory", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                             RESOLUTION_M, use_sweep=use_sweep, conv=conv)
-                        svf_valid = arr_svf[arr_svf >= 0]
+                                             RESOLUTION_M, use_sweep=use_sweep,
+                                             conv=conv, nodata=_nd)
+                        # > 0 strict : les nodata valent exactement 0.0 et
+                        # tireraient p2 vers 0 (stretch délavé).
+                        svf_valid = arr_svf[arr_svf > 0]
                         p2  = float(np.percentile(svf_valid, 2))
                         p98 = float(np.percentile(svf_valid, 98))
                         if p98 > p2:
@@ -5619,98 +5899,107 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
 
             elif cle == "rrim":
                 # ── Red Relief Image Map (RRIM) ───────────────────────────────
-                # Composite RGB couleur :
-                #   R = pente normalisée [0°..45°] → [0..255]  (relief en amplitude)
-                #   G = B = SVF normalisé [0..1] → [0..255]    (ouverture / micro-formes)
-                # Révèle simultanément creux ET bosses — optimal prospection terrain.
-                # Technique : Chiba et al. (2008), standard archéo-LiDAR européen.
+                # Composite RGB couleur — Chiba et al. (2008), standard
+                # archéo-LiDAR européen :
+                #   R = pente, rampe ABSOLUE 0–45° + gamma 0.7 (relief en
+                #       amplitude, comparable d'une zone à l'autre)
+                #   G = B = LRM normalisé p5–p95 + gamma 0.8 (micro-relief ;
+                #       choisi plutôt que le SVF du RRIM canonique : sur
+                #       terrain ouvert SVF ≈ 0.97 partout → dominance bleue)
+                # Révèle simultanément creux ET bosses — optimal prospection.
                 print("  RRIM — Red Relief Image Map (slope × LRM)"
                       " — peut prendre 5-10 min...", flush=True)
+
+                sigma_rrim = params_numpy["sigma_px"]  # 15 px = 7.5 m
 
                 # Slope temporaire (réutilisé si already present)
                 slope_rrim_path = dossier_ville / (nom_base + "_slope_ombrage.tif")
                 slope_tmp_path  = dossier_ville / (nom_fichier.replace(".tif","_slope_tmp.tif"))
                 _slope_src = None
-                if slope_rrim_path.exists():
-                    _slope_src = slope_rrim_path
-                    print("  RRIM: existing slope reused", flush=True)
-                else:
-                    # Slope numpy (remplace gdaldem slope CLI)
+                try:
+                    if slope_rrim_path.exists():
+                        _slope_src = slope_rrim_path
+                        print("  RRIM: existing slope reused", flush=True)
+                    else:
+                        # Slope chunked (RAM bornée) — même moteur que
+                        # l'ombrage slope standalone.
+                        try:
+                            ok_sl = _hillshade_chunked(
+                                Path(src_str), slope_tmp_path, "slope", {},
+                                dx=RESOLUTION_M, dy=RESOLUTION_M)
+                            if not ok_sl:
+                                raise RuntimeError(
+                                    "slope chunked failed (rasterio absent ?)")
+                            _slope_src = slope_tmp_path
+                        except Exception as _e_sl:
+                            print(f"  ERROR slope for RRIM: {_e_sl}")
+                            continue
+
+                    # ── Chemin 1 : composite chunked (RAM bornée) ───────────
                     try:
-                        import rasterio as _rio_sl
-                        with _rio_sl.open(src_str) as _ds_sl:
-                            _dem_sl    = _ds_sl.read(1).astype("float32")
-                            _nd_sl_in  = _ds_sl.nodata
-                            _profile_sl = _ds_sl.profile.copy()
-                        _slope_u8 = _slope_numpy(_dem_sl, dx=RESOLUTION_M,
-                                                 dy=RESOLUTION_M, nodata=_nd_sl_in)
-                        _profile_sl.update({
-                            "dtype":      "uint8",
-                            "count":      1,
-                            "compress":   "deflate",
-                            "predictor":  2,
-                            "tiled":      True,
-                            "blockxsize": 512,
-                            "blockysize": 512,
-                            "BIGTIFF":    "YES",
-                        })
-                        for _k in ("nodata",):
-                            _profile_sl.pop(_k, None)
-                        with _rio_sl.open(str(slope_tmp_path), "w", **_profile_sl) as _dst_sl:
-                            _dst_sl.write(_slope_u8, 1)
-                        _slope_src = slope_tmp_path
-                    except Exception as _e_sl:
-                        print(f"  ERROR slope numpy for RRIM: {_e_sl}")
+                        ok_rrim = _rrim_chunked(
+                            Path(src_str), _slope_src, chemin_out,
+                            sigma_px=sigma_rrim)
+                    except Exception as e_rrim:
+                        print(f"  ERREUR composite RRIM : {e_rrim}")
+                        # Fichier partiellement écrit → supprimer (sinon pris
+                        # pour un cache sain au prochain lancement).
+                        if chemin_out.exists():
+                            chemin_out.unlink()
+                            print(f"  Partial file removed: {chemin_out.name}")
                         continue
 
-                # Étape 3 : composite RGB numpy/PIL
-                # RRIM modifié pour terrain ouvert (Var) :
-                #   R = pente gamma 0.7 (relief général)
-                #   G = B = LRM normalisé (micro-relief local, variance >> SVF)
-                # Le LRM a beaucoup plus de variance que SVF sur terrain ouvert
-                # où SVF ≈ 0.97 partout → G/B ≈ 255 constant → dominance bleue.
-                try:
-                    import numpy as np
+                    if not ok_rrim:
+                        # ── Chemin 2 : fallback pleine mémoire ──────────────
+                        # (rasterio/scipy absent, ou échantillon dégénéré) —
+                        # limité aux zones modestes.
+                        try:
+                            import numpy as np
 
-                    slope_arr, _nd_sl = _lire_dem_rasterio(str(_slope_src))
+                            slope_arr, _ = _lire_dem_rasterio(str(_slope_src))
+                            dem_rrim, _nd_rr = _lire_dem_rasterio(src_str)
+                            lrm_r, nd_mask_r = _lrm_array(dem_rrim, _nd_rr,
+                                                          sigma_rrim)
 
-                    # LRM interne pour RRIM via le helper partagé — même calcul
-                    # exact que le LRM standalone (voir _lrm_array).
-                    dem_rrim, _nd_rr  = _lire_dem_rasterio(src_str)
-                    sigma_rrim = params_numpy["sigma_px"]  # 15 px = 7.5 m
-                    lrm_r, _ = _lrm_array(dem_rrim, _nd_rr, sigma_rrim)
+                            # Aligner dimensions
+                            h = min(slope_arr.shape[0], lrm_r.shape[0])
+                            w = min(slope_arr.shape[1], lrm_r.shape[1])
+                            slope_arr = slope_arr[:h, :w]
+                            lrm_r     = lrm_r[:h, :w]
+                            nd_mask_r = nd_mask_r[:h, :w]
 
-                    # Aligner dimensions
-                    h = min(slope_arr.shape[0], lrm_r.shape[0])
-                    w = min(slope_arr.shape[1], lrm_r.shape[1])
-                    slope_arr = slope_arr[:h, :w]
-                    lrm_r     = lrm_r[:h, :w]
+                            # R : pente décodée (uint8 1–255 → 0–90°), rampe
+                            # absolue 0–45° + gamma 0.7 (cf. _rrim_chunked).
+                            slope_deg = np.clip(slope_arr - 1.0, 0.0, None) \
+                                        * (90.0 / 254.0)
+                            r_chan = (np.clip(slope_deg / 45.0, 0, 1) ** 0.7
+                                      * 255).astype(np.uint8)
 
-                    def _norm_pct(arr, p_lo=5, p_hi=95):
-                        valid = arr[np.isfinite(arr)]
-                        if len(valid) == 0:
-                            return np.zeros_like(arr)
-                        lo = float(np.percentile(valid, p_lo))
-                        hi = float(np.percentile(valid, p_hi))
-                        if hi > lo:
-                            return np.clip((arr - lo) / (hi - lo), 0, 1)
-                        return np.zeros_like(arr)
+                            # G = B : LRM normalisé p5–p95, gamma 0.8
+                            # LRM > 0 = élévation → clair ; < 0 = creux → foncé
+                            lrm_valid = lrm_r[np.isfinite(lrm_r)]
+                            if len(lrm_valid) == 0:
+                                raise RuntimeError("LRM vide (tout nodata)")
+                            lo = float(np.percentile(lrm_valid, 5))
+                            hi = float(np.percentile(lrm_valid, 95))
+                            if hi > lo:
+                                lrm_n = np.clip((lrm_r - lo) / (hi - lo), 0, 1)
+                            else:
+                                lrm_n = np.zeros_like(lrm_r)
+                            gb_chan = (np.nan_to_num(lrm_n) ** 0.8
+                                       * 255).astype(np.uint8)
 
-                    # R = pente gamma 0.7
-                    slope_n = np.clip(slope_arr / 45.0, 0, 1)
-                    r_chan  = (_norm_pct(slope_n) ** 0.7 * 255).astype(np.uint8)
+                            r_chan[nd_mask_r]  = 0
+                            gb_chan[nd_mask_r] = 0
+                            r_chan[slope_arr == 0] = 0   # nodata du slope
 
-                    # G = B = LRM normalisé p5-p95, gamma 0.8
-                    # LRM > 0 = élévation → clair ; LRM < 0 = creux → foncé
-                    lrm_n  = _norm_pct(lrm_r)
-                    gb_chan = (lrm_n ** 0.8 * 255).astype(np.uint8)
-
-                    rgb = np.stack([r_chan, gb_chan, gb_chan], axis=2)
-                    _sauver_array_georef(rgb, Path(src_str), chemin_out)
-                    print(f"  RRIM : {chemin_out.name} — RGB 3 canaux")
-                except Exception as e_rrim:
-                    print(f"  ERREUR composite RRIM : {e_rrim}")
-                    continue
+                            rgb = np.stack([r_chan, gb_chan, gb_chan], axis=2)
+                            _sauver_array_georef(rgb, Path(src_str), chemin_out)
+                            print(f"  RRIM (full memory): {chemin_out.name}"
+                                  f" — RGB 3 canaux")
+                        except Exception as e_rrim:
+                            print(f"  ERREUR composite RRIM : {e_rrim}")
+                            continue
                 finally:
                     if slope_tmp_path.exists():
                         slope_tmp_path.unlink(missing_ok=True)
@@ -5896,11 +6185,19 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # bounds : requis par la spec MBTiles et par Locus pour positionner la carte
     # "left,bottom,right,top" en degrés WGS84
     if bbox_l93 is not None:
-        _lon0, _lat0 = _lamb93_to_wgs84_safe(bbox_l93[0], bbox_l93[1])
-        _lon1, _lat1 = _lamb93_to_wgs84_safe(bbox_l93[2], bbox_l93[3])
-        _bounds = f"{min(_lon0,_lon1):.6f},{min(_lat0,_lat1):.6f},{max(_lon0,_lon1):.6f},{max(_lat0,_lat1):.6f}"
-        _cx = (min(_lon0,_lon1) + max(_lon0,_lon1)) / 2
-        _cy = (min(_lat0,_lat1) + max(_lat0,_lat1)) / 2
+        # Enveloppe des 4 coins — même règle que pour l'étendue du warp plus
+        # bas : un rectangle L93 ne reste pas axis-aligné après reprojection,
+        # min/max sur 2 coins opposés sous-estimerait l'emprise.
+        _pts4 = [_lamb93_to_wgs84_safe(cx4, cy4)
+                 for cx4, cy4 in ((bbox_l93[0], bbox_l93[1]),
+                                  (bbox_l93[2], bbox_l93[1]),
+                                  (bbox_l93[2], bbox_l93[3]),
+                                  (bbox_l93[0], bbox_l93[3]))]
+        _lons = [p[0] for p in _pts4]
+        _lats = [p[1] for p in _pts4]
+        _bounds = f"{min(_lons):.6f},{min(_lats):.6f},{max(_lons):.6f},{max(_lats):.6f}"
+        _cx = (min(_lons) + max(_lons)) / 2
+        _cy = (min(_lats) + max(_lats)) / 2
         cur.execute("INSERT INTO metadata VALUES (?,?)", ("bounds", _bounds))
         cur.execute("INSERT INTO metadata VALUES (?,?)",
                     ("center", f"{_cx:.6f},{_cy:.6f},{zoom_max}"))
@@ -5928,8 +6225,14 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _tile.convert("RGB").save(_buf, "JPEG",
                                        quality=jpeg_quality, optimize=False)
         else:
-            _tile.convert("RGB").save(_buf, "PNG",
-                                       optimize=False, compress_level=1)
+            # PNG : conserver le mode natif — une source monobande (SVF, LRM)
+            # part en niveaux de gris ("L"), ~2-3× plus petit que le même
+            # contenu tripliqué en RGB. PNG grayscale = standard, lu par
+            # Locus/OsmAnd/TwoNav. compress_level=6 (défaut zlib) : artefact
+            # final écrit une fois, lu mille fois — le niveau 1 économisait
+            # quelques secondes d'encodage contre ~20-30 % de taille.
+            _img = _tile if _tile.mode in ("L", "RGB") else _tile.convert("RGB")
+            _img.save(_buf, "PNG", optimize=False, compress_level=6)
         _y_tms = (2 ** _z - 1) - _ty
         return (_z, _tx, _y_tms, _buf.getvalue())
 
@@ -6196,12 +6499,14 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         canvas[:, dst_y:dst_y+arr.shape[1],
                                   dst_x:dst_x+arr.shape[2]] = arr
 
-                        # Convertir en image PIL et redimensionner si zoom < zoom_max
+                        # Convertir en image PIL — monobande conservée en
+                        # mode "L" (pas de triplication RGB : _encode_tile
+                        # en tire des PNG grayscale 2-3× plus petits ; les
+                        # JPEG sont convertis RGB à l'encodage).
                         if _w_count >= 3:
                             img_arr = _np.moveaxis(canvas[:3], 0, 2)
                         else:
-                            img_arr = _np.stack(
-                                [canvas[0]] * 3, axis=2)
+                            img_arr = canvas[0]
 
                         band_img = Image.fromarray(img_arr.astype(_np.uint8))
                         # Pas de resize — rasterio a déjà lu à la bonne résolution
@@ -6464,7 +6769,7 @@ def deg_to_tile(lat_deg, lon_deg, zoom):
     lat_r = math.radians(lat_deg)
     y = int((1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
             / 2.0 * n)
-    return x, max(0, min(n - 1, y))
+    return max(0, min(n - 1, x)), max(0, min(n - 1, y))
 
 
 def calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):

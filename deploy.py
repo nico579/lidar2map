@@ -97,6 +97,7 @@ MAP = {
 FOLDERS = {
     "screenshots": "screenshots",
     "providers":   "providers",   # implémentations LiDAR par pays (fr-ign, nl-ahn, ch-swisstopo, etc.)
+    "Tests":       "tests",       # tests de régression (calculs scientifiques, tuilage)
 }
 
 # Anciens chemins sur GitHub à supprimer (renommages + scripts PS1 obsolètes)
