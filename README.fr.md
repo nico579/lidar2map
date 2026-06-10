@@ -76,6 +76,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   - Suède (`se-lantmateriet`, compte Lantmäteriet requis), Australie (`au-ga`, à écrire)
 
 - **Cartes raster IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
+- **Imagerie USGS** *(USA, `--couche naip`)* : imagerie aérienne dérivée NAIP, domaine public (~1 m, cache complet jusqu'à z16) — complément image du LiDAR 3DEP `us-tnm`.
 
 - **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*
 

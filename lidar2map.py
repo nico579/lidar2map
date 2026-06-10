@@ -6336,6 +6336,12 @@ COUCHES = {
     # ── Données thématiques (public, sans clé) ────────────────────────────────
     "cadastre":      ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS",      "normal", "image/png",  False),
     "ombrage":       ("ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW",    "normal", "image/png",  False),
+    # ── Imagerie hors-France (tuiles XYZ ArcGIS, public, sans clé) ────────────
+    # Convention "XYZ:<template>" : URL de tuile XYZ avec {z}/{y}/{x} (même
+    # schéma Web Mercator que les WMTS IGN). Gérée par construire_url_wmts.
+    # naip = USGS Imagery (dérivé NAIP, ortho sub-métrique sur les USA contigus,
+    # domaine public) — complément image du LiDAR 3DEP (us-tnm).
+    "naip":          ("XYZ:https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}", "normal", "image/jpeg", False),
     # ── Cartes topographiques — RÉSERVÉES AUX PROFESSIONNELS ─────────────────
     # Accès restreint : compte pro sur cartes.gouv.fr + SIRET requis
     "scan25":        ("GEOGRAPHICALGRIDSYSTEMS.MAPS",              "normal", "image/jpeg", True),
@@ -6356,6 +6362,10 @@ def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
     pour la couche *layer* dans le TileMatrixSet PM.
     Résultat mis en cache pour la session ; retourne None si inaccessible.
     """
+    # Couches XYZ (USGS Imagery, etc.) : pas de GetCapabilities WMTS IGN → pas
+    # de plafonnement (le garde-fou 204 gère les zooms hors cache).
+    if layer.startswith("XYZ:"):
+        return None
     cache_key = (layer, bool(apikey_requis))
 
     # Lecture du cache — verrou court, pas de réseau dedans
@@ -6455,9 +6465,16 @@ def estimer_taille(nb_tuiles, format_img="jpeg"):
 
 def construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis):
     """
-    Construit l'URL WMTS IGN pour la tuile (z, x, y).
-    Convention WMTS : TileMatrix=z, TileCol=x, TileRow=y (XYZ standard).
+    Construit l'URL de tuile (z, x, y).
+    - WMTS IGN : TileMatrix=z, TileCol=x, TileRow=y (XYZ standard).
+    - Source XYZ (layer == "XYZ:<template>", ex. USGS Imagery / NAIP) : substitue
+      {z}/{x}/{y} dans le template ArcGIS/XYZ (même schéma Mercator, y top-origine).
     """
+    if layer.startswith("XYZ:"):
+        tmpl = layer[4:]
+        return (tmpl.replace("{z}", str(z))
+                    .replace("{x}", str(x))
+                    .replace("{y}", str(y)))
     base = WMTS_URL if apikey_requis else WMTS_URL_PUB
     params = {
         "SERVICE":      "WMTS",
@@ -12557,13 +12574,17 @@ def lancer_gui():
         "edugeo_marseille_1969": (12, 18), "edugeo_marseille_1980": (12, 18),
         "edugeo_marseille_1987": (12, 18), "edugeo_marseille_1988": (12, 18),
         "edugeo_marseille_2010": (12, 18), "edugeo_toulon_1972": (12, 18),
+        # USGS Imagery (USA) : cache complet jusqu'à z16 (~1.8 m), partiel au-delà.
+        "naip": (11, 16),
     }
 
     # ── Données statiques exposées au formulaire ──────────────────────────────
     _COUCHES_PRIVEES = {"scan25", "scan25tour", "scan100", "scanoaci"}
+    _COUCHES_LABELS = {"naip": "USGS Imagery (USA, ~1 m)"}
     _COUCHES_DATA = [
         {"code": k,
-         "label": f"{'⚠ [PRO] ' if k in _COUCHES_PRIVEES else ''}{k}  ({v[0]})",
+         "label": f"{'⚠ [PRO] ' if k in _COUCHES_PRIVEES else ''}{k}  "
+                  f"({_COUCHES_LABELS.get(k, v[0])})",
          "zoom_min":  _ZOOMS_GUI.get(k, (8, 16))[0],
          "zoom_max":  _ZOOMS_GUI.get(k, (8, 16))[1],
          "restreinte": k in _COUCHES_PRIVEES}

@@ -78,6 +78,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   - Sweden (`se-lantmateriet`, Lantmäteriet account required), Australia (`au-ga`, to be written)
 
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
+- **USGS Imagery** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16) — pairs with the 3DEP LiDAR (`us-tnm`).
 
 - **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*
 
