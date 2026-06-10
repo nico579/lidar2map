@@ -159,7 +159,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   Télécharge des tuiles WMTS IGN dans un MBTiles.
-  Cache tuiles dans ign_raster/<nom>/dalles/<z>/<x>/<y>.<ext>.
+  Sortie dans Projets/<nom>/raster/. Cache permanent : cache/ign_raster/<z>/<x>/<y>.<ext>.
 
   Couches disponibles :
     planign     Plan IGN v2 (png, public, z6-18)              ← recommandé particuliers
@@ -206,7 +206,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   Arborescence de sortie :
     Projets/<nom>/
-      ign_raster/
+      raster/
         <nom>_scan25_z8-18.mbtiles
         <nom>_scan25_z8-18.rmap
         <nom>_scan25_z8-18.sqlitedb
@@ -1671,7 +1671,7 @@ if _SMOKETEST:
          ["--ignraster", "--couche", "planign", "--workers", "8",
           "--formats-fichier", "mbtiles",
           "--zoom-min", "12", "--zoom-max", "14"],
-         ["ign_raster/smoke_planign_z12-14.mbtiles"]),
+         ["raster/smoke_planign_z12-14.mbtiles"]),
         ("WFS (routes)",
          ["--ignvecteur", "--couche", "routes", "--formats-fichier", "gz"],
          ["ign_vecteur/smoke_ign_troncon_de_route.geojson.gz"]),
@@ -2253,11 +2253,25 @@ def _discover_providers():
 
 def _load_provider():
     code = None
-    # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré)
-    if "--provider" in sys.argv:
-        _i = sys.argv.index("--provider")
-        if _i + 1 < len(sys.argv):
-            code = sys.argv[_i + 1]
+    # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré).
+    # --provider est un pré-flag GLOBAL : on le lit puis on le RETIRE de sys.argv
+    # pour qu'aucun des parsers par-mode (raster, vecteur, fusion, découpe…) n'ait
+    # à le déclarer. Sinon `--raster --provider us-tnm` → "unrecognized arguments".
+    # Accepte les deux formes : `--provider code` et `--provider=code`.
+    _argv = sys.argv
+    _i = 0
+    while _i < len(_argv):
+        _a = _argv[_i]
+        if _a == "--provider":
+            if _i + 1 < len(_argv):
+                code = _argv[_i + 1]
+            del _argv[_i:_i + 2]
+            continue
+        if _a.startswith("--provider="):
+            code = _a.split("=", 1)[1]
+            del _argv[_i]
+            continue
+        _i += 1
     code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
     # Mapping code → module (kebab-case → snake_case)
     module_name = code.replace("-", "_")
@@ -6356,15 +6370,29 @@ _wmts_caps_cache: dict = {}
 _wmts_caps_lock  = threading.Lock()   # protège les lectures/écritures concurrentes
 
 
+# Plafonds (zoom_min, zoom_max) pour les couches XYZ sans GetCapabilities.
+# Signature recherchée dans le template d'URL → limites. USGSImageryOnly = naip.
+_XYZ_ZOOM_LIMITS = (
+    ("USGSImageryOnly", (0, 16)),
+)
+
+
 def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
     """
     Interroge GetCapabilities WMTS IGN et retourne (zoom_min, zoom_max) réels
     pour la couche *layer* dans le TileMatrixSet PM.
     Résultat mis en cache pour la session ; retourne None si inaccessible.
     """
-    # Couches XYZ (USGS Imagery, etc.) : pas de GetCapabilities WMTS IGN → pas
-    # de plafonnement (le garde-fou 204 gère les zooms hors cache).
+    # Couches XYZ (USGS Imagery, etc.) : pas de GetCapabilities WMTS IGN. On
+    # plafonne via une table de limites connues (réutilise le clamp ci-dessous
+    # comme pour l'IGN). USGSImageryOnly (naip) : LODs 0-16 au national ; au-delà
+    # de z16, le cache ArcGIS renvoie des 204 → flot d'absences qui déclenche le
+    # garde-fou « hors couverture » à tort. Sans limite connue → None (le 204
+    # reste le filet de sécurité).
     if layer.startswith("XYZ:"):
+        for _sig, _lim in _XYZ_ZOOM_LIMITS:
+            if _sig in layer:
+                return _lim
         return None
     cache_key = (layer, bool(apikey_requis))
 
@@ -6616,7 +6644,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     t0          = time.time()
 
     _base_wmts = WMTS_URL if apikey_requis else WMTS_URL_PUB
-    _log_req(f"{_base_wmts}?SERVICE=WMTS&LAYER={layer}&...", "WMTS IGN")
+    # Couches XYZ (USGS Imagery…) : pas un WMTS IGN → logger le vrai template.
+    if layer.startswith("XYZ:"):
+        _log_req(layer[4:], "XYZ tiles")
+    else:
+        _log_req(f"{_base_wmts}?SERVICE=WMTS&LAYER={layer}&...", "WMTS IGN")
     print(f"  Downloading {total:,} tiles -> {chemin.name}...", flush=True)
 
     _fmt_out = "jpeg" if _convert_png else fmt_ext   # format réel inséré
@@ -9148,9 +9180,9 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             zoom_min = min(args.zoom_min, args.zoom_max)
             zoom_max = max(args.zoom_min, args.zoom_max)
             tuiles = calculer_grille_xyz(lat_s, lon_w, lat_n, lon_e, zoom_min, zoom_max)
-            # Structure : <racine>/<nom_zone_base>/ign_raster/<nom_z>/
+            # Structure : <racine>/<nom_zone_base>/raster/<nom_z>/
             racine_base = (Path(args.dossier).resolve() if args.dossier
-                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "ign_raster")
+                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "raster")
             dossier = racine_base / nom_z
             dossier.mkdir(parents=True, exist_ok=True)
             nom_fichier    = f"{nom_z}_{args.couche}_z{zoom_min}-{zoom_max}"
@@ -9677,6 +9709,12 @@ Examples:
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
                              "Ex: --raster --layer GEOGRAPHICALGRIDSYSTEMS.MAPS")
+    # Consommé tôt par _load_provider (scan de sys.argv) ; déclaré ici uniquement
+    # pour qu'argparse ne le rejette pas. Le raster US (--layer naip) passe par
+    # --provider us-tnm depuis le GUI comme depuis la CLI.
+    parser.add_argument("--provider", default=None, metavar="CODE",
+                        help="Provider (default: fr-ign). Détermine les couches "
+                             "raster disponibles (fr-ign → IGN ; us-tnm → naip).")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
     grp_priori = parser.add_argument_group(
@@ -9735,7 +9773,7 @@ Examples:
                              "(standalone mode, no zone required). Requires rmap format. "
                              "Ex: --source gareoult_scan25_z12-16.mbtiles --file-formats rmap")
     parser.add_argument("--output-dir", "--dossier",  metavar="PATH", default=None, dest="dossier",
-                        help="Output folder (default: ./ign_raster/)")
+                        help="Output folder (default: Projets/<name>/raster/)")
 
     # Comportement
     parser.add_argument("--workers",       type=int, default=NB_WORKERS, metavar="N")
@@ -9830,7 +9868,7 @@ Examples:
             0, _rayon_pr, unite_m=False, n_cols=_cols_pr, n_rows=_rows_pr)
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
-                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
+                         else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster")
             manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
             n_total   = len(sous_zones)
             nb_done   = sum(1 for z in sous_zones
@@ -9877,7 +9915,7 @@ Examples:
                         # de tout supprimer silencieusement.
                         _dossier_chunk = (
                             (Path(args.dossier).resolve() if args.dossier
-                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster")
+                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster")
                             / nom_z)
                         _mbts = list(_dossier_chunk.glob("*.mbtiles"))
                         _has_empty = (not _mbts) or any(
@@ -9900,18 +9938,20 @@ Examples:
     zoom_min = min(args.zoom_min, args.zoom_max)
     zoom_max = max(args.zoom_min, args.zoom_max)
 
-    # ── Plafonnement selon capacités réelles IGN (GetCapabilities WMTS) ──────
+    # ── Plafonnement selon capacités réelles de la couche ────────────────────
+    # IGN : GetCapabilities WMTS. XYZ (naip…) : table _XYZ_ZOOM_LIMITS.
     _limites_reel = _lire_zoom_limites_wmts(
         layer, apikey_requis, apikey=getattr(args, "apikey", ""))
     if _limites_reel:
+        _src_caps = "service" if layer.startswith("XYZ:") else "IGN"
         _zmin_reel, _zmax_reel = _limites_reel
         if zoom_max > _zmax_reel:
-            print(f"  ⚠ Layer {args.couche}: IGN max zoom = {_zmax_reel} "
+            print(f"  ⚠ Layer {args.couche}: {_src_caps} max zoom = {_zmax_reel} "
                   f"— zoom_max ramené de {zoom_max} à {_zmax_reel}.")
             zoom_max = _zmax_reel
             zoom_min = min(zoom_min, zoom_max)
         if zoom_min < _zmin_reel:
-            print(f"  ⚠ Layer {args.couche}: IGN min zoom = {_zmin_reel} "
+            print(f"  ⚠ Layer {args.couche}: {_src_caps} min zoom = {_zmin_reel} "
                   f"— zoom_min ramené de {zoom_min} à {_zmin_reel}.")
             zoom_min = _zmin_reel
             zoom_max = max(zoom_max, zoom_min)
@@ -9921,8 +9961,11 @@ Examples:
     total  = len(tuiles)
     taille_est = estimer_taille(total, fmt_ext)
 
+    # Couches XYZ (USGS Imagery…) : source non-IGN → libellé neutre + vrai template.
+    _src = layer[4:] if layer.startswith("XYZ:") else layer
+    _lbl = "Raster map" if layer.startswith("XYZ:") else "IGN map"
     print("=" * 55)
-    print(f"  IGN map - {args.couche} ({layer})")
+    print(f"  {_lbl} - {args.couche} ({_src})")
     print("=" * 55)
     print(f"  Zone    : {nom_zone}")
     print(f"  BBox    : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
@@ -9937,13 +9980,16 @@ Examples:
 
     # ── Dossier de sortie ─────────────────────────────────────────────────────
     racine  = Path(args.dossier).resolve() if args.dossier \
-              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_raster"
+              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster"
     dossier = racine
     dossier.mkdir(parents=True, exist_ok=True)
 
     nom_fichier = f"{nom_zone}_{args.couche}_z{zoom_min}-{zoom_max}"
     chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
-    # Cache tuiles : dossier/dalles/<z>/<x>/<y>.<ext>
+    # Cache tuiles : cache/ign_raster/<z>/<x>/<y>.<ext>. Le dossier de SORTIE est
+    # provider-neutre (raster/), mais le cache garde le nom legacy "ign_raster"
+    # pour ne pas orpheliner les tuiles WMTS déjà téléchargées des users FR.
+    # naip (US) et IGN (FR) y cohabitent sans collision (x/y disjoints).
     dossier_cache = DOSSIER_TRAVAIL / "cache" / "ign_raster"
     dossier_cache.mkdir(parents=True, exist_ok=True)
     print(f"  Tiles cache: {dossier_cache}")
@@ -12255,6 +12301,9 @@ def _cfg_depuis_argv() -> dict:
     ombs = _args_after("--shadings", "--ombrages")
 
     return {
+        # Provider — pris du global déjà résolu (PROVIDER.CODE), car _load_provider
+        # a strippé --provider de sys.argv ; _arg("--provider") ne le verrait plus.
+        "provider": PROVIDER.CODE,
         # Zone
         "type":    t,
         "mode":    mode,
@@ -12581,13 +12630,16 @@ def lancer_gui():
     # ── Données statiques exposées au formulaire ──────────────────────────────
     _COUCHES_PRIVEES = {"scan25", "scan25tour", "scan100", "scanoaci"}
     _COUCHES_LABELS = {"naip": "USGS Imagery (USA, ~1 m)"}
+    # Pays propriétaire de chaque couche raster (filtre l'onglet selon le provider).
+    _COUCHES_PAYS = {"naip": "us"}   # défaut "fr" (couches IGN)
     _COUCHES_DATA = [
         {"code": k,
          "label": f"{'⚠ [PRO] ' if k in _COUCHES_PRIVEES else ''}{k}  "
                   f"({_COUCHES_LABELS.get(k, v[0])})",
          "zoom_min":  _ZOOMS_GUI.get(k, (8, 16))[0],
          "zoom_max":  _ZOOMS_GUI.get(k, (8, 16))[1],
-         "restreinte": k in _COUCHES_PRIVEES}
+         "restreinte": k in _COUCHES_PRIVEES,
+         "pays":       _COUCHES_PAYS.get(k, "fr")}
         for k, v in COUCHES.items()
     ]
     _WFS_DATA = [{"alias": k, "label": v[1]} for k, v in COUCHES_WFS.items()]
@@ -12975,7 +13027,7 @@ def lancer_gui():
                     _cfg_country = _p.get("country", "fr")
                     break
             _lidar_subdir_cfg = f"lidar/{_cfg_country}"
-            _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"ign_raster", "osm":"osm_vecteur",
+            _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
                          "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)
@@ -13490,7 +13542,7 @@ body.log-resizing *{
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
       <label style="min-width:auto;margin-left:12px"
-             data-i18n-title="tip.provider" title="Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.">Provider</label>
+             data-i18n-title="tip.provider" title="Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.">Provider</label>
       <select id="f-provider" style="min-width:200px">
        <option value="fr-ign" data-i18n="loading">Chargement...</option>
       </select>
@@ -13570,7 +13622,7 @@ body.log-resizing *{
      <input type="radio" name="type" id="t-lidar"   value="lidar"   checked>
      <label for="t-lidar" data-i18n="t.lidar">LiDAR MNT</label>
      <input type="radio" name="type" id="t-scan"    value="scan">
-     <label for="t-scan" data-fr-only="1">IGN Raster</label>
+     <label for="t-scan" id="lbl-raster" data-raster-tab="1">IGN Raster</label>
      <input type="radio" name="type" id="t-vecteur" value="vecteur">
      <label for="t-vecteur" data-fr-only="1" data-i18n="t.vecteur">IGN Vectoriel</label>
      <input type="radio" name="type" id="t-osm"     value="osm">
@@ -13724,7 +13776,7 @@ body.log-resizing *{
     </div>
    </div>
    <div class="section">
-    <div class="section-hd" data-i18n="sec.couche">Couche IGN</div>
+    <div class="section-hd" id="hd-couche" data-i18n="sec.couche">Couche IGN</div>
     <div class="section-body">
      <div class="row">
       <label data-i18n="couche">Couche :</label>
@@ -13986,7 +14038,7 @@ const I18N = {
     // Projet
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "loading":"Chargement...", "apikey":"Clé API :",
-    "tip.provider":"Source LiDAR (par pays). Le choix masque les onglets IGN Raster/Vecteur pour les providers non-FR.",
+    "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
     // Zone
     "sec.zone":"Zone géographique",
     "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
@@ -14012,7 +14064,7 @@ const I18N = {
     "tip.svf":"Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite.",
     "tip.elev":"Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.",
     // IGN Raster
-    "sec.couche":"Couche IGN", "couche":"Couche :",
+    "sec.couche":"Couche IGN", "sec.couche.us":"Couche USGS Imagery", "couche":"Couche :",
     // OSM / Vecteur / Fusion
     "pbfpar":"(parallélisme téléchargement PBF)", "max4":"(max 4 recommandé)",
     "geojson.raw":".geojson (non compressed)",
@@ -14072,7 +14124,7 @@ const I18N = {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "loading":"Loading...", "apikey":"API key:",
-    "tip.provider":"LiDAR source (per country). The choice hides the IGN Raster/Vector tabs for non-FR providers.",
+    "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
     "sec.zone":"Geographic area",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
     "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
@@ -14093,7 +14145,7 @@ const I18N = {
     "zoom":"Zoom:", "imgfmt":"Image format:", "jpegq":"Jpeg quality:", "filefmt":"File format:",
     "tip.svf":"Sky-View Factor — openness of the celestial hemisphere. Options on the right.",
     "tip.elev":"Sun angle of the directional hillshades. 25° = archaeology (micro-relief); 45° = general use.",
-    "sec.couche":"IGN layer", "couche":"Layer:",
+    "sec.couche":"IGN layer", "sec.couche.us":"USGS Imagery layer", "couche":"Layer:",
     "pbfpar":"(PBF download parallelism)", "max4":"(max 4 recommended)",
     "geojson.raw":".geojson (uncompressed)",
     "gen.map":"2 — Generate Mapsforge map (.map)",
@@ -14163,6 +14215,10 @@ function applyI18n(){
 function setLang(code, persist){
   _lang = (code === 'en') ? 'en' : 'fr';
   applyI18n();
+  // applyI18n a réécrit le header couche depuis sa clé générique : ré-applique
+  // la variante conscient-du-pays (IGN vs USGS Imagery) dans la nouvelle langue.
+  const _prov = document.getElementById('f-provider');
+  if (_prov && _prov.dataset.country) applyProviderCountry(_prov.dataset.country);
   if (persist && window.pywebview && pywebview.api && pywebview.api.set_lang) {
     pywebview.api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
   }
@@ -14422,9 +14478,11 @@ async function initAsync() {
   try {
     const d = await pywebview.api.get_init_data();
     if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
+    // buildCouches AVANT buildProviders : ce dernier appelle applyProviderCountry
+    // qui filtre le dropdown des couches → il doit déjà être peuplé.
+    buildCouches(d.couches);
     buildProviders(d.providers || [], d.active_provider || 'fr-ign');
     buildRegions(d.regions || []);
-    buildCouches(d.couches);
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);
     document.getElementById('f-apikey').value = d.apikey_def || '';
@@ -14497,6 +14555,37 @@ function applyProviderApiKey(opt) {
   group.style.display = needs ? 'inline-flex' : 'none';
 }
 
+// Libellé de l'onglet raster selon le pays propriétaire des couches.
+const _RASTER_TAB_LABEL = { fr: 'IGN Raster', us: 'USGS Imagery' };
+
+function _bascullerVersLidar(inp) {
+  // Si l'onglet courant devient invisible, basculer sur LiDAR.
+  if (inp && inp.checked) {
+    const lidarRadio = document.getElementById('t-lidar');
+    if (lidarRadio) { lidarRadio.checked = true; lidarRadio.dispatchEvent(new Event('change')); }
+  }
+}
+
+function filterCouchesByCountry(country) {
+  // N'affiche que les couches du pays courant dans le dropdown raster.
+  const sel = document.getElementById('f-couche');
+  if (!sel) return false;
+  let firstVisible = null;
+  Array.from(sel.options).forEach(o => {
+    const match = (o.dataset.pays || 'fr') === country;
+    o.hidden = !match;
+    o.disabled = !match;
+    if (match && !firstVisible) firstVisible = o;
+  });
+  // Si la couche sélectionnée n'est plus du bon pays, prendre la 1re visible.
+  const cur = sel.selectedOptions[0];
+  if (firstVisible && (!cur || cur.hidden)) {
+    sel.value = firstVisible.value;
+    sel.dispatchEvent(new Event('change'));
+  }
+  return firstVisible !== null;   // true si le pays a au moins une couche raster
+}
+
 function applyProviderCountry(country) {
   // Cache les onglets/labels marqués data-fr-only="1" si le pays n'est pas FR.
   const elts = document.querySelectorAll('[data-fr-only="1"]');
@@ -14508,14 +14597,30 @@ function applyProviderCountry(country) {
       const inp = document.getElementById(forId);
       if (inp) {
         inp.style.display = (country === 'fr') ? '' : 'none';
-        // Si l'onglet courant devient invisible, basculer sur LiDAR
-        if (country !== 'fr' && inp.checked) {
-          const lidarRadio = document.getElementById('t-lidar');
-          if (lidarRadio) { lidarRadio.checked = true; lidarRadio.dispatchEvent(new Event('change')); }
-        }
+        if (country !== 'fr') _bascullerVersLidar(inp);
       }
     }
   });
+
+  // Onglet raster : conscient du pays. Visible si le provider a des couches
+  // raster (FR → IGN, US → USGS Imagery), masqué sinon. Le libellé s'adapte.
+  const hasRaster = filterCouchesByCountry(country);
+  const lblRaster = document.getElementById('lbl-raster');
+  const inpRaster = document.getElementById('t-scan');
+  if (lblRaster) {
+    lblRaster.style.display = hasRaster ? '' : 'none';
+    if (hasRaster) lblRaster.textContent = _RASTER_TAB_LABEL[country] || 'Raster';
+  }
+  if (inpRaster) {
+    inpRaster.style.display = hasRaster ? '' : 'none';
+    if (!hasRaster) _bascullerVersLidar(inpRaster);
+  }
+  // Titre de la section couche : "Couche IGN" (FR) / "Couche USGS Imagery" (US),
+  // dans la langue courante. Survit aux changements de langue (setLang ré-appelle).
+  const hdCouche = document.getElementById('hd-couche');
+  if (hdCouche && hasRaster) {
+    hdCouche.textContent = t(country === 'us' ? 'sec.couche.us' : 'sec.couche');
+  }
 }
 
 let _historique = [];
@@ -14528,7 +14633,7 @@ function buildHistorique(hist) {
     list.innerHTML = '<div style="color:var(--dim);font-size:12px">' + t('hist.empty') + '</div>';
     return;
   }
-  const LABELS = {lidar:'LiDAR',scan:'IGN Raster',osm:t('t.osm'),
+  const LABELS = {lidar:'LiDAR',scan:'Raster',osm:t('t.osm'),
                   vecteur:t('t.vecteur'),fusion:t('t.fusion'),decoupe:t('t.decoupe')};
   // Marqueur visuel du statut : ✓ ok (vert), ✗ ko (rouge), ⚠ en cours (orange,
   // process probablement crashé — l'entrée n'a pas été finalisée).
@@ -14601,6 +14706,7 @@ function buildCouches(couches) {
     o.value = c.code; o.textContent = c.label;
     o.dataset.zmin = c.zoom_min; o.dataset.zmax = c.zoom_max;
     o.dataset.restreinte = c.restreinte ? '1' : '0';
+    o.dataset.pays = c.pays || 'fr';
     sel.appendChild(o);
   });
   const updateWarning = () => {
@@ -15008,15 +15114,11 @@ function loadConfig(cfg) {
   if (cfg.type) sr('type', cfg.type);
   // (window.applyMode/applyType seront rappelées en fin de loadConfig
   //  pour synchroniser les sections visibles avec les radios cochés)
-
-  // Provider (multi-pays) — restauré depuis l'historique si présent
-  if (cfg.provider) {
-    const psel = document.getElementById('f-provider');
-    if (psel && psel.querySelector(`option[value="${cfg.provider}"]`)) {
-      psel.value = cfg.provider;
-      psel.dispatchEvent(new Event('change'));
-    }
-  }
+  // NB : le provider + couche + zooms sont restaurés EN DERNIER (voir fin de
+  //  fonction) car le changement de provider déclenche une cascade de 'change'
+  //  (filtre des couches → updateWarning → reset des zooms) qui écraserait des
+  //  valeurs restaurées trop tôt. Bug observé uniquement au démarrage, où
+  //  l'ordre d'init diffère du rappel manuel via le panneau.
 
   // Projet
   s('f-nom',     cfg.nom);
@@ -15161,6 +15263,24 @@ function loadConfig(cfg) {
   if (typeof window.applyFmtL    === 'function') window.applyFmtL();
   if (typeof window.applyFmtS    === 'function') window.applyFmtS();
   toggleSvfPanel();
+
+  // ── Restauration des champs sensibles aux cascades, EN DERNIER ────────────
+  // Le changement de provider filtre les couches et déclenche updateWarning,
+  // qui remet les zooms aux valeurs par défaut de la couche. On restaure donc
+  // provider → couche → zooms dans cet ordre, après tout le reste, pour que les
+  // valeurs sauvées gagnent quel que soit l'ordre d'init (démarrage vs panneau).
+  if (cfg.provider) {
+    const psel = document.getElementById('f-provider');
+    if (psel && psel.querySelector(`option[value="${cfg.provider}"]`)) {
+      psel.value = cfg.provider;
+      psel.dispatchEvent(new Event('change'));   // applyProviderCountry + filtre couches
+    }
+  }
+  s('f-couche',     cfg.couche);
+  s('f-zoom-min-s', cfg.zoom_min_s);
+  s('f-zoom-max-s', cfg.zoom_max_s);
+  s('f-zoom-min-l', cfg.zoom_min_l);
+  s('f-zoom-max-l', cfg.zoom_max_l);
 }
 
 // Affiche/masque le panneau de détail SVF selon la case SVF.
@@ -15400,7 +15520,7 @@ function btnReset() {
         pass
 
     win = webview.create_window(
-        "lidar2map — Cartes offline LiDAR/IGN/OSM",
+        "lidar2map — Cartes offline LiDAR / raster / OSM",
         html=HTML,
         js_api=api,
         width=_w, height=_h,
