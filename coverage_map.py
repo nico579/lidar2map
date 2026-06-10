@@ -42,6 +42,8 @@ REGIONS = [
     ("España",                 ["es-cnig"],          "#fb923c", (-10.0, 35.5, 4.6, 44.5), None),
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
     ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
+    ("Queensland",             ["au-qld"],           "#e11d48", (137.0, -29.5, 154.5, -9.0), None),
+    ("New South Wales",        ["au-nsw"],           "#0284c7", (140.0, -38.0, 154.5, -27.5), None),
 ]
 
 
@@ -115,7 +117,7 @@ def render_png(features, out_png):
         print(f"  (PNG non généré — matplotlib absent : {e})")
         return
     EU = (-11, 31, 35.5, 71.5)      # lon_min, lon_max, lat_min, lat_max
-    NZ = (165.5, 179.5, -47.5, -34)
+    NZ = (137.0, 180.0, -47.5, -9.0)  # Océanie : Australie (est) + Nouvelle-Zélande
 
     def cen_lon(geom):
         ring = (geom["coordinates"][0][0] if geom["type"] == "MultiPolygon"
@@ -160,14 +162,14 @@ def render_png(features, out_png):
     for s in ax.spines.values():
         s.set_edgecolor("#cbd5e1")
     ax.set_title(f"lidar2map — couverture LiDAR sol-nu ({len(features)} zones, "
-                 f"15 pays + USA/Canada par projet)", fontsize=11, weight="bold")
+                 f"16 pays + USA/Canada par projet)", fontsize=11, weight="bold")
     if nz:
-        axn = ax.inset_axes([0.70, 0.0, 0.29, 0.32]); axn.set_facecolor("#eaf2fb")
+        axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")
         draw(axn, nz)
         axn.set_xlim(NZ[0], NZ[1]); axn.set_ylim(NZ[2], NZ[3])
-        axn.set_aspect(1 / math.cos(math.radians(41)))
+        axn.set_aspect(1 / math.cos(math.radians(28)))
         axn.set_xticks([]); axn.set_yticks([])
-        axn.set_title("Nouvelle-Zélande", fontsize=7)
+        axn.set_title("Océanie — Australie (QLD·NSW) + N.-Zélande", fontsize=6.5)
     fig.savefig(out_png, dpi=120, facecolor=fig.get_facecolor())
     plt.close(fig)
     print(f"coverage.png : {os.path.getsize(out_png) // 1024} Ko")

@@ -4,7 +4,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **16 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **17 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande, Australie), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -14,7 +14,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ---
 
-**Ton pays est-il couvert ?** — 16 pays en LiDAR sol-nu national (+ USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** — 17 pays en LiDAR sol-nu national (+ USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.png)
 
@@ -24,7 +24,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **16 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **17 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Espagne, Pologne, Canada, Nouvelle-Zélande, Australie), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, LRM, RRIM) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) — les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -70,6 +70,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
   *Océanie*
   - **Nouvelle-Zélande** (`nz-linz`) — DEM 1 m national seamless (STAC LINZ S3 ; lecture COG fenêtrée)
+  - **Australie** (`au-qld`, `au-nsw`) — Queensland DEM LiDAR 0.5 m (QSpatial) + NSW DEM 5 m (Spatial Services). Couverture **par État** (ImageServers ELVIS) ; les autres États n'exposent pas d'ImageServer statewide propre
 
   *En cours* (providers ébauchés, non encore fonctionnels) :
   - Suède (`se-lantmateriet`, compte Lantmäteriet requis), Australie (`au-ga`, à écrire)
@@ -305,6 +306,8 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `es-cnig` | Espagne | EPSG:25830 (UTM30N) | 5 m | WCS 2.0.1 INSPIRE (MDT) |
 | `pl-gugik` | Pologne | EPSG:2180 (PUWG 1992) | 1 m | WCS 2.0.1 (NMT ISOK) |
 | `nz-linz` | Nouvelle-Zélande | EPSG:2193 (NZTM2000) | 1 m | STAC + COG national (lecture fenêtrée) |
+| `au-qld` | Australie (Queensland) | EPSG:3857 | 0.5 m | ArcGIS ImageServer exportImage |
+| `au-nsw` | Australie (NSW) | EPSG:3857 | 5 m | ArcGIS ImageServer exportImage |
 
 Sélection : flag `--provider <code>` (CLI), variable d'env `LIDAR2MAP_PROVIDER`, ou dropdown en haut de la GUI.
 
@@ -328,7 +331,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles) · Belgique (Flandre) · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles) · Belgique (Flandre) · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
@@ -448,6 +451,7 @@ Données utilisées :
 - **IGN España / CNIG** — MDT 5m (Espagne), CC BY 4.0
 - **GUGiK** (office polonais de géodésie et cartographie) — NMT 1m LiDAR ISOK (Pologne), données ouvertes
 - **LINZ** (Land Information New Zealand) — DEM 1m (Nouvelle-Zélande), CC BY 4.0
+- **QSpatial** (State of Queensland) & **Spatial Services NSW** — DEM 0.5m / 5m (Australie), CC BY 4.0
 - **OpenStreetMap** — données vectorielles sous licence ODbL, distribuées par Geofabrik
 - **Apache JMapsforge / mapsforge-map-writer** — moteur de rendu vectoriel offline
 
