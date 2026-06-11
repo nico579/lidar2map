@@ -21,6 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      # Pas d'auto-install/venv dans le runner : les deps sont posées par pip
+      # ci-dessous, et un manque doit échouer net (message clair) plutôt que
+      # déclencher le bootstrap.
+      LIDAR2MAP_BOOTSTRAP: none
 
     steps:
       - name: Checkout
@@ -32,7 +37,11 @@ jobs:
           python-version: "3.12"
 
       - name: Installer les dependances Python
-        run: pip install pyproj Pillow numpy scipy
+        # Liste alignée sur les deps OBLIGATOIRES de lidar2map (cf.
+        # _installer_deps) : depuis le refactor rasterio, ijson/rasterio/
+        # fiona/certifi sont requis à l'import — l'ancienne ligne (pyproj
+        # Pillow numpy scipy) est la raison des échecs CI d'avril 2026.
+        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi
 
       - name: Syntaxe Python
         run: python -c "import ast; ast.parse(open('lidar2map.py', encoding='utf-8').read()); print('OK')"
@@ -200,6 +209,8 @@ jobs:
   tests-scientifiques:
     name: tests scientifiques (ubuntu)
     runs-on: ubuntu-latest
+    env:
+      LIDAR2MAP_BOOTSTRAP: none
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -210,7 +221,9 @@ jobs:
           python-version: "3.12"
 
       - name: Installer les dependances calcul
-        run: pip install numpy scipy rasterio numba Pillow pyproj
+        # numba pour les kernels + la liste obligatoire de lidar2map
+        # (l'import sous bootstrap=none vérifie ijson/fiona/certifi aussi).
+        run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi
 
       - name: Tests calculs scientifiques
         run: python tests/_test_corrections.py
