@@ -4,7 +4,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **19 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **20 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -14,7 +14,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ---
 
-**Ton pays est-il couvert ?** — 19 pays en LiDAR sol-nu (dont USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** — 20 pays en LiDAR sol-nu (dont USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.png)
 
@@ -24,7 +24,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **19 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **20 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) — les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -67,10 +67,10 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  Sources LiDAR : **19 pays** via le flag `--provider <code>` (ou le dropdown
+  Sources LiDAR : **20 pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI) — France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (3 Länder),
   Autriche (Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
-  Irlande, Tchéquie, Slovénie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande,
+  Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande,
   Australie (QLD/NSW). Le détail par provider (donnée, résolution, CRS, mécanisme
   d'accès, couverture, clés API) est dans **l'unique tableau de référence** de la
   section [Providers LiDAR](#providers-lidar--ajouter-un-pays).
@@ -303,6 +303,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `ie-gsi` | Irlande | LiDAR DTM | 1 m | EPSG:2157 (ITM) | ArcGIS FeatureServer → ZIP (post_fetch) — ~60 % du territoire, CC BY 4.0 |
 | `cz-cuzk` | Tchéquie | DMR 5G | 1 m | EPSG:5514 (S-JTSK/Krovak) | Atom INSPIRE 2 niveaux → LAZ (post_fetch, nécessite `lazrs`) — couverture nationale |
 | `si-arso` | Slovénie | DMR1 (LiDAR 2011-2015) | 1 m | EPSG:3794 (D96/TM) | Index fishnet ArcGIS REST + dalles texte x;y;z → GeoTIFF (post_fetch) — couverture nationale |
+| `ee-maaamet` | Estonie | DTM 1 m (ALS 2021-2024) | 1 m | EPSG:3301 (L-EST97) | URLs directes par feuille 1:10000 (numérotation = formule pure, pas d'index) — couverture nationale, open data |
 | `es-cnig` | Espagne | MDT | 5 m | EPSG:25830 (UTM30N) | WCS 2.0.1 INSPIRE — 5 m = échelle paysage (le LiDAR 2 m sol-nu exige le portail à session CNIG) |
 | `pl-gugik` | Pologne | NMT (projet ISOK) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1 — données ouvertes, couverture nationale |
 | `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + COG mosaïque (lecture fenêtrée) — ~95 % de la population |
