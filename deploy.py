@@ -441,7 +441,11 @@ def main():
 
     # --- Phase 2 : catégorisation -> action ---
     rebuild = [c for c in changed if is_rebuild_file(c)]
-    code_changed = APP_PY in changed
+    # providers/*.py comptent comme du code : update_app.py les injecte dans
+    # les bundles lors du patch (extras _internal/providers/). Sans ce test,
+    # un nouveau provider serait poussé sur main mais jamais livré aux bundles.
+    code_changed = (APP_PY in changed
+                    or any(c.startswith("providers/") for c in changed))
 
     if rebuild:
         cprint("\n==> [2/2] REBUILD requis (fichiers impactant le binaire) :", "yellow")
