@@ -7933,7 +7933,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
+                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -10066,7 +10066,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
+                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -11715,7 +11715,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.5.3 (2026-06) — multi-provider")
+                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
@@ -14055,8 +14055,8 @@ body.log-resizing *{
        <label><input type="checkbox" name="omb" value="225"> 225°</label>
        <label><input type="checkbox" name="omb" value="lrm"> LRM</label>
        <label><input type="checkbox" name="omb" value="rrim"> RRIM</label>
-       <label data-i18n-title="tip.opos" title="Openness positive (Yokoyama 2002) — angle d'horizon moyen au-dessus de l'horizontale, crêtes et bosses claires. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="opos"> O+</label>
-       <label data-i18n-title="tip.oneg" title="Openness négative inversée (Yokoyama 2002) — fossés, talus et chemins creux sombres. Complément archéo du SVF. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="oneg"> O−</label>
+       <label data-i18n-title="tip.opos" title="Openness positive (Yokoyama 2002) — angle d'horizon moyen au-dessus de l'horizontale, crêtes et bosses claires. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="opos" onchange="toggleSvfPanel()"> O+</label>
+       <label data-i18n-title="tip.oneg" title="Openness négative inversée (Yokoyama 2002) — fossés, talus et chemins creux sombres. Complément archéo du SVF. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="oneg" onchange="toggleSvfPanel()"> O−</label>
       </div>
       <span style="margin-left:12px;color:var(--dim)" data-i18n-title="tip.sun" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
       <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" data-i18n-title="tip.elev" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
@@ -15647,9 +15647,14 @@ function loadConfig(cfg) {
   s('f-zoom-max-l', cfg.zoom_max_l);
 }
 
-// Affiche/masque le panneau de détail SVF selon la case SVF.
+// Affiche/masque le panneau de détail SVF. Les openness O+/O− empruntent
+// rayon et gamma à ce panneau → il reste visible si l'une des trois cases
+// (SVF, opos, oneg) est cochée.
 function toggleSvfPanel() {
-  const on = document.getElementById('f-svf')?.checked;
+  const opos = document.querySelector('input[name=omb][value=opos]');
+  const oneg = document.querySelector('input[name=omb][value=oneg]');
+  const on = (document.getElementById('f-svf')?.checked)
+          || (opos && opos.checked) || (oneg && oneg.checked);
   const p  = document.getElementById('svf-panel');
   if (p) p.style.display = on ? 'flex' : 'none';
 }
