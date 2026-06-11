@@ -254,6 +254,42 @@ if ok:
     check("oneg fossé plus sombre que le fond (Δ > 30)",
           fond_med - fosse_med > 30, f"Δ={fond_med - fosse_med:.0f}")
 
+print("== 10. Instances d'ombrages paramétrées (--shading) ==")
+# Parser de specs
+assert l2m.parser_shading_spec("svf:dist=10,gamma=1.5,conv=rvt") == \
+    ("svf", {"dist": 10.0, "gamma": 1.5, "conv": "rvt"})
+assert l2m.parser_shading_spec("oneg") == ("oneg", {})
+assert l2m.parser_shading_spec("315:elevation=35") == ("315", {"elevation": 35.0})
+assert l2m.parser_shading_spec("lrm:sigma=5") == ("lrm", {"sigma": 5.0})
+for bad in ("foo", "svf:bidule=1", "svf:conv=xx", "svf:dist=abc"):
+    try:
+        l2m.parser_shading_spec(bad)
+        check(f"spec invalide rejetée : {bad}", False)
+    except ValueError:
+        pass
+check("parser_shading_spec : specs valides + rejets", True)
+
+# Moteur : deux instances du même type + noms taggés seulement si explicites
+dem_i = (3.0 * np.sin(xx2[:512, :512] / 12.0)
+         * np.sin(yy2[:512, :512] / 12.0)).astype(np.float32)
+src_i = tmp / "dem_inst.tif"
+write_tif(src_i, dem_i, nodata=ND)
+inst = [l2m.parser_shading_spec(s) for s in
+        ("svf:dist=10,gamma=1.0", "svf:dist=20,gamma=1.0",
+         "315:elevation=35", "lrm:sigma=5")]
+dossier_i = tmp / "inst"
+dossier_i.mkdir()
+l2m.generer_ombrages([src_i], dossier_i, choix=["multi"], nom_zone="zz",
+                     instances=inst, bbox_natif=None)
+produits = {f.name for f in dossier_i.glob("zz_*.tif")}
+attendus = {"zz_multi_ombrage.tif",            # legacy : nom historique
+            "zz_svf_flux_10m_g1p0_ombrage.tif",
+            "zz_svf_flux_20m_g1p0_ombrage.tif",  # 2 instances du même type
+            "zz_315_e35_ombrage.tif",            # élévation explicite → taggée
+            "zz_lrm_s5m_ombrage.tif"}            # sigma explicite → taggé
+check("instances : fichiers attendus produits", produits == attendus,
+      f"écart : {produits ^ attendus}")
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

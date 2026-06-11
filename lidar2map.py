@@ -119,6 +119,14 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   lrm rrim | tous | aucun
                                   (opos/oneg = openness ± Yokoyama 2002,
                                    rayon --svf-dist, gamma --svf-gamma)
+    --shading TYPE[:k=v,...]    Instance d'ombrage PARAMÉTRÉE, répétable —
+                                  permet plusieurs instances du même type :
+                                  --shading svf:dist=20 --shading svf:dist=100
+                                  --shading oneg:gamma=1.5 --shading lrm:sigma=10
+                                  Params : elevation (directionnels/multi),
+                                  conv/dist/gamma (svf), dist/gamma (opos/oneg),
+                                  sigma en m (lrm/rrim). Les params explicites
+                                  sont encodés dans le nom de fichier.
     --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
     --svf-dist M                Rayon SVF en mètres, 10–200 (déf. 20)
     --svf-sweep / --no-svf-sweep  Kernel sweep-horizon SVF (déf. activé)
@@ -5587,7 +5595,74 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
                   flush=True)
 
 
-def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None, bbox_natif=None):
+# ── Instances d'ombrages paramétrées (--shading TYPE:cle=val,...) ────────────
+# Types et paramètres admis. Syntaxe répétable façon ffmpeg/GDAL : chaque
+# --shading produit UNE instance avec SES paramètres — deux instances du même
+# type (ex. svf à 20 m ET 100 m) coexistent, les params étant encodés dans le
+# nom de fichier de sortie.
+_SHADING_TYPES = {
+    "315":   {"elevation"},
+    "045":   {"elevation"},
+    "135":   {"elevation"},
+    "225":   {"elevation"},
+    "multi": {"elevation"},
+    "slope": set(),
+    "svf":   {"conv", "dist", "gamma"},
+    "opos":  {"dist", "gamma"},
+    "oneg":  {"dist", "gamma"},
+    "lrm":   {"sigma"},
+    "rrim":  {"sigma"},
+}
+
+
+def parser_shading_spec(spec):
+    """Parse 'TYPE[:cle=val,...]' → (type, params explicites).
+
+    Exemples :
+      --shading svf:dist=20,gamma=2,conv=flux --shading svf:dist=100
+      --shading oneg:dist=20,gamma=1.5 --shading 315:elevation=20
+      --shading lrm:sigma=10 --shading slope
+
+    Paramètres par type :
+      315/045/135/225/multi : elevation (degrés)
+      svf                   : conv (flux|rvt), dist (m), gamma
+      opos/oneg             : dist (m), gamma
+      lrm/rrim              : sigma (m, rayon gaussien — défaut 15 px du provider)
+      slope                 : aucun
+
+    Lève ValueError (message clair) si type ou clé inconnus.
+    """
+    typ, _, reste = spec.strip().partition(":")
+    typ = typ.strip().lower()
+    if typ not in _SHADING_TYPES:
+        raise ValueError(f"type d'ombrage inconnu : {typ!r}"
+                         f" (valides : {', '.join(sorted(_SHADING_TYPES))})")
+    admis = _SHADING_TYPES[typ]
+    params = {}
+    for kv in reste.split(","):
+        kv = kv.strip()
+        if not kv:
+            continue
+        k, sep, v = kv.partition("=")
+        k = k.strip().lower()
+        if not sep or k not in admis:
+            raise ValueError(
+                f"paramètre {k!r} invalide pour {typ}"
+                f" (admis : {', '.join(sorted(admis)) or 'aucun'})")
+        if k == "conv":
+            v = v.strip().lower()
+            if v not in ("flux", "rvt"):
+                raise ValueError(f"conv={v!r} (attendu : flux ou rvt)")
+            params[k] = v
+        else:
+            try:
+                params[k] = float(v)
+            except ValueError:
+                raise ValueError(f"{k}={v.strip()!r} : nombre attendu")
+    return typ, params
+
+
+def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None, bbox_natif=None, instances=None):
     """
     Génère les ombrages depuis le VRT/COG source (MNT EPSG:2154).
 
@@ -5600,10 +5675,19 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
         lrm  — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
 
+    Deux chemins d'entrée, cumulables :
+      choix     : liste de TYPES (--shadings, GUI historique) — chaque type
+                  devient une instance aux paramètres GLOBAUX ci-dessous ;
+      instances : liste (type, params explicites) du flag répétable
+                  --shading TYPE:cle=val,... (cf. parser_shading_spec) —
+                  permet plusieurs instances du même type (svf 20 m + 100 m).
+    Les params sont encodés dans le nom de fichier quand ils diffèrent des
+    défauts canoniques → pas de collision, caches historiques préservés.
+
     elevation_soleil : angle solaire des hillshades directionnels (défaut: 25°).
     svf_conv  : "flux" (cos²γ, contraste) ou "rvt" (1−sin γ, archéo).  Défaut flux.
-    svf_dist  : rayon SVF en mètres (10–200).  Défaut 20.
-    svf_gamma : gamma du SVF après stretch (défaut: SVF_GAMMA ; <1 éclaircit).
+    svf_dist  : rayon SVF/openness en mètres (10–200).  Défaut 20.
+    svf_gamma : gamma après stretch (défaut: SVF_GAMMA ; miroir pour oneg).
     use_sweep : kernel sweep-horizon (SVF uniquement).
     SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
     """
@@ -5643,45 +5727,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     gdal_translate = None
     env_dem        = None
 
-    CATALOGUE_GDAL = {
-        "315":   ("315_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az","315","-alt",str(elevation_soleil)]),
-        "045":   ("045_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az", "45","-alt",str(elevation_soleil)]),
-        "135":   ("135_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az","135","-alt",str(elevation_soleil)]),
-        "225":   ("225_ombrage",   ["hillshade", "-b","1","-z","1.0","-s","1.0","-az","225","-alt",str(elevation_soleil)]),
-        "multi": ("multi_ombrage", ["hillshade", "-b","1","-z","1.0","-s","1.0","-multidirectional"]),
-        "slope": ("slope_ombrage",           ["slope",     "-b","1","-s","1.0"]),
-    }
-    CATALOGUE_NUMPY = {
-        # (suffix_fichier, moteur, params)
-        # moteur=None → traitement numpy interne (pas de WBT)
-        # SVF paramétrique : conv/distance/gamma viennent des args (svf_conv,
-        # svf_dist, svf_gamma) — le suffixe de fichier est recalculé dynamiquement
-        # dans le dispatch. Les params ci-dessous ne sont que des valeurs de repli.
-        "svf":     ("svf_ombrage",      None,
-                    {"max_dist_px": 40,  "n_directions": 16, "conv": "flux"}),
-        # Openness (Yokoyama et al. 2002) — même moteur ray-cast que le SVF
-        # (rayon = --svf-dist, gamma = --svf-gamma) :
-        #   opos = positive (φ moyen au-dessus de l'horizontale) : crêtes claires
-        #   oneg = négative inversée : fossés/chemins creux sombres — le
-        #          complément archéo standard du SVF (RVT/Kokalj)
-        "opos":   ("opos_ombrage",     None, {}),
-        "oneg":   ("oneg_ombrage",     None, {}),
-        "lrm":    ("lrm_ombrage",      None,
-                   {"sigma_px": 15}),                            # σ=15 px = 7.5 m — compromise structures 4-15 m
-        "rrim":   ("rrim_ombrage",     None,
-                   {"sigma_px": 15}),   # slope + LRM σ=7.5 m (cf. clé "lrm")
-    }
-    co = ["-of", "GTiff",
-          "-co", "BIGTIFF=YES",
-          "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2",
-          "-co", "TILED=YES", "-co", "BLOCKXSIZE=512", "-co", "BLOCKYSIZE=512",
-          "--config", "GDAL_NUM_THREADS", "ALL_CPUS",
-          "--config", "GDAL_CACHEMAX", "2048"]
-
     # Ombrages precalcules fournis par le provider (PROVIDES_SHADINGS) :
     # telecharges directement depuis le WCS du provider (ex. Digitaal Vlaanderen
-    # SVF/Hillshade 25cm) AVANT de deriver choix_gdal/choix_numpy, pour que les
-    # cles ainsi servies soient retirees de choix et NON recalculees localement.
+    # SVF/Hillshade 25cm) AVANT la resolution en instances, pour que les cles
+    # ainsi servies soient retirees de choix et NON recalculees localement.
+    # Seules les instances "par defaut" (issues de choix) sont servies — une
+    # instance --shading aux params explicites est toujours calculee localement.
     if bbox_natif is not None and hasattr(PROVIDER, "PROVIDES_SHADINGS") and choix:
         choix = list(choix)
         _fetch_provider_shadings(
@@ -5689,13 +5740,58 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             PROVIDER.PROVIDES_SHADINGS
         )
 
-    choix_gdal = [c for c in choix if c in CATALOGUE_GDAL]
-    choix_numpy  = [c for c in choix if c in CATALOGUE_NUMPY]
+    # ── Résolution en instances (typ, params_explicites, params_résolus, suffixe)
+    # Le suffixe encode un param uniquement s'il est EXPLICITE et différent du
+    # défaut canonique : les noms historiques (multi_ombrage, lrm_ombrage…)
+    # restent inchangés aux réglages par défaut → caches préservés.
+    HORN_TYPES     = ("315", "045", "135", "225", "multi", "slope")
+    sigma_defaut_m = 15 * RESOLUTION_M   # = 15 px quel que soit le provider (compat)
 
-    # NB : les "hillshades GDAL" ne sont plus calculés via gdaldem CLI depuis
-    # le refactor étape 4. Ils utilisent maintenant _hillshade_numpy /
-    # _hillshade_multi_numpy / _slope_numpy (numpy direct, formule Horn 1981).
-    # Le nom CATALOGUE_GDAL est conservé pour minimiser le diff.
+    def _resoudre_params(typ, prm):
+        p = dict(prm or {})
+        if typ in ("315", "045", "135", "225", "multi"):
+            p.setdefault("elevation", float(elevation_soleil))
+        if typ == "svf":
+            p.setdefault("conv", "rvt" if str(svf_conv).lower() == "rvt" else "flux")
+        if typ in ("svf", "opos", "oneg"):
+            p.setdefault("dist", float(svf_dist))
+            p.setdefault("gamma", float(svf_gamma))
+        if typ in ("lrm", "rrim"):
+            p.setdefault("sigma", float(sigma_defaut_m))
+        return p
+
+    def _suffixe_instance(typ, prm, p):
+        def _tag(v):
+            return f"{v:g}".replace(".", "p").replace("-", "m")
+        if typ == "slope":
+            return "slope_ombrage"
+        if typ in ("315", "045", "135", "225", "multi"):
+            if "elevation" in (prm or {}) and p["elevation"] != ELEVATION_SOLEIL:
+                return f"{typ}_e{_tag(p['elevation'])}_ombrage"
+            return f"{typ}_ombrage"
+        if typ in ("svf", "opos", "oneg"):
+            gtag = f"{p['gamma']:.1f}".replace(".", "p")
+            base = (f"svf_{p['conv']}" if typ == "svf" else typ)
+            return f"{base}_{int(round(p['dist']))}m_g{gtag}_ombrage"
+        # lrm / rrim
+        if "sigma" in (prm or {}) and p["sigma"] != sigma_defaut_m:
+            return f"{typ}_s{_tag(p['sigma'])}m_ombrage"
+        return f"{typ}_ombrage"
+
+    insts, _vus = [], set()
+    for typ, prm in ([(t, {}) for t in choix] + list(instances or [])):
+        if typ not in _SHADING_TYPES:
+            print(f"  ⚠ type d'ombrage inconnu ignoré : {typ}")
+            continue
+        p = _resoudre_params(typ, prm)
+        sfx = _suffixe_instance(typ, prm, p)
+        if sfx in _vus:
+            continue   # doublon exact (même type, mêmes params)
+        _vus.add(sfx)
+        insts.append((typ, p, sfx))
+
+    horn_insts  = [i for i in insts if i[0] in HORN_TYPES]
+    numpy_insts = [i for i in insts if i[0] not in HORN_TYPES]
 
     # ── Construction VRT global (seamless, évite jointures gdaldem) ─────────
     # VRT dans _tmp/ sous dossier_ville : tous les fichiers restent dans le projet.
@@ -5747,34 +5843,27 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # Tous les types demandés sont calculés en UNE passe de lecture :
         # sur une grande zone le coût dominant est l'I/O + décompression
         # deflate des dalles derrière le VRT, pas les kernels.
-        if choix_gdal:
+        if horn_insts:
             jobs_h = []
-            for cle_h in choix_gdal:
-                suffix, args_dem = CATALOGUE_GDAL[cle_h]
-                nom_fichier = nom_base + "_" + suffix + ".tif"
+            for typ_h, p_h, sfx_h in horn_insts:
+                nom_fichier = nom_base + "_" + sfx_h + ".tif"
                 chemin_out  = dossier_ville / nom_fichier
                 if chemin_out.exists() and not ecraser_ombrages:
                     print("  " + nom_fichier.ljust(56) + " -> already present")
                     continue
                 if chemin_out.exists():
                     chemin_out.unlink()
-                mode = args_dem[0]
-                if mode == "hillshade":
-                    if "-multidirectional" in args_dem:
-                        jobs_h.append(("hillshade_multi",
-                                       {"altitude_deg": float(elevation_soleil)},
-                                       chemin_out))
-                    else:
-                        i_az  = args_dem.index("-az")
-                        i_alt = args_dem.index("-alt")
-                        jobs_h.append(("hillshade",
-                                       {"azimuth_deg":  float(args_dem[i_az + 1]),
-                                        "altitude_deg": float(args_dem[i_alt + 1])},
-                                       chemin_out))
-                elif mode == "slope":
+                if typ_h == "multi":
+                    jobs_h.append(("hillshade_multi",
+                                   {"altitude_deg": float(p_h["elevation"])},
+                                   chemin_out))
+                elif typ_h == "slope":
                     jobs_h.append(("slope", {}, chemin_out))
                 else:
-                    print(f"\n  ERREUR hillshade {nom_fichier} : mode inconnu {mode}")
+                    jobs_h.append(("hillshade",
+                                   {"azimuth_deg":  float(int(typ_h)),
+                                    "altitude_deg": float(p_h["elevation"])},
+                                   chemin_out))
 
             if jobs_h:
                 print(f"  Hillshades chunked — {len(jobs_h)} type(s),"
@@ -5804,45 +5893,37 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         raise
                     print(f"\n  ERREUR hillshades chunked : {e_hill}")
 
-        # ── SVF, LRM, RRIM — numpy/scipy (pas de WBT pour SVF) ──────────────
-        if not choix_numpy:
-            pass  # pas de traitement demandé
-
+        # ── SVF / openness / LRM / RRIM — numpy/scipy ────────────────────────
         # NB : rasterio.merge (étape 2 du refactor) produit déjà un GeoTIFF
         # directement utilisable par numpy/PIL/rasterio en aval. Plus aucune
         # conversion intermédiaire VRT→GTiff nécessaire.
         src_str = str(source)
         tmp_gtiff = None
 
-        for cle in choix_numpy:
+        for cle, p_i, sfx_i in numpy_insts:
             # Cancellation propre entre 2 ombrages : si l'utilisateur a fait
             # Ctrl+C pendant le précédent (kernel Numba intuable), l'ombrage
             # courant a été sauvegardé mais on n'enchaîne pas le suivant.
             if _stop_event.is_set():
                 print("  Interruption - remaining shadings skipped.")
                 break
-            sous_dossier_name, outil_numpy, params_numpy = CATALOGUE_NUMPY[cle]
 
-            # SVF/openness paramétriques : conv/distance/gamma depuis les args,
-            # et nom de fichier encodant les params → un changement de réglage
-            # produit un nouveau fichier (pas de collision avec un cache au
-            # mauvais réglage). opos/oneg partagent rayon et gamma du SVF.
+            # Params résolus de L'INSTANCE (et plus des args globaux) : deux
+            # instances du même type avec des réglages différents coexistent,
+            # le suffixe sfx_i encodant les params.
             if cle in ("svf", "opos", "oneg"):
-                _svf_dist_m   = float(svf_dist)
-                _svf_dist_px  = max(1, int(round(_svf_dist_m / RESOLUTION_M)))
-                _svf_g_tag    = f"{svf_gamma:.1f}".replace(".", "p")
+                _svf_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
+                _gamma_i     = float(p_i["gamma"])
                 if cle == "svf":
-                    _svf_conv_str = "rvt" if str(svf_conv).lower() == "rvt" else "flux"
+                    _svf_conv_str = p_i["conv"]
                     _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
-                    sous_dossier_name = (f"svf_{_svf_conv_str}_{int(round(_svf_dist_m))}m"
-                                         f"_g{_svf_g_tag}_ombrage")
                 else:
                     _svf_conv_str = cle   # libellé pour les prints
                     _svf_conv_i   = 2 if cle == "opos" else 3
-                    sous_dossier_name = (f"{cle}_{int(round(_svf_dist_m))}m"
-                                         f"_g{_svf_g_tag}_ombrage")
+            elif cle in ("lrm", "rrim"):
+                _sigma_px = max(1, int(round(p_i["sigma"] / RESOLUTION_M)))
 
-            nom_fichier  = nom_base + "_" + sous_dossier_name + ".tif"
+            nom_fichier  = nom_base + "_" + sfx_i + ".tif"
             chemin_out   = dossier_ville / nom_fichier
 
             if chemin_out.exists() and not ecraser_ombrages:
@@ -5865,7 +5946,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 dist_m = max_dist_px * RESOLUTION_M
                 _lbl_svf = "SVF" if cle == "svf" else f"Openness {cle}"
                 print(f"  {_lbl_svf} chunked ({n_directions} dir, rayon {dist_m:.0f} m"
-                      f" = {max_dist_px} px, conv={_svf_conv_str}, gamma={svf_gamma:g})...", flush=True)
+                      f" = {max_dist_px} px, conv={_svf_conv_str}, gamma={_gamma_i:g})...", flush=True)
                 try:
                     ok = _svf_chunked(
                         src_path     = Path(src_str),
@@ -5873,7 +5954,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         max_dist_px  = max_dist_px,
                         n_directions = n_directions,
                         resolution   = RESOLUTION_M,
-                        gamma        = svf_gamma,
+                        gamma        = _gamma_i,
                         use_sweep    = use_sweep,
                         conv         = conv,
                     )
@@ -5898,10 +5979,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         if conv == 3:
                             # Gamma miroir pour l'openness négative inversée
                             # (cf. _svf_chunked) : creux renforcés, fond clair.
-                            arr_u8 = ((1.0 - (1.0 - arr_stretched) ** svf_gamma)
+                            arr_u8 = ((1.0 - (1.0 - arr_stretched) ** _gamma_i)
                                       * 255).astype(np.uint8)
                         else:
-                            arr_u8 = (arr_stretched ** svf_gamma * 255).astype(np.uint8)
+                            arr_u8 = (arr_stretched ** _gamma_i * 255).astype(np.uint8)
                         _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
                     import traceback as _tb
@@ -5927,7 +6008,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 # Traitement par blocs avec overlap pour borner la RAM :
                 #   chemin 1 : _lrm_chunked() si rasterio + scipy disponibles
                 #   chemin 2 : pleine mémoire (fallback)
-                sigma_px = params_numpy["sigma_px"]  # 15 px = 7.5 m à 0.5 m/px
+                sigma_px = _sigma_px   # défaut 15 px ; --shading lrm:sigma=M en mètres
                 print(f"  LRM gaussien (σ={sigma_px} px = {sigma_px * RESOLUTION_M:.0f} m)"
                       f" — peut prendre 3-7 min...", flush=True)
 
@@ -5981,7 +6062,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 print("  RRIM — Red Relief Image Map (slope × LRM)"
                       " — peut prendre 5-10 min...", flush=True)
 
-                sigma_rrim = params_numpy["sigma_px"]  # 15 px = 7.5 m
+                sigma_rrim = _sigma_px   # défaut 15 px ; --shading rrim:sigma=M en mètres
 
                 # Slope temporaire (réutilisé si already present)
                 slope_rrim_path = dossier_ville / (nom_base + "_slope_ombrage.tif")
@@ -8025,6 +8106,22 @@ Examples:
                             "svf/lrm/rrim: computed with numpy/scipy (scipy auto-installed). "
                             "Ex: --shadings multi slope svf rrim"
                         ))
+    parser.add_argument("--shading", metavar="TYPE[:k=v,...]", action="append",
+                        dest="shading_specs", default=None,
+                        help=(
+                            "Parameterized shading instance, repeatable. "
+                            "Each occurrence yields ONE output with ITS params "
+                            "(encoded in the filename, no collision): "
+                            "--shading svf:dist=20,gamma=2 --shading svf:dist=100 "
+                            "--shading oneg:dist=20,gamma=1.5 --shading 315:elevation=20 "
+                            "--shading lrm:sigma=10. "
+                            "Params: 315/045/135/225/multi=elevation ; "
+                            "svf=conv,dist,gamma ; opos/oneg=dist,gamma ; "
+                            "lrm/rrim=sigma(m) ; slope=none. "
+                            "Unset params inherit --svf-* / --shading-elevation. "
+                            "Combines with --shadings (a type listed in --shading "
+                            "is not re-generated at default params)."
+                        ))
     parser.add_argument("--svf-conv", choices=["flux", "rvt"], default="flux",
                         dest="svf_conv",
                         help=("SVF convention: flux = cos²γ (compressed near 1, "
@@ -8120,6 +8217,23 @@ Examples:
 
     args = parser.parse_args()
     _valider_zooms(args, parser)
+
+    # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
+    # reflétés dans args.ombrages pour que les gates existants (qui testent
+    # la présence d'ombrages demandés) voient ces instances ; au dispatch,
+    # les types couverts par une instance explicite sont RETIRÉS de choix
+    # (sinon ils seraient aussi générés aux params par défaut).
+    args.shading_instances = None
+    if getattr(args, "shading_specs", None):
+        _insts = []
+        for _spec in args.shading_specs:
+            try:
+                _insts.append(parser_shading_spec(_spec))
+            except ValueError as _e_spec:
+                parser.error(f"--shading : {_e_spec}")
+        args.shading_instances = _insts
+        args.ombrages = list(dict.fromkeys(
+            (args.ombrages or []) + [t for t, _ in _insts]))
 
     # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
     if hasattr(PROVIDER, "set_apikey"):
@@ -8905,13 +9019,20 @@ Examples:
                         print(f"  ERREUR compression {chemin_out.name} : {_e_cmp}")
                         chemin_tmp.replace(chemin_out)
 
+    spec_insts = getattr(args, "shading_instances", None) or []
     if dalles_ombrages and args.ombrages:
         if "aucun" in args.ombrages:
             choix_ombrages = []
+            spec_insts = []
         elif "tous" in args.ombrages:
             choix_ombrages = TOUS_OMBRAGES
         else:
             choix_ombrages = args.ombrages
+        # Types couverts par une instance --shading explicite : ne pas les
+        # re-générer aux params par défaut (l'instance porte SES params).
+        if spec_insts:
+            _spec_types = {t for t, _ in spec_insts}
+            choix_ombrages = [c for c in choix_ombrages if c not in _spec_types]
     elif dalles_ombrages and not args.ombrages and not args.oui:
         # Mode interactif — pas de --ombrages, pas de --oui
         print(f"\n  Shadings to generate:")
@@ -8939,10 +9060,14 @@ Examples:
     else:
         choix_ombrages = []  # --oui sans --ombrages → pas d'ombrage
 
-    if choix_ombrages:
+    if choix_ombrages or spec_insts:
         surface_km2 = len(dalles_ombrages)  # ~1 dalle = 1 km²
-        print_etape("Ombrages " + ", ".join(choix_ombrages))
-        print(f"  Ombrages : {', '.join(choix_ombrages)}")
+        _libelles = choix_ombrages + [
+            t + (":" + ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}"
+                                for k, v in p.items()) if p else "")
+            for t, p in spec_insts]
+        print_etape("Ombrages " + ", ".join(_libelles))
+        print(f"  Ombrages : {', '.join(_libelles)}")
         elev = args.ombrages_elevation if args.ombrages_elevation is not None else ELEVATION_SOLEIL
         print(f"  Angle solaire : {elev}°")
         print(f"  Area: ~{surface_km2} km²  — Estimated duration:"
@@ -8954,7 +9079,8 @@ Examples:
                          use_sweep=args.sweep_horizon,
                          svf_gamma=args.svf_gamma,
                          svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                         bbox_natif=tuple(bbox))
+                         bbox_natif=tuple(bbox),
+                         instances=spec_insts or None)
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     if args.mbtiles or args.rmap or args.sqlitedb:
@@ -9494,7 +9620,13 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 choix = (TOUS if "tous" in args.ombrages
                          else [] if "aucun" in args.ombrages
                          else args.ombrages)
-                if choix:
+                _spec_i = getattr(args, "shading_instances", None) or []
+                if "aucun" in args.ombrages:
+                    _spec_i = []
+                if _spec_i:
+                    _spec_types = {t for t, _ in _spec_i}
+                    choix = [c for c in choix if c not in _spec_types]
+                if choix or _spec_i:
                     dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
                                                           dossier_ville, bbox)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
@@ -9505,7 +9637,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                      use_sweep=args.sweep_horizon,
                                      svf_gamma=args.svf_gamma,
                                      svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                                     bbox_natif=tuple(bbox))
+                                     bbox_natif=tuple(bbox),
+                                     instances=_spec_i or None)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Filtre identique à la fonction main : exclure les caches de
@@ -12698,8 +12831,12 @@ def _cfg_depuis_argv() -> dict:
         "ecraser_tel":   _flag("--download-overwrite", "--telechargement-ecraser"),
         "workers_l":     _arg_int("--workers", default=8),
         "dossier_dalles":_arg("--tiles-dir", "--dossier-dalles"),
-        "no_omb":        bool(ombs) or _flag("--shadings", "--ombrages"),
+        "no_omb":        bool(ombs) or _flag("--shadings", "--ombrages", "--shading"),
         "ombrages":      ombs,
+        # --shading répétable : collecter CHAQUE occurrence (contrairement à
+        # _arg qui ne prend que la première).
+        "shading_specs": [argv[i + 1] for i, a in enumerate(argv)
+                          if a == "--shading" and i + 1 < len(argv)],
         "elevation":     _arg_int("--shading-elevation", "--ombrages-elevation", default=25),
         "svf_conv":      _arg("--svf-conv") or "flux",
         "svf_dist":      _arg_float("--svf-dist", default=20.0),
@@ -13224,6 +13361,9 @@ def lancer_gui():
                 if cfg.get("no_omb"):
                     ombs = cfg.get("ombrages", [])
                     if ombs: cmd += ["--shadings"] + ombs
+                    # Instances paramétrées (shuttle list) — répétable
+                    for _spec in cfg.get("shading_specs", []) or []:
+                        cmd += ["--shading", str(_spec)]
                     if cfg.get("elevation"):
                         cmd += ["--shading-elevation", str(cfg["elevation"])]
                     if cfg.get("svf_conv"):
@@ -14060,40 +14200,39 @@ body.log-resizing *{
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-omb"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-omb">
-     <div class="row" style="align-items:center;">
-      <div class="cb-group">
-       <label><input type="checkbox" name="omb" value="multi" checked> multi</label>
-       <label><input type="checkbox" name="omb" value="slope"> slope</label>
-       <label><input type="checkbox" name="omb" value="315"> 315°</label>
-       <label><input type="checkbox" name="omb" value="045"> 045°</label>
-       <label><input type="checkbox" name="omb" value="135"> 135°</label>
-       <label><input type="checkbox" name="omb" value="225"> 225°</label>
-       <label><input type="checkbox" name="omb" value="lrm"> LRM</label>
-       <label><input type="checkbox" name="omb" value="rrim"> RRIM</label>
-       <label data-i18n-title="tip.opos" title="Openness positive (Yokoyama 2002) — angle d'horizon moyen au-dessus de l'horizontale, crêtes et bosses claires. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="opos" onchange="toggleSvfPanel()"> O+</label>
-       <label data-i18n-title="tip.oneg" title="Openness négative inversée (Yokoyama 2002) — fossés, talus et chemins creux sombres. Complément archéo du SVF. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="oneg" onchange="toggleSvfPanel()"> O−</label>
+     <!-- Liste d'instances d'ombrages paramétrées (shuttle list) : chaque
+          instance porte SES paramètres → plusieurs instances du même type
+          (ex. SVF 20 m + SVF 100 m) coexistent. Émise en --shading TYPE:k=v. -->
+     <div class="row" style="align-items:flex-start;">
+      <select id="omb-dispo" size="8" style="min-width:150px"
+              data-i18n-title="tip.ombdispo" title="Ombrages disponibles. Sélectionnez puis + pour ajouter une instance à traiter."
+              ondblclick="ombAdd()">
+       <option value="multi" selected>multi (hillshade)</option>
+       <option value="slope">slope (pente)</option>
+       <option value="315">315° NO</option>
+       <option value="045">045° NE</option>
+       <option value="135">135° SE</option>
+       <option value="225">225° SO</option>
+       <option value="svf">SVF</option>
+       <option value="opos">openness O+</option>
+       <option value="oneg">openness O−</option>
+       <option value="lrm">LRM</option>
+       <option value="rrim">RRIM</option>
+      </select>
+      <div style="display:flex;flex-direction:column;gap:6px;justify-content:center;align-self:center;">
+       <button type="button" onclick="ombAdd()" style="min-width:34px"
+               data-i18n-title="tip.ombadd" title="Ajouter l'ombrage sélectionné à la liste à traiter (une instance de plus, avec ses propres paramètres)">+</button>
+       <button type="button" onclick="ombDel()" style="min-width:34px"
+               data-i18n-title="tip.ombdel" title="Retirer l'instance sélectionnée de la liste à traiter">−</button>
       </div>
-      <span style="margin-left:12px;color:var(--dim)" data-i18n-title="tip.sun" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
-      <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" data-i18n-title="tip.elev" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
-      <span style="color:var(--dim)">°</span>
+      <select id="omb-liste" size="8" style="min-width:250px"
+              data-i18n-title="tip.ombliste" title="Instances à calculer, avec leurs paramètres. Sélectionnez-en une pour éditer ses paramètres à droite."
+              onchange="ombShowParams()"></select>
+      <div id="omb-params" style="display:flex;flex-direction:column;gap:6px;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);min-width:230px;">
+      </div>
      </div>
      <div class="row" style="align-items:center;">
-      <label style="min-width:auto" data-i18n-title="tip.svf" title="Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite."><input type="checkbox" name="omb" value="svf" id="f-svf" checked onchange="toggleSvfPanel()"> SVF</label>
-      <div id="svf-panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);">
-       <span id="svf-opt-conv" style="display:flex;gap:14px;align-items:center;">
-        <span style="color:var(--dim)" data-i18n-title="tip.svftype" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
-        <select id="f-svf-conv" style="min-width:auto" data-i18n-title="tip.svfconv" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
-         <option value="flux">flux cos²γ</option>
-         <option value="rvt">RVT 1−sin γ</option>
-        </select>
-       </span>
-       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfdist" title="Rayon d'horizon en mètres (SVF et openness O+/O−). 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
-       <input type="number" id="f-svf-dist" value="20" min="10" max="200" step="5" class="inp-short">
-       <span style="color:var(--dim)">m</span>
-       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfgamma" title="Gamma après stretch percentile (SVF et openness). &lt;1 éclaircit, 1 = linéaire, &gt;1 = plus de contraste. Pour O− il est appliqué en miroir : renforce les creux, fond inchangé.">γ</span>
-       <input type="number" id="f-svf-gamma" value="2.0" min="0.3" max="3.0" step="0.1" class="inp-short">
-       <label id="svf-opt-sweep" style="margin-left:8px" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. SVF uniquement (l'openness utilise toujours le ray-cast). Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
-      </div>
+      <label id="svf-opt-sweep" style="min-width:auto" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) pour les instances SVF : ×2-3 à 20 m, ×15+ à 100 m. L'openness utilise toujours le ray-cast. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon (SVF)</label>
      </div>
     </div>
    </div>
@@ -15381,11 +15520,10 @@ function getConfig() {
     workers_l:     parseInt(g('f-workers-l')?.value) || 8,
     dossier_dalles:g('f-dossier-dalles')?.value.trim(),
     no_omb:        g('f-no-omb')?.checked,
-    ombrages:      [...document.querySelectorAll('input[name=omb]:checked')].map(c=>c.value),
-    elevation:     parseInt(g('f-elevation')?.value) || 25,
-    svf_conv:      g('f-svf-conv')?.value || 'flux',
-    svf_dist:      parseFloat(g('f-svf-dist')?.value) || 20,
-    svf_gamma:     parseFloat(g('f-svf-gamma')?.value) || 2.0,
+    // Shuttle list : les instances paramétrées remplacent les cases à cocher.
+    // ombrages reste émis vide pour compat avec les vieux lecteurs de cfg.
+    ombrages:      [],
+    shading_specs: ombToSpecs(),
     sweep_horizon: g('f-svf-sweep')?.checked,
     ecraser_omb:   g('f-ecraser-omb')?.checked,
     mbtiles_l:     g('f-mbtiles-l')?.checked && g('f-mbtiles')?.checked,
@@ -15522,11 +15660,9 @@ function loadConfig(cfg) {
   s('f-workers-l',      cfg.workers_l);
   s('f-dossier-dalles', cfg.dossier_dalles);
   s('f-no-omb',         cfg.no_omb);
-  s('f-elevation',      cfg.elevation);
-  s('f-svf-dist',       cfg.svf_dist);
-  s('f-svf-gamma',      cfg.svf_gamma);
+  // f-elevation / f-svf-* : champs globaux remplacés par les paramètres
+  // par instance de la shuttle list (cfg.shading_specs, restaurés plus bas).
   s('f-svf-sweep',      cfg.sweep_horizon);
-  s('f-svf-conv',       cfg.svf_conv);
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
@@ -15625,13 +15761,25 @@ function loadConfig(cfg) {
   s('f-sqlitedb-d',      cfg.sqlitedb_d);
   s('f-ecraser-d',       cfg.ecraser_d);
 
-  // Ombrages
-  if (cfg.ombrages) {
-    const ombSet = new Set(Array.isArray(cfg.ombrages)
-      ? cfg.ombrages : Object.keys(cfg.ombrages).filter(k => cfg.ombrages[k]));
-    document.querySelectorAll('input[name=omb]').forEach(c => {
-      c.checked = ombSet.has(c.value);
+  // Ombrages : instances paramétrées (shuttle list).
+  // Historique récent : cfg.shading_specs (strings 'type:k=v,...').
+  // Historique ancien (cases à cocher) : cfg.ombrages + params globaux de
+  // l'époque → converti en specs équivalentes.
+  if (cfg.shading_specs && cfg.shading_specs.length) {
+    ombFromSpecs(cfg.shading_specs);
+  } else if (cfg.ombrages) {
+    const arr = Array.isArray(cfg.ombrages)
+      ? cfg.ombrages : Object.keys(cfg.ombrages).filter(k => cfg.ombrages[k]);
+    const specs = arr.filter(t => OMB_DEFS[t]).map(t => {
+      if (t === 'svf')
+        return `svf:conv=${cfg.svf_conv || 'flux'},dist=${cfg.svf_dist || 20},gamma=${cfg.svf_gamma || 2}`;
+      if (t === 'opos' || t === 'oneg')
+        return `${t}:dist=${cfg.svf_dist || 20},gamma=${cfg.svf_gamma || 2}`;
+      if (['315', '045', '135', '225', 'multi'].includes(t))
+        return `${t}:elevation=${cfg.elevation || 25}`;
+      return t;   // slope, lrm, rrim → défauts
     });
+    if (specs.length) ombFromSpecs(specs);
   }
 
   // Re-déclencher les toggles et l'état initial.
@@ -15643,7 +15791,6 @@ function loadConfig(cfg) {
   if (typeof window.applyToggles === 'function') window.applyToggles();
   if (typeof window.applyFmtL    === 'function') window.applyFmtL();
   if (typeof window.applyFmtS    === 'function') window.applyFmtS();
-  toggleSvfPanel();
 
   // ── Restauration des champs sensibles aux cascades, EN DERNIER ────────────
   // Le changement de provider filtre les couches et déclenche updateWarning,
@@ -15664,21 +15811,134 @@ function loadConfig(cfg) {
   s('f-zoom-max-l', cfg.zoom_max_l);
 }
 
-// Affiche/masque le panneau de détail SVF. Les openness O+/O− empruntent
-// distance et gamma à ce panneau → il reste visible si l'une des trois cases
-// (SVF, opos, oneg) est cochée. type (flux/rvt) et sweep-horizon ne
-// s'appliquent qu'au SVF → masqués quand seule l'openness est cochée.
-function toggleSvfPanel() {
-  const svf  = !!document.getElementById('f-svf')?.checked;
-  const opos = !!document.querySelector('input[name=omb][value=opos]')?.checked;
-  const oneg = !!document.querySelector('input[name=omb][value=oneg]')?.checked;
-  const p  = document.getElementById('svf-panel');
-  if (p) p.style.display = (svf || opos || oneg) ? 'flex' : 'none';
-  const conv  = document.getElementById('svf-opt-conv');
-  const sweep = document.getElementById('svf-opt-sweep');
-  if (conv)  conv.style.display  = svf ? 'flex' : 'none';
-  if (sweep) sweep.style.display = svf ? '' : 'none';
+// ── Ombrages : liste d'instances paramétrées (shuttle list) ──────────────────
+// Chaque instance = {type, params}. Plusieurs instances du même type avec des
+// params différents coexistent (les params sont encodés dans le nom de fichier
+// côté pipeline). Émission CLI : --shading TYPE:k=v,... (répétable).
+const OMB_DEFS = {
+  multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  slope: {label:'slope',  fields:{}},
+  '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '045': {label:'045°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '135': {label:'135°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
+                                  dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                  gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1}}},
+  opos:  {label:'O+ openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                       gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1}}},
+  oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                       gamma:{lbl:'γ (miroir)',   def:2.0, min:0.3, max:3.0, step:0.1}}},
+  lrm:   {label:'LRM',    fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
+  rrim:  {label:'RRIM',   fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
+};
+let ombInstances = [{type:'multi', params:{elevation:25}}];   // défaut = multi
+
+function ombLabel(inst) {
+  const d = OMB_DEFS[inst.type]; if (!d) return inst.type;
+  const parts = Object.entries(inst.params)
+    .filter(([k, v]) => v !== '' && v != null)
+    .map(([k, v]) => `${k}=${v}`);
+  return d.label + (parts.length ? '   [' + parts.join('  ') + ']' : '');
 }
+function ombRender(selIdx) {
+  const sel = document.getElementById('omb-liste'); if (!sel) return;
+  sel.innerHTML = '';
+  ombInstances.forEach((inst, i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = ombLabel(inst);
+    sel.appendChild(o);
+  });
+  if (selIdx != null && selIdx >= 0 && selIdx < ombInstances.length)
+    sel.selectedIndex = selIdx;
+  ombShowParams();
+}
+function ombAdd() {
+  const t = document.getElementById('omb-dispo')?.value;
+  if (!t || !OMB_DEFS[t]) return;
+  const params = {};
+  Object.entries(OMB_DEFS[t].fields).forEach(([k, f]) => {
+    if (!f.opt) params[k] = f.def;
+  });
+  ombInstances.push({type: t, params});
+  ombRender(ombInstances.length - 1);
+}
+function ombDel() {
+  const i = document.getElementById('omb-liste')?.selectedIndex;
+  if (i == null || i < 0) return;
+  ombInstances.splice(i, 1);
+  ombRender(Math.min(i, ombInstances.length - 1));
+}
+function ombShowParams() {
+  const box = document.getElementById('omb-params'); if (!box) return;
+  const i = document.getElementById('omb-liste')?.selectedIndex;
+  box.innerHTML = '';
+  const dimSpan = (txt) => {
+    const sp = document.createElement('span');
+    sp.style.color = 'var(--dim)'; sp.textContent = txt; return sp;
+  };
+  if (i == null || i < 0 || !ombInstances[i]) {
+    box.appendChild(dimSpan('Sélectionnez une instance…')); return;
+  }
+  const inst = ombInstances[i], defs = OMB_DEFS[inst.type].fields;
+  if (!Object.keys(defs).length) {
+    box.appendChild(dimSpan('aucun paramètre')); return;
+  }
+  Object.entries(defs).forEach(([k, f]) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;';
+    row.appendChild(dimSpan(f.lbl));
+    let inp;
+    if (f.opts) {
+      inp = document.createElement('select');
+      f.opts.forEach(v => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = v; inp.appendChild(o);
+      });
+      inp.value = inst.params[k] ?? f.def;
+    } else {
+      inp = document.createElement('input');
+      inp.type = 'number'; inp.className = 'inp-short';
+      inp.min = f.min; inp.max = f.max; inp.step = f.step;
+      inp.value = inst.params[k] ?? '';
+      if (f.opt) inp.placeholder = 'auto';
+    }
+    inp.onchange = () => {
+      const v = inp.value;
+      if (v === '') delete inst.params[k];
+      else inst.params[k] = f.opts ? v : parseFloat(v);
+      ombRender(i);
+    };
+    row.appendChild(inp);
+    box.appendChild(row);
+  });
+}
+function ombToSpecs() {
+  return ombInstances.map(inst => {
+    const kv = Object.entries(inst.params)
+      .filter(([k, v]) => v !== '' && v != null)
+      .map(([k, v]) => `${k}=${v}`).join(',');
+    return inst.type + (kv ? ':' + kv : '');
+  });
+}
+function ombFromSpecs(specs) {
+  ombInstances = [];
+  (specs || []).forEach(s => {
+    const t = s.split(':')[0];
+    const rest = s.split(':').slice(1).join(':');
+    if (!OMB_DEFS[t]) return;
+    const params = {};
+    if (rest) rest.split(',').forEach(kv => {
+      const [k, v] = kv.split('=');
+      if (k && v !== undefined && v !== '')
+        params[k] = isNaN(parseFloat(v)) ? v : parseFloat(v);
+    });
+    ombInstances.push({type: t, params});
+  });
+  ombRender(0);
+}
+// Rendu initial (défaut multi) — re-rendu par la restauration de cfg ensuite.
+document.addEventListener('DOMContentLoaded', () => ombRender(0));
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
 async function pickDir(fieldId) {
