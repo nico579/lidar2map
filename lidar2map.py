@@ -5607,7 +5607,7 @@ _SHADING_TYPES = {
     "225":   {"elevation"},
     "multi": {"elevation"},
     "slope": set(),
-    "svf":   {"conv", "dist", "gamma"},
+    "svf":   {"conv", "dist", "gamma", "sweep"},
     "opos":  {"dist", "gamma"},
     "oneg":  {"dist", "gamma"},
     "lrm":   {"sigma"},
@@ -5625,7 +5625,8 @@ def parser_shading_spec(spec):
 
     Paramètres par type :
       315/045/135/225/multi : elevation (degrés)
-      svf                   : conv (flux|rvt), dist (m), gamma
+      svf                   : conv (flux|rvt), dist (m), gamma,
+                              sweep (1|0, kernel sweep-horizon — défaut --svf-sweep)
       opos/oneg             : dist (m), gamma
       lrm/rrim              : sigma (m, rayon gaussien — défaut 15 px du provider)
       slope                 : aucun
@@ -5914,6 +5915,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             if cle in ("svf", "opos", "oneg"):
                 _svf_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
                 _gamma_i     = float(p_i["gamma"])
+                # sweep par instance (svf:sweep=0|1) ; défaut = --svf-sweep
+                # global. Pas encodé dans le nom : même produit, autre kernel.
+                _sweep_i = (bool(p_i["sweep"]) if "sweep" in p_i else use_sweep)
                 if cle == "svf":
                     _svf_conv_str = p_i["conv"]
                     _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
@@ -5955,7 +5959,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         n_directions = n_directions,
                         resolution   = RESOLUTION_M,
                         gamma        = _gamma_i,
-                        use_sweep    = use_sweep,
+                        use_sweep    = _sweep_i,
                         conv         = conv,
                     )
                     if not ok:
@@ -5965,7 +5969,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  SVF chunked KO → fallback to full memory", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                             RESOLUTION_M, use_sweep=use_sweep,
+                                             RESOLUTION_M, use_sweep=_sweep_i,
                                              conv=conv, nodata=_nd)
                         # > 0 strict : les nodata valent exactement 0.0 et
                         # tireraient p2 vers 0 (stretch délavé).
@@ -13212,6 +13216,7 @@ def lancer_gui():
                 "active_provider": PROVIDER.CODE,
                 "regions":    _regions_disponibles(),
                 "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
+                "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
             }
 
         def get_historique(self):
@@ -13233,6 +13238,17 @@ def lancer_gui():
             if code not in ("fr", "en"):
                 return {"ok": False, "error": "lang invalide"}
             return {"ok": _ecrire_pref("lang", code)}
+
+        def set_ui_zoom(self, z):
+            """Persiste le zoom de l'interface (Ctrl+molette / Ctrl+±),
+            restauré au prochain lancement via get_init_data. Borné 0.5–2.5."""
+            try:
+                z = float(z)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "zoom invalide"}
+            if not (0.5 <= z <= 2.5):
+                return {"ok": False, "error": "zoom hors plage"}
+            return {"ok": _ecrire_pref("ui_zoom", round(z, 2))}
 
         # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
         # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
@@ -14204,7 +14220,7 @@ body.log-resizing *{
           instance porte SES paramètres → plusieurs instances du même type
           (ex. SVF 20 m + SVF 100 m) coexistent. Émise en --shading TYPE:k=v. -->
      <div class="row" style="align-items:flex-start;">
-      <select id="omb-dispo" size="8" style="min-width:150px"
+      <select id="omb-dispo" size="5" style="min-width:150px"
               data-i18n-title="tip.ombdispo" title="Ombrages disponibles. Sélectionnez puis + pour ajouter une instance à traiter."
               ondblclick="ombAdd()">
        <option value="multi" selected>multi (hillshade)</option>
@@ -14225,14 +14241,11 @@ body.log-resizing *{
        <button type="button" onclick="ombDel()" style="min-width:34px"
                data-i18n-title="tip.ombdel" title="Retirer l'instance sélectionnée de la liste à traiter">−</button>
       </div>
-      <select id="omb-liste" size="8" style="min-width:250px"
+      <select id="omb-liste" size="5" style="min-width:250px"
               data-i18n-title="tip.ombliste" title="Instances à calculer, avec leurs paramètres. Sélectionnez-en une pour éditer ses paramètres à droite."
               onchange="ombShowParams()"></select>
       <div id="omb-params" style="display:flex;flex-direction:column;gap:6px;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);min-width:230px;">
       </div>
-     </div>
-     <div class="row" style="align-items:center;">
-      <label id="svf-opt-sweep" style="min-width:auto" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) pour les instances SVF : ×2-3 à 20 m, ×15+ à 100 m. L'openness utilise toujours le ray-cast. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon (SVF)</label>
      </div>
     </div>
    </div>
@@ -14998,6 +15011,7 @@ async function initAsync() {
   try {
     const d = await pywebview.api.get_init_data();
     if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
+    if (d.ui_zoom) applyUiZoom(d.ui_zoom, false);   // zoom UI sauvé
     // buildCouches AVANT buildProviders : ce dernier appelle applyProviderCountry
     // qui filtre le dropdown des couches → il doit déjà être peuplé.
     buildCouches(d.couches);
@@ -15522,9 +15536,11 @@ function getConfig() {
     no_omb:        g('f-no-omb')?.checked,
     // Shuttle list : les instances paramétrées remplacent les cases à cocher.
     // ombrages reste émis vide pour compat avec les vieux lecteurs de cfg.
+    // sweep est PAR INSTANCE (svf:sweep=0|1) ; le global reste à sa valeur
+    // par défaut pour les chemins legacy.
     ombrages:      [],
     shading_specs: ombToSpecs(),
-    sweep_horizon: g('f-svf-sweep')?.checked,
+    sweep_horizon: true,
     ecraser_omb:   g('f-ecraser-omb')?.checked,
     mbtiles_l:     g('f-mbtiles-l')?.checked && g('f-mbtiles')?.checked,
     rmap:          g('f-mbtiles-l')?.checked && g('f-rmap')?.checked,
@@ -15660,9 +15676,8 @@ function loadConfig(cfg) {
   s('f-workers-l',      cfg.workers_l);
   s('f-dossier-dalles', cfg.dossier_dalles);
   s('f-no-omb',         cfg.no_omb);
-  // f-elevation / f-svf-* : champs globaux remplacés par les paramètres
-  // par instance de la shuttle list (cfg.shading_specs, restaurés plus bas).
-  s('f-svf-sweep',      cfg.sweep_horizon);
+  // f-elevation / f-svf-* (y compris sweep) : champs globaux remplacés par
+  // les paramètres par instance (cfg.shading_specs, restaurés plus bas).
   s('f-ecraser-omb',    cfg.ecraser_omb);          // FIX: était cfg.ecraser_omb_l
   // FIX: f-mbtiles-l (section "calculer les tuiles") n'était jamais restauré
   s('f-mbtiles-l',      cfg.mbtiles_l || cfg.rmap || cfg.sqlitedb || false);
@@ -15772,7 +15787,7 @@ function loadConfig(cfg) {
       ? cfg.ombrages : Object.keys(cfg.ombrages).filter(k => cfg.ombrages[k]);
     const specs = arr.filter(t => OMB_DEFS[t]).map(t => {
       if (t === 'svf')
-        return `svf:conv=${cfg.svf_conv || 'flux'},dist=${cfg.svf_dist || 20},gamma=${cfg.svf_gamma || 2}`;
+        return `svf:conv=${cfg.svf_conv || 'flux'},dist=${cfg.svf_dist || 20},gamma=${cfg.svf_gamma || 2},sweep=${cfg.sweep_horizon === false ? 0 : 1}`;
       if (t === 'opos' || t === 'oneg')
         return `${t}:dist=${cfg.svf_dist || 20},gamma=${cfg.svf_gamma || 2}`;
       if (['315', '045', '135', '225', 'multi'].includes(t))
@@ -15824,7 +15839,8 @@ const OMB_DEFS = {
   '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
                                   dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                  gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1}}},
+                                  gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1},
+                                  sweep:{lbl:'sweep-horizon', def:1, bool:true}}},
   opos:  {label:'O+ openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                        gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1}}},
   oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
@@ -15838,6 +15854,7 @@ function ombLabel(inst) {
   const d = OMB_DEFS[inst.type]; if (!d) return inst.type;
   const parts = Object.entries(inst.params)
     .filter(([k, v]) => v !== '' && v != null)
+    .filter(([k, v]) => !(k === 'sweep' && v == 1))   // sweep=1 = défaut, pas de bruit
     .map(([k, v]) => `${k}=${v}`);
   return d.label + (parts.length ? '   [' + parts.join('  ') + ']' : '');
 }
@@ -15851,11 +15868,6 @@ function ombRender(selIdx) {
   });
   if (selIdx != null && selIdx >= 0 && selIdx < ombInstances.length)
     sel.selectedIndex = selIdx;
-  // sweep-horizon ne s'applique qu'aux instances SVF → visible seulement
-  // si la liste à traiter en contient au moins une.
-  const sweep = document.getElementById('svf-opt-sweep');
-  if (sweep)
-    sweep.style.display = ombInstances.some(x => x.type === 'svf') ? '' : 'none';
   ombShowParams();
 }
 function ombAdd() {
@@ -15901,19 +15913,25 @@ function ombShowParams() {
         o.value = v; o.textContent = v; inp.appendChild(o);
       });
       inp.value = inst.params[k] ?? f.def;
+      inp.onchange = () => { inst.params[k] = inp.value; ombRender(i); };
+    } else if (f.bool) {
+      inp = document.createElement('input');
+      inp.type = 'checkbox';
+      inp.checked = (inst.params[k] ?? f.def) == 1;
+      inp.onchange = () => { inst.params[k] = inp.checked ? 1 : 0; ombRender(i); };
     } else {
       inp = document.createElement('input');
       inp.type = 'number'; inp.className = 'inp-short';
       inp.min = f.min; inp.max = f.max; inp.step = f.step;
       inp.value = inst.params[k] ?? '';
       if (f.opt) inp.placeholder = 'auto';
+      inp.onchange = () => {
+        const v = inp.value;
+        if (v === '') delete inst.params[k];
+        else inst.params[k] = parseFloat(v);
+        ombRender(i);
+      };
     }
-    inp.onchange = () => {
-      const v = inp.value;
-      if (v === '') delete inst.params[k];
-      else inst.params[k] = f.opts ? v : parseFloat(v);
-      ombRender(i);
-    };
     row.appendChild(inp);
     box.appendChild(row);
   });
@@ -15944,6 +15962,30 @@ function ombFromSpecs(specs) {
 }
 // Rendu initial (défaut multi) — re-rendu par la restauration de cfg ensuite.
 document.addEventListener('DOMContentLoaded', () => ombRender(0));
+
+// ── Zoom de l'interface (persisté) ───────────────────────────────────────────
+// Remplace le zoomable natif pywebview (invisible côté JS, donc impossible à
+// sauvegarder). body.style.zoom est appliqué/persisté via set_ui_zoom, et
+// restauré au lancement (get_init_data.ui_zoom).
+let _uiZoom = 1.0;
+function applyUiZoom(z, persist) {
+  _uiZoom = Math.min(2.5, Math.max(0.5, Math.round(z * 20) / 20));   // pas de 5 %
+  document.body.style.zoom = _uiZoom;
+  if (persist && window.pywebview && pywebview.api && pywebview.api.set_ui_zoom) {
+    pywebview.api.set_ui_zoom(_uiZoom).catch(() => {});
+  }
+}
+window.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  applyUiZoom(_uiZoom + (e.deltaY < 0 ? 0.05 : -0.05), true);
+}, {passive: false});
+window.addEventListener('keydown', e => {
+  if (!e.ctrlKey) return;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); applyUiZoom(_uiZoom + 0.05, true); }
+  else if (e.key === '-')             { e.preventDefault(); applyUiZoom(_uiZoom - 0.05, true); }
+  else if (e.key === '0')             { e.preventDefault(); applyUiZoom(1.0, true); }
+});
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
 async function pickDir(fieldId) {
@@ -16180,7 +16222,10 @@ function btnReset() {
         js_api=api,
         width=_w, height=_h,
         min_size=(1000, 600),
-        zoomable=True,   # active Ctrl+molette
+        # Zoom géré en JS (applyUiZoom : Ctrl+molette / Ctrl+± / Ctrl+0) pour
+        # pouvoir le PERSISTER (preferences.json). zoomable natif désactivé,
+        # sinon les deux zooms se cumuleraient.
+        zoomable=False,
     )
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win

@@ -69,34 +69,13 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   instance has its own little parameter form.
   `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
-  Supported LiDAR sources (via the `--provider <code>` flag):
-
-  *Europe*
-  - **France** (`fr-ign`, default) — IGN LiDAR HD, 0.5 m, national coverage
-  - **Netherlands** (`nl-ahn`) — AHN4/5, 0.5 m, national coverage
-  - **Switzerland** (`ch-swisstopo`) — swissALTI3D, 0.5 m, national coverage
-  - **Norway** (`no-kartverket`) — Nasjonal Høydemodell, 1 m, national coverage
-  - **Germany** (`de-nrw`, `de-bayern`, `de-niedersachsen`) — DGM1, 1 m (3 Länder, open data)
-  - **Austria** (`at-tirol`, `at-osttirol`) — DGM 0.5 m (Tyrol + East Tyrol, tiris WCS)
-  - **United Kingdom** (`gb-england`, `gb-wales`) — LIDAR Composite DTM, 1 m (EA/NRW)
-  - **Belgium** (`be-flanders`) — DHMV II DTM, 1 m, Flandre+Bruxelles (Digitaal Vlaanderen WCS) — also exposes pre-computed SVF 25 cm and multi-hillshade 25 cm
-  - **Finland** (`fi-maanmittauslaitos`) — Elevation Model, 2 m, national coverage (NLS WCS, API key required)
-  - **Denmark** (`dk-datafordeler`) — DHM DTM, 0.4 m, national coverage (Datafordeler WCS, API key required)
-  - **Ireland** (`ie-gsi`) — LiDAR DTM, 1 m, ~60% coverage (GSI, CC BY 4.0)
-  - **Czechia** (`cz-cuzk`) — DMR 5G, 1 m, national coverage (ČÚZK Atom feed; LAZ → GeoTIFF, requires `lazrs`)
-  - **Spain** (`es-cnig`) — MDT 5 m, national coverage (IGN INSPIRE WCS). Note: 5 m = landscape scale; the bare-earth 2 m LiDAR is only behind the session-based CNIG portal (not cleanly integrable)
-  - **Poland** (`pl-gugik`) — NMT 1 m LiDAR (ISOK project), national coverage (GUGiK WCS, open data)
-
-  *Americas*
-  - **Canada** (`ca-nrcan`) — HRDEM Mosaic, 1 m, ~95% population coverage (NRCan STAC; windowed COG reads /vsicurl/)
-  - **USA** (`us-tnm`, `us-3dep`) — 3DEP 1 m (TNMAccess direct S3, no account; or OpenTopography with free key)
-
-  *Oceania*
-  - **New Zealand** (`nz-linz`) — 1 m national seamless DEM (LINZ S3 STAC; windowed COG reads)
-  - **Australia** (`au-qld`, `au-nsw`) — Queensland 0.5 m LiDAR DEM (QSpatial) + NSW 5 m DEM (Spatial Services). **Per-state** coverage (ELVIS ImageServers); other states don't expose a clean statewide ImageServer
-
-  *In progress* (providers drafted, not yet functional):
-  - Sweden (`se-lantmateriet`, Lantmäteriet account required), Australia (`au-ga`, to be written)
+  LiDAR sources: **19 countries** via the `--provider <code>` flag (or the GUI
+  dropdown) — France (default), Netherlands, Switzerland, Norway, Germany
+  (3 Länder), Austria (Tyrol), United Kingdom, Belgium (Flanders), Finland,
+  Denmark, Ireland, Czechia, Slovenia, Spain, Poland, USA, Canada, New Zealand,
+  Australia (QLD/NSW). Per-provider details (dataset, resolution, CRS, access
+  mechanism, coverage, API keys) live in **the single reference table** of the
+  [LiDAR providers](#lidar-providers--adding-a-country) section.
 
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
 - **USGS Imagery** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16) — pairs with the 3DEP LiDAR (`us-tnm`).
@@ -311,29 +290,31 @@ discover_dalles(bbox_wgs, bbox_natif, cache)  # → {name: url}
 
 The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnostic: it consumes the GeoTIFFs returned by `discover_dalles`, regardless of the native CRS or the index format used upstream.
 
-| Code | Country | Native CRS | Resolution | API paradigm |
-|---|---|---|---|---|
-| `fr-ign` | France | EPSG:2154 (Lambert-93) | 0.5 m | Vector TMS PBF + WMS GetMap |
-| `nl-ahn` | Netherlands | EPSG:28992 (RD New) | 0.5 m | ATOM feed + JSON FeatureCollection |
-| `ch-swisstopo` | Switzerland | EPSG:2056 (CH1903+/LV95) | 0.5 m | STAC REST API |
-| `no-kartverket` | Norway | EPSG:25833 (UTM33N) | 1 m | ArcGIS ImageServer exportImage |
-| `de-bayern` · `de-nrw` · `de-niedersachsen` | Germany (3 Länder) | EPSG:25832 (UTM32N) | 1 m | metalink / index.json / STAC COG |
-| `at-tirol` · `at-osttirol` | Austria (Tyrol) | EPSG:31254/31255 (MGI M28/M31) | 0.5 m | WCS 1.0.0 GetCoverage |
-| `gb-england` · `gb-wales` | United Kingdom | EPSG:27700 (OSGB36) | 1 m | WCS 2.0.1 / WFS catalogue |
-| `be-flanders` | Belgium (Flanders) | EPSG:31370 (Lambert 1972) | 1 m | WCS 2.0.1 (+ pre-computed 25 cm shadings) |
-| `fi-maanmittauslaitos` | Finland | EPSG:3067 (TM35FIN) | 2 m | WCS 2.0.1 (free API key) |
-| `dk-datafordeler` | Denmark | EPSG:25832 (UTM32N) | 0.4 m | WCS 1.0.0 (free API key) |
-| `ie-gsi` | Ireland | EPSG:2157 (ITM) | 1 m | ArcGIS FeatureServer → ZIP (post_fetch) |
-| `cz-cuzk` | Czechia | EPSG:5514 (S-JTSK/Krovak) | 1 m | Atom INSPIRE 2-level → LAZ (post_fetch) |
-| `ca-nrcan` | Canada | EPSG:3979 (LCC Canada) | 1 m | STAC + mosaic COG (windowed read) |
-| `us-tnm` · `us-3dep` | USA | EPSG:3857 | 1 m | TNMAccess S3 / OpenTopography |
-| `es-cnig` | Spain | EPSG:25830 (UTM30N) | 5 m | WCS 2.0.1 INSPIRE (MDT) |
-| `pl-gugik` | Poland | EPSG:2180 (PUWG 1992) | 1 m | WCS 2.0.1 (NMT ISOK) |
-| `nz-linz` | New Zealand | EPSG:2193 (NZTM2000) | 1 m | STAC + national COG (windowed read) |
-| `au-qld` | Australia (Queensland) | EPSG:3857 | 0.5 m | ArcGIS ImageServer exportImage |
-| `au-nsw` | Australia (NSW) | EPSG:3857 | 5 m | ArcGIS ImageServer exportImage |
+| Code | Country | Dataset | Res. | Native CRS | Access & specifics |
+|---|---|---|---|---|---|
+| `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap — national coverage |
+| `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection — national coverage |
+| `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API — national coverage |
+| `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage — national coverage |
+| `de-bayern` · `de-nrw` · `de-niedersachsen` | Germany (3 Länder) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG — open data |
+| `at-tirol` · `at-osttirol` | Austria (Tyrol + East Tyrol) | DGM | 0.5 m | EPSG:31254/31255 (MGI M28/M31) | WCS 1.0.0 GetCoverage (tiris) |
+| `gb-england` · `gb-wales` | United Kingdom | LIDAR Composite DTM | 1 m | EPSG:27700 (OSGB36) | WCS 2.0.1 / WFS catalogue (EA / NRW) |
+| `be-flanders` | Belgium (Flanders + Brussels) | DHMV II DTM | 1 m | EPSG:31370 (Lambert 1972) | WCS 2.0.1 — also exposes pre-computed 25 cm SVF and multi-hillshade |
+| `fi-maanmittauslaitos` | Finland | Elevation Model | 2 m | EPSG:3067 (TM35FIN) | WCS 2.0.1 — free API key required, national coverage |
+| `dk-datafordeler` | Denmark | DHM DTM | 0.4 m | EPSG:25832 (UTM32N) | WCS 1.0.0 — free API key required, national coverage |
+| `ie-gsi` | Ireland | LiDAR DTM | 1 m | EPSG:2157 (ITM) | ArcGIS FeatureServer → ZIP (post_fetch) — ~60% coverage, CC BY 4.0 |
+| `cz-cuzk` | Czechia | DMR 5G | 1 m | EPSG:5514 (S-JTSK/Krovak) | Atom INSPIRE 2-level → LAZ (post_fetch, requires `lazrs`) — national coverage |
+| `si-arso` | Slovenia | DMR1 (2011-2015 LiDAR) | 1 m | EPSG:3794 (D96/TM) | ArcGIS REST fishnet index + x;y;z text tiles → GeoTIFF (post_fetch) — national coverage |
+| `es-cnig` | Spain | MDT | 5 m | EPSG:25830 (UTM30N) | WCS 2.0.1 INSPIRE — 5 m = landscape scale (the 2 m bare-earth LiDAR requires the session-based CNIG portal) |
+| `pl-gugik` | Poland | NMT (ISOK project) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1 — open data, national coverage |
+| `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + mosaic COG (windowed read) — ~95% of population |
+| `us-tnm` · `us-3dep` | USA | 3DEP | 1 m | EPSG:3857 | TNMAccess direct S3 (no account) / OpenTopography (free key) |
+| `nz-linz` | New Zealand | National seamless DEM | 1 m | EPSG:2193 (NZTM2000) | LINZ S3 STAC + COG (windowed read) |
+| `au-qld` · `au-nsw` | Australia (QLD 0.5 m · NSW 5 m) | LiDAR DEM | 0.5–5 m | EPSG:3857 | ArcGIS ImageServer (ELVIS) — **per-state** coverage |
 
-Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI.
+*In progress*: Sweden (`se-lantmateriet`, Lantmäteriet account required).
+
+Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI. **This table is the single reference list of providers** — the features section links here instead of duplicating it.
 
 To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS ImageServer, direct COG, FeatureServer catalogue…) and adapt URLs/CRS/naming format. The first provider for a new paradigm takes ~½ day; subsequent ones with the same pattern take ~1–2 h. A [provider roadmap](docs/lidar_providers_roadmap.md) documents ~40 evaluated sources across 25+ countries.
 

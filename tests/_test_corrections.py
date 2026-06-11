@@ -261,6 +261,7 @@ assert l2m.parser_shading_spec("svf:dist=10,gamma=1.5,conv=rvt") == \
 assert l2m.parser_shading_spec("oneg") == ("oneg", {})
 assert l2m.parser_shading_spec("315:elevation=35") == ("315", {"elevation": 35.0})
 assert l2m.parser_shading_spec("lrm:sigma=5") == ("lrm", {"sigma": 5.0})
+assert l2m.parser_shading_spec("svf:sweep=0") == ("svf", {"sweep": 0.0})
 for bad in ("foo", "svf:bidule=1", "svf:conv=xx", "svf:dist=abc"):
     try:
         l2m.parser_shading_spec(bad)
