@@ -1,5 +1,5 @@
 # Tests de régression des calculs scientifiques de lidar2map.py
-# (kernels Horn, nodata, LRM, SVF, RRIM, passe multi-sorties).
+# (kernels Horn, nodata, LRM, SVF, openness, RRIM, passe multi-sorties).
 # Usage : python Tests/_test_corrections.py  (depuis n'importe quel cwd)
 import sys, math, tempfile, importlib.util
 from pathlib import Path
@@ -191,6 +191,49 @@ if ok:
 print("== 8. deg_to_tile clamp + bounds ==")
 x_, y_ = l2m.deg_to_tile(45.0, 180.0, 10)
 check("deg_to_tile x clampé", x_ == 1023, f"x={x_}")
+
+print("== 9. Openness positive/négative (Yokoyama 2002) ==")
+# Cas analytiques : cône à 45° (tan = 1 le long de chaque rayon).
+#   cuvette → β = δ = 45°  → opos = oneg = 0.5 − atan(1)/π = 0.25 (sombre)
+#   plat    → β = δ = 0°   → opos = oneg = 0.5
+#   sommet  → β = δ = −45° → opos = oneg = 0.75 (clair)
+NN = 81; cc = NN // 2
+yyo, xxo = np.mgrid[0:NN, 0:NN].astype(np.float32)
+dist_px = np.sqrt((xxo - cc) ** 2 + (yyo - cc) ** 2).astype(np.float32)
+bowl = dist_px * 0.5          # cuvette : monte de 0.5 m / px de 0.5 m
+peak = -dist_px * 0.5         # sommet
+flat = np.zeros((NN, NN), np.float32)
+
+op_flat = l2m._svf_numpy(flat, 10, 8, 0.5, conv=2)
+on_flat = l2m._svf_numpy(flat, 10, 8, 0.5, conv=3)
+op_bowl = l2m._svf_numpy(bowl, 10, 8, 0.5, conv=2)
+on_bowl = l2m._svf_numpy(bowl, 10, 8, 0.5, conv=3)
+op_peak = l2m._svf_numpy(peak, 10, 8, 0.5, conv=2)
+on_peak = l2m._svf_numpy(peak, 10, 8, 0.5, conv=3)
+check("opos plat = 0.5",    abs(op_flat[cc, cc] - 0.5) < 0.01, f"{op_flat[cc,cc]:.3f}")
+check("oneg plat = 0.5",    abs(on_flat[cc, cc] - 0.5) < 0.01, f"{on_flat[cc,cc]:.3f}")
+check("opos cuvette ≈ 0.25", abs(op_bowl[cc, cc] - 0.25) < 0.03, f"{op_bowl[cc,cc]:.3f}")
+check("oneg cuvette sombre ≈ 0.25", abs(on_bowl[cc, cc] - 0.25) < 0.03, f"{on_bowl[cc,cc]:.3f}")
+check("opos sommet ≈ 0.75", abs(op_peak[cc, cc] - 0.75) < 0.03, f"{op_peak[cc,cc]:.3f}")
+check("oneg sommet clair ≈ 0.75", abs(on_peak[cc, cc] - 0.75) < 0.03, f"{on_peak[cc,cc]:.3f}")
+
+# Cohérence numba vs fallback numpy (zone centrale, hors effets de bord)
+saved_svf = l2m._NUMBA_KERNELS_CACHE.get("svf")
+l2m._NUMBA_KERNELS_CACHE["svf"] = None
+op_bowl_np = l2m._svf_numpy(bowl, 10, 8, 0.5, conv=2)
+on_bowl_np = l2m._svf_numpy(bowl, 10, 8, 0.5, conv=3)
+l2m._NUMBA_KERNELS_CACHE["svf"] = saved_svf
+sl_c = slice(cc - 20, cc + 20)
+d_op = np.abs(op_bowl[sl_c, sl_c] - op_bowl_np[sl_c, sl_c]).max()
+d_on = np.abs(on_bowl[sl_c, sl_c] - on_bowl_np[sl_c, sl_c]).max()
+check("opos numba == numpy (±0.02)", d_op < 0.02, f"max diff {d_op:.4f}")
+check("oneg numba == numpy (±0.02)", d_on < 0.02, f"max diff {d_on:.4f}")
+
+# Chunked + garde sweep : use_sweep=True doit être ignoré pour l'openness
+dst_on = tmp / "oneg.tif"
+ok = l2m._svf_chunked(src_svf, dst_on, max_dist_px=20, n_directions=8,
+                      resolution=0.5, gamma=2.0, use_sweep=True, conv=3)
+check("openness chunked (sweep forcé off) réussit", ok)
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")

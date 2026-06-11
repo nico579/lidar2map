@@ -5,10 +5,12 @@ on:
     paths:
       - 'lidar2map.py'
       - 'deploy.py'
+      - 'tests/**'
   pull_request:
     paths:
       - 'lidar2map.py'
       - 'deploy.py'
+      - 'tests/**'
   workflow_dispatch:
 
 jobs:
@@ -189,3 +191,29 @@ jobs:
           assert lidar2map.MACOS   == expected_mac,   f'MACOS={lidar2map.MACOS}'
           print(f'Platform flags OK : WINDOWS={lidar2map.WINDOWS} LINUX={lidar2map.LINUX} MACOS={lidar2map.MACOS}')
           "
+
+  # Tests de régression des calculs scientifiques (kernels Horn/SVF/openness,
+  # LRM, RRIM, tuilage MBTiles/RMAP/SQLiteDB). Ubuntu uniquement : les calculs
+  # sont identiques sur les 3 OS (numpy/numba), inutile de payer 3× la
+  # compilation numba — le job 'test' ci-dessus couvre déjà la matrice OS
+  # pour la syntaxe et les imports.
+  tests-scientifiques:
+    name: tests scientifiques (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dependances calcul
+        run: pip install numpy scipy rasterio numba Pillow pyproj
+
+      - name: Tests calculs scientifiques
+        run: python tests/_test_corrections.py
+
+      - name: Tests tuilage MBTiles/RMAP/SQLiteDB
+        run: python tests/_test_tiling.py

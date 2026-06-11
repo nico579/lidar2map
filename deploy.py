@@ -210,15 +210,22 @@ def find_python() -> str:
 def clone_or_pull():
     if (CLONE / ".git").exists():
         cprint(f"==> Pull du repo existant : {CLONE}", "cyan")
-        git("fetch", "origin")
-        git("reset", "--hard", "origin/main")
-        git("clean", "-fd")
-    else:
-        cprint(f"==> Clone {REPO_URL} -> {CLONE}", "cyan")
-        if CLONE.exists():
-            shutil.rmtree(CLONE)
-        # Clone initial : peut prendre 1-2 min (assets binaires, screenshots).
-        run(["git", "clone", REPO_URL, str(CLONE)], timeout=300)
+        # fetch non-fatal : le clone temp peut être corrompu (nettoyage
+        # périodique de %TEMP% par Windows, copie interrompue, .git tronqué).
+        # Dans ce cas on supprime et on re-clone au lieu d'échouer sec.
+        r = git("fetch", "origin", check=False, capture=True)
+        if r.returncode == 0:
+            git("reset", "--hard", "origin/main")
+            git("clean", "-fd")
+            return
+        cprint(f"    Clone temp corrompu (fetch code {r.returncode}) — "
+               f"suppression + re-clone.", "yellow")
+        shutil.rmtree(CLONE, ignore_errors=True)
+    cprint(f"==> Clone {REPO_URL} -> {CLONE}", "cyan")
+    if CLONE.exists():
+        shutil.rmtree(CLONE)
+    # Clone initial : peut prendre 1-2 min (assets binaires, screenshots).
+    run(["git", "clone", REPO_URL, str(CLONE)], timeout=300)
 
 def remove_obsolete():
     cprint("\n==> Suppression des anciens chemins renommés", "cyan")

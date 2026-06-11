@@ -115,8 +115,10 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
     --ombrages TYPE...          Shadings to generate:
-                                  315 045 135 225 multi slope svf lrm rrim
-                                  tous | aucun
+                                  315 045 135 225 multi slope svf opos oneg
+                                  lrm rrim | tous | aucun
+                                  (opos/oneg = openness ± Yokoyama 2002,
+                                   rayon --svf-dist, gamma --svf-gamma)
     --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
     --svf-dist M                Rayon SVF en mètres, 10–200 (déf. 20)
     --svf-sweep / --no-svf-sweep  Kernel sweep-horizon SVF (déf. activé)
@@ -4133,8 +4135,14 @@ def _get_numba_svf_kernel():
 
         @_nb.njit(parallel=True, fastmath=True)
         def _svf_kernel(dem, n_dir, max_r, res, conv):
-            # conv : 0 = flux cos²γ (contraste) ; 1 = RVT 1−sin γ (archéo).
-            # Argument runtime → une seule compilation gère les deux variantes.
+            # conv : 0 = SVF flux cos²γ (contraste) ; 1 = SVF RVT 1−sin γ ;
+            #        2 = openness positive (Yokoyama 2002) : φ/π, φ = π/2 − β
+            #            où β = angle d'horizon max (NON clampé : négatif sur
+            #            crête) — crêtes claires ;
+            #        3 = openness négative INVERSÉE : (π/2 − δ)/π, δ = angle
+            #            min (vue la plus descendante) — fossés/chemins creux
+            #            sombres, lecture alignée sur le SVF.
+            # Argument runtime → une seule compilation gère les 4 variantes.
             h, w = dem.shape
             PI2 = 2.0 * _math.pi
             out = _np.zeros((h, w), dtype=_np.float32)
@@ -4147,6 +4155,7 @@ def _get_numba_svf_kernel():
                         ddx =  _math.sin(angle)
                         ddy = -_math.cos(angle)
                         max_tan = -1e38
+                        min_tan =  1e38
                         for r in range(1, max_r + 1):
                             rr = row + ddy * r
                             cc = col + ddx * r
@@ -4176,13 +4185,22 @@ def _get_numba_svf_kernel():
                             tan_a  = (zn - z0) / dist_m
                             if tan_a > max_tan:
                                 max_tan = tan_a
-                        mt = max_tan if max_tan > 0.0 else 0.0
+                            if tan_a < min_tan:
+                                min_tan = tan_a
                         if conv == 0:
                             # SVF flux : cos²γ = 1/(1+tan²γ) — contraste
+                            mt = max_tan if max_tan > 0.0 else 0.0
                             svf_sum += 1.0 / (1.0 + mt * mt)
-                        else:
-                            # SVF RVT (Kokalj/Hesse) : 1 − sin γ (archéo/openness)
+                        elif conv == 1:
+                            # SVF RVT (Kokalj/Hesse) : 1 − sin γ (archéo)
+                            mt = max_tan if max_tan > 0.0 else 0.0
                             svf_sum += 1.0 - mt / _math.sqrt(1.0 + mt * mt)
+                        elif conv == 2:
+                            # Openness positive : φ/π ∈ (0,1)
+                            svf_sum += 0.5 - _math.atan(max_tan) / _math.pi
+                        else:
+                            # Openness négative inversée : (π/2 − δ)/π
+                            svf_sum += 0.5 - _math.atan(min_tan) / _math.pi
                     out[row, col] = svf_sum / n_dir
             return out
 
@@ -5036,6 +5054,12 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     # Kernel SVF mutualisé entre _svf_numpy et _svf_chunked (factory + cache).
     # Évite la double compilation Numba (~20 s × 2 au premier appel).
     # Si use_sweep : variante nearest-neighbor sans bilinéaire (~×2-3 plus rapide).
+    # Openness (conv ≥ 2) : ray-cast obligatoire — le sweep ne maintient qu'un
+    # running max clampé via upper hull (pas de min, pas d'angles négatifs).
+    if use_sweep and conv >= 2:
+        print("  Openness : kernel sweep non applicable — ray-cast utilisé.",
+              flush=True)
+        use_sweep = False
     _kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _kernel is None:
         print("  numba missing - SVF chunked unavailable", flush=True)
@@ -5165,6 +5189,9 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     # ── Tentative Numba ──────────────────────────────────────────────────────
     # Kernel mutualisé via _get_numba_svf_kernel() — partagé avec _svf_chunked
     # pour éviter la double compilation (~20 s × 2 au premier appel).
+    # Openness (conv ≥ 2) : ray-cast obligatoire (cf. _svf_chunked).
+    if use_sweep and conv >= 2:
+        use_sweep = False
     _numba_ok = False
     _svf_kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _svf_kernel is not None:
@@ -5195,7 +5222,11 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
             angle   = k * 2.0 * np.pi / n_directions
             dx      =  np.sin(angle)
             dy      = -np.cos(angle)
-            max_tan = np.full((h, w), -np.inf, dtype=np.float32)
+            # conv 3 (openness négative) suit le MIN des angles le long du
+            # rayon ; les autres conventions suivent le MAX (horizon).
+            need_min = (conv == 3)
+            fill = np.inf if need_min else -np.inf
+            ext_tan = np.full((h, w), fill, dtype=np.float32)
 
             for r in range(1, max_dist_px + 1):
                 # Check au sein du rayon : sur dept-scale, max_dist_px peut
@@ -5216,19 +5247,27 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
                     c_d0 = max(0,  cs); c_d1 = min(w, w + cs)
                     if r_s1 <= r_s0 or c_s1 <= c_s0:
                         continue
-                    tan_angle = np.full((h, w), -np.inf, dtype=np.float32)
+                    tan_angle = np.full((h, w), fill, dtype=np.float32)
                     tan_angle[r_d0:r_d1, c_d0:c_d1] = (
                         dem_f[r_s0:r_s1, c_s0:c_s1] -
                         dem_f[r_d0:r_d1, c_d0:c_d1]
                     ) / dist_m
-                np.maximum(max_tan, tan_angle, out=max_tan)
+                if need_min:
+                    np.minimum(ext_tan, tan_angle, out=ext_tan)
+                else:
+                    np.maximum(ext_tan, tan_angle, out=ext_tan)
 
-            mt = np.maximum(max_tan, 0.0)
             if conv == 0:
                 # SVF flux : cos²γ = 1/(1+tan²γ) — contraste
+                mt = np.maximum(ext_tan, 0.0)
                 return (1.0 / (1.0 + mt * mt)).astype(np.float32)
-            # SVF RVT (Kokalj/Hesse) : 1 − sin γ — archéo/openness
-            return (1.0 - mt / np.sqrt(1.0 + mt * mt)).astype(np.float32)
+            if conv == 1:
+                # SVF RVT (Kokalj/Hesse) : 1 − sin γ — archéo
+                mt = np.maximum(ext_tan, 0.0)
+                return (1.0 - mt / np.sqrt(1.0 + mt * mt)).astype(np.float32)
+            # Openness (Yokoyama 2002) — conv 2 : φ/π depuis le max β ;
+            # conv 3 : négative inversée (π/2 − δ)/π depuis le min δ.
+            return (0.5 - np.arctan(ext_tan) / np.pi).astype(np.float32)
 
         n_workers = min(n_directions, max(1, os.cpu_count() or 4))
         svf_sum   = np.zeros((h, w), dtype=np.float32)
@@ -5547,6 +5586,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     Types numpy/scipy (sans WhiteboxTools) :
         svf  — Sky-View Factor paramétrique (conv flux cos²γ / rvt 1−sin γ,
                distance svf_dist, gamma svf_gamma) : micro-relief, fossés, murs
+        opos — Openness positive (Yokoyama 2002, rayon/gamma du SVF) : crêtes
+        oneg — Openness négative inversée : fossés/chemins creux sombres
         rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
         lrm  — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
 
@@ -5609,6 +5650,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # dans le dispatch. Les params ci-dessous ne sont que des valeurs de repli.
         "svf":     ("svf_ombrage",      None,
                     {"max_dist_px": 40,  "n_directions": 16, "conv": "flux"}),
+        # Openness (Yokoyama et al. 2002) — même moteur ray-cast que le SVF
+        # (rayon = --svf-dist, gamma = --svf-gamma) :
+        #   opos = positive (φ moyen au-dessus de l'horizontale) : crêtes claires
+        #   oneg = négative inversée : fossés/chemins creux sombres — le
+        #          complément archéo standard du SVF (RVT/Kokalj)
+        "opos":   ("opos_ombrage",     None, {}),
+        "oneg":   ("oneg_ombrage",     None, {}),
         "lrm":    ("lrm_ombrage",      None,
                    {"sigma_px": 15}),                            # σ=15 px = 7.5 m — compromise structures 4-15 m
         "rrim":   ("rrim_ombrage",     None,
@@ -5766,17 +5814,24 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 break
             sous_dossier_name, outil_numpy, params_numpy = CATALOGUE_NUMPY[cle]
 
-            # SVF paramétrique : conv/distance/gamma depuis les args, et nom de
-            # fichier encodant les params → un changement de réglage produit un
-            # nouveau fichier (pas de collision avec un cache au mauvais réglage).
-            if cle == "svf":
-                _svf_conv_str = "rvt" if str(svf_conv).lower() == "rvt" else "flux"
-                _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
+            # SVF/openness paramétriques : conv/distance/gamma depuis les args,
+            # et nom de fichier encodant les params → un changement de réglage
+            # produit un nouveau fichier (pas de collision avec un cache au
+            # mauvais réglage). opos/oneg partagent rayon et gamma du SVF.
+            if cle in ("svf", "opos", "oneg"):
                 _svf_dist_m   = float(svf_dist)
                 _svf_dist_px  = max(1, int(round(_svf_dist_m / RESOLUTION_M)))
                 _svf_g_tag    = f"{svf_gamma:.1f}".replace(".", "p")
-                sous_dossier_name = (f"svf_{_svf_conv_str}_{int(round(_svf_dist_m))}m"
-                                     f"_g{_svf_g_tag}_ombrage")
+                if cle == "svf":
+                    _svf_conv_str = "rvt" if str(svf_conv).lower() == "rvt" else "flux"
+                    _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
+                    sous_dossier_name = (f"svf_{_svf_conv_str}_{int(round(_svf_dist_m))}m"
+                                         f"_g{_svf_g_tag}_ombrage")
+                else:
+                    _svf_conv_str = cle   # libellé pour les prints
+                    _svf_conv_i   = 2 if cle == "opos" else 3
+                    sous_dossier_name = (f"{cle}_{int(round(_svf_dist_m))}m"
+                                         f"_g{_svf_g_tag}_ombrage")
 
             nom_fichier  = nom_base + "_" + sous_dossier_name + ".tif"
             chemin_out   = dossier_ville / nom_fichier
@@ -5791,15 +5846,16 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
 
             t0_numpy = time.time()
 
-            if cle == "svf":
-                # ── Sky-View Factor chunked (RAM bornée) ─────────────────────
+            if cle in ("svf", "opos", "oneg"):
+                # ── SVF / openness chunked (RAM bornée) ──────────────────────
                 # Traitement par fenêtres 2048×2048 avec halo = max_dist_px.
                 # Permet de traiter des zones de département entier sans OOM.
                 max_dist_px  = _svf_dist_px
                 n_directions = 16
                 conv = _svf_conv_i
                 dist_m = max_dist_px * RESOLUTION_M
-                print(f"  SVF chunked ({n_directions} dir, rayon {dist_m:.0f} m"
+                _lbl_svf = "SVF" if cle == "svf" else f"Openness {cle}"
+                print(f"  {_lbl_svf} chunked ({n_directions} dir, rayon {dist_m:.0f} m"
                       f" = {max_dist_px} px, conv={_svf_conv_str}, gamma={svf_gamma:g})...", flush=True)
                 try:
                     ok = _svf_chunked(
@@ -6071,7 +6127,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     # Déterminer le format de tuile effectif
     _nom_lower = tif_source.stem.lower()
-    _types_png = ("svf", "lrm", "rrim")   # gradients fins → PNG sans perte
+    _types_png = ("svf", "opos", "oneg", "lrm", "rrim")   # gradients fins → PNG sans perte
     if format_tuiles == "auto":
         _use_jpeg = not any(t in _nom_lower for t in _types_png)
     elif format_tuiles == "jpeg":
@@ -7945,10 +8001,11 @@ Examples:
     # Ombrages
     parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
                         choices=["315", "045", "135", "225", "multi", "slope",
-                                 "svf", "lrm", "rrim", "tous", "aucun"],
+                                 "svf", "opos", "oneg", "lrm", "rrim", "tous", "aucun"],
                         help=(
                             "Shadings to generate (default: interactive). "
-                            "Values: 315 045 135 225 multi slope svf lrm rrim tous(all) aucun(none). "
+                            "Values: 315 045 135 225 multi slope svf opos oneg lrm rrim tous(all) aucun(none). "
+                            "opos/oneg = openness positive/negative (Yokoyama 2002, rayon/gamma du SVF). "
                             "SVF is tuned via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
                             "svf/lrm/rrim: computed with numpy/scipy (scipy auto-installed). "
                             "Ex: --shadings multi slope svf rrim"
@@ -8696,7 +8753,7 @@ Examples:
     # Ombrages
     # -------------------------------------------------------
     TOUS_OMBRAGES = ["315", "045", "135", "225", "multi", "slope",
-                     "svf", "lrm", "rrim"]
+                     "svf", "opos", "oneg", "lrm", "rrim"]
 
     # Dalles disponibles pour les ombrages :
     # 1. Seulement les dalles de la zone courante (filtre par nom)
@@ -9418,7 +9475,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
             if args.ombrages:
-                TOUS = ["315","045","135","225","multi","slope","svf","lrm","rrim"]
+                TOUS = ["315","045","135","225","multi","slope","svf","opos","oneg","lrm","rrim"]
                 choix = (TOUS if "tous" in args.ombrages
                          else [] if "aucun" in args.ombrages
                          else args.ombrages)
@@ -13998,6 +14055,8 @@ body.log-resizing *{
        <label><input type="checkbox" name="omb" value="225"> 225°</label>
        <label><input type="checkbox" name="omb" value="lrm"> LRM</label>
        <label><input type="checkbox" name="omb" value="rrim"> RRIM</label>
+       <label data-i18n-title="tip.opos" title="Openness positive (Yokoyama 2002) — angle d'horizon moyen au-dessus de l'horizontale, crêtes et bosses claires. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="opos"> O+</label>
+       <label data-i18n-title="tip.oneg" title="Openness négative inversée (Yokoyama 2002) — fossés, talus et chemins creux sombres. Complément archéo du SVF. Rayon et gamma = réglages SVF."><input type="checkbox" name="omb" value="oneg"> O−</label>
       </div>
       <span style="margin-left:12px;color:var(--dim)" data-i18n-title="tip.sun" title="Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.">☀</span>
       <input type="number" id="f-elevation" value="25" min="5" max="60" class="inp-short" data-i18n-title="tip.elev" title="Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.">
