@@ -5135,7 +5135,16 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
                 svf   = _svf_block(block)
 
                 svf_stretched = np.clip((svf - p2_g) / (p98_g - p2_g), 0.0, 1.0)
-                arr_u8 = (svf_stretched ** gamma * 255.0).astype(np.uint8)
+                if conv == 3:
+                    # Openness négative inversée : les features (fossés, chemins
+                    # creux) sont les valeurs BASSES, le fond est clair — gamma
+                    # en miroir 1−(1−x)^γ : renforce les creux SANS assombrir le
+                    # fond. Le x^γ direct (γ=2) assombrissait toute l'image
+                    # (fond ~0.5 → 0.27, rendu « très sombre »).
+                    arr_u8 = ((1.0 - (1.0 - svf_stretched) ** gamma)
+                              * 255.0).astype(np.uint8)
+                else:
+                    arr_u8 = (svf_stretched ** gamma * 255.0).astype(np.uint8)
 
                 dr0 = row_off - r0
                 dc0 = col_off - c0
@@ -5886,7 +5895,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             arr_stretched = np.clip((arr_svf - p2) / (p98 - p2), 0, 1)
                         else:
                             arr_stretched = np.clip(arr_svf, 0, 1)
-                        arr_u8 = (arr_stretched ** svf_gamma * 255).astype(np.uint8)
+                        if conv == 3:
+                            # Gamma miroir pour l'openness négative inversée
+                            # (cf. _svf_chunked) : creux renforcés, fond clair.
+                            arr_u8 = ((1.0 - (1.0 - arr_stretched) ** svf_gamma)
+                                      * 255).astype(np.uint8)
+                        else:
+                            arr_u8 = (arr_stretched ** svf_gamma * 255).astype(np.uint8)
                         _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
                     import traceback as _tb
@@ -14065,17 +14080,19 @@ body.log-resizing *{
      <div class="row" style="align-items:center;">
       <label style="min-width:auto" data-i18n-title="tip.svf" title="Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite."><input type="checkbox" name="omb" value="svf" id="f-svf" checked onchange="toggleSvfPanel()"> SVF</label>
       <div id="svf-panel" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);">
-       <span style="color:var(--dim)" data-i18n-title="tip.svftype" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
-       <select id="f-svf-conv" style="min-width:auto" data-i18n-title="tip.svfconv" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
-        <option value="flux">flux cos²γ</option>
-        <option value="rvt">RVT 1−sin γ</option>
-       </select>
-       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfdist" title="Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
+       <span id="svf-opt-conv" style="display:flex;gap:14px;align-items:center;">
+        <span style="color:var(--dim)" data-i18n-title="tip.svftype" title="Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.">type</span>
+        <select id="f-svf-conv" style="min-width:auto" data-i18n-title="tip.svfconv" title="Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.">
+         <option value="flux">flux cos²γ</option>
+         <option value="rvt">RVT 1−sin γ</option>
+        </select>
+       </span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfdist" title="Rayon d'horizon en mètres (SVF et openness O+/O−). 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.">distance</span>
        <input type="number" id="f-svf-dist" value="20" min="10" max="200" step="5" class="inp-short">
        <span style="color:var(--dim)">m</span>
-       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfgamma" title="Gamma après stretch percentile. &lt;1 éclaircit (√), 1 = linéaire, &gt;1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.">γ</span>
+       <span style="margin-left:8px;color:var(--dim)" data-i18n-title="tip.svfgamma" title="Gamma après stretch percentile (SVF et openness). &lt;1 éclaircit, 1 = linéaire, &gt;1 = plus de contraste. Pour O− il est appliqué en miroir : renforce les creux, fond inchangé.">γ</span>
        <input type="number" id="f-svf-gamma" value="2.0" min="0.3" max="3.0" step="0.1" class="inp-short">
-       <label style="margin-left:8px" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
+       <label id="svf-opt-sweep" style="margin-left:8px" data-i18n-title="tip.svfsweep" title="Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. SVF uniquement (l'openness utilise toujours le ray-cast). Léger aliasing NN imperceptible pour structures > 1-2 px."><input type="checkbox" id="f-svf-sweep" checked> sweep-horizon</label>
       </div>
      </div>
     </div>
@@ -15648,15 +15665,19 @@ function loadConfig(cfg) {
 }
 
 // Affiche/masque le panneau de détail SVF. Les openness O+/O− empruntent
-// rayon et gamma à ce panneau → il reste visible si l'une des trois cases
-// (SVF, opos, oneg) est cochée.
+// distance et gamma à ce panneau → il reste visible si l'une des trois cases
+// (SVF, opos, oneg) est cochée. type (flux/rvt) et sweep-horizon ne
+// s'appliquent qu'au SVF → masqués quand seule l'openness est cochée.
 function toggleSvfPanel() {
-  const opos = document.querySelector('input[name=omb][value=opos]');
-  const oneg = document.querySelector('input[name=omb][value=oneg]');
-  const on = (document.getElementById('f-svf')?.checked)
-          || (opos && opos.checked) || (oneg && oneg.checked);
+  const svf  = !!document.getElementById('f-svf')?.checked;
+  const opos = !!document.querySelector('input[name=omb][value=opos]')?.checked;
+  const oneg = !!document.querySelector('input[name=omb][value=oneg]')?.checked;
   const p  = document.getElementById('svf-panel');
-  if (p) p.style.display = on ? 'flex' : 'none';
+  if (p) p.style.display = (svf || opos || oneg) ? 'flex' : 'none';
+  const conv  = document.getElementById('svf-opt-conv');
+  const sweep = document.getElementById('svf-opt-sweep');
+  if (conv)  conv.style.display  = svf ? 'flex' : 'none';
+  if (sweep) sweep.style.display = svf ? '' : 'none';
 }
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────

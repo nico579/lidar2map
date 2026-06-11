@@ -235,6 +235,25 @@ ok = l2m._svf_chunked(src_svf, dst_on, max_dist_px=20, n_directions=8,
                       resolution=0.5, gamma=2.0, use_sweep=True, conv=3)
 check("openness chunked (sweep forcé off) réussit", ok)
 
+# Gamma miroir oneg : le fond doit rester CLAIR (le x^γ direct donnait une
+# image globalement sombre — médiane fond ~68/255 au lieu de ~195).
+dem_g = (2.0 * np.sin(xx2[:1024, :1024] / 15.0) * np.sin(yy2[:1024, :1024] / 15.0)
+         + 0.1 * np.sin(xx2[:1024, :1024] * 2.1)).astype(np.float32)
+dem_g[:, 500:506] -= 1.5    # fossé N-S
+src_g = tmp / "dem_oneg_gamma.tif"; dst_g = tmp / "oneg_gamma.tif"
+write_tif(src_g, dem_g, nodata=ND)
+ok = l2m._svf_chunked(src_g, dst_g, max_dist_px=40, n_directions=16,
+                      resolution=0.5, gamma=2.0, use_sweep=False, conv=3)
+check("oneg gamma miroir : calcul réussit", ok)
+if ok:
+    with rasterio.open(str(dst_g)) as ds:
+        on_arr = ds.read(1)
+    fond_med  = float(np.median(on_arr[100:900, 100:450]))
+    fosse_med = float(np.median(on_arr[100:900, 500:506]))
+    check("oneg fond clair (médiane > 150)", fond_med > 150, f"{fond_med:.0f}")
+    check("oneg fossé plus sombre que le fond (Δ > 30)",
+          fond_med - fosse_med > 30, f"Δ={fond_med - fosse_med:.0f}")
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
