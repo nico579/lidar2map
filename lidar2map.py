@@ -15851,6 +15851,11 @@ function ombRender(selIdx) {
   });
   if (selIdx != null && selIdx >= 0 && selIdx < ombInstances.length)
     sel.selectedIndex = selIdx;
+  // sweep-horizon ne s'applique qu'aux instances SVF → visible seulement
+  // si la liste à traiter en contient au moins une.
+  const sweep = document.getElementById('svf-opt-sweep');
+  if (sweep)
+    sweep.style.display = ombInstances.some(x => x.type === 'svf') ? '' : 'none';
   ombShowParams();
 }
 function ombAdd() {
