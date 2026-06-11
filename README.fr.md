@@ -36,15 +36,36 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 À partir d'une commune, de coordonnées GPS, d'une bbox, d'un département ou d'une région entière :
 
 - **Ombrages archéo** depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
-  - Hillshade multidirectionnel (angle solaire 25° pour micro-relief)
-  - SVF (Sky-View Factor) paramétrable — révèle fossés, restanques, enceintes.
-    Convention `flux` (cos²γ, contraste à l'œil, défaut) ou `rvt` (1−sin γ,
-    standard archéo Kokalj/Hesse / openness) ; distance d'horizon réglable
-    (10–200 m, défaut 20 m) ; gamma d'affichage ; kernel sweep-horizon.
-    Flags : `--svf-conv flux|rvt`, `--svf-dist M`, `--svf-gamma G`,
-    `--svf-sweep` / `--no-svf-sweep` (ou le panneau SVF dans la GUI).
-  - LRM (Local Relief Model) — supprime le relief naturel, garde les anomalies
-  - RRIM (Red Relief Image Map) — composite couleur (pente + LRM)
+
+  | Type | Ce qu'il révèle | Paramètres |
+  |------|-----------------|------------|
+  | `multi` | Hillshade multidirectionnel (Mark 1992) — relief général sans biais d'azimut, le fond de carte par défaut | `elevation` (° soleil, défaut 25 — bas = micro-relief, 45 = usage général) |
+  | `315` `045` `135` `225` | Hillshades directionnels — accentuent les structures perpendiculaires à l'azimut choisi | `elevation` (idem) |
+  | `slope` | Pente 0–90° étalée sur 1–255 — talus, ruptures, terrasses | — |
+  | `svf` | Sky-View Factor — fraction de ciel visible : fossés, restanques, enceintes en sombre | `conv` (`flux` = cos²γ contrasté, défaut ; `rvt` = 1−sin γ, standard archéo Kokalj/Hesse), `dist` (rayon d'horizon en m, défaut 20 — 20 = micro-relief, 100 = enceintes/voiries), `gamma` (contraste, défaut 2.0) |
+  | `opos` | Openness positive (Yokoyama 2002) — angle d'horizon moyen au-dessus de l'horizontale : crêtes, bosses, tumuli en clair | `dist`, `gamma` |
+  | `oneg` | Openness négative inversée — vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
+  | `lrm` | Local Relief Model — soustrait le relief lissé (gaussienne σ) : supprime collines et vallées, ne garde que les anomalies locales | `sigma` (rayon gaussien en m ≈ échelle max des structures conservées ; défaut 15 px du provider) |
+  | `rrim` | Red Relief Image Map (Chiba 2008) — composite couleur : pente en rouge (rampe absolue 0–45°), LRM en clair/foncé — creux ET bosses d'un seul regard | `sigma` (du LRM interne) |
+
+  Deux façons de les demander :
+
+  ```bash
+  # Simple : liste de types, paramètres globaux partagés
+  --shadings multi svf oneg --svf-dist 20 --svf-gamma 2
+
+  # Instances paramétrées (répétable) : chaque occurrence porte SES paramètres
+  # → plusieurs instances du même type dans un seul run
+  --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
+  --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+  ```
+
+  Les paramètres explicites différents des défauts sont encodés dans le nom du
+  fichier produit (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`) :
+  pas de collision entre instances, et les ombrages déjà calculés sont réutilisés.
+  Dans la GUI, la liste « à traiter » (boutons +/−) fait la même chose : chaque
+  instance ajoutée a son propre mini-formulaire de paramètres.
+  `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
   Sources LiDAR supportées (via flag `--provider <code>`) :
 

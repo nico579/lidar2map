@@ -38,15 +38,36 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Archaeological relief** from national LiDAR (0.5 m to 1 m resolution depending on source):
-  - Multidirectional hillshade (25° sun angle for micro-relief)
-  - Configurable SVF (Sky-View Factor) — reveals ditches, terraces, enclosures.
-    `flux` convention (cos²γ, more visual contrast, default) or `rvt` (1−sin γ,
-    the Kokalj/Hesse archaeology standard / openness); adjustable horizon
-    distance (10–200 m, default 20 m); display gamma; sweep-horizon kernel.
-    Flags: `--svf-conv flux|rvt`, `--svf-dist M`, `--svf-gamma G`,
-    `--svf-sweep` / `--no-svf-sweep` (or the SVF panel in the GUI).
-  - LRM (Local Relief Model) — removes the natural terrain, keeps the anomalies
-  - RRIM (Red Relief Image Map) — color composite (slope + LRM)
+
+  | Type | What it reveals | Parameters |
+  |------|-----------------|------------|
+  | `multi` | Multidirectional hillshade (Mark 1992) — general relief without azimuth bias, the default basemap | `elevation` (° sun, default 25 — low = micro-relief, 45 = general use) |
+  | `315` `045` `135` `225` | Directional hillshades — emphasize structures perpendicular to the chosen azimuth | `elevation` (same) |
+  | `slope` | Slope 0–90° stretched to 1–255 — banks, breaks, terraces | — |
+  | `svf` | Sky-View Factor — fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20 — 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
+  | `opos` | Positive openness (Yokoyama 2002) — mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
+  | `oneg` | Inverted negative openness — the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
+  | `lrm` | Local Relief Model — subtracts the smoothed terrain (gaussian σ): removes hills and valleys, keeps only local anomalies | `sigma` (gaussian radius in m ≈ max scale of preserved structures; default 15 px of the provider) |
+  | `rrim` | Red Relief Image Map (Chiba 2008) — color composite: slope in red (absolute 0–45° ramp), LRM as light/dark — hollows AND mounds at a glance | `sigma` (of the internal LRM) |
+
+  Two ways to request them:
+
+  ```bash
+  # Simple: list of types, shared global parameters
+  --shadings multi svf oneg --svf-dist 20 --svf-gamma 2
+
+  # Parameterized instances (repeatable): each occurrence carries ITS OWN params
+  # → several instances of the same type in a single run
+  --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
+  --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+  ```
+
+  Explicit parameters that differ from the defaults are encoded in the output
+  filename (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`):
+  no collision between instances, and already-computed shadings are reused.
+  In the GUI, the "to process" list (+/− buttons) does the same: each added
+  instance has its own little parameter form.
+  `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
   Supported LiDAR sources (via the `--provider <code>` flag):
 
