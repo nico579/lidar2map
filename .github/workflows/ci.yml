@@ -143,15 +143,21 @@ jobs:
           "
 
       - name: wgs84_to_lamb93_approx
+        # Référence pyproj plutôt que bornes en dur : les anciennes bornes
+        # (950000 < x) étaient fausses (X exact = 946880.8) et n'avaient
+        # jamais été exercées, la CI tombant avant sur l'import.
+        # Tolérance 50 m = précision documentée de l'approximation.
         run: |
           python -c "
           import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
           try: import lidar2map
           except SystemExit: pass
+          from pyproj import Transformer
+          t = Transformer.from_crs('EPSG:4326', 'EPSG:2154', always_xy=True)
+          xe, ye = t.transform(6.0423, 43.3156)
           x, y = lidar2map.wgs84_to_lamb93_approx(6.0423, 43.3156)
-          assert 950000 < x < 970000, f'X={x}'
-          assert 6250000 < y < 6270000, f'Y={y}'
-          print(f'wgs84_to_lamb93_approx OK : X={x:.0f}, Y={y:.0f}')
+          assert abs(x - xe) < 50 and abs(y - ye) < 50, f'dx={x-xe:.1f}m dy={y-ye:.1f}m'
+          print(f'wgs84_to_lamb93_approx OK : X={x:.1f} Y={y:.1f} (pyproj a {abs(x-xe)*100:.0f}/{abs(y-ye)*100:.0f} cm)')
           "
 
       - name: lamb93_to_wgs84_approx
@@ -160,10 +166,12 @@ jobs:
           import sys; sys.argv=['lidar2map.py','--ignlidar','--help']
           try: import lidar2map
           except SystemExit: pass
+          from pyproj import Transformer
+          t = Transformer.from_crs('EPSG:2154', 'EPSG:4326', always_xy=True)
+          lon_e, lat_e = t.transform(960000, 6258000)
           lon, lat = lidar2map.lamb93_to_wgs84_approx(960000, 6258000)
-          assert 5.9 < lon < 6.2, f'lon={lon}'
-          assert 43.2 < lat < 43.5, f'lat={lat}'
-          print(f'lamb93_to_wgs84_approx OK : lon={lon:.4f}, lat={lat:.4f}')
+          assert abs(lon - lon_e) < 0.0007 and abs(lat - lat_e) < 0.0005, f'dlon={lon-lon_e} dlat={lat-lat_e}'
+          print(f'lamb93_to_wgs84_approx OK : lon={lon:.5f} lat={lat:.5f}')
           "
 
       - name: Historique lecture ecriture
