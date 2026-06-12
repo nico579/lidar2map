@@ -114,7 +114,7 @@ def simplify(geom, tol=0.01):
         return geom
 
 
-def render_png(features, out_png, n_pays=None):
+def render_png(features, out_png, n_pays=None, lang="fr"):
     """Carte PNG colorée : Europe (principal) + encart Nouvelle-Zélande + légende.
     Optionnel — nécessite matplotlib (outil dev `pip install matplotlib`, PAS le
     bundle app). Les polygones geojson EUX-MÊMES sont les contours des pays
@@ -172,22 +172,29 @@ def render_png(features, out_png, n_pays=None):
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_edgecolor("#cbd5e1")
-    # Titre bilingue : l'image est partagée par README.md (EN) et README.fr.md.
-    # Compte de pays calculé depuis REGIONS (anti-drift, plus de "16" en dur).
-    _pays = f"{n_pays} pays/countries" if n_pays else "multi-pays/countries"
-    ax.set_title(f"lidar2map — couverture LiDAR sol-nu / bare-earth LiDAR coverage\n"
-                 f"({len(features)} zones, {_pays} + USA · Canada)",
-                 fontsize=10.5, weight="bold")
+    # Deux images par langue (coverage.png = EN pour README.md,
+    # coverage.fr.png = FR pour README.fr.md). Compte de pays calculé depuis
+    # REGIONS (anti-drift, plus de "16" en dur).
+    if lang == "en":
+        _pays = f"{n_pays} countries" if n_pays else "multi-country"
+        titre = (f"lidar2map — bare-earth LiDAR coverage\n"
+                 f"({len(features)} zones, {_pays} + USA · Canada project-based)")
+    else:
+        _pays = f"{n_pays} pays" if n_pays else "multi-pays"
+        titre = (f"lidar2map — couverture LiDAR sol-nu\n"
+                 f"({len(features)} zones, {_pays} + USA · Canada par projet)")
+    ax.set_title(titre, fontsize=11, weight="bold")
     if nz:
         axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")
         draw(axn, nz)
         axn.set_xlim(NZ[0], NZ[1]); axn.set_ylim(NZ[2], NZ[3])
         axn.set_aspect(1 / math.cos(math.radians(28)))
         axn.set_xticks([]); axn.set_yticks([])
-        axn.set_title("Océanie / Oceania — AU (QLD·NSW) + NZ", fontsize=6.5)
+        axn.set_title("Oceania — AU (QLD·NSW) + NZ" if lang == "en"
+                      else "Océanie — AU (QLD·NSW) + NZ", fontsize=6.5)
     fig.savefig(out_png, dpi=120, facecolor=fig.get_facecolor())
     plt.close(fig)
-    print(f"coverage.png : {os.path.getsize(out_png) // 1024} Ko")
+    print(f"{os.path.basename(out_png)} : {os.path.getsize(out_png) // 1024} Ko")
 
 
 def main():
@@ -231,7 +238,8 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False)
     print(f"\ncoverage.geojson : {len(features)} zones, {os.path.getsize(out)//1024} Ko")
-    render_png(features, os.path.join(HERE, "coverage.png"), n_pays=n_pays)
+    render_png(features, os.path.join(HERE, "coverage.png"),    n_pays=n_pays, lang="en")
+    render_png(features, os.path.join(HERE, "coverage.fr.png"), n_pays=n_pays, lang="fr")
     return 0 if len(features) == len(REGIONS) else 1
 
 

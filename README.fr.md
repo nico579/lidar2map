@@ -16,7 +16,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 **Ton pays est-il couvert ?** — 20 pays en LiDAR sol-nu (dont USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
 
-![Carte de couverture LiDAR lidar2map](coverage.png)
+![Carte de couverture LiDAR lidar2map](coverage.fr.png)
 
 *Détails, résolutions et sources évaluées : section [Couverture LiDAR](#couverture-lidar--sources-évaluées) plus bas.*
 
