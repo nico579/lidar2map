@@ -13,6 +13,14 @@ Style : simplestyle-spec (fill/stroke) lu par le rendu GitHub.
 """
 import glob, importlib.util, json, os, sys, time, urllib.parse, urllib.request
 
+# Console Windows cp1252 : les noms natifs (Česko, Österreich…) planteraient
+# les print — forcer UTF-8 (best effort).
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 UA = "lidar2map-coverage/1.0 (https://github.com/nico579/lidar2map)"
 
@@ -39,6 +47,8 @@ REGIONS = [
     ("Danmark",                ["dk-datafordeler"],  "#ec4899", (7.5, 54.4, 15.6, 58.0), None),
     ("Ireland",                ["ie-gsi"],           "#0d9488", None, None),
     ("Česko",                  ["cz-cuzk"],          "#84cc16", None, None),
+    ("Slovenija",              ["si-arso"],          "#14b8a6", None, None),
+    ("Eesti",                  ["ee-maaamet"],       "#d946ef", (21.5, 57.4, 28.3, 59.9), None),
     ("España",                 ["es-cnig"],          "#fb923c", (-10.0, 35.5, 4.6, 44.5), None),
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
     ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
@@ -63,7 +73,8 @@ def load_providers():
             continue
         code = getattr(m, "CODE", None)
         if code:
-            prov[code] = getattr(m, "NAME", None) or code
+            prov[code] = {"name":    getattr(m, "NAME", None) or code,
+                          "country": getattr(m, "COUNTRY", "") or ""}
     return prov
 
 
@@ -103,7 +114,7 @@ def simplify(geom, tol=0.01):
         return geom
 
 
-def render_png(features, out_png):
+def render_png(features, out_png, n_pays=None):
     """Carte PNG colorée : Europe (principal) + encart Nouvelle-Zélande + légende.
     Optionnel — nécessite matplotlib (outil dev `pip install matplotlib`, PAS le
     bundle app). Les polygones geojson EUX-MÊMES sont les contours des pays
@@ -161,15 +172,19 @@ def render_png(features, out_png):
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_edgecolor("#cbd5e1")
-    ax.set_title(f"lidar2map — couverture LiDAR sol-nu ({len(features)} zones, "
-                 f"16 pays + USA/Canada par projet)", fontsize=11, weight="bold")
+    # Titre bilingue : l'image est partagée par README.md (EN) et README.fr.md.
+    # Compte de pays calculé depuis REGIONS (anti-drift, plus de "16" en dur).
+    _pays = f"{n_pays} pays/countries" if n_pays else "multi-pays/countries"
+    ax.set_title(f"lidar2map — couverture LiDAR sol-nu / bare-earth LiDAR coverage\n"
+                 f"({len(features)} zones, {_pays} + USA · Canada)",
+                 fontsize=10.5, weight="bold")
     if nz:
         axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")
         draw(axn, nz)
         axn.set_xlim(NZ[0], NZ[1]); axn.set_ylim(NZ[2], NZ[3])
         axn.set_aspect(1 / math.cos(math.radians(28)))
         axn.set_xticks([]); axn.set_yticks([])
-        axn.set_title("Océanie — Australie (QLD·NSW) + N.-Zélande", fontsize=6.5)
+        axn.set_title("Océanie / Oceania — AU (QLD·NSW) + NZ", fontsize=6.5)
     fig.savefig(out_png, dpi=120, facecolor=fig.get_facecolor())
     plt.close(fig)
     print(f"coverage.png : {os.path.getsize(out_png) // 1024} Ko")
@@ -184,10 +199,13 @@ def main():
         print(f"  ERREUR : codes provider introuvables dans providers/ : {missing}")
         return 1
 
+    # Pays distincts couverts par la carte (anti-drift du titre)
+    n_pays = len({prov[c]["country"] for c in codes if prov[c]["country"]})
+
     features = []
     for query, region_codes, color, clip, group in REGIONS:
-        title = group or (prov[region_codes[0]] if len(region_codes) == 1
-                          else " + ".join(prov[c] for c in region_codes))
+        title = group or (prov[region_codes[0]]["name"] if len(region_codes) == 1
+                          else " + ".join(prov[c]["name"] for c in region_codes))
         print(f"  {query}  ->  {title}", flush=True)
         g = fetch_polygon(query)
         if not g:
@@ -213,7 +231,7 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False)
     print(f"\ncoverage.geojson : {len(features)} zones, {os.path.getsize(out)//1024} Ko")
-    render_png(features, os.path.join(HERE, "coverage.png"))
+    render_png(features, os.path.join(HERE, "coverage.png"), n_pays=n_pays)
     return 0 if len(features) == len(REGIONS) else 1
 
 
