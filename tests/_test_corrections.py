@@ -314,6 +314,24 @@ check("dalles_pour_bbox : grille 1 km (2×2)",
 check("discover_dalles(bbox_natif=None) → {} (pas de réseau)",
       sct.discover_dalles(None, None, tmp / "sct_cache.json") == {})
 
+print("== 12. Provider lu-act : COG national fenêtré ==")
+_LU = Path(__file__).resolve().parent.parent / "providers" / "lu_act.py"
+_lu_spec = importlib.util.spec_from_file_location("lu_act", str(_LU))
+lu = importlib.util.module_from_spec(_lu_spec)
+_lu_spec.loader.exec_module(lu)
+check("COG_WINDOWED activé", getattr(lu, "COG_WINDOWED", False) is True)
+check("CRS natif EPSG:2169", lu.CRS_NATIF == "EPSG:2169")
+_lu_in = lu.discover_dalles(None, (76000, 75000, 76500, 75500), None)
+check("discover : 1 fenêtre dans la bbox LU", len(_lu_in) == 1)
+check("nom encode la bbox zone (rejoue → même nom)",
+      next(iter(_lu_in)) == "lu_mnt2024_76000_75000_76500_75500.tif",
+      next(iter(_lu_in)))
+check("URL = COG unique (toutes zones)", next(iter(_lu_in.values())) == lu.COG_URL)
+check("subdir_from_name : bande 10 km easting",
+      lu.subdir_from_name("lu_mnt2024_76000_75000_76500_75500.tif") == "7")
+check("discover hors étendue LU → {}",
+      lu.discover_dalles(None, (0, 0, 1000, 1000), None) == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

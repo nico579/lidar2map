@@ -44,6 +44,7 @@ REGIONS = [
     ("Wales",                  ["gb-wales"],         "#78350f", None, None),
     ("Scotland",               ["gb-scotland"],      "#78350f", (-8.8, 54.5, -0.5, 61.2), None),
     ("Vlaanderen",             ["be-flanders"],      "#a855f7", None, None),
+    ("Luxembourg",             ["lu-act"],           "#fb7185", None, None),
     ("Suomi",                  ["fi-maanmittauslaitos"], "#06b6d4", (19.0, 59.0, 32.0, 70.6), None),
     ("Danmark",                ["dk-datafordeler"],  "#ec4899", (7.5, 54.4, 15.6, 58.0), None),
     ("Ireland",                ["ie-gsi"],           "#0d9488", None, None),

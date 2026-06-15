@@ -4,7 +4,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **20 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **21 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -14,7 +14,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ---
 
-**Ton pays est-il couvert ?** — 20 pays en LiDAR sol-nu (dont USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** — 21 pays en LiDAR sol-nu (dont USA & Canada en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.fr.png)
 
@@ -24,7 +24,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **20 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR — l'outil fonctionne dans **21 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) — les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -67,7 +67,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  Sources LiDAR : **20 pays** via le flag `--provider <code>` (ou le dropdown
+  Sources LiDAR : **21 pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI) — France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (3 Länder),
   Autriche (Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
   Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande,
@@ -299,6 +299,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `gb-england` · `gb-wales` | Royaume-Uni | LIDAR Composite DTM | 1 m | EPSG:27700 (OSGB36) | WCS 2.0.1 / WFS catalogue (EA / NRW) |
 | `gb-scotland` | Royaume-Uni (Écosse) | LiDAR secteur public écossais (DTM) | 0,5 m | EPSG:27700 (OSGB36) | Bucket AWS S3 public (sans compte), listing de tuiles OS-grid (`ListObjectsV2`) → COG — couverture 50 cm moderne (programme national + Orcades) |
 | `be-flanders` | Belgique (Flandre + Bruxelles) | DHMV II DTM | 1 m | EPSG:31370 (Lambert 1972) | WCS 2.0.1 — expose aussi SVF 25 cm et hillshade multi 25 cm précalculés |
+| `lu-act` | Luxembourg | BD-L-Lidar 2024 (MNT) | 0,5 m | EPSG:2169 (LUREF) | COG national unique (~40 Go) lu en **fenêtré** via HTTP range `/vsicurl` — sans jamais télécharger tout le fichier ; CC0 |
 | `fi-maanmittauslaitos` | Finlande | Modèle d'élévation | 2 m | EPSG:3067 (TM35FIN) | WCS 2.0.1 — clé API gratuite requise, couverture nationale |
 | `dk-datafordeler` | Danemark | DHM DTM | 0.4 m | EPSG:25832 (UTM32N) | WCS 1.0.0 — clé API gratuite requise, couverture nationale |
 | `ie-gsi` | Irlande | LiDAR DTM | 1 m | EPSG:2157 (ITM) | ArcGIS FeatureServer → ZIP (post_fetch) — ~60 % du territoire, CC BY 4.0 |
@@ -336,7 +337,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
@@ -447,6 +448,7 @@ Données utilisées :
 - **Land Tirol** (tiris) — DGM 0.5m (Autriche, Tyrol), CC BY 4.0
 - **Environment Agency** (Angleterre) & **DataMapWales / Natural Resources Wales** — LIDAR Composite DTM 1m (Royaume-Uni), Open Government Licence v3
 - **Scottish Government / JNCC** (Scottish Remote Sensing Portal) — LiDAR secteur public écossais DTM 0,5m (Écosse), Open Government Licence v3
+- **ACT** (Administration du Cadastre et de la Topographie) — BD-L-Lidar 2024 MNT 0,5m (Luxembourg), CC0
 - **USGS** — 3DEP / The National Map 1m (USA), domaine public
 - **Digitaal Vlaanderen** — DHMV II DTM/SVF/Hillshade (Belgique Flandre), Open Data Licentie Vlaanderen
 - **Maanmittauslaitos** — Modèle d'élévation 2m (Finlande), CC BY 4.0
