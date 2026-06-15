@@ -332,6 +332,27 @@ check("subdir_from_name : bande 10 km easting",
 check("discover hors étendue LU → {}",
       lu.discover_dalles(None, (0, 0, 1000, 1000), None) == {})
 
+print("== 13. Provider au-ga : grille WCS + reproject 3857 ==")
+_GA = Path(__file__).resolve().parent.parent / "providers" / "au_ga.py"
+_ga_spec = importlib.util.spec_from_file_location("au_ga", str(_GA))
+ga = importlib.util.module_from_spec(_ga_spec)
+_ga_spec.loader.exec_module(ga)
+check("CRS natif (travail) EPSG:3857", ga.CRS_NATIF == "EPSG:3857")
+check("dalle_filename signé", ga.dalle_filename(1542, -416) == "au_ga5m_+01542_-00416.tif",
+      ga.dalle_filename(1542, -416))
+check("subdir_from_name round-trip",
+      ga.subdir_from_name("au_ga5m_+01542_-00416.tif") == "+01542")
+# grille 10 km (pyproj-free) : 20×20 km → 4 dalles
+_g = ga.dalles_pour_bbox(15420000, -4160000, 15440000, -4140000)
+check("dalles_pour_bbox : grille 10 km (2×2)", len(_g) == 4, str(len(_g)))
+try:
+    import pyproj  # noqa: F401
+    _u = ga.dalle_url(1542, -416)
+    check("dalle_url : WCS 1.0.0 natif 4283 GeoTIFF",
+          "VERSION=1.0.0" in _u and "CRS=EPSG:4283" in _u and "FORMAT=GeoTIFF" in _u)
+except ImportError:
+    print("  [skip] dalle_url (pyproj absent)")
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

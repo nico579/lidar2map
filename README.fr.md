@@ -312,6 +312,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `us-tnm` · `us-3dep` | USA | 3DEP | 1 m | EPSG:3857 | TNMAccess S3 direct (sans compte) / OpenTopography (clé gratuite) |
 | `nz-linz` | Nouvelle-Zélande | DEM national seamless | 1 m | EPSG:2193 (NZTM2000) | STAC LINZ S3 + COG (lecture fenêtrée) |
 | `au-qld` · `au-nsw` | Australie (QLD 0.5 m · NSW 5 m) | DEM LiDAR | 0.5–5 m | EPSG:3857 | ArcGIS ImageServer (ELVIS) — couverture **par État** |
+| `au-ga` | Australie (national, dispersé) | DEM dérivé LiDAR | 5 m | EPSG:3857 (servi en 4283) | WCS 1.0.0 GetCoverage (Geoscience Australia) → reprojeté au téléchargement — ~245 000 km² sur tous les États (littoral + Murray-Darling), ouvre SA/VIC/TAS/WA au-delà de QLD·NSW |
 
 *En cours* : Suède (`se-lantmateriet`, compte Lantmäteriet requis).
 
@@ -337,7 +338,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m · national 5 m GA, dispersé)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
@@ -460,6 +461,7 @@ Données utilisées :
 - **GUGiK** (office polonais de géodésie et cartographie) — NMT 1m LiDAR ISOK (Pologne), données ouvertes
 - **LINZ** (Land Information New Zealand) — DEM 1m (Nouvelle-Zélande), CC BY 4.0
 - **QSpatial** (State of Queensland) & **Spatial Services NSW** — DEM 0.5m / 5m (Australie), CC BY 4.0
+- **Geoscience Australia** — DEM dérivé LiDAR 5m (Australie, national), CC BY 4.0
 - **OpenStreetMap** — données vectorielles sous licence ODbL, distribuées par Geofabrik
 - **Apache JMapsforge / mapsforge-map-writer** — moteur de rendu vectoriel offline
 
