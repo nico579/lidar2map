@@ -367,6 +367,24 @@ check("dalles_pour_bbox : grille 1 km (2×2)",
 check("discover(bbox_natif=None) → {} (pas de réseau)",
       th.discover_dalles(None, None, tmp / "th_cache.json") == {})
 
+print("== 15. Provider es-icgc : COG Catalogne 50 cm fenêtré ==")
+_IC = Path(__file__).resolve().parent.parent / "providers" / "es_icgc.py"
+_ic_spec = importlib.util.spec_from_file_location("es_icgc", str(_IC))
+ic = importlib.util.module_from_spec(_ic_spec)
+_ic_spec.loader.exec_module(ic)
+check("COG_WINDOWED activé", getattr(ic, "COG_WINDOWED", False) is True)
+check("CRS natif EPSG:25831", ic.CRS_NATIF == "EPSG:25831")
+check("résolution 0,5 m", ic.RESOLUTION_M == 0.5)
+_ic_in = ic.discover_dalles(None, (430000, 4580000, 430500, 4580500), None)
+check("discover : 1 fenêtre dans la bbox Catalogne", len(_ic_in) == 1)
+check("nom encode la bbox zone",
+      next(iter(_ic_in)) == "icgc_met50cm_430000_4580000_430500_4580500.tif",
+      next(iter(_ic_in)))
+check("URL = COG unique datacloud", next(iter(_ic_in.values())) == ic.COG_URL)
+check("subdir bande 10 km", ic.subdir_from_name(next(iter(_ic_in))) == "43")
+check("discover hors étendue → {}",
+      ic.discover_dalles(None, (0, 0, 1000, 1000), None) == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

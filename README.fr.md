@@ -308,6 +308,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `si-arso` | Slovénie | DMR1 (LiDAR 2011-2015) | 1 m | EPSG:3794 (D96/TM) | Index fishnet ArcGIS REST + dalles texte x;y;z → GeoTIFF (post_fetch) — couverture nationale |
 | `ee-maaamet` | Estonie | DTM 1 m (ALS 2021-2024) | 1 m | EPSG:3301 (L-EST97) | URLs directes par feuille 1:10000 (numérotation = formule pure, pas d'index) — couverture nationale, open data |
 | `es-cnig` | Espagne | MDT | 5 m | EPSG:25830 (UTM30N) | WCS 2.0.1 INSPIRE — 5 m = échelle paysage (le LiDAR 2 m sol-nu exige le portail à session CNIG) |
+| `es-icgc` | Espagne (Catalogne) | MET LiDAR | 0,5 m | EPSG:25831 (UTM31N) | COG régional unique (~433 Go) lu en **fenêtré** via HTTP range `/vsicurl` — 50 cm, bien plus fin que es-cnig 5 m ; CC BY 4.0 (ICGC) |
 | `pl-gugik` | Pologne | NMT (projet ISOK) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1 — données ouvertes, couverture nationale |
 | `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + COG mosaïque (lecture fenêtrée) — ~95 % de la population |
 | `us-tnm` · `us-3dep` | USA | 3DEP | 1 m | EPSG:3857 | TNMAccess S3 direct (sans compte) / OpenTopography (clé gratuite) |
@@ -339,7 +340,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe · Thuringe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m · national 5 m GA, dispersé)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe · Thuringe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m ; Catalogne 0,5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m · national 5 m GA, dispersé)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
@@ -459,6 +460,7 @@ Données utilisées :
 - **Natural Resources Canada** — HRDEM Mosaic 1m (Canada), Open Government Licence
 - **ČÚZK** (office tchèque de cartographie et cadastre) — DMR 5G 1m (Tchéquie), Open Data
 - **IGN España / CNIG** — MDT 5m (Espagne), CC BY 4.0
+- **ICGC** (Institut Cartogràfic i Geològic de Catalunya) — MET LiDAR 50cm (Catalogne), CC BY 4.0
 - **GUGiK** (office polonais de géodésie et cartographie) — NMT 1m LiDAR ISOK (Pologne), données ouvertes
 - **LINZ** (Land Information New Zealand) — DEM 1m (Nouvelle-Zélande), CC BY 4.0
 - **QSpatial** (State of Queensland) & **Spatial Services NSW** — DEM 0.5m / 5m (Australie), CC BY 4.0
