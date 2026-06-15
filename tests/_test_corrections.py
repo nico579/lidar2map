@@ -353,6 +353,20 @@ try:
 except ImportError:
     print("  [skip] dalle_url (pyproj absent)")
 
+print("== 14. Provider de-thueringen : grille + ATOM (offline) ==")
+_TH = Path(__file__).resolve().parent.parent / "providers" / "de_thueringen.py"
+_th_spec = importlib.util.spec_from_file_location("de_thueringen", str(_TH))
+th = importlib.util.module_from_spec(_th_spec)
+_th_spec.loader.exec_module(th)
+check("CRS natif EPSG:25832", th.CRS_NATIF == "EPSG:25832")
+check("dalle_filename km", th.dalle_filename(642, 5650) == "th_dgm_642_5650.tif",
+      th.dalle_filename(642, 5650))
+check("subdir_from_name round-trip", th.subdir_from_name("th_dgm_642_5650.tif") == "642")
+check("dalles_pour_bbox : grille 1 km (2×2)",
+      len(th.dalles_pour_bbox(642000, 5650000, 644000, 5652000)) == 4)
+check("discover(bbox_natif=None) → {} (pas de réseau)",
+      th.discover_dalles(None, None, tmp / "th_cache.json") == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

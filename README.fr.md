@@ -295,6 +295,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST — couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage — couverture nationale |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` | Allemagne (3 Länder) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG — open data |
+| `de-thueringen` | Allemagne (Thuringe) | DGM | 1–2 m | EPSG:25832 (UTM32N) | index ATOM INSPIRE → XYZ zippé (post_fetch → GeoTIFF), 1 m récent / 2 m ancien — open data dl-de/by-2-0 |
 | `at-tirol` · `at-osttirol` | Autriche (Tyrol + Osttirol) | DGM | 0.5 m | EPSG:31254/31255 (MGI M28/M31) | WCS 1.0.0 GetCoverage (tiris) |
 | `gb-england` · `gb-wales` | Royaume-Uni | LIDAR Composite DTM | 1 m | EPSG:27700 (OSGB36) | WCS 2.0.1 / WFS catalogue (EA / NRW) |
 | `gb-scotland` | Royaume-Uni (Écosse) | LiDAR secteur public écossais (DTM) | 0,5 m | EPSG:27700 (OSGB36) | Bucket AWS S3 public (sans compte), listing de tuiles OS-grid (`ListObjectsV2`) → COG — couverture 50 cm moderne (programme national + Orcades) |
@@ -338,7 +339,7 @@ La carte colorée est [en haut du README](#lidar2map). Version interactive (clic
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)** — rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
-**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m · national 5 m GA, dispersé)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
+**Pays sur la carte** (LiDAR sol-nu national) : France · Pays-Bas · Suisse · Norvège · Allemagne (Bavière · RNW · Basse-Saxe · Thuringe) · Autriche (Tyrol) · Royaume-Uni (Angleterre · Pays de Galles · Écosse) · Belgique (Flandre) · Luxembourg · Finlande · Danemark · Irlande · Tchéquie · Espagne *(5 m)* · Pologne · Nouvelle-Zélande · Australie *(Queensland 0,5 m · NSW 5 m · national 5 m GA, dispersé)*. Résolutions 0,5–1 m sauf indication — codes et détails dans la liste de providers ci-dessus.
 
 La carte est régénérée par `coverage_map.py`, qui lit les titres des zones depuis `providers/*.py` — donc carte et GUI ne peuvent pas diverger. Au clic sur une zone du GeoJSON interactif, GitHub affiche son `NAME` et son/ses code(s).
 
@@ -445,7 +446,7 @@ Données utilisées :
 - **AHN** (Actueel Hoogtebestand Nederland) — AHN4/5 0.5m (Pays-Bas), CC BY 4.0
 - **swisstopo** (Office fédéral de topographie) — swissALTI3D 0.5m (Suisse), open data gratuit © swisstopo
 - **Kartverket** — Nasjonal Høydemodell 1m (Norvège), CC BY 4.0
-- **Geobasis NRW · LDBV Bayern · LGLN Niedersachsen** — DGM1 1m (Allemagne, 3 Länder), Datenlizenz Deutschland Namensnennung 2.0
+- **Geobasis NRW · LDBV Bayern · LGLN Niedersachsen · TLBG Thüringen** — DGM 1m (1–2m Thuringe) (Allemagne, 4 Länder), Datenlizenz Deutschland Namensnennung 2.0
 - **Land Tirol** (tiris) — DGM 0.5m (Autriche, Tyrol), CC BY 4.0
 - **Environment Agency** (Angleterre) & **DataMapWales / Natural Resources Wales** — LIDAR Composite DTM 1m (Royaume-Uni), Open Government Licence v3
 - **Scottish Government / JNCC** (Scottish Remote Sensing Portal) — LiDAR secteur public écossais DTM 0,5m (Écosse), Open Government Licence v3
