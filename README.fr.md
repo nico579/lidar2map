@@ -354,24 +354,30 @@ Un provider s'intègre proprement si la source expose des **tuiles déterministe
 `cz-cuzk`, `ie-gsi`). Restent mal adaptées : les sources par **formulaire/email**,
 en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
-Sources évaluées **non retenues** à ce stade (documenté pour éviter de re-creuser) :
+**Pas encore couvert — et pourquoi** — le miroir public de mes notes internes (dernière revue 2026-06, tenu à la main pour ne pas re-creuser les impasses) :
 
-| Source | Raison |
-|---|---|
-| DE — BKG DGM1 national | payant (≥ 8 000 €) |
-| DE — Saxe-Anhalt | WCS `GetCoverage` en erreur 500 ; download = 4 gros blocs |
-| DE — Thüringen / Saxe | pas d'accès programmatique propre documenté (portail) |
-| DE — Bade-Wurtemberg | XYZ (ASCII) + portail JS, pas de GeoTIFF tuilé clair |
-| AT — BEV national | tuiles 50 km via portail |
-| AT — Vorarlberg | WMS seul (pas d'altitude brute) |
-| ES — CNIG MDT02 | 2 m (trop grossier) + feuilles MTN50 (gros blocs) |
-| BE — Wallonie | 0,5 m mais blocs provinciaux ~14 Go, pas de WCS |
-| GB — Écosse | 1 m fragmenté **par phase** ; composite seamless = 2 m (grossier) |
-| IT — Val d'Aoste / régions | formulaire de portail |
-| IT — Tyrol du Sud | 0,5 m zones bâties seulement / 2,5 m ailleurs |
-| SI — Slovénie (ARSO) | URLs propres mais ASC sans CRS + index par bloc |
+| Zone | Statut | Pourquoi pas (encore) |
+|---|---|---|
+| Portugal | 🔄 en attente | MDT 0,5 m national ouvert, mais téléchargement par panier interactif seulement — pas d'API par emprise (la DGT en annonce une « à venir »). |
+| Wallonie (BE) | 🔄 en attente | MNT 0,5/1 m ouvert, mais livraison par panier e-mail (48 h) — pas de service par tuile / WCS. |
+| Saxe · Bade-Wurtemberg (DE) | 🔄 en attente | DGM1 1 m ouvert, mais derrière un portail de sélection JS sans URL de tuile stable documentée. |
+| Lettonie | 🔄 en attente | DTM 0,4 m, téléchargement non public (WMS sur demande e-mail). |
+| Hong Kong | 🔄 en attente | seul un DTM 5 m **hybride** (non sol-nu) est ouvert ; le LiDAR fin est sur commande. |
+| Slovaquie | ⛔ structurel | 1 m ouvert, mais livré en gros blocs régionaux ZIP — pas de découpe par emprise. |
+| Irlande du Nord | ⛔ structurel | LiDAR seulement sur une bande côtière ; DTM national = 10 m (trop grossier). |
+| Lituanie | ⛔ structurel | inscription + signature électronique obligatoires. |
+| Taïwan | ⛔ structurel | DTM 1 m classé (réservé administrations) ; seul le 20 m est ouvert. |
+| Islande | ⛔ structurel | élévation = stéréo satellite (ArcticDEM), pas du LiDAR sol-nu. |
+| Australie-Occ. · Liechtenstein | ⛔ structurel | données sur devis / payantes. |
+| Italie (national) | ⛔ structurel | formulaire de commande ; quelques régions ouvertes (Tyrol du Sud 0,5 m bâti seulement). |
+| Allemagne — BKG national · autres Länder | ⛔ structurel | DGM1 national payant (≥ 8 000 €) ; certains Länder en WMS/portail seulement. |
+| Autriche — BEV · Vorarlberg | ⛔ structurel | tuiles 50 km via portail / WMS seul. |
+| Afrique · reste de l'Asie | ⛔ structurel | pas de LiDAR sol-nu national ouvert (seulement des MNT mondiaux à 30 m). |
+| OpenTopography (mondial) | ⛔ structurel | LiDAR fin = nuage de points / jobs async ; son API raster simple est du 30 m satellite. |
 
-L'Allemagne est traitée au mieux du faisable (3 Länder propres + le Tyrol côté Alpes) ; les Länder restants n'ont pas d'accès programmatique propre à ce jour (cf. table). Cette table est régénérée à la main au fil des sondages — elle sert à ne pas re-creuser les mêmes impasses.
+🔄 **en attente** = données ouvertes mais pas *encore* d'accès programmable par emprise — re-vérifié périodiquement (prochaine revue ~déc. 2026). ⛔ **structurel** = bloqué pour l'instant (donnée inexistante, payante, classée, trop grossière, ou pas du LiDAR sol-nu).
+
+**Tu habites l'un de ces endroits ? Tu connais peut-être une porte d'entrée.** La plupart des cas 🔄 ne demandent qu'un endpoint documenté accessible *par emprise* — un **WCS** `GetCoverage`, un flux **ATOM INSPIRE**, du **STAC**, des **URL par tuile** dérivables, ou un bucket **S3** public. Si tu en connais un pour ton pays/région, ouvre une issue ou une PR — ajouter un provider = ~100–150 lignes (copier le `providers/*.py` le plus proche). L'Allemagne est intégrée au mieux du faisable (4 Länder : Bavière, RNW, Basse-Saxe, Thuringe).
 
 ## Captures d'écran
 

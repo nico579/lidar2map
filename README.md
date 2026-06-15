@@ -358,28 +358,30 @@ hook: unzip + point-cloud→GeoTIFF via `laspy`+`lazrs`, see `cz-cuzk`, `ie-gsi`
 Still a poor fit: sources via **form/email order**, **WMS only** (rendered, no raw
 elevation) or **ASC without a CRS**.
 
-Sources **evaluated but not retained** so far (documented to avoid re-digging):
+**Not covered yet — and why** — the public mirror of our internal notes (last reviewed 2026-06, maintained by hand to avoid re-digging dead ends):
 
-| Source | Reason |
-|---|---|
-| DE — BKG national DGM1 | paid (≥ €8,000) |
-| DE — Saxony-Anhalt | WCS `GetCoverage` returns 500 ; download = 4 large blocks |
-| DE — Thuringia / Saxony | no documented clean programmatic access (portal) |
-| DE — Baden-Württemberg | XYZ (ASCII) + JS portal, no clear tiled GeoTIFF |
-| AT — BEV national | 50 km tiles via portal |
-| AT — Vorarlberg | WMS only (no raw elevation) |
-| ES — CNIG MDT02 | LAZ blocks + 2 m (coarse) — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
-| SE — Lantmäteriet | LAZ tiles (CC0) — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
-| CZ — ČÚZK DMR 5G | LAZ zipped — needs `post_fetch` LAZ→GeoTIFF (PDAL) |
-| BE — Wallonia | 0.5 m but large provincial blocks; WCS availability unconfirmed |
-| GB — Scotland | per-phase fragmentation; AWS S3 accessible but index complex |
-| IT — Aosta Valley / regions | portal order form |
-| IT — South Tyrol | 0.5 m built-up areas only / 2.5 m elsewhere |
-| SI — Slovenia (ARSO) | ASC without CRS + per-block index |
-| LV — LGIA | DTM/DSM 0.4 m; download API not publicly accessible (WMS only) |
-| PT — DGT | 0.5 m national 2024; API to be validated |
+| Zone | Status | Why not (yet) |
+|---|---|---|
+| Portugal | 🔄 pending | 0.5 m national open, but download via interactive basket only — no per-bbox API (DGT announced one "coming"). |
+| Wallonia (BE) | 🔄 pending | 0.5/1 m open, but delivery by 48 h e-mail basket — no per-tile service / WCS. |
+| Saxony · Baden-Württemberg (DE) | 🔄 pending | DGM1 1 m open, but behind a JS selection portal with no documented stable tile URL. |
+| Latvia | 🔄 pending | DTM 0.4 m, download not public (WMS on e-mail request). |
+| Hong Kong | 🔄 pending | only a 5 m **hybrid** (non-bare-earth) DTM is open; the fine LiDAR is order-only. |
+| Slovakia | ⛔ structural | 1 m open, but delivered as large regional ZIP blocks — no per-bbox cut. |
+| Northern Ireland | ⛔ structural | LiDAR only on a coastal strip; national DTM is 10 m (too coarse). |
+| Lithuania | ⛔ structural | registration + e-signature required. |
+| Taiwan | ⛔ structural | 1 m DTM classified (gov-only); only the 20 m is open. |
+| Iceland | ⛔ structural | elevation = satellite stereo (ArcticDEM), not bare-earth LiDAR. |
+| W. Australia · Liechtenstein | ⛔ structural | data on quote / paid. |
+| Italy (national) | ⛔ structural | order form; a few regions open (South Tyrol 0.5 m built-up only). |
+| Germany — BKG national · other Länder | ⛔ structural | national DGM1 paid (≥ €8,000); some Länder WMS-only / portal-only. |
+| Austria — BEV · Vorarlberg | ⛔ structural | 50 km portal tiles / WMS only. |
+| Africa · rest of Asia | ⛔ structural | no open national bare-earth LiDAR (global 30 m DEMs only). |
+| OpenTopography (global) | ⛔ structural | fine LiDAR = point cloud / async jobs; its simple raster API is 30 m satellite. |
 
-Germany is covered as far as cleanly possible (3 clean states + Tyrol on the Alps side); the remaining states have no clean programmatic access so far (see table). This table is maintained by hand as sources are probed — it exists to avoid re-digging the same dead ends.
+🔄 **pending** = open data but no per-bbox programmatic access *yet* — re-checked periodically (next review ~Dec 2026). ⛔ **structural** = blocked for now (data nonexistent, paid, classified, too coarse, or not bare-earth LiDAR).
+
+**Live in one of these places? You may know a way in.** Most 🔄 cases just need a documented endpoint accessible *by bounding box* — a **WCS** `GetCoverage`, an **INSPIRE ATOM** feed, **STAC**, derivable **per-tile URLs**, or a public **S3** bucket. If you know one for your country/region, open an issue or PR — adding a provider is ~100–150 lines (copy the closest `providers/*.py`). Germany is in as far as cleanly possible (4 states: Bavaria, NRW, Lower Saxony, Thuringia).
 
 ## Screenshots
 
