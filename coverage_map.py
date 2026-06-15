@@ -181,11 +181,11 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
     if lang == "en":
         _pays = f"{n_pays} countries" if n_pays else "multi-country"
         titre = (f"lidar2map — bare-earth LiDAR coverage\n"
-                 f"({len(features)} zones, {_pays} + USA · Canada project-based)")
+                 f"({len(features)} zones, {_pays} + USA · Canada · Japan project-based)")
     else:
         _pays = f"{n_pays} pays" if n_pays else "multi-pays"
         titre = (f"lidar2map — couverture LiDAR sol-nu\n"
-                 f"({len(features)} zones, {_pays} + USA · Canada par projet)")
+                 f"({len(features)} zones, {_pays} + USA · Canada · Japon par projet)")
     ax.set_title(titre, fontsize=11, weight="bold")
     if nz:
         axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")

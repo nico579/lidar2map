@@ -385,6 +385,24 @@ check("subdir bande 10 km", ic.subdir_from_name(next(iter(_ic_in))) == "43")
 check("discover hors étendue → {}",
       ic.discover_dalles(None, (0, 0, 1000, 1000), None) == {})
 
+print("== 16. Provider jp-gsi : tuiles XYZ DEM5A → 3857 (offline) ==")
+_JP = Path(__file__).resolve().parent.parent / "providers" / "jp_gsi.py"
+_jp_spec = importlib.util.spec_from_file_location("jp_gsi", str(_JP))
+jp = importlib.util.module_from_spec(_jp_spec)
+_jp_spec.loader.exec_module(jp)
+check("CRS de travail EPSG:3857", jp.CRS_NATIF == "EPSG:3857")
+check("dalle_filename z/x/y", jp.dalle_filename(15, 29105, 12902) == "jp_dem5a_15_29105_12902.tif",
+      jp.dalle_filename(15, 29105, 12902))
+check("subdir_from_name", jp.subdir_from_name("jp_dem5a_15_29105_12902.tif") == f"{29105 // 64}")
+# Tokyo-area bbox EPSG:3857 (math de tuiles pure, sans réseau)
+_jp_d = jp.discover_dalles(None, (15556000, 4257000, 15557200, 4258200), None)
+check("discover : tuiles z15 dans la bbox Tokyo", len(_jp_d) >= 1, str(len(_jp_d)))
+check("noms bien formés", all(n.startswith("jp_dem5a_15_") and n.endswith(".tif")
+                               for n in _jp_d))
+_l, _b, _r, _t = jp._tile_bounds(15, 29105, 12902)
+check("tile_bounds : ~1223 m de côté", abs((_r - _l) - jp._STEP) < 1 and _t > _b)
+check("discover(bbox_natif=None) → {}", jp.discover_dalles(None, None, None) == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
