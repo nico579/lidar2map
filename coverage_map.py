@@ -42,6 +42,7 @@ REGIONS = [
      "Autriche — Tyrol (Nordtirol + Osttirol)"),
     ("England",                ["gb-england"],       "#78350f", None, None),
     ("Wales",                  ["gb-wales"],         "#78350f", None, None),
+    ("Scotland",               ["gb-scotland"],      "#78350f", (-8.8, 54.5, -0.5, 61.2), None),
     ("Vlaanderen",             ["be-flanders"],      "#a855f7", None, None),
     ("Suomi",                  ["fi-maanmittauslaitos"], "#06b6d4", (19.0, 59.0, 32.0, 70.6), None),
     ("Danmark",                ["dk-datafordeler"],  "#ec4899", (7.5, 54.4, 15.6, 58.0), None),
@@ -152,7 +153,7 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
     # la carte (les petits du cluster Europe centrale restent identifiés par
     # leur forme + la liste texte).
     BIG = {"fr-ign", "no-kartverket", "fi-maanmittauslaitos", "es-cnig",
-           "pl-gugik", "gb-england", "se-lantmateriet"}
+           "pl-gugik", "gb-england", "gb-scotland", "se-lantmateriet"}
     fig = plt.figure(figsize=(8.5, 9.2), dpi=120)
     fig.patch.set_facecolor("#f8fafc")
     ax = fig.add_axes([0.02, 0.02, 0.96, 0.93]); ax.set_facecolor("#eaf2fb")

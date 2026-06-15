@@ -291,6 +291,29 @@ attendus = {"zz_multi_ombrage.tif",            # legacy : nom historique
 check("instances : fichiers attendus produits", produits == attendus,
       f"écart : {produits ^ attendus}")
 
+print("== 11. Provider gb-scotland : encodage OS National Grid ==")
+_SCT = Path(__file__).resolve().parent.parent / "providers" / "gb_scotland.py"
+_sct_spec = importlib.util.spec_from_file_location("gb_scotland", str(_SCT))
+sct = importlib.util.module_from_spec(_sct_spec)
+_sct_spec.loader.exec_module(sct)
+# Références OS connues (coin SW) — carrés 100 km NR (E100000/N600000) et
+# HY (E300000/N1000000).
+check("OS ref NR5807 (E158000/N607000)",
+      sct._en_vers_osref(158000, 607000) == "NR5807",
+      sct._en_vers_osref(158000, 607000))
+check("OS ref HY1700 (E317000/N1000000)",
+      sct._en_vers_osref(317000, 1000000) == "HY1700",
+      sct._en_vers_osref(317000, 1000000))
+check("dalle_filename km → nom OS",
+      sct.dalle_filename(158, 607) == "sct_dtm_NR5807.tif",
+      sct.dalle_filename(158, 607))
+check("subdir_from_name parse le carré 100 km",
+      sct.subdir_from_name("sct_dtm_NR5807.tif") == "NR")
+check("dalles_pour_bbox : grille 1 km (2×2)",
+      len(sct.dalles_pour_bbox(158000, 607000, 160000, 609000)) == 4)
+check("discover_dalles(bbox_natif=None) → {} (pas de réseau)",
+      sct.discover_dalles(None, None, tmp / "sct_cache.json") == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
