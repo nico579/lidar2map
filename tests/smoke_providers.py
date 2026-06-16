@@ -47,7 +47,7 @@ TEST_POINTS = {
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),
     "at-tirol": (11.405, 47.268), "at-osttirol": (12.770, 46.829),
     "gb-england": (-1.470, 53.380), "gb-wales": (-3.179, 51.481),
-    "gb-scotland": (-5.806, 55.302), "be-flanders": (4.401, 51.221),
+    "gb-scotland": (-4.2518, 55.8642), "be-flanders": (4.401, 51.221),
     "lu-act": (6.130, 49.611), "fi-maanmittauslaitos": (24.941, 60.170),
     "dk-datafordeler": (12.568, 55.676), "ie-gsi": (-6.260, 53.349),
     "cz-cuzk": (14.418, 50.073), "si-arso": (14.506, 46.056),
