@@ -32,6 +32,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 os.environ.setdefault("LIDAR2MAP_BOOTSTRAP", "none")   # pas de bootstrap/venv
 
 ROOT = Path(__file__).resolve().parent.parent
+PROV_DIR = ROOT / "providers"
 sys.path.insert(0, str(ROOT))
 
 import numpy as np
@@ -127,24 +128,49 @@ def smoke_one(code, mod, lon, lat):
         return "FAIL", f"{type(e).__name__}: {e}"
 
 
+def _discover_providers():
+    """AUTO : tous les providers du dossier providers/ = source de verite (comme
+    coverage_map.py). Retourne ({code: module}, [(fichier, erreur_import)])."""
+    ok, errors = {}, []
+    for p in sorted(PROV_DIR.glob("*.py")):
+        if p.stem.startswith("_"):
+            continue
+        try:
+            m = importlib.import_module("providers." + p.stem)
+        except Exception as e:
+            errors.append((p.stem, e)); continue
+        code = getattr(m, "CODE", None)
+        if code:
+            ok[code] = m
+        else:
+            errors.append((p.stem, "pas d'attribut CODE"))
+    return ok, errors
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", default="")
+    ap.add_argument("--only", default="",
+                    help="restreindre a ces codes (defaut : TOUS les providers du dossier)")
     args = ap.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()}
-    codes = [c for c in TEST_POINTS if (not only or c in only)]
 
-    print(f"\nSmoke providers (lidar2map, {len(codes)}) - {time.strftime('%Y-%m-%d %H:%M')}\n")
+    discovered, imp_errors = _discover_providers()      # lit providers/*.py
+    codes = sorted(c for c in discovered if (not only or c in only))
+    orphans = sorted(set(TEST_POINTS) - set(discovered))  # point sans provider
+
+    print(f"\nSmoke providers (auto, dossier providers/) : {len(codes)} - "
+          f"{time.strftime('%Y-%m-%d %H:%M')}\n")
     rows = []
+    for stem, err in imp_errors:
+        print(f"  [FAIL] {stem:<22}   import : {err}")
+        rows.append((stem, "FAIL"))
     for code in codes:
-        mod_name = "providers." + code.replace("-", "_")
-        try:
-            mod = importlib.import_module(mod_name)
-        except Exception as e:
-            print(f"  ? {code:<22} FAIL    import {type(e).__name__}: {e}"); rows.append((code, "FAIL")); continue
+        if code not in TEST_POINTS:
+            print(f"  [NOPT] {code:<22}   aucun point de test (ajouter dans TEST_POINTS)")
+            rows.append((code, "NOPT")); continue
         t0 = time.time()
         try:
-            status, detail = smoke_one(code, mod, *TEST_POINTS[code])
+            status, detail = smoke_one(code, discovered[code], *TEST_POINTS[code])
         except Exception as e:
             status, detail = "FAIL", f"{type(e).__name__}: {e}"
         dt = time.time() - t0
@@ -152,11 +178,16 @@ def main():
         print(f"  [{icon}] {code:<22} {dt:6.1f}s  {detail}", flush=True)
         rows.append((code, status))
 
+    if orphans:
+        print(f"\n  ATTENTION : point(s) de test sans provider dans le dossier : {orphans}")
+
     nf = sum(1 for _, s in rows if s == "FAIL")
+    nnopt = sum(1 for _, s in rows if s == "NOPT")
     npass = sum(1 for _, s in rows if s == "PASS")
     nskip = sum(1 for _, s in rows if s == "SKIP")
-    print(f"\n{npass} PASS - {nf} FAIL - {nskip} SKIP / {len(rows)}")
-    return 1 if nf else 0
+    extra = f" - {nnopt} NOPT" if nnopt else ""
+    print(f"\n{npass} PASS - {nf} FAIL{extra} - {nskip} SKIP / {len(rows)}")
+    return 1 if (nf or nnopt) else 0
 
 
 if __name__ == "__main__":
