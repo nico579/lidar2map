@@ -26,9 +26,11 @@
 #   (1 m). RESOLUTION_M=0.5 est la cible de sortie ; les dalles 1 m sont
 #   ré-échantillonnées par le pipeline (pas de détail inventé).
 #
-# Pas encore inclus (arbo imbriquée différente, à traiter séparément si besoin) :
-#   `hes` (Historic Environment Scotland, scans de sites archéo, le plus
-#   pertinent à terme), `outer-hebrides/2019`.
+# Inclus aussi : `hes` (Historic Environment Scotland, scans archéo de sites),
+#   7 sous-jeux à 25 ou 50 cm sous lidar/hes/<sous-jeu>/, MÊME grille 1 km et même
+#   nommage OS que le national. Les 25 cm (hes-2016, hes-2016-2017, hes-2017) sont
+#   priorité haute (plus fins, ré-échantillonnés à RESOLUTION_M=0.5 en sortie).
+#   Pas encore inclus : `outer-hebrides/2019` (arbo imbriquée, suivi possible).
 #
 #   - CRS natif EPSG:27700 (British National Grid, OSGB36), MÊME grille que
 #     gb_england / gb_wales (réutilisation de l'encodage OS, cf. _os_cell).
@@ -71,15 +73,21 @@ COVERAGE_EXTENT = (0, 520000, 470000, 1220000)   # (E_min, N_min, E_max, N_max)
 
 # ── Endpoints S3 ─────────────────────────────────────────────────────────────
 S3_BASE  = "https://srsp-open-data.s3.eu-west-2.amazonaws.com"
-GRIDDED_TMPL = "lidar/{coll}/dtm/27700/gridded/"
+GRIDDED_TMPL = "lidar/{coll}/dtm/27700/gridded/"   # coll peut contenir un / (ex. hes/hes-2016)
 HTTP_UA  = "lidar2map/1.0 (Scottish Remote Sensing Portal)"
 
 # (collection S3, grille) par ordre de PRIORITÉ : la 1re qui couvre une cellule
-# 1 km gagne. Grille : "1km" (réf AAeennn, 50 cm), "5km" (réf AAenQ quadrant,
-# 50 cm), "10km" (réf AAen, 1 m). Plus fin + plus récent d'abord.
+# 1 km gagne. Grille : "1km" (réf AAeennn), "5km" (réf AAenQ quadrant),
+# "10km" (réf AAen). Ordre = résolution décroissante (la plus fine d'abord).
 COLLECTIONS = (
+    # 25 cm, 1 km : scans archéo HES (couverture ponctuelle de sites), le plus fin
+    ("hes/hes-2016-2017", "1km"), ("hes/hes-2016", "1km"), ("hes/hes-2017", "1km"),
+    # 50 cm, 1 km : national, Orcades, puis les autres jeux HES
     ("national-lidar-programme",  "1km"),
     ("orkney-islands-council-23", "1km"),
+    ("hes/hes-2010s10", "1km"), ("hes/hes-2017sp3", "1km"),
+    ("hes/hes_2010", "1km"), ("hes/luing", "1km"),
+    # 50 cm, 5 km (phases 3-6) puis 1 m, 10 km (phases 1-2)
     ("phase-6", "5km"), ("phase-5", "5km"),
     ("phase-4", "5km"), ("phase-3", "5km"),
     ("phase-2", "10km"), ("phase-1", "10km"),
