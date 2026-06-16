@@ -286,7 +286,6 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   --dossier CHEMIN      Racine de sortie (défaut: Projets/<nom>/)
-  --oui                 Mode non-interactif (pas de questions)
   --nettoyage           Supprimer les fichiers intermédiaires après chaque
                           morceau (dalles, TIF ombrages, TIF warpé).
                           Conserve les sorties finales (.mbtiles .rmap .sqlitedb).
@@ -374,59 +373,59 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   # LiDAR : zone 1 km, ombrage multi, MBTiles + RMAP + SQLiteDB
   python lidar2map.py --ignlidar --zone-ville gareoult --zone-rayon 1 \
       --zone-nom aa --telechargement --ombrages multi \
-      --formats-fichier mbtiles rmap sqlitedb --zoom-min 8 --zoom-max 18 --oui
+      --formats-fichier mbtiles rmap sqlitedb --zoom-min 8 --zoom-max 18
 
   # LiDAR : zone 10 km, plusieurs ombrages
   python lidar2map.py --ignlidar --zone-ville gareoult --zone-rayon 10 \
       --zone-nom gareoult --telechargement --ombrages multi slope svf lrm \
-      --formats-fichier mbtiles rmap --qualite-image 75 --oui
+      --formats-fichier mbtiles rmap --qualite-image 75
 
   # LiDAR : depuis TIF existant → RMAP uniquement
   python lidar2map.py --ignlidar --zone-ville gareoult --zone-rayon 1 \
       --zone-nom aa --source ign_lidar/aa/_warped_aa_multi_ombrage_z18.tif \
-      --formats-fichier rmap --zoom-min 8 --zoom-max 18 --oui
+      --formats-fichier rmap --zoom-min 8 --zoom-max 18
 
   # IGN Raster public (pas de clé requise)
   python lidar2map.py --ignraster --zone-ville gareoult --zone-rayon 10 \
       --zone-nom aa --couche planign \
-      --formats-fichier mbtiles rmap --zoom-min 8 --zoom-max 18 --oui
+      --formats-fichier mbtiles rmap --zoom-min 8 --zoom-max 18
 
   # IGN Raster Scan 25 (professionnel uniquement — clé API requise)
   # python lidar2map.py --ignraster --zone-ville gareoult --zone-rayon 10 \
   #     --zone-nom aa --couche scan25 --apikey VOTRE_CLE_PRO \
-  #     --formats-fichier mbtiles rmap --zoom-min 8 --zoom-max 18 --oui
+  #     --formats-fichier mbtiles rmap --zoom-min 8 --zoom-max 18
 
   # Vecteur IGN : cadastre + hydrographie
   python lidar2map.py --ignvecteur --zone-ville gareoult --zone-rayon 5 \
-      --zone-nom aa --couche cadastre cours_eau detail_hydro --oui
+      --zone-nom aa --couche cadastre cours_eau detail_hydro
 
   # OSM : carte rando + GeoJSON
   python lidar2map.py --osm --zone-ville gareoult --zone-rayon 10 \
       --zone-nom aa --couche "highway=* waterway=* natural=water" \
-      --formats-fichier map gz --oui
+      --formats-fichier map gz
 
   # Fusion GeoJSON
   python lidar2map.py --fusionner \
       --source ign_vecteur/aa/*.geojson.gz osm_vecteur/aa/*.geojson.gz \
-      --formats-fichier gz --oui
+      --formats-fichier gz
 
   # Zone par département entier (Var)
   python lidar2map.py --ignlidar --zone-departement 83 \
-      --telechargement --workers 8 --ombrages multi --formats-fichier mbtiles --oui
+      --telechargement --workers 8 --ombrages multi --formats-fichier mbtiles
 
   # A-priori splitting: grande zone en 4×4 morceaux avec nettoyage disque
   python lidar2map.py --ignlidar --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
-      --cols-decoupe 4 --rows-decoupe 4 --nettoyage --oui
+      --cols-decoupe 4 --rows-decoupe 4 --nettoyage
 
   # Reprise après interruption (même commande — les morceaux terminés sont ignorés)
   python lidar2map.py --ignlidar --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
-      --cols-decoupe 4 --rows-decoupe 4 --nettoyage --oui
+      --cols-decoupe 4 --rows-decoupe 4 --nettoyage
 
   # Linux/macOS : la commande est identique, sauf 'python' → 'python3'
   python3 lidar2map.py --ignlidar --zone-ville Gareoult --zone-rayon 1 \
-      --ombrages svf --formats-fichier mbtiles --oui
+      --ombrages svf --formats-fichier mbtiles
 """
 import os
 import re
@@ -1668,7 +1667,7 @@ if _SMOKETEST:
     _smk_nom     = "smoke"
     _smk_projets = _smk_work / "Projets" / _smk_nom
     _smk_zone    = ["--zone-ville", "Gareoult", "--zone-rayon", "1",
-                    "--zone-nom",   _smk_nom, "--oui"]
+                    "--zone-nom",   _smk_nom]
 
     # (nom, args supplémentaires, outputs attendus relatifs à _smk_projets)
     _smk_tests = [
@@ -1743,7 +1742,7 @@ if _SMOKETEST:
         try:
             rc = subprocess.run(_smk_cmd_base + ["--fusionner", "--source", str(src),
                                                  "--sortie", str(out),
-                                                 "--formats-fichier", "gz", "--oui"],
+                                                 "--formats-fichier", "gz"],
                                 timeout=timeout, env=_smk_env).returncode
         except subprocess.TimeoutExpired:
             print(f"  ✗ TIMEOUT (> {timeout}s)")
@@ -2781,7 +2780,7 @@ def geocoder_ville_wgs84(nom_ville):
     non-existante : "yyyy" → un POI au milieu des Deux-Sèvres, "xxxxx" → un
     nom de cheval dans un haras, etc.
 
-    En mode --oui, lève une erreur claire si le résultat n'est pas un lieu
+    En mode non-interactif, lève une erreur claire si le résultat n'est pas un lieu
     administratif/habité reconnu. En mode interactif, demande confirmation.
     """
     # Le code pays vient du provider actif. Nominatim filtre par ISO code
@@ -2831,7 +2830,7 @@ def geocoder_ville_wgs84(nom_ville):
     lat = float(data[0]["lat"])
     lon = float(data[0]["lon"])
 
-    # Type non-administratif → demander confirmation (ou rejeter en mode --oui)
+    # Type non-administratif → demander confirmation (ou rejeter en mode non-interactif)
     if addrtype not in TYPES_OK:
         if addrtype in TYPES_DOUTE:
             # Lieu-dit ou hameau : signaler mais accepter
@@ -8027,9 +8026,9 @@ def main():
         epilog="""
 Examples:
   python lidar2map.py
-  python lidar2map.py --lidar --zone-city gareoult --download --shadings multi slope --file-formats mbtiles --yes
-  python lidar2map.py --lidar --zone-department 83 --download --shadings multi --file-formats mbtiles --yes
-  python lidar2map.py --osm --zone-city gareoult --yes
+  python lidar2map.py --lidar --zone-city gareoult --download --shadings multi slope --file-formats mbtiles
+  python lidar2map.py --lidar --zone-department 83 --download --shadings multi --file-formats mbtiles
+  python lidar2map.py --osm --zone-city gareoult
         """
     )
     parser.add_argument("--version", action="version",
@@ -8147,8 +8146,6 @@ Examples:
                               f"darkens. Ex: --svf-gamma 0.7 for lighter."))
 
     # Mode non-interactif
-    parser.add_argument("--yes", "--oui", action="store_true", dest="oui",
-                        help="Answer Yes to all prompts (non-interactive)")
     parser.add_argument("--download", "--telechargement", action="store_true", dest="telechargement",
                         help="Download missing IGN tiles.")
     parser.add_argument("--tiles-purge-invalid", "--dalles-purger-invalides", action="store_true",
@@ -8220,6 +8217,7 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
 
     # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
@@ -8439,7 +8437,7 @@ Examples:
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
         elif args.oui:
-            print("  ERROR: --zone-name required with --zone-bbox in --yes mode")
+            print("  ERROR: --zone-name required with --zone-bbox when non-interactive (no terminal)")
             sys.exit(1)
         else:
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
@@ -8456,7 +8454,7 @@ Examples:
         if args.zone_nom:
             nom_zone = normaliser_nom(args.zone_nom)
         elif args.oui:
-            print("  ERROR: --zone-name required with --zone-gps in --yes mode")
+            print("  ERROR: --zone-name required with --zone-gps when non-interactive (no terminal)")
             sys.exit(1)
         else:
             nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
@@ -9038,7 +9036,7 @@ Examples:
             _spec_types = {t for t, _ in spec_insts}
             choix_ombrages = [c for c in choix_ombrages if c not in _spec_types]
     elif dalles_ombrages and not args.ombrages and not args.oui:
-        # Mode interactif — pas de --ombrages, pas de --oui
+        # Mode interactif — pas de --ombrages, pas de
         print(f"\n  Shadings to generate:")
         print(f"  [1] Rapide     : multi + slope                                    (~1 min)")
         print(f"  [2] Archaeo     : 315 + 045 + multi + slope                        (~2 min)")
@@ -9062,7 +9060,7 @@ Examples:
             choix_ombrages = [s for s in saisie if s in TOUS_OMBRAGES]
         else:             choix_ombrages = ["multi", "slope"]
     else:
-        choix_ombrages = []  # --oui sans --ombrages → pas d'ombrage
+        choix_ombrages = []  # sans --ombrages → pas d'ombrage
 
     if choix_ombrages or spec_insts:
         surface_km2 = len(dalles_ombrages)  # ~1 dalle = 1 km²
@@ -10082,7 +10080,7 @@ def _resoudre_zone_wgs84(args):
             sys.exit(1)
         if not nom_zone:
             if getattr(args, 'oui', False):
-                print("  ERROR: --zone-name required with --zone-bbox in --yes mode")
+                print("  ERROR: --zone-name required with --zone-bbox when non-interactive (no terminal)")
                 sys.exit(1)
             nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
 
@@ -10095,7 +10093,7 @@ def _resoudre_zone_wgs84(args):
             sys.exit(1)
         if not nom_zone:
             if getattr(args, 'oui', False):
-                print("  ERROR: --zone-name required with --zone-gps in --yes mode")
+                print("  ERROR: --zone-name required with --zone-gps when non-interactive (no terminal)")
                 sys.exit(1)
             nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
         r     = args.zone_rayon / 111.0
@@ -10116,7 +10114,7 @@ def _resoudre_zone_wgs84(args):
 
     else:
         if getattr(args, 'oui', False):
-            print("  ERROR: a zone option is required in --yes mode")
+            print("  ERROR: a zone option is required when non-interactive (no terminal)")
             sys.exit(1)
         ville = input("  Ville (ou laisser vide pour GPS) : ").strip()
         if ville:
@@ -10167,8 +10165,9 @@ def main_decouper():
                         choices=["mbtiles", "rmap", "sqlitedb"], default=["mbtiles"],
                         metavar="FMT")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
-    parser.add_argument("--yes", "--oui", action="store_true", dest="oui")
     args = parser.parse_args()
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
@@ -10210,10 +10209,10 @@ def main_wmts():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python lidar2map.py --raster --zone-city gareoult --zoom-min 12 --zoom-max 16 --file-formats mbtiles --yes
-  python lidar2map.py --raster --layer ORTHOIMAGERY.ORTHOPHOTOS --zone-department 83 --zoom-min 14 --zoom-max 17 --file-formats mbtiles --yes
-  python lidar2map.py --raster --layer GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2 --zone-city gareoult --zoom-min 10 --zoom-max 16 --file-formats mbtiles --yes
-  python lidar2map.py --osm --layer "highway=* waterway=* natural=water" --zone-city gareoult --yes
+  python lidar2map.py --raster --zone-city gareoult --zoom-min 12 --zoom-max 16 --file-formats mbtiles
+  python lidar2map.py --raster --layer ORTHOIMAGERY.ORTHOPHOTOS --zone-department 83 --zoom-min 14 --zoom-max 17 --file-formats mbtiles
+  python lidar2map.py --raster --layer GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2 --zone-city gareoult --zoom-min 10 --zoom-max 16 --file-formats mbtiles
+  python lidar2map.py --osm --layer "highway=* waterway=* natural=water" --zone-city gareoult
   python lidar2map.py --raster --source gareoult_scan25_z12-16.mbtiles --file-formats rmap
         """
     )
@@ -10301,13 +10300,13 @@ Examples:
                         help="Overwrite cached tiles (force re-download)")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Overwrite existing MBTiles")
-    parser.add_argument("--yes", "--oui",           action="store_true", dest="oui")
 
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(0)
 
     args = parser.parse_args()
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
@@ -11860,9 +11859,9 @@ def main_wfs():
             [f"  {k:<16} {v[2]}" for k, v in COUCHES_WFS.items()] +
             ["",
              "Examples:",
-             "  python lidar2map.py --vector --zone-city gareoult --zone-radius 5 --yes",
-             "  python lidar2map.py --vector --layer batiments routes --zone-city gareoult --yes",
-             "  python lidar2map.py --vector --layer cadastre --zone-department 83 --yes",
+             "  python lidar2map.py --vector --zone-city gareoult --zone-radius 5",
+             "  python lidar2map.py --vector --layer batiments routes --zone-city gareoult",
+             "  python lidar2map.py --vector --layer cadastre --zone-department 83",
             ]
         )
     )
@@ -11898,10 +11897,8 @@ def main_wfs():
                         help="Douglas-Peucker simplification epsilon in metres. "
                              "Without it, computed automatically from the area "
                              "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
-    parser.add_argument("--yes", "--oui",         action="store_true", dest="oui",
-                        help="Non-interactive mode")
-
     args = parser.parse_args()
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _ff = getattr(args, "formats_fichier", ["gz"])
     # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
     _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
@@ -12671,9 +12668,8 @@ Examples:
     parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
                         metavar="M", dest="simplification_vecteur",
                         help="Douglas-Peucker epsilon in metres (default: auto from area).")
-    parser.add_argument("--yes", "--oui", action="store_true", dest="oui")
-
     args, _ = parser.parse_known_args()  # ignorer --zone-* et autres args globaux
+    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
 
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
@@ -13524,7 +13520,6 @@ def lancer_gui():
                 if cfg.get("ecraser_d"):  cmd.append("--tiles-overwrite")
 
 
-            cmd.append("--yes")
             return cmd
 
         # ── Lancement ────────────────────────────────────────────────────

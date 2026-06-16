@@ -1,0 +1,45 @@
+name: Smoke providers
+
+# Test de fumée réseau des providers LiDAR : pour chaque provider, lidar2map
+# télécharge UNE tuile réelle sur un point couvert (mode --provider-selftest) et
+# valide le GeoTIFF. Détecte un endpoint tombé, une API qui change de format,
+# une clé expirée. Lancé chaque semaine + à la demande (PAS sur push : ça
+# toucherait ~30 endpoints externes à chaque déploiement).
+#
+# NB : les runners GitHub sortent par des IP US/cloud ; quelques providers
+# géo-restreints (ex. pl-gugik) peuvent échouer faussement depuis la CI. Un
+# FAIL = signal à vérifier (peut être un vrai blocage ou un filtrage IP).
+#
+# Clés API optionnelles via secrets du repo (sinon ces providers -> SKIP) :
+#   OPENTOPOGRAPHY_API_KEY (us-3dep), DATAFORDELER_TOKEN (dk), FI_NLS_API_KEY (fi).
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"      # chaque lundi 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: smoke providers (ubuntu)
+    runs-on: ubuntu-latest
+    env:
+      LIDAR2MAP_BOOTSTRAP: none
+      OPENTOPOGRAPHY_API_KEY: ${{ secrets.OPENTOPOGRAPHY_API_KEY }}
+      DATAFORDELER_TOKEN:     ${{ secrets.DATAFORDELER_TOKEN }}
+      FI_NLS_API_KEY:         ${{ secrets.FI_NLS_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dependances
+        # Deps obligatoires de lidar2map (import) + laspy/lazrs pour le post_fetch
+        # LAZ (cz/se). Pas de numba : le self-test ne calcule aucun ombrage.
+        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi laspy lazrs
+
+      - name: Smoke test providers
+        run: python tests/smoke_providers.py

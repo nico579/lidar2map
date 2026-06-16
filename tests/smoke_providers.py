@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""smoke_providers.py - test de fumee reseau des providers LiDAR.
+
+Importe lidar2map et appelle SES vraies fonctions de telechargement
+(telecharger_dalle_directe / telecharger_cog_fenetre, qui enchainent
+discover -> download -> _post_fetch_si_besoin (post_fetch/multipart) ->
+_valider_tif_dalle -> post_download). Pour chaque provider : on bascule le
+PROVIDER courant, on cible un point connu couvert, on telecharge UNE tuile et
+on verifie qu'elle s'ouvre avec des altitudes plausibles. Pas de
+reimplementation : c'est le pipeline reel qui est exerce. Aucun ajout cote CLI.
+
+Statuts :
+  PASS  tuile valide recuperee (z affiche)        -> exit 0
+  FAIL  endpoint casse / vide / format invalide   -> le harness sort en 1
+  SKIP  cle API absente, ou dependance LAZ absente (laspy/lazrs/pdal)
+
+Usage :
+  python Tests/smoke_providers.py
+  python Tests/smoke_providers.py --only gb-scotland,lu-act
+Reseau requis. Pense pour tourner regulierement (cron CI ou manuel).
+Cles API (sinon SKIP) : OPENTOPOGRAPHY_API_KEY, DATAFORDELER_TOKEN, FI_NLS_API_KEY.
+"""
+import argparse
+import importlib
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+os.environ.setdefault("LIDAR2MAP_BOOTSTRAP", "none")   # pas de bootstrap/venv
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import numpy as np
+import rasterio
+import lidar2map as L   # noqa: E402  (charge un PROVIDER par defaut ; on le bascule)
+
+# Point (lon, lat WGS84) connu couvert par chaque provider.
+TEST_POINTS = {
+    "fr-ign": (1.444, 43.604), "nl-ahn": (4.895, 52.370),
+    "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
+    "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
+    "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),
+    "at-tirol": (11.405, 47.268), "at-osttirol": (12.770, 46.829),
+    "gb-england": (-1.470, 53.380), "gb-wales": (-3.179, 51.481),
+    "gb-scotland": (-5.806, 55.302), "be-flanders": (4.401, 51.221),
+    "lu-act": (6.130, 49.611), "fi-maanmittauslaitos": (24.941, 60.170),
+    "dk-datafordeler": (12.568, 55.676), "ie-gsi": (-6.260, 53.349),
+    "cz-cuzk": (14.418, 50.073), "si-arso": (14.506, 46.056),
+    "ee-maaamet": (24.753, 59.437), "es-cnig": (-3.703, 40.417),
+    "es-icgc": (2.173, 41.385), "pl-gugik": (21.012, 52.230),
+    "ca-nrcan": (-75.697, 45.421), "nz-linz": (174.776, -41.286),
+    "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),
+    "au-ga": (138.600, -34.920), "us-tnm": (-122.332, 47.606),
+    "us-3dep": (-122.332, 47.606), "se-lantmateriet": (18.069, 59.329),
+    "jp-gsi": (139.767, 35.681),
+}
+APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
+              "dk-datafordeler": "DATAFORDELER_TOKEN",
+              "fi-maanmittauslaitos": "FI_NLS_API_KEY"}
+_DEP = ("laspy", "lazrs", "pdal", "laszip")
+
+
+def _select(mod):
+    """Bascule le PROVIDER courant de lidar2map + les globals derives qu'il
+    pose a l'import (cf. lidar2map ~l.2337-2344). C'est tout ce dont les
+    fonctions de download ont besoin."""
+    L.PROVIDER = mod
+    L.CRS_NATIF = mod.CRS_NATIF
+    L.RESOLUTION_M = mod.RESOLUTION_M
+    L.DALLE_KM = mod.DALLE_KM
+    L.PX_PAR_DALLE = mod.PX_PAR_DALLE
+    L.SEUIL_DALLE_VALIDE = mod.SEUIL_DALLE_VALIDE
+    L.LIDAR_SUBDIR = f"lidar/{getattr(mod, 'COUNTRY', 'xx')}"
+
+
+def smoke_one(code, mod, lon, lat):
+    _select(mod)
+    d = 0.003
+    bbox_wgs = (lon - d, lat - d, lon + d, lat + d)
+    tf = L._get_transformer("EPSG:4326", mod.CRS_NATIF)
+    xs, ys = [], []
+    for px, py in ((bbox_wgs[0], bbox_wgs[1]), (bbox_wgs[0], bbox_wgs[3]),
+                   (bbox_wgs[2], bbox_wgs[1]), (bbox_wgs[2], bbox_wgs[3])):
+        x, y = tf.transform(px, py); xs.append(x); ys.append(y)
+    bbox_natif = (min(xs), min(ys), max(xs), max(ys))
+
+    needs_key = getattr(mod, "APIKEY_REQUISE", False)
+    if needs_key:
+        key = os.environ.get(APIKEY_ENV.get(code, ""), "").strip()
+        if not key:
+            return "SKIP", "cle API absente"
+        if hasattr(mod, "set_apikey"):
+            mod.set_apikey(key)
+
+    try:
+        with tempfile.TemporaryDirectory() as dd:
+            dossier = Path(dd)
+            dalles = mod.discover_dalles(bbox_wgs, bbox_natif, dossier / "disc.json")
+            if dalles is None:
+                return ("SKIP", "cle/None") if needs_key else ("FAIL", "discover -> None (reseau/endpoint)")
+            if not dalles:
+                return "FAIL", "0 dalle pour un point pourtant couvert"
+            nom, url = next(iter(dalles.items()))
+            if getattr(mod, "COG_WINDOWED", False):
+                res = L.telecharger_cog_fenetre(nom, url, dossier, bbox_natif)
+            else:
+                res = L.telecharger_dalle_directe(nom, url, dossier)
+            if res != "ok":
+                return "FAIL", f"download={res} ({nom})"
+            with rasterio.open(L.chemin_dalle(dossier, nom)) as src:
+                a = src.read(1); ndv = src.nodata
+                v = a[a != ndv] if ndv is not None else a
+                v = v[np.isfinite(v)]
+                rm = src.res[0]
+            if v.size == 0:
+                return "FAIL", "tuile recuperee mais 0 pixel valide"
+            return "PASS", f"z=[{float(v.min()):.1f},{float(v.max()):.1f}] m, {v.size}px, res={rm:g}"
+    except ImportError as e:
+        return "SKIP", f"dependance absente: {e}"
+    except Exception as e:
+        if any(h in repr(e).lower() for h in _DEP):
+            return "SKIP", f"dependance LAZ absente: {type(e).__name__}"
+        return "FAIL", f"{type(e).__name__}: {e}"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", default="")
+    args = ap.parse_args()
+    only = {c.strip() for c in args.only.split(",") if c.strip()}
+    codes = [c for c in TEST_POINTS if (not only or c in only)]
+
+    print(f"\nSmoke providers (lidar2map, {len(codes)}) - {time.strftime('%Y-%m-%d %H:%M')}\n")
+    rows = []
+    for code in codes:
+        mod_name = "providers." + code.replace("-", "_")
+        try:
+            mod = importlib.import_module(mod_name)
+        except Exception as e:
+            print(f"  ? {code:<22} FAIL    import {type(e).__name__}: {e}"); rows.append((code, "FAIL")); continue
+        t0 = time.time()
+        try:
+            status, detail = smoke_one(code, mod, *TEST_POINTS[code])
+        except Exception as e:
+            status, detail = "FAIL", f"{type(e).__name__}: {e}"
+        dt = time.time() - t0
+        icon = {"PASS": "OK  ", "FAIL": "FAIL", "SKIP": "SKIP"}.get(status, "????")
+        print(f"  [{icon}] {code:<22} {dt:6.1f}s  {detail}", flush=True)
+        rows.append((code, status))
+
+    nf = sum(1 for _, s in rows if s == "FAIL")
+    npass = sum(1 for _, s in rows if s == "PASS")
+    nskip = sum(1 for _, s in rows if s == "SKIP")
+    print(f"\n{npass} PASS - {nf} FAIL - {nskip} SKIP / {len(rows)}")
+    return 1 if nf else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

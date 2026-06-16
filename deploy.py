@@ -90,6 +90,7 @@ MAP = {
     "release_github.yml":            ".github/workflows/release.yml",
     "update_github.yml":             ".github/workflows/update.yml",
     "cross_platform_github.yml":     ".github/workflows/cross_platform.yml",
+    "smoke_github.yml":              ".github/workflows/smoke.yml",
     "LICENSE":                       "LICENSE",
     ".gitignore":                    ".gitignore",
 }
