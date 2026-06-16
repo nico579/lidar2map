@@ -53,7 +53,7 @@ TEST_POINTS = {
     "cz-cuzk": (14.418, 50.073), "si-arso": (14.506, 46.056),
     "ee-maaamet": (24.753, 59.437), "es-cnig": (-3.703, 40.417),
     "es-icgc": (2.173, 41.385), "pl-gugik": (21.012, 52.230),
-    "ca-nrcan": (-75.697, 45.421), "nz-linz": (174.776, -41.286),
+    "ca-nrcan": (-73.567, 45.501), "nz-linz": (174.776, -41.286),
     "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),
     "au-ga": (138.600, -34.920), "us-tnm": (-122.332, 47.606),
     "us-3dep": (-122.332, 47.606), "se-lantmateriet": (18.069, 59.329),
@@ -151,8 +151,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="",
                     help="restreindre a ces codes (defaut : TOUS les providers du dossier)")
+    ap.add_argument("--skip", default="",
+                    help="codes a exclure (reportes SKIP) : faux-positifs CI "
+                         "(IP throttle, auth) qui marchent depuis une IP normale")
     args = ap.parse_args()
     only = {c.strip() for c in args.only.split(",") if c.strip()}
+    skip = {c.strip() for c in args.skip.split(",") if c.strip()}
 
     discovered, imp_errors = _discover_providers()      # lit providers/*.py
     codes = sorted(c for c in discovered if (not only or c in only))
@@ -165,6 +169,9 @@ def main():
         print(f"  [FAIL] {stem:<22}   import : {err}")
         rows.append((stem, "FAIL"))
     for code in codes:
+        if code in skip:
+            print(f"  [SKIP] {code:<22}   exclu via --skip (faux-positif CI connu)")
+            rows.append((code, "SKIP")); continue
         if code not in TEST_POINTS:
             print(f"  [NOPT] {code:<22}   aucun point de test (ajouter dans TEST_POINTS)")
             rows.append((code, "NOPT")); continue

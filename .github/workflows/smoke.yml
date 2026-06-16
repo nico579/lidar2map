@@ -1,14 +1,19 @@
 name: Smoke providers
 
-# Test de fumée réseau des providers LiDAR : pour chaque provider, lidar2map
-# télécharge UNE tuile réelle sur un point couvert (mode --provider-selftest) et
-# valide le GeoTIFF. Détecte un endpoint tombé, une API qui change de format,
+# Test de fumée réseau des providers LiDAR : le harness tests/smoke_providers.py
+# importe lidar2map et appelle SES vraies fonctions de download (discover ->
+# telecharger_* -> post_fetch -> validation GeoTIFF) sur un point couvert, une
+# tuile par provider. Détecte un endpoint tombé, une API qui change de format,
 # une clé expirée. Lancé chaque semaine + à la demande (PAS sur push : ça
 # toucherait ~30 endpoints externes à chaque déploiement).
 #
-# NB : les runners GitHub sortent par des IP US/cloud ; quelques providers
-# géo-restreints (ex. pl-gugik) peuvent échouer faussement depuis la CI. Un
-# FAIL = signal à vérifier (peut être un vrai blocage ou un filtrage IP).
+# Les runners GitHub sortent par des IP cloud. Deux providers donnent un faux
+# FAIL depuis la CI mais marchent depuis une IP normale, donc exclus via --skip :
+#   es-icgc          : datacloud.icgc.cat throttle les IP cloud (timeout ~370s ;
+#                      PASS en 1,6s en local).
+#   se-lantmateriet  : HTTP 403 sans compte Lantmäteriet (auth requise).
+# us-tnm peut échouer transitoirement (backend USGS/sciencebase) : un re-run
+# repasse, on le garde dans le run pour ne pas perdre le signal.
 #
 # Clés API optionnelles via secrets du repo (sinon ces providers -> SKIP) :
 #   OPENTOPOGRAPHY_API_KEY (us-3dep), DATAFORDELER_TOKEN (dk), FI_NLS_API_KEY (fi).
@@ -42,4 +47,4 @@ jobs:
         run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi laspy lazrs
 
       - name: Smoke test providers
-        run: python tests/smoke_providers.py
+        run: python tests/smoke_providers.py --skip es-icgc,se-lantmateriet
