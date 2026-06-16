@@ -26,11 +26,12 @@
 #   (1 m). RESOLUTION_M=0.5 est la cible de sortie ; les dalles 1 m sont
 #   ré-échantillonnées par le pipeline (pas de détail inventé).
 #
-# Inclus aussi : `hes` (Historic Environment Scotland, scans archéo de sites),
-#   7 sous-jeux à 25 ou 50 cm sous lidar/hes/<sous-jeu>/, MÊME grille 1 km et même
-#   nommage OS que le national. Les 25 cm (hes-2016, hes-2016-2017, hes-2017) sont
-#   priorité haute (plus fins, ré-échantillonnés à RESOLUTION_M=0.5 en sortie).
-#   Pas encore inclus : `outer-hebrides/2019` (arbo imbriquée, suivi possible).
+# Inclus aussi : `hes` (Historic Environment Scotland, 7 sous-jeux de scans archéo
+#   de sites, 25/50 cm, lidar/hes/<sous-jeu>/) et `outer-hebrides/2019` (Hébrides
+#   extérieures, 25 cm en grille 1 km + 50 cm en grille 5 km). Toutes en
+#   EPSG:27700, mêmes grilles OS que ci-dessus. Les 25 cm passent en tête (plus
+#   fins ; sortie ré-échantillonnée à RESOLUTION_M=0.5). Tout l'open LiDAR
+#   écossais du portail est désormais couvert.
 #
 #   - CRS natif EPSG:27700 (British National Grid, OSGB36), MÊME grille que
 #     gb_england / gb_wales (réutilisation de l'encodage OS, cf. _os_cell).
@@ -73,28 +74,44 @@ COVERAGE_EXTENT = (0, 520000, 470000, 1220000)   # (E_min, N_min, E_max, N_max)
 
 # ── Endpoints S3 ─────────────────────────────────────────────────────────────
 S3_BASE  = "https://srsp-open-data.s3.eu-west-2.amazonaws.com"
-GRIDDED_TMPL = "lidar/{coll}/dtm/27700/gridded/"   # coll peut contenir un / (ex. hes/hes-2016)
 HTTP_UA  = "lidar2map/1.0 (Scottish Remote Sensing Portal)"
 
-# (collection S3, grille) par ordre de PRIORITÉ : la 1re qui couvre une cellule
-# 1 km gagne. Grille : "1km" (réf AAeennn), "5km" (réf AAenQ quadrant),
-# "10km" (réf AAen). Ordre = résolution décroissante (la plus fine d'abord).
+
+def _gp(coll):
+    """Chemin gridded standard (layout le plus courant)."""
+    return f"lidar/{coll}/dtm/27700/gridded/"
+
+
+# (label, chemin S3 gridded complet, grille) par ordre de PRIORITÉ : la 1re
+# collection qui couvre une cellule 1 km gagne. Grille : "1km" (réf AAeennn),
+# "5km" (réf AAenQ quadrant), "10km" (réf AAen). Ordre = résolution décroissante
+# (la plus fine d'abord). Le chemin est stocké en entier car les layouts varient
+# (hes ajoute un sous-jeu ; outer-hebrides intercale la résolution avant le CRS).
 COLLECTIONS = (
-    # 25 cm, 1 km : scans archéo HES (couverture ponctuelle de sites), le plus fin
-    ("hes/hes-2016-2017", "1km"), ("hes/hes-2016", "1km"), ("hes/hes-2017", "1km"),
-    # 50 cm, 1 km : national, Orcades, puis les autres jeux HES
-    ("national-lidar-programme",  "1km"),
-    ("orkney-islands-council-23", "1km"),
-    ("hes/hes-2010s10", "1km"), ("hes/hes-2017sp3", "1km"),
-    ("hes/hes_2010", "1km"), ("hes/luing", "1km"),
-    # 50 cm, 5 km (phases 3-6) puis 1 m, 10 km (phases 1-2)
-    ("phase-6", "5km"), ("phase-5", "5km"),
-    ("phase-4", "5km"), ("phase-3", "5km"),
-    ("phase-2", "10km"), ("phase-1", "10km"),
+    # 25 cm, grille 1 km : scans archéo HES (sites ponctuels) + Hébrides extérieures
+    ("hes-2016-2017", _gp("hes/hes-2016-2017"), "1km"),
+    ("hes-2016",      _gp("hes/hes-2016"),      "1km"),
+    ("hes-2017",      _gp("hes/hes-2017"),      "1km"),
+    ("outer-hebrides-25cm",
+     "lidar/outer-hebrides/2019/dtm/25cm/27700/gridded/", "1km"),
+    # 50 cm, grille 1 km : national, Orcades, puis les autres jeux HES
+    ("national-lidar-programme",  _gp("national-lidar-programme"),  "1km"),
+    ("orkney-islands-council-23", _gp("orkney-islands-council-23"), "1km"),
+    ("hes-2010s10", _gp("hes/hes-2010s10"), "1km"),
+    ("hes-2017sp3", _gp("hes/hes-2017sp3"), "1km"),
+    ("hes_2010",    _gp("hes/hes_2010"),    "1km"),
+    ("luing",       _gp("hes/luing"),       "1km"),
+    # 50 cm, grille 5 km : Hébrides extérieures puis phases 3-6
+    ("outer-hebrides-50cm",
+     "lidar/outer-hebrides/2019/dtm/50cm/27700/gridded/", "5km"),
+    ("phase-6", _gp("phase-6"), "5km"), ("phase-5", _gp("phase-5"), "5km"),
+    ("phase-4", _gp("phase-4"), "5km"), ("phase-3", _gp("phase-3"), "5km"),
+    # 1 m, grille 10 km : phases 1-2
+    ("phase-2", _gp("phase-2"), "10km"), ("phase-1", _gp("phase-1"), "10km"),
 )
 
 _S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 
 
 # ── OS National Grid : (E, N) mètres → référence de dalle ─────────────────────
@@ -222,22 +239,21 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
     etat = {"reseau_ok": False, "nouveaux": False}
 
-    def _availabilite(coll, grille, cells):
+    def _availabilite(label, base, grille, cells):
         """{ref_token: url} pour `cells` dans cette collection ; liste S3 par
         préfixe (mémoïsé dans `cache`). Ne liste que les préfixes manquants."""
         prefixes = sorted({_prefixe_listing(x * 1000, y * 1000, grille)
                            for x, y in cells})
         avail = {}
-        base = GRIDDED_TMPL.format(coll=coll)
         for pfx in prefixes:
-            ck = f"{coll}|{pfx}"
+            ck = f"{label}|{pfx}"
             if ck in cache:
                 avail.update(cache[ck]); etat["reseau_ok"] = True; continue
             try:
                 keys = _list_prefix(base + pfx)
                 etat["reseau_ok"] = True
             except Exception as e:
-                print(f"  GB-Scotland listing {coll}/{pfx} : {type(e).__name__}: {e}")
+                print(f"  GB-Scotland listing {label}/{pfx} : {type(e).__name__}: {e}")
                 continue
             trouve = {_osref_depuis_cle(k): f"{S3_BASE}/{k}" for k in keys}
             cache[ck] = trouve
@@ -248,10 +264,10 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     dalles = {}
     par_collection = {}
     restantes = set(cellules)
-    for coll, grille in COLLECTIONS:
+    for label, base, grille in COLLECTIONS:
         if not restantes:
             break
-        avail = _availabilite(coll, grille, restantes)
+        avail = _availabilite(label, base, grille, restantes)
         if not avail:
             continue
         couvertes = set()
@@ -261,7 +277,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 dalles[url.rsplit("/", 1)[-1]] = url
                 couvertes.add((x, y))
         if couvertes:
-            par_collection[coll] = len(couvertes)
+            par_collection[label] = len(couvertes)
         restantes -= couvertes
 
     if etat["nouveaux"] and etat["reseau_ok"]:
