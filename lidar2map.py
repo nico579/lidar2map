@@ -5599,6 +5599,68 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
 # --shading produit UNE instance avec SES paramètres — deux instances du même
 # type (ex. svf à 20 m ET 100 m) coexistent, les params étant encodés dans le
 # nom de fichier de sortie.
+# Opacités du composite VAT (cf. _vat_compose). Tunables : ce sont les seuls
+# réglages "esthétiques" du mélange, exposés en constantes pour calage facile.
+VAT_OPOS_OPACITY  = 0.5   # overlay openness positif (renforce le micro-relief convexe)
+VAT_SLOPE_OPACITY = 0.5   # assombrissement par la pente (contraste des talus/scarps)
+
+
+def _vat_compose(svf_path, opos_path, slope_path, dst_path,
+                 gamma=1.0, opos_opacity=VAT_OPOS_OPACITY,
+                 slope_opacity=VAT_SLOPE_OPACITY):
+    """Composite VAT-style (Visualization for Archaeological Topography), niveaux
+    de gris, à partir de 3 couches uint8 déjà calculées et pixel-alignées :
+        base   = Sky-View Factor (micro-relief : fossés sombres, surfaces claires)
+        + overlay openness positif  (accentue crêtes / tertres / convexités)
+        × assombrissement par la pente (donne du contraste aux talus et scarps)
+    C'est l'esprit du défaut archéo du Relief Visualization Toolbox (ZRC SAZU) :
+    une seule image qui révèle creux ET bosses sans choisir une méthode. Les
+    poids sont dans VAT_*_OPACITY (à calibrer à l'œil / contre RVT).
+
+    Blend par fenêtres 2048² (uint8, RAM bornée). Retourne True/False."""
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+    except ImportError as _ie:
+        print(f"  VAT compose: missing import ({_ie})", flush=True)
+        return False
+
+    CHUNK = 2048
+    with _rio.open(str(svf_path)) as s0:
+        H, W = s0.height, s0.width
+        profile = s0.profile.copy()
+    for _k in ("BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        profile.pop(_k, None)
+    profile.update(driver="GTiff", dtype="uint8", count=1,
+                   compress="deflate", predictor=2, tiled=True,
+                   blockxsize=512, blockysize=512, nodata=None, bigtiff="IF_SAFER")
+
+    def _overlay(b, t):
+        return np.where(b < 0.5, 2 * b * t, 1.0 - 2.0 * (1.0 - b) * (1.0 - t))
+
+    with _rio.open(str(svf_path)) as s, _rio.open(str(opos_path)) as o, \
+         _rio.open(str(slope_path)) as sl, \
+         _rio.open(str(dst_path), "w", **profile) as dst:
+        for r in range(0, H, CHUNK):
+            for c in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("VAT compose interrompu")
+                win = Window(c, r, min(CHUNK, W - c), min(CHUNK, H - r))
+                a_u8 = s.read(1, window=win)
+                a = a_u8.astype(np.float32) / 255.0
+                b = o.read(1, window=win).astype(np.float32) / 255.0
+                d = sl.read(1, window=win).astype(np.float32) / 255.0
+                v = a * (1.0 - opos_opacity) + _overlay(a, b) * opos_opacity
+                v = v * (1.0 - slope_opacity * d)      # pente raide → plus sombre
+                if gamma and gamma != 1.0:
+                    v = np.clip(v, 0, 1) ** gamma
+                out = (np.clip(v, 0, 1) * 255.0).astype(np.uint8)
+                out[a_u8 == 0] = 0                     # nodata SVF (= 0) → noir
+                dst.write(out, 1, window=win)
+    return True
+
+
 _SHADING_TYPES = {
     "315":   {"elevation"},
     "045":   {"elevation"},
@@ -5611,6 +5673,7 @@ _SHADING_TYPES = {
     "oneg":  {"dist", "gamma"},
     "lrm":   {"sigma"},
     "rrim":  {"sigma"},
+    "vat":   {"dist", "gamma"},
 }
 
 
@@ -5628,6 +5691,7 @@ def parser_shading_spec(spec):
                               sweep (1|0, kernel sweep-horizon — défaut --svf-sweep)
       opos/oneg             : dist (m), gamma
       lrm/rrim              : sigma (m, rayon gaussien — défaut 15 px du provider)
+      vat                   : dist (m, rayon SVF/openness), gamma (du composite)
       slope                 : aucun
 
     Lève ValueError (message clair) si type ou clé inconnus.
@@ -5674,6 +5738,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         oneg — Openness négative inversée : fossés/chemins creux sombres
         rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
         lrm  — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
+        vat  — Visualization for Archaeological Topography : composite niveaux de
+               gris SVF + openness positif + slope (la "meilleure vue archéo" en
+               une seule image ; numba requis pour les composantes SVF/openness)
 
     Deux chemins d'entrée, cumulables :
       choix     : liste de TYPES (--shadings, GUI historique) — chaque type
@@ -5756,6 +5823,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         if typ in ("svf", "opos", "oneg"):
             p.setdefault("dist", float(svf_dist))
             p.setdefault("gamma", float(svf_gamma))
+        if typ == "vat":
+            # dist = rayon SVF/openness ; gamma = gamma FINAL du composite (les
+            # composantes entrent linéaires dans le blend → pas de double gamma).
+            p.setdefault("dist", float(svf_dist))
+            p.setdefault("gamma", 1.0)
         if typ in ("lrm", "rrim"):
             p.setdefault("sigma", float(sigma_defaut_m))
         return p
@@ -5773,6 +5845,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             gtag = f"{p['gamma']:.1f}".replace(".", "p")
             base = (f"svf_{p['conv']}" if typ == "svf" else typ)
             return f"{base}_{int(round(p['dist']))}m_g{gtag}_ombrage"
+        if typ == "vat":
+            if prm:   # params explicites → encoder dist/gamma, sinon nom canonique
+                gtag = f"{p['gamma']:.1f}".replace(".", "p")
+                return f"vat_{int(round(p['dist']))}m_g{gtag}_ombrage"
+            return "vat_ombrage"
         # lrm / rrim
         if "sigma" in (prm or {}) and p["sigma"] != sigma_defaut_m:
             return f"{typ}_s{_tag(p['sigma'])}m_ombrage"
@@ -6158,6 +6235,48 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 finally:
                     if slope_tmp_path.exists():
                         slope_tmp_path.unlink(missing_ok=True)
+
+            elif cle == "vat":
+                # ── VAT — composite SVF + openness positif + slope ────────────
+                # Même patron que RRIM : calcule les 3 composantes en temp (SVF
+                # conv=0 et openness conv=2 via _svf_chunked, slope via
+                # _hillshade_chunked), blende avec _vat_compose, nettoie. Les
+                # composantes entrent LINÉAIRES (gamma 1) ; le gamma final est
+                # appliqué par le composite.
+                _vat_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
+                _vat_gamma   = float(p_i["gamma"])
+                print(f"  VAT — composite SVF + openness + slope"
+                      f" (rayon {_vat_dist_px * RESOLUTION_M:.0f} m)"
+                      f" — peut prendre 10-20 min...", flush=True)
+                _svf_t   = dossier_ville / nom_fichier.replace(".tif", "_svf_tmp.tif")
+                _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
+                _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
+                try:
+                    _ok_comp = (
+                        _svf_chunked(Path(src_str), _svf_t, _vat_dist_px, 16,
+                                     RESOLUTION_M, 1.0, use_sweep, conv=0)
+                        and _svf_chunked(Path(src_str), _opos_t, _vat_dist_px, 16,
+                                         RESOLUTION_M, 1.0, False, conv=2)
+                        and _hillshade_chunked(Path(src_str), _slope_t, "slope",
+                                               {}, dx=RESOLUTION_M, dy=RESOLUTION_M))
+                    if not _ok_comp:
+                        print("  VAT : composantes indisponibles (numba requis pour"
+                              " SVF/openness) — ombrage sauté.", flush=True)
+                        continue
+                    if not _vat_compose(_svf_t, _opos_t, _slope_t, chemin_out,
+                                        gamma=_vat_gamma):
+                        if chemin_out.exists():
+                            chemin_out.unlink()
+                        continue
+                except Exception as e_vat:
+                    print(f"  ERREUR composite VAT : {e_vat}")
+                    if chemin_out.exists():
+                        chemin_out.unlink()
+                    continue
+                finally:
+                    for _t in (_svf_t, _opos_t, _slope_t):
+                        if _t.exists():
+                            _t.unlink(missing_ok=True)
 
             if chemin_out.exists():
                 _creer_fichier(chemin_out)
@@ -9038,26 +9157,28 @@ Examples:
     elif dalles_ombrages and not args.ombrages and not args.oui:
         # Mode interactif — pas de --ombrages, pas de
         print(f"\n  Shadings to generate:")
-        print(f"  [1] Rapide     : multi + slope                                    (~1 min)")
-        print(f"  [2] Archaeo     : 315 + 045 + multi + slope                        (~2 min)")
-        print(f"  [3] Archaeo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
-        print(f"  [4] Archaeo+LRM : multi + slope + LRM gaussien                     (~8 min)")
-        print(f"  [5] Archaeo+RRIM: multi + slope + RRIM (colour composite)         (~25 min)")
-        print(f"  [6] Complet    : 315 045 135 225 multi slope svf lrm rrim         (~60 min)")
-        print(f"  [7] None")
-        print(f"  [8] Choix manuel  ex: multi slope svf rrim")
-        print(f"  SVF/LRM/RRIM : numpy/scipy (scipy auto-installed if missing)")
+        print(f"  [1] Rapide      : multi + slope                                   (~1 min)")
+        print(f"  [2] Archaeo     : 315 + 045 + multi + slope                       (~2 min)")
+        print(f"  [3] VAT (archéo, recommandé) : SVF + openness + slope, 1 image    (~20 min)")
+        print(f"  [4] Archaeo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
+        print(f"  [5] Archaeo+LRM : multi + slope + LRM gaussien                     (~8 min)")
+        print(f"  [6] Archaeo+RRIM: multi + slope + RRIM (colour composite)         (~25 min)")
+        print(f"  [7] Complet     : 315 045 135 225 multi slope svf lrm rrim        (~60 min)")
+        print(f"  [8] None")
+        print(f"  [9] Choix manuel  ex: multi slope svf rrim vat")
+        print(f"  SVF/openness/LRM/RRIM/VAT : numpy/scipy/numba (auto-installés si besoin)")
         rep = input("  Choix [1] : ").strip() or "1"
         if   rep == "1": choix_ombrages = ["multi", "slope"]
         elif rep == "2": choix_ombrages = ["315", "045", "multi", "slope"]
-        elif rep == "3": choix_ombrages = ["multi", "slope", "svf"]
-        elif rep == "4": choix_ombrages = ["multi", "slope", "lrm"]
-        elif rep == "5": choix_ombrages = ["multi", "slope", "rrim"]
-        elif rep == "6": choix_ombrages = TOUS_OMBRAGES
-        elif rep == "7": choix_ombrages = []
-        elif rep == "8":
+        elif rep == "3": choix_ombrages = ["vat"]
+        elif rep == "4": choix_ombrages = ["multi", "slope", "svf"]
+        elif rep == "5": choix_ombrages = ["multi", "slope", "lrm"]
+        elif rep == "6": choix_ombrages = ["multi", "slope", "rrim"]
+        elif rep == "7": choix_ombrages = TOUS_OMBRAGES
+        elif rep == "8": choix_ombrages = []
+        elif rep == "9":
             saisie = input("  Types : ").strip().lower().split()
-            choix_ombrages = [s for s in saisie if s in TOUS_OMBRAGES]
+            choix_ombrages = [s for s in saisie if s in _SHADING_TYPES]
         else:             choix_ombrages = ["multi", "slope"]
     else:
         choix_ombrages = []  # sans --ombrages → pas d'ombrage

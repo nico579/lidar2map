@@ -291,24 +291,60 @@ attendus = {"zz_multi_ombrage.tif",            # legacy : nom historique
 check("instances : fichiers attendus produits", produits == attendus,
       f"écart : {produits ^ attendus}")
 
-print("== 11. Provider gb-scotland : encodage OS National Grid ==")
+print("== 10b. Composite VAT (_vat_compose) ==")
+assert l2m.parser_shading_spec("vat") == ("vat", {})
+assert l2m.parser_shading_spec("vat:dist=30,gamma=1.5") == \
+    ("vat", {"dist": 30.0, "gamma": 1.5})
+check("vat dans _SHADING_TYPES (dist, gamma)",
+      l2m._SHADING_TYPES.get("vat") == {"dist", "gamma"})
+# Blend sur 3 couches uint8 synthétiques (pas de numba ni réseau) : on vérifie
+# le nodata (SVF=0 → noir) et l'assombrissement par la pente.
+_vd = tmp / "vat"; _vd.mkdir()
+def _mk_u8(path, arr):
+    h, w = arr.shape
+    with rasterio.open(path, "w", driver="GTiff", height=h, width=w, count=1,
+                       dtype="uint8", crs="EPSG:27700",
+                       transform=from_origin(0, h, 1, 1)) as d:
+        d.write(arr, 1)
+_svf = np.full((32, 32), 200, np.uint8); _svf[0:4, 0:4] = 0       # nodata SVF
+_opos = np.full((32, 32), 128, np.uint8)
+_slope = np.zeros((32, 32), np.uint8); _slope[:, 16:] = 200        # pente à droite
+_mk_u8(_vd / "s.tif", _svf); _mk_u8(_vd / "o.tif", _opos); _mk_u8(_vd / "sl.tif", _slope)
+assert l2m._vat_compose(_vd / "s.tif", _vd / "o.tif", _vd / "sl.tif",
+                        _vd / "v.tif", gamma=1.0)
+with rasterio.open(_vd / "v.tif") as _r:
+    _out = _r.read(1); _bands = _r.count
+check("VAT : sortie 1 bande uint8", _bands == 1 and _out.dtype == np.uint8)
+check("VAT : nodata SVF → noir", int(_out[1, 1]) == 0, int(_out[1, 1]))
+check("VAT : la pente assombrit (droite < gauche)",
+      int(_out[20, 24]) < int(_out[20, 4]),
+      f"droite={_out[20, 24]} gauche={_out[20, 4]}")
+
+print("== 11. Provider gb-scotland : encodage OS National Grid (multi-grille) ==")
 _SCT = Path(__file__).resolve().parent.parent / "providers" / "gb_scotland.py"
 _sct_spec = importlib.util.spec_from_file_location("gb_scotland", str(_SCT))
 sct = importlib.util.module_from_spec(_sct_spec)
 _sct_spec.loader.exec_module(sct)
-# Références OS connues (coin SW) — carrés 100 km NR (E100000/N600000) et
-# HY (E300000/N1000000).
-check("OS ref NR5807 (E158000/N607000)",
-      sct._en_vers_osref(158000, 607000) == "NR5807",
-      sct._en_vers_osref(158000, 607000))
-check("OS ref HY1700 (E317000/N1000000)",
-      sct._en_vers_osref(317000, 1000000) == "HY1700",
-      sct._en_vers_osref(317000, 1000000))
-check("dalle_filename km → nom OS",
-      sct.dalle_filename(158, 607) == "sct_dtm_NR5807.tif",
+# Réf OS du point E158000/N607000 (carré 100 km NR, 1 km = E58/N07 km) selon les
+# 3 grilles du bucket : 1 km (national/hes/orkney), 10 km (phases 1-2), 5 km
+# (phases 3-6, outer-hebrides : cellule 10 km + quadrant N/S puis E/O).
+check("OS ref 1 km NR5807 (E158000/N607000)",
+      sct._ref_pour_grille(158000, 607000, "1km") == "NR5807",
+      sct._ref_pour_grille(158000, 607000, "1km"))
+check("OS ref 1 km HY1700 (E317000/N1000000)",
+      sct._ref_pour_grille(317000, 1000000, "1km") == "HY1700",
+      sct._ref_pour_grille(317000, 1000000, "1km"))
+check("OS ref 10 km NR50 (E158000/N607000)",
+      sct._ref_pour_grille(158000, 607000, "10km") == "NR50",
+      sct._ref_pour_grille(158000, 607000, "10km"))
+check("OS ref 5 km NR50NE (E%10=8→E, N%10=7→N)",
+      sct._ref_pour_grille(158000, 607000, "5km") == "NR50NE",
+      sct._ref_pour_grille(158000, 607000, "5km"))
+check("dalle_filename km → nom OS 1 km",
+      sct.dalle_filename(158, 607) == "NR5807.tif",
       sct.dalle_filename(158, 607))
-check("subdir_from_name parse le carré 100 km",
-      sct.subdir_from_name("sct_dtm_NR5807.tif") == "NR")
+check("subdir_from_name parse le carré 100 km (basename S3 réel)",
+      sct.subdir_from_name("NR5807_50cm_DTM_ScotlandNationalLiDAR.tif") == "NR")
 check("dalles_pour_bbox : grille 1 km (2×2)",
       len(sct.dalles_pour_bbox(158000, 607000, 160000, 609000)) == 4)
 check("discover_dalles(bbox_natif=None) → {} (pas de réseau)",

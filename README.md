@@ -2,6 +2,8 @@
 
 # lidar2map
 
+[![Smoke providers](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml/badge.svg)](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml)
+
 **Offline archaeological LiDAR maps, multi-country + IGN raster/vector + OSM, for Locus Map / OsmAnd / TwoNav**
 
 A self-contained Python tool that downloads public LiDAR data from national portals across **22 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Poland, USA, Canada, New Zealand, Australia, Japan), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
@@ -26,7 +28,7 @@ A self-contained Python tool that downloads public LiDAR data from national port
 
 ## Who is it for?
 
-- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **22 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Poland, USA, Canada, New Zealand, Australia, Japan) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM) are identical from one country to the next.
+- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **22 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Poland, USA, Canada, New Zealand, Australia, Japan) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM, VAT) are identical from one country to the next.
 - **French hikers** who want offline IGN topo maps on their phone (Locus Map Pro, OsmAnd+): the IGN raster/vector tabs remain France-only.
 - **Landscape surveyors** who combine historical orthophotos (1950-1995, France) with a DEM to spot human remains before agricultural land abandonment erases them.
 - **Cavers / explorers** who need accurate base maps in areas not covered by mainstream apps.
@@ -49,6 +51,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
   | `lrm` | Local Relief Model, subtracts the smoothed terrain (gaussian σ): removes hills and valleys, keeps only local anomalies | `sigma` (gaussian radius in m ≈ max scale of preserved structures; default 15 px of the provider) |
   | `rrim` | Red Relief Image Map (Chiba 2008), color composite: slope in red (absolute 0-45° ramp), LRM as light/dark, hollows AND mounds at a glance | `sigma` (of the internal LRM) |
+  | `vat` | **Visualization for Archaeological Topography**, the recommended one-shot archaeology view: SVF + positive openness + slope blended into a single grayscale, reveals hollows AND mounds without picking a method (RVT style, ZRC SAZU). Needs numba | `dist` (SVF/openness radius in m, default 20), `gamma` (final composite contrast, default 1.0) |
 
   Two ways to request them:
 

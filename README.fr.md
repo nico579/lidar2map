@@ -2,6 +2,8 @@
 
 # lidar2map
 
+[![Smoke providers](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml/badge.svg)](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml)
+
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
 Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **22 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
@@ -24,7 +26,7 @@ Script Python autonome qui télécharge les données LiDAR publiques de portails
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **22 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **22 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) : les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -47,6 +49,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   | `oneg` | Openness négative inversée, vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
   | `lrm` | Local Relief Model, soustrait le relief lissé (gaussienne σ) : supprime collines et vallées, ne garde que les anomalies locales | `sigma` (rayon gaussien en m ≈ échelle max des structures conservées ; défaut 15 px du provider) |
   | `rrim` | Red Relief Image Map (Chiba 2008), composite couleur : pente en rouge (rampe absolue 0-45°), LRM en clair/foncé, creux ET bosses d'un seul regard | `sigma` (du LRM interne) |
+  | `vat` | **Visualization for Archaeological Topography**, la vue archéo recommandée en une passe : SVF + openness positif + pente fondus en un seul niveau de gris, révèle creux ET bosses sans choisir une méthode (esprit RVT, ZRC SAZU). Nécessite numba | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste du composite, défaut 1.0) |
 
   Deux façons de les demander :
 
