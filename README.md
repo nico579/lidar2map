@@ -226,58 +226,49 @@ Everything below applies to the binary as well as the script, just replace
 **SVF relief + IGN topo map over a town (1 km² zone around Garéoult, France):**
 ```bash
 python lidar2map.py --lidar --zone-city Gareoult --zone-radius 1 \
-    --shadings multi svf --file-formats mbtiles --yes
-```
+    --shadings multi svf --file-formats mbtiles```
 
 **Relief over Amsterdam (Netherlands, AHN4):**
 ```bash
 python lidar2map.py --provider nl-ahn --lidar --download \
     --zone-bbox 120000,486000,122000,488000 --zone-name amsterdam \
-    --shadings multi --file-formats mbtiles --yes
-```
+    --shadings multi --file-formats mbtiles```
 
 **Relief over Geneva (Switzerland, swissALTI3D):**
 ```bash
 python lidar2map.py --provider ch-swisstopo --lidar --download \
     --zone-city Geneve --zone-radius 1 \
-    --shadings svf --file-formats mbtiles --yes
-```
+    --shadings svf --file-formats mbtiles```
 
 **Relief over Oslo (Norway, Kartverket):**
 ```bash
 python lidar2map.py --provider no-kartverket --lidar --download \
     --zone-city Oslo --zone-radius 1 \
-    --shadings multi --file-formats mbtiles --yes
-```
+    --shadings multi --file-formats mbtiles```
 
 **Historical 1950-1965 orthophoto over an archaeological survey area:**
 ```bash
 python lidar2map.py --raster --zone-bbox 6.0,43.3,6.1,43.4 \
-    --layer ortho_1950 --zoom-min 14 --zoom-max 18 --yes
-```
+    --layer ortho_1950 --zoom-min 14 --zoom-max 18```
 
 **OSM vector map (Mapsforge .map) for Locus, whole département:**
 ```bash
-python lidar2map.py --osm --zone-department 83 --file-formats map --yes
-```
+python lidar2map.py --osm --zone-department 83 --file-formats map```
 
 **Whole region (`--zone-region`), available for all modes:**
 ```bash
 # OSM: a single map for the whole region, no re-splitting
 # (the Geofabrik PBF IS already regional, far faster than looping per département)
-python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur --yes
-
+python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur
 # IGN vector: paths/routes for the whole region as GeoJSON + Locus .map
 python lidar2map.py --vector --zone-region provence-alpes-cote-d-azur \
-    --layer chemins --file-formats gz map --yes
-```
+    --layer chemins --file-formats gz map```
 The slug is the one from [Geofabrik France](https://download.geofabrik.de/europe/france.html) (old-style regions: `provence-alpes-cote-d-azur`, `bretagne`, `corse`, `rhone-alpes`…). In OSM the region is processed as one block (the Geofabrik file is already regional, no per-département geocoding); for the raster/vector/lidar modes the area is the bbox enclosing all the départements of the region. An unknown slug lists the available regions.
 
 **IGN BD TOPO map (roads + buildings) as compressed GeoJSON + Mapsforge .map:**
 ```bash
 python lidar2map.py --vector --zone-department 83 \
-    --layer routes batiments --file-formats gz map --yes
-```
+    --layer routes batiments --file-formats gz map```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map / OsmAnd).
 
 ## LiDAR providers, adding a country
@@ -429,8 +420,7 @@ python lidar2map.py \
   --shadings svf --shading-elevation 25 \
   --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
   --file-formats mbtiles --zoom-min 8 --zoom-max 18 \
-  --image-format jpeg --image-quality 85 --yes
-```
+  --image-format jpeg --image-quality 85```
 
 Replace `<lat> <lon>` with your own area; the SVF parameters above are the ones
 used for the visual. The exact coordinates of a micro-relief are deliberately
