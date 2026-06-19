@@ -7120,35 +7120,99 @@ def construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis):
 
 
 
+# ── Connexions keep-alive pour le download WMTS ───────────────────────────────
+# urllib.request.urlopen rouvre une connexion TCP+TLS par tuile (~90 ms de
+# poignée de main perdus à chaque fois ; benchmark IGN planign : ~2x plus lent
+# qu'une connexion réutilisée). Les tuiles d'un batch tapent toutes le même hôte
+# (data.geopf.fr) : on garde une connexion HTTP/1.1 keep-alive par worker
+# (thread-local), réutilisée d'une tuile à l'autre, avec reconnexion auto si le
+# serveur ferme. Fermeture en fin de batch (generer_mbtiles_wmts).
+import http.client
+
+_wmts_conn_tl    = threading.local()
+_wmts_conns      = []                  # connexions ouvertes (fermées en fin de batch)
+_wmts_conns_lock = threading.Lock()
+
+
+def _wmts_get_conn(scheme, host):
+    cache = getattr(_wmts_conn_tl, "by_host", None)
+    if cache is None:
+        cache = {}; _wmts_conn_tl.by_host = cache
+    conn = cache.get(host)
+    if conn is None:
+        cls = (http.client.HTTPSConnection if scheme == "https"
+               else http.client.HTTPConnection)
+        conn = cls(host, timeout=15)
+        cache[host] = conn
+        with _wmts_conns_lock:
+            _wmts_conns.append(conn)
+    return conn
+
+
+def _wmts_drop_conn(host):
+    cache = getattr(_wmts_conn_tl, "by_host", None)
+    if cache and host in cache:
+        try: cache[host].close()
+        except Exception: pass
+        del cache[host]
+
+
+def _wmts_close_all_conns():
+    """À appeler en fin de batch WMTS pour libérer les sockets keep-alive."""
+    with _wmts_conns_lock:
+        for c in _wmts_conns:
+            try: c.close()
+            except Exception: pass
+        _wmts_conns.clear()
+
+
+def _wmts_fetch(url):
+    """GET via la connexion keep-alive thread-local (réutilisée d'une tuile à
+    l'autre). Retourne (status, content_type, data). Une reconnexion si la
+    connexion persistante a été fermée par le serveur."""
+    parts = urllib.parse.urlsplit(url)
+    host  = parts.netloc
+    path  = parts.path + (("?" + parts.query) if parts.query else "")
+    last_exc = None
+    for _essai in (1, 2):
+        conn = _wmts_get_conn(parts.scheme, host)
+        try:
+            conn.request("GET", path, headers=WMTS_HEADERS)
+            resp = conn.getresponse()
+            data = resp.read()        # lecture complète = condition de réutilisation
+            return resp.status, resp.headers.get("content-type", ""), data
+        except (http.client.HTTPException, OSError) as e:
+            last_exc = e
+            _wmts_drop_conn(host)     # connexion morte → on en recrée une au prochain tour
+    raise last_exc if last_exc else IOError("WMTS fetch failed")
+
+
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
     """
     Télécharge une tuile et retourne les bytes, ou None si absente/erreur.
-    Réessaie MAX_TENTATIVES fois avec délai exponentiel.
+    Réessaie MAX_TENTATIVES fois avec délai exponentiel. Réutilise une connexion
+    keep-alive par worker (cf. _wmts_fetch), ~2x plus rapide que urlopen/tuile.
     """
     url = construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis)
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
-            try:
-                resp = _urlopen(url, headers=WMTS_HEADERS, timeout=15)
-            except urllib.error.HTTPError as _e:
-                if _e.code == 404:
-                    return None
-                raise IOError(f"HTTP {_e.code}") from _e
-            # `with` ferme le socket même sur exception → pas de FD leak.
-            with resp:
-                ct = resp.headers.get("content-type", "")
-                if "xml" in ct or "html" in ct:
-                    return None   # réponse d'erreur serveur
-                data = resp.read()
+            status, ct, data = _wmts_fetch(url)
+            if status == 404:
+                return None
+            if not (200 <= status < 300):
+                raise IOError(f"HTTP {status}")
+            ct = (ct or "").lower()
+            if "xml" in ct or "html" in ct:
+                return None   # réponse d'erreur serveur
             if len(data) < 500:
-                return None   # tuile vide (mer, hors couverture)
+                return None   # tuile vide / 204 (mer, hors couverture)
             return data
         except KeyboardInterrupt:
             # Propagation au handler top-level (sys.exit(130)) qui sait
             # nettoyer (lockfile, tmp). sys.exit(0) ici tuerait juste le
             # worker, masquerait l'interruption et casserait le code retour.
             raise
-        except (urllib.error.URLError, IOError, OSError):
+        except (urllib.error.URLError, IOError, OSError, http.client.HTTPException):
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY * tentative)
             else:
@@ -7412,6 +7476,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # Sans ça la WAL reste ouverte, le .mbtiles-wal/-shm traîne.
         try: con.close()
         except Exception: pass
+        _wmts_close_all_conns()   # libérer les connexions keep-alive du batch
 
     # Garde-fou couverture (petites zones sous le seuil mi-parcours) : aucune
     # tuile dans la couche → même diagnostic. Évite un MBTiles vide "0 tiles"
