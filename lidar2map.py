@@ -1165,8 +1165,10 @@ def _bootstrap_venv_si_besoin():
             r = subprocess.run(
                 [str(venv_pip), "install", "-q",
                  "--disable-pip-version-check"] + pkgs,
-                capture_output=True, text=True)
+                capture_output=True, text=True, timeout=900)
             return r.returncode == 0, (r.stderr or "")[-500:]
+        except subprocess.TimeoutExpired:
+            return False, "pip install timeout (>900s, reseau bloque ?)"
         except subprocess.CalledProcessError as e:
             return False, str(e)
 
@@ -1356,9 +1358,12 @@ def _installer_deps():
     install_ok = False
     for cmd, label in strategies:
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         except (OSError, FileNotFoundError) as e:
             last_stderr = f"pip not found : {e}"
+            continue
+        except subprocess.TimeoutExpired:
+            last_stderr = f"pip install timeout (>900s) : {label}"
             continue
         if r.returncode == 0:
             # Vérifier que les imports critiques fonctionnent.
@@ -1403,8 +1408,9 @@ def _installer_deps():
         cmd_crit_only = base_cmd + deps_crit
         if in_venv:
             try:
-                r = subprocess.run(cmd_crit_only, capture_output=True, text=True)
-            except (OSError, FileNotFoundError):
+                r = subprocess.run(cmd_crit_only, capture_output=True, text=True,
+                                   timeout=900)
+            except (OSError, FileNotFoundError, subprocess.TimeoutExpired):
                 r = None
             if r is not None and r.returncode == 0:
                 rates = []
@@ -5630,6 +5636,15 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
     with _rio.open(str(svf_path)) as s0:
         H, W = s0.height, s0.width
         profile = s0.profile.copy()
+    # Les 3 couches viennent du même DEM donc devraient être alignées ; on le
+    # vérifie quand même (cf. _rrim_chunked) : sinon les lectures fenêtrées se
+    # désaligneraient silencieusement. En cas d'écart, on annule proprement.
+    for _other in (opos_path, slope_path):
+        with _rio.open(str(_other)) as _so:
+            if (_so.width, _so.height) != (W, H):
+                print(f"  VAT compose : {Path(_other).name} {_so.width}×{_so.height}"
+                      f" != SVF {W}×{H}, composite annulé", flush=True)
+                return False
     for _k in ("BIGTIFF", "bigtiff", "NODATA", "nodata"):
         profile.pop(_k, None)
     profile.update(driver="GTiff", dtype="uint8", count=1,
@@ -11653,9 +11668,13 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         import py7zr as _py7zr
     except ImportError:
         print("  Installing py7zr for .7z extraction...", flush=True)
-        r_pip = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "py7zr", "-q"],
-            capture_output=True)
+        try:
+            r_pip = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "py7zr", "-q"],
+                capture_output=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            print("  ERROR: py7zr install timeout (>600s) - cannot extract the IGN .7z")
+            return None
         if r_pip.returncode != 0:
             print("  ERROR: py7zr not installable - cannot extract the IGN .7z")
             return None
@@ -13233,11 +13252,16 @@ def lancer_gui():
             pkg = "pywebview"
         try:
             subprocess.run([sys.executable, "-m", "pip", "install", pkg,
-                            "--break-system-packages", "-q"], check=True)
-        except subprocess.CalledProcessError:
-            # Fallback : tenter sans --break-system-packages (envs Conda/venv)
-            subprocess.run([sys.executable, "-m", "pip", "install", pkg, "-q"],
-                           check=True)
+                            "--break-system-packages", "-q"], check=True, timeout=600)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            # Fallback : tenter sans --break-system-packages (envs Conda/venv).
+            # Un échec/timeout ici ne doit pas crasher : on laisse l'import
+            # webview ci-dessous échouer proprement avec un message clair.
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", pkg, "-q"],
+                               check=True, timeout=600)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as _e_wv:
+                print(f"  PyWebView install failed ({type(_e_wv).__name__}).")
         try:
             import webview
         except ImportError:
