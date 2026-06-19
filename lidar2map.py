@@ -8938,7 +8938,20 @@ Examples:
                     max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
         # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
         cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
-        dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+        # discover_dalles : None = échec réseau/endpoint, {} = pas de couverture.
+        # On distingue les deux (sinon une panne de portail ressemble à "rien
+        # ici") et on protège l'appel : un provider qui lève ne doit pas casser
+        # tout le run, juste signaler la zone comme indisponible.
+        try:
+            _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
+            if _d is None:
+                print("  ⚠ Découverte des dalles indisponible (réseau/endpoint),"
+                      " zone ignorée, réessayez.", flush=True)
+        except Exception as _e_disc:
+            print(f"  ⚠ Découverte des dalles échouée ({type(_e_disc).__name__}:"
+                  f" {_e_disc}), zone ignorée, réessayez.", flush=True)
+            _d = None
+        dalles_dict = _d or {}
         noms_attendus = set(dalles_dict.keys())
 
     # -------------------------------------------------------
@@ -9733,7 +9746,18 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
                         max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
             cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
-            dalles_dict = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover) or {}
+            # discover_dalles : None = échec réseau/endpoint, {} = pas de
+            # couverture (distinguer + protéger l'appel, cf. _traiter_zone).
+            try:
+                _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
+                if _d is None:
+                    print("  ⚠ Découverte des dalles indisponible (réseau/endpoint),"
+                          " zone ignorée, réessayez.", flush=True)
+            except Exception as _e_disc:
+                print(f"  ⚠ Découverte des dalles échouée ({type(_e_disc).__name__}:"
+                      f" {_e_disc}), zone ignorée, réessayez.", flush=True)
+                _d = None
+            dalles_dict = _d or {}
 
             if args.telechargement:
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
