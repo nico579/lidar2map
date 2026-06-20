@@ -8429,7 +8429,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.11.0 (2026-06), multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -10665,7 +10665,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.11.0 (2026-06), multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -12318,7 +12318,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.10.0 (2026-06) — multi-provider")
+                        version="lidar2map 1.11.0 (2026-06), multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
