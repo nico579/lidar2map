@@ -333,6 +333,28 @@ check("preset auto 1m -> standard",
       l2m._resoudre_preset_shading("auto", 1.0)[0] == "standard")
 check("preset : types valides", all(t in l2m._SHADING_TYPES for t, _ in _pi))
 
+print("== 10d. Fusion SVF+openness (kernel VAT) ==")
+if l2m._get_numba_svf_opos_kernel() is None:
+    check("fusion : numba absent -> skip", True)
+else:
+    import rasterio as _rio_f
+    _fd = tmp / "fus"; _fd.mkdir()
+    _dem_f = (4.0 * np.sin(xx2[:512, :512] / 9.0)
+              * np.cos(yy2[:512, :512] / 11.0)).astype(np.float32)
+    _src_f = _fd / "dem.tif"; write_tif(_src_f, _dem_f, nodata=ND)
+    # 2 passes separees vs 1 passe fusionnee, memes params (dist 20px, gamma 1)
+    l2m._svf_chunked(_src_f, _fd / "svf_s.tif", 20, 16, 1.0, 1.0, False, conv=0)
+    l2m._svf_chunked(_src_f, _fd / "opos_s.tif", 20, 16, 1.0, 1.0, False, conv=2)
+    l2m._svf_opos_chunked(_src_f, _fd / "svf_f.tif", _fd / "opos_f.tif",
+                          20, 16, 1.0, 1.0)
+    def _arr_f(p):
+        with _rio_f.open(p) as r:
+            return r.read(1)
+    check("fusion SVF == _svf_chunked conv=0 (byte-identique)",
+          np.array_equal(_arr_f(_fd / "svf_s.tif"), _arr_f(_fd / "svf_f.tif")))
+    check("fusion openness == _svf_chunked conv=2 (byte-identique)",
+          np.array_equal(_arr_f(_fd / "opos_s.tif"), _arr_f(_fd / "opos_f.tif")))
+
 print("== 11. Provider gb-scotland : encodage OS National Grid (multi-grille) ==")
 _SCT = Path(__file__).resolve().parent.parent / "providers" / "gb_scotland.py"
 _sct_spec = importlib.util.spec_from_file_location("gb_scotland", str(_SCT))

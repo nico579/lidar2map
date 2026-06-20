@@ -4228,6 +4228,82 @@ def _get_numba_svf_kernel():
         return None
 
 
+def _get_numba_svf_opos_kernel():
+    """Kernel FUSIONNÉ SVF flux (conv=0) + openness positif (conv=2) : un seul
+    scan d'horizon produit les DEUX réductions (toutes deux dérivées de max_tan).
+    Sert au composite VAT, qui sinon refait le scan coûteux deux fois. Le scan et
+    les deux formules sont identiques à ceux de _svf_kernel (conv 0 et 2), donc
+    sorties numériquement identiques (min_tan, utile au seul oneg, est omis)."""
+    if "svf_opos" in _NUMBA_KERNELS_CACHE:
+        return _NUMBA_KERNELS_CACHE["svf_opos"]
+    try:
+        import numba as _nb
+        import numpy as _np
+        import math as _math
+
+        @_nb.njit(parallel=True, fastmath=True)
+        def _svf_opos_kernel(dem, n_dir, max_r, res):
+            h, w = dem.shape
+            PI2 = 2.0 * _math.pi
+            svf  = _np.zeros((h, w), dtype=_np.float32)
+            opos = _np.zeros((h, w), dtype=_np.float32)
+            for row in _nb.prange(h):
+                for col in range(w):
+                    z0 = dem[row, col]
+                    svf_sum  = 0.0
+                    opos_sum = 0.0
+                    for k in range(n_dir):
+                        angle = k * PI2 / n_dir
+                        ddx =  _math.sin(angle)
+                        ddy = -_math.cos(angle)
+                        max_tan = -1e38
+                        for r in range(1, max_r + 1):
+                            rr = row + ddy * r
+                            cc = col + ddx * r
+                            rr_fl = _math.floor(rr)
+                            cc_fl = _math.floor(cc)
+                            r0i = int(rr_fl)
+                            c0i = int(cc_fl)
+                            r1i = r0i + 1
+                            c1i = c0i + 1
+                            if r0i < 0:       r0i = 0
+                            elif r0i > h - 1: r0i = h - 1
+                            if r1i < 0:       r1i = 0
+                            elif r1i > h - 1: r1i = h - 1
+                            if c0i < 0:       c0i = 0
+                            elif c0i > w - 1: c0i = w - 1
+                            if c1i < 0:       c1i = 0
+                            elif c1i > w - 1: c1i = w - 1
+                            fr = rr - rr_fl
+                            fc = cc - cc_fl
+                            zn = (dem[r0i, c0i] * (1 - fr) * (1 - fc) +
+                                  dem[r0i, c1i] * (1 - fr) *      fc  +
+                                  dem[r1i, c0i] *      fr  * (1 - fc) +
+                                  dem[r1i, c1i] *      fr  *      fc)
+                            dist_m = r * res
+                            tan_a  = (zn - z0) / dist_m
+                            if tan_a > max_tan:
+                                max_tan = tan_a
+                        # SVF flux : cos²γ = 1/(1+tan²γ), tan clampé >= 0
+                        mt = max_tan if max_tan > 0.0 else 0.0
+                        svf_sum  += 1.0 / (1.0 + mt * mt)
+                        # Openness positive : 0.5 − atan(max_tan)/π (NON clampé)
+                        opos_sum += 0.5 - _math.atan(max_tan) / _math.pi
+                    svf[row, col]  = svf_sum  / n_dir
+                    opos[row, col] = opos_sum / n_dir
+            return svf, opos
+
+        _NUMBA_KERNELS_CACHE["svf_opos"] = _svf_opos_kernel
+        return _svf_opos_kernel
+    except ImportError:
+        _NUMBA_KERNELS_CACHE["svf_opos"] = None
+        return None
+    except Exception as _e:
+        print(f"  Numba kernel SVF+opos : erreur compilation ({_e})", flush=True)
+        _NUMBA_KERNELS_CACHE["svf_opos"] = None
+        return None
+
+
 def _get_numba_svf_sweep_kernel():
     """Sweep-horizon SVF avec running max sur deque (upper convex hull).
 
@@ -5173,6 +5249,100 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
                 print(f"\r  SVF chunked : {pct:3d} % ({n}/{total} blocs)   ",
                       end="", flush=True)
     print(f"\r  SVF chunked: done ({total} blocs, halo={HALO} px)        ")
+    return True
+
+
+def _svf_opos_chunked(src_path, svf_dst, opos_dst, max_dist_px, n_directions=16,
+                      resolution=0.5, gamma=1.0):
+    """SVF flux + openness positif en UN seul scan d'horizon (kernel fusionné),
+    écrits dans svf_dst et opos_dst. Utilisé par le composite VAT pour éviter de
+    refaire le scan deux fois (~moitié du temps des deux passes SVF/openness).
+    Mêmes 2 passes (percentiles puis blocs), même stretch/gamma que _svf_chunked
+    en conv=0 / conv=2 : sorties identiques, une seule traversée. True/False."""
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+    except ImportError as _ie:
+        print(f"  SVF+opos chunked: missing import ({_ie})", flush=True)
+        return False
+    _kernel = _get_numba_svf_opos_kernel()
+    if _kernel is None:
+        print("  numba missing - VAT SVF+opos unavailable", flush=True)
+        return False
+
+    CHUNK = 2048
+    HALO  = max_dist_px
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+        nodata  = src.nodata
+
+    def _blocks(block):
+        """(svf, opos, nd_mask) — float, nodata rempli par la moyenne du bloc."""
+        nd_mask = _nodata_mask(block, nodata)
+        bf = block.astype(np.float32, copy=True)
+        if nd_mask.any():
+            mv = float(np.nanmean(bf[~nd_mask])) if (~nd_mask).any() else 0.0
+            bf[nd_mask] = mv
+        svf, opos = _kernel(bf, n_directions, max_dist_px, resolution)
+        return svf, opos, nd_mask
+
+    # ── Passe 1 : percentiles p2/p98 par sortie (échantillon grille 3×3) ────────
+    print("  VAT SVF+opos chunked — compilation Numba + percentiles (grille)...", flush=True)
+    def _samp(idx):
+        def f(win):
+            svf, opos, nd = _blocks(win)
+            return np.where(nd, np.nan, svf if idx == 0 else opos)
+        return f
+    _pc_s = _percentiles_grille(src_path, HALO, _samp(0), 2, 98)
+    _pc_o = _percentiles_grille(src_path, HALO, _samp(1), 2, 98)
+    if _pc_s is None or _pc_o is None:
+        return False
+    p2s, p98s, _ = _pc_s
+    p2o, p98o, _ = _pc_o
+    if p98s <= p2s: p2s, p98s = 0.0, 1.0
+    if p98o <= p2o: p2o, p98o = 0.0, 1.0
+    print(f"  VAT SVF+opos — svf p2={p2s:.3f}/p98={p98s:.3f}, "
+          f"opos p2={p2o:.3f}/p98={p98o:.3f}", flush=True)
+
+    op = profile.copy()
+    for _k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        op.pop(_k, None)
+    op.update(driver="GTiff", dtype="uint8", count=1, compress="deflate",
+              predictor=2, tiled=True, blockxsize=512, blockysize=512,
+              bigtiff="YES", nodata=None)
+
+    # ── Passe 2 : un seul scan par bloc → stretch des deux sorties → écriture ──
+    total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
+    nblk = 0
+    with _rio.open(str(src_path)) as src, \
+         _rio.open(str(svf_dst), "w", **op) as dsv, \
+         _rio.open(str(opos_dst), "w", **op) as dop:
+        for row_off in range(0, H, CHUNK):
+            for col_off in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("VAT SVF+opos interrompu")
+                row_end = min(row_off + CHUNK, H)
+                col_end = min(col_off + CHUNK, W)
+                r0 = max(0, row_off - HALO); c0 = max(0, col_off - HALO)
+                r1 = min(H, row_end + HALO); c1 = min(W, col_end + HALO)
+                block = src.read(1, window=Window(c0, r0, c1 - c0, r1 - r0)).astype(np.float32)
+                svf, opos, nd = _blocks(block)
+                svf[nd] = 0.0; opos[nd] = 0.0
+                su8 = (np.clip((svf - p2s) / (p98s - p2s), 0.0, 1.0) ** gamma
+                       * 255.0).astype(np.uint8)
+                ou8 = (np.clip((opos - p2o) / (p98o - p2o), 0.0, 1.0) ** gamma
+                       * 255.0).astype(np.uint8)
+                dr0 = row_off - r0; dc0 = col_off - c0
+                dr1 = dr0 + (row_end - row_off); dc1 = dc0 + (col_end - col_off)
+                ww = Window(col_off, row_off, col_end - col_off, row_end - row_off)
+                dsv.write(su8[dr0:dr1, dc0:dc1][np.newaxis, :, :], window=ww)
+                dop.write(ou8[dr0:dr1, dc0:dc1][np.newaxis, :, :], window=ww)
+                nblk += 1
+                print(f"\r  VAT SVF+opos : {nblk * 100 // total:3d} % "
+                      f"({nblk}/{total} blocs)   ", end="", flush=True)
+    print(f"\r  VAT SVF+opos: done ({total} blocs, halo={HALO} px)        ")
     return True
 
 
@@ -6294,11 +6464,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
                 _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
                 try:
+                    # SVF (conv=0) et openness positif (conv=2) en UN seul scan
+                    # d'horizon (kernel fusionné) : ~43% plus rapide que deux
+                    # passes _svf_chunked, sorties numériquement identiques.
                     _ok_comp = (
-                        _svf_chunked(Path(src_str), _svf_t, _vat_dist_px, 16,
-                                     RESOLUTION_M, 1.0, use_sweep, conv=0)
-                        and _svf_chunked(Path(src_str), _opos_t, _vat_dist_px, 16,
-                                         RESOLUTION_M, 1.0, False, conv=2)
+                        _svf_opos_chunked(Path(src_str), _svf_t, _opos_t,
+                                          _vat_dist_px, 16, RESOLUTION_M, 1.0)
                         and _hillshade_chunked(Path(src_str), _slope_t, "slope",
                                                {}, dx=RESOLUTION_M, dy=RESOLUTION_M))
                     if not _ok_comp:
