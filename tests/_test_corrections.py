@@ -320,6 +320,19 @@ check("VAT : la pente assombrit (droite < gauche)",
       int(_out[20, 24]) < int(_out[20, 4]),
       f"droite={_out[20, 24]} gauche={_out[20, 4]}")
 
+print("== 10c. Presets de stack par resolution ==")
+_pn, _pi, _pe = l2m._resoudre_preset_shading("auto", 0.5)
+check("preset auto 0.5m -> micro (soleil 25)", _pn == "micro" and _pe == 25)
+check("preset micro : svf/opos rayon 15 m en metres",
+      dict(_pi).get("svf") == {"dist": 15.0} and dict(_pi).get("opos") == {"dist": 15.0})
+_pn2, _pi2, _pe2 = l2m._resoudre_preset_shading("auto", 5.0)
+check("preset auto 5m -> landscape (rayon 80 m, lrm sigma 40 m, soleil 30)",
+      _pn2 == "landscape" and dict(_pi2)["lrm"] == {"sigma": 40.0} and _pe2 == 30,
+      f"{_pn2} {dict(_pi2)} {_pe2}")
+check("preset auto 1m -> standard",
+      l2m._resoudre_preset_shading("auto", 1.0)[0] == "standard")
+check("preset : types valides", all(t in l2m._SHADING_TYPES for t, _ in _pi))
+
 print("== 11. Provider gb-scotland : encodage OS National Grid (multi-grille) ==")
 _SCT = Path(__file__).resolve().parent.parent / "providers" / "gb_scotland.py"
 _sct_spec = importlib.util.spec_from_file_location("gb_scotland", str(_SCT))

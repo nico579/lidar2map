@@ -63,6 +63,12 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   # → several instances of the same type in a single run
   --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
   --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+
+  # Resolution preset (opt-in): a stack (svf + opos + lrm + multi + slope) sized
+  # in METRES for the DEM resolution, so the same ground-scale features are
+  # targeted whether the DEM is 0.25 m or 5 m. 'auto' picks the tier per provider:
+  #   micro (<=0.75 m) / standard (~1 m) / landscape (>=5 m)
+  --shading-preset auto
   ```
 
   Explicit parameters that differ from the defaults are encoded in the output

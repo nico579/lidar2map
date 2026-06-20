@@ -5692,6 +5692,33 @@ _SHADING_TYPES = {
 }
 
 
+# Presets de stack par résolution : params en METRES (intention indépendante de la
+# taille de pixel) pour cibler la même échelle de structures que le MNT soit à
+# 0,25 m ou 5 m. Sans ça, à 5 m le rayon SVF de 20 m ne fait que 4 px et le LRM
+# enleve 75 m de relief. 'auto' choisit le palier selon RESOLUTION_M. Opt-in
+# (--shading-preset) : le comportement par defaut reste inchange. Valeurs a
+# l'appreciation de l'archeologue (tunables).
+SHADING_PRESETS = {
+    # nom          svf/opos rayon (m)   LRM sigma (m)   elevation soleil (deg)
+    "micro":       (15.0,               8.0,            25),   # micro-relief, MNT fin (<=0,75 m)
+    "standard":    (30.0,               15.0,           25),   # MNT ~1 m
+    "landscape":   (80.0,               40.0,           30),   # grandes structures / MNT grossier (>=5 m)
+}
+
+
+def _resoudre_preset_shading(name, res_m):
+    """(nom_resolu, [instances (type, params)], elevation) pour un preset.
+    'auto' choisit le palier par la resolution du provider. Les instances portent
+    les params en metres ; le pipeline existant les nomme/encode (cache preserve)."""
+    if name == "auto":
+        name = ("micro" if res_m <= 0.75 else
+                "standard" if res_m <= 2.5 else "landscape")
+    dist, sigma, elev = SHADING_PRESETS[name]
+    insts = [("svf", {"dist": dist}), ("opos", {"dist": dist}),
+             ("lrm", {"sigma": sigma})]
+    return name, insts, elev
+
+
 def parser_shading_spec(spec):
     """Parse 'TYPE[:cle=val,...]' → (type, params explicites).
 
@@ -8324,6 +8351,15 @@ Examples:
                             "Combines with --shadings (a type listed in --shading "
                             "is not re-generated at default params)."
                         ))
+    parser.add_argument("--shading-preset",
+                        choices=["auto", "micro", "standard", "landscape"],
+                        default=None, dest="shading_preset",
+                        help=("Resolution-tuned shading stack (opt-in, params in "
+                              "metres): adds svf + opos + lrm sized for the DEM "
+                              "resolution, plus multi + slope. 'auto' picks micro "
+                              "(<=0.75 m) / standard (~1 m) / landscape (>=5 m) from "
+                              "the active provider. Off by default; when set it takes "
+                              "precedence over --shadings default params."))
     parser.add_argument("--svf-conv", choices=["flux", "rvt"], default="flux",
                         dest="svf_conv",
                         help=("SVF convention: flux = cos²γ (compressed near 1, "
@@ -8435,6 +8471,22 @@ Examples:
         args.shading_instances = _insts
         args.ombrages = list(dict.fromkeys(
             (args.ombrages or []) + [t for t, _ in _insts]))
+
+    # Preset de stack par resolution (opt-in) : ajoute svf/opos/lrm dimensionnes
+    # en metres pour la resolution du provider (+ multi/slope), via le meme
+    # mecanisme d'instances (nommage/cache preserves). Les types couverts par une
+    # instance ne sont pas re-generes aux params par defaut (cf. dispatch).
+    if getattr(args, "shading_preset", None):
+        _pname, _pinsts, _pelev = _resoudre_preset_shading(args.shading_preset, RESOLUTION_M)
+        args.shading_instances = (args.shading_instances or []) + _pinsts
+        args.ombrages = list(dict.fromkeys(
+            (args.ombrages or []) + ["multi", "slope"] + [t for t, _ in _pinsts]))
+        if args.ombrages_elevation is None:
+            args.ombrages_elevation = _pelev
+        _pd = _pinsts[0][1]["dist"]; _ps = _pinsts[2][1]["sigma"]
+        print(f"  Preset ombrages '{_pname}' (res {RESOLUTION_M:g} m) : "
+              f"svf/opos rayon {_pd:g} m, lrm sigma {_ps:g} m, soleil "
+              f"{args.ombrages_elevation}°")
 
     # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
     if hasattr(PROVIDER, "set_apikey"):

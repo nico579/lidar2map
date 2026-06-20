@@ -61,6 +61,12 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   # → plusieurs instances du même type dans un seul run
   --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
   --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+
+  # Preset par résolution (opt-in) : un stack (svf + opos + lrm + multi + slope)
+  # dimensionné en MÈTRES pour la résolution du MNT, pour cibler la même échelle
+  # de structures que le MNT soit à 0,25 m ou 5 m. 'auto' choisit le palier selon
+  # le provider : micro (<=0,75 m) / standard (~1 m) / landscape (>=5 m)
+  --shading-preset auto
   ```
 
   Les paramètres explicites différents des défauts sont encodés dans le nom du
