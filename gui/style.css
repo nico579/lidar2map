@@ -1,0 +1,216 @@
+
+:root{--bg:#12121f;--bg2:#1a1a30;--bg3:#1f1f3a;--bd:#2a2a50;
+  --ac:#7070cc;--ac2:#e07060;--fg:#ececec;--dim:#a0a0d0;
+  --green:#60cc80;--red:#cc6060;--fnt:"Segoe UI",system-ui,sans-serif;
+  /* Couleurs par type de carte */
+  --lidar:  #5b8a6e;  /* vert forêt */
+  --scan:   #7a6fa0;  /* violet doux */
+  --osm:    #7a9abf;  /* bleu acier */
+  --vecteur:#b07840;  /* ocre */
+  --fusion: #606878;  /* gris bleu */
+  --decoupe:#8a6870;  /* rose-gris */
+  --projet: #4a6080;  /* bleu nuit */
+  --zone:   #3a7070;  /* teal */
+}
+*{box-sizing:border-box;margin:0;padding:0}
+.hidden{display:none!important}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:13px var(--fnt)}
+#main{padding:10px 24px}
+#form-inner{max-width:900px;width:100%;margin:0 auto;
+  display:flex;flex-direction:column;gap:8px}
+#btn-bar{max-width:900px;margin:8px auto;padding:0;display:flex;gap:8px;align-items:center}
+/* Form elements */
+.section{background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
+  overflow:hidden}
+.section-hd{padding:5px 10px;font-size:11px;font-weight:600;
+  color:rgba(255,255,255,.85);text-transform:uppercase;letter-spacing:.6px;
+  display:flex;align-items:center;gap:6px}
+.section-hd label{display:flex;align-items:center;gap:5px;cursor:pointer;
+  font-size:11px;color:rgba(255,255,255,.9);font-weight:600;
+  text-transform:none;letter-spacing:0}
+/* Bandeau Projet */
+.sec-projet .section-hd{background:var(--projet)}
+/* Bandeau Zone */
+.sec-zone .section-hd{background:var(--zone)}
+/* Bandeau Type */
+.sec-type .section-hd{background:var(--projet)}
+/* Bandeaux LiDAR */
+#sec-lidar .section-hd{background:var(--lidar)}
+/* Bandeaux IGN Raster */
+#sec-scan .section-hd{background:var(--scan)}
+/* Bandeaux OSM */
+#sec-osm .section-hd{background:var(--osm)}
+/* Bandeaux IGN Vectoriel */
+#sec-vecteur .section-hd{background:var(--vecteur)}
+/* Fond pastel des sections par type */
+.section.sec-projet,.section.sec-projet .section-body{background:rgba(74,96,128,.18)!important;border-color:rgba(74,96,128,.4)!important}
+.section.sec-zone,.section.sec-zone .section-body    {background:rgba(58,112,112,.18)!important;border-color:rgba(58,112,112,.4)!important}
+.section.sec-type,.section.sec-type .section-body    {background:rgba(74,96,128,.18)!important;border-color:rgba(74,96,128,.4)!important}
+#sec-lidar   .section{background:rgba(91,138,110,.14)!important;border-color:rgba(91,138,110,.35)!important}
+#sec-scan    .section{background:rgba(122,111,160,.14)!important;border-color:rgba(122,111,160,.35)!important}
+#sec-osm     .section{background:rgba(122,154,191,.14)!important;border-color:rgba(122,154,191,.35)!important}
+#sec-vecteur .section{background:rgba(176,120,64,.14)!important;border-color:rgba(176,120,64,.35)!important}
+#sec-fusion  .section{background:rgba(96,104,120,.14)!important;border-color:rgba(96,104,120,.35)!important}
+.section-body{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.section-body.hidden{display:none}
+.row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.row label{font-size:11px;color:var(--dim);white-space:nowrap;min-width:110px}
+.row label.wide{min-width:140px}
+input[type=text],input[type=number],select{
+  background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+  color:var(--fg);padding:3px 7px;font:12px var(--fnt);outline:none;
+  flex:1;min-width:0}
+input[type=text]:focus,input[type=number]:focus,select:focus{
+  border-color:var(--ac)}
+input[type=number]{width:60px;flex:none}
+.inp-short{width:54px!important;flex:none!important}
+select{cursor:pointer}
+.cb-group{display:flex;flex-wrap:wrap;gap:4px 14px;max-width:100%}
+.cb-group label{display:flex;align-items:center;gap:4px;font-size:11px;
+  cursor:pointer;color:var(--fg);white-space:nowrap;min-width:auto}
+.seg{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden}
+.seg input{display:none}
+.seg label{padding:3px 10px;font-size:11px;cursor:pointer;
+  background:var(--bg3);color:var(--dim);white-space:nowrap}
+.seg input:checked+label{background:var(--ac);color:#fff}
+.btn{padding:4px 14px;border:none;border-radius:4px;cursor:pointer;
+  font:12px var(--fnt);font-weight:600;letter-spacing:.3px}
+.btn-run{background:var(--ac);color:#fff;padding:6px 20px}
+.btn-lang{background:var(--bg3);color:var(--dim);border:none;padding:3px 9px;
+  font:11px var(--fnt);font-weight:600;cursor:pointer}
+.btn-lang.active{background:var(--ac);color:#fff}
+.btn-stop{background:var(--bg3);color:var(--ac2);border:1px solid var(--ac2)}
+.btn-sm{background:var(--bg3);color:var(--dim);border:1px solid var(--bd);
+  padding:2px 8px;font-size:11px}
+.btn:disabled{opacity:.4;cursor:default}
+.hint{font-size:10px;color:var(--dim)}
+.priori-zone{display:none}
+body.type-lidar .priori-zone, body.type-scan .priori-zone{display:inline-flex!important}
+/* type selector */
+#type-sel{display:flex;gap:6px;flex-wrap:wrap}
+#type-sel input{display:none}
+#type-sel label{padding:5px 16px;border:2px solid var(--bd);border-radius:4px;
+  cursor:pointer;font-size:12px;background:var(--bg3);color:var(--dim);
+  font-weight:600}
+#t-lidar:checked   +label{border-color:var(--lidar);color:var(--lidar);background:var(--bg2)}
+#t-scan:checked    +label{border-color:var(--scan);color:var(--scan);background:var(--bg2)}
+#t-osm:checked     +label{border-color:var(--osm);color:var(--osm);background:var(--bg2)}
+#t-vecteur:checked +label{border-color:var(--vecteur);color:var(--vecteur);background:var(--bg2)}
+#t-fusion:checked  +label{border-color:var(--fusion);color:var(--fusion);background:var(--bg2)}
+#t-decoupe:checked +label{border-color:var(--decoupe);color:var(--decoupe);background:var(--bg2)}
+/* Couleur btn-run selon type actif */
+body.type-lidar   #btn-run{background:var(--lidar)}
+body.type-scan    #btn-run{background:var(--scan)}
+body.type-osm     #btn-run{background:var(--osm)}
+body.type-vecteur #btn-run{background:var(--vecteur)}
+body.type-fusion  #btn-run{background:var(--fusion)}
+body.type-decoupe #btn-run{background:var(--decoupe)}
+/* Bandeaux Découpage raster */
+#sec-decoupe .section-hd{background:var(--decoupe)}
+#sec-decoupe .section{background:rgba(138,104,112,.14)!important;border-color:rgba(138,104,112,.35)!important}
+/* listbox fusion */
+#fusion-list{background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+  min-height:60px;max-height:100px;overflow-y:auto;padding:4px;font-size:11px}
+#fusion-list div{padding:2px 4px;border-radius:3px;cursor:pointer}
+#fusion-list div:hover{background:var(--bd)}
+#fusion-list div.sel{background:var(--ac);color:#fff}
+/* ═══ PANNEAU DE LOG ═══ */
+#panneau-log{
+  position:fixed;left:0;right:0;bottom:0;
+  height:200px; min-height:60px; max-height:85vh;
+  background:var(--bg2);border-top:2px solid var(--bd);
+  display:flex;flex-direction:column;z-index:50;
+  /* Pas de transition .15s sur height : ça lutte avec le drag de la
+     poignée et provoque un effet d'inertie/saccade pendant le mousemove.
+     Conservé seulement pour le toggle ouvert/fermé via JS qui ajoute la
+     classe `animating` le temps de la transition. */
+}
+#panneau-log.animating{ transition:height .15s ease; }
+/* Poignée de redimensionnement vertical : 6 px sur le bord supérieur,
+   débordant 3 px au-dessus pour faciliter le clic (zone de hit plus
+   généreuse que la bordure visible). Cursor ns-resize est explicite. */
+#log-resize-handle{
+  position:absolute; left:0; right:0; top:-3px;
+  height:6px;
+  cursor:ns-resize;
+  z-index:51;
+  background:transparent;
+}
+#log-resize-handle:hover,
+#log-resize-handle.dragging{
+  background:var(--ac);
+  opacity:.6;
+}
+/* Pendant le drag : désactiver toute sélection de texte sur la page
+   pour éviter de surligner le contenu en bougeant la souris. */
+body.log-resizing,
+body.log-resizing *{
+  user-select:none !important;
+  cursor:ns-resize !important;
+}
+/* Caché par défaut, ouvert au clic sur le bouton Logs */
+#panneau-log.hidden{display:none}
+#log-header{
+  display:flex;align-items:center;gap:8px;
+  padding:6px 12px;background:var(--bg3);
+  border-bottom:1px solid var(--bd);
+  user-select:none;
+  font-size:12px;
+}
+#log-header strong{color:var(--ac);font-weight:600}
+#log-header .log-actions{margin-left:auto;display:flex;gap:6px}
+#log-header button{
+  background:transparent;border:1px solid var(--bd);color:var(--dim);
+  padding:2px 8px;border-radius:3px;cursor:pointer;font-size:11px;
+}
+#log-header button:hover{background:var(--bd);color:var(--fg)}
+#log-content{
+  flex:1;overflow-y:auto;overflow-x:auto;
+  padding:6px 12px;
+  font-family:Consolas,"Courier New",monospace;
+  font-size:11px;line-height:1.4;
+  color:var(--fg);background:#0a0a14;
+  white-space:pre-wrap;word-wrap:break-word;
+}
+#log-content .log-ok  {color:#c8c8d4}
+#log-content .log-err {color:#ff7060;font-weight:500}
+#log-content .log-dim {color:#7575a0;font-style:italic}
+#log-content .log-cmd {color:#80a0d0;font-style:italic;border-bottom:1px dashed var(--bd);
+                       padding-bottom:4px;margin-bottom:6px}
+/* Compenser la hauteur du panneau dans le main quand il est visible */
+#main.log-visible{padding-bottom:210px}
+/* Bouton Logs actif (panneau visible) — bordure plus claire */
+#btn-log.active{background:var(--ac)!important;color:#fff!important}
+/* Barre de progression */
+#log-progress{
+  height:3px;background:var(--bg3);position:relative;
+}
+#log-progress-bar{
+  position:absolute;top:0;left:0;height:100%;
+  background:var(--ac);transition:width .2s;
+  width:0%;
+}
+#log-progress-bar.err{background:var(--red)}
+#log-progress-bar.ok{background:var(--green)}
+/* ── Autocomplete ville (API BAN data.gouv.fr) ─────────────────────────── */
+/* La section zone doit laisser dépasser le dropdown — sinon clipping par
+   .section { overflow:hidden } (ligne ~9945) qui sert aux coins arrondis. */
+.section.sec-zone{overflow:visible}
+.section.sec-zone .section-hd{border-radius:6px 6px 0 0}
+.ac-wrap{position:relative;display:inline-flex;flex:1;min-width:0;max-width:180px}
+.ac-wrap > input[type=text]{width:100%}
+.ac-dropdown{
+  position:absolute;top:calc(100% + 2px);left:0;
+  min-width:100%;width:max-content;max-width:380px;
+  background:var(--bg3);border:1px solid var(--bd);border-radius:4px;
+  box-shadow:0 4px 12px rgba(0,0,0,.4);
+  z-index:1000;max-height:240px;overflow-y:auto;
+}
+.ac-item{
+  padding:5px 8px;cursor:pointer;font-size:12px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border-bottom:1px solid var(--bd);
+}
+.ac-item:last-child{border-bottom:none}
+.ac-item:hover,.ac-item.active{background:var(--bg2);color:var(--ac)}
+.ac-item .ac-meta{color:var(--dim);font-size:11px;margin-left:6px}

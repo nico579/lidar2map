@@ -114,6 +114,14 @@ hiddenimports = []
 if (SRC / "tagmapping-min.xml").exists():
     datas += [("tagmapping-min.xml", ".")]
 
+# Front-end GUI (extrait de lancer_gui) : index.html + style.css + app.js,
+# reassembles au runtime (cf. lancer_gui -> BUNDLE_DIR / "gui").
+_gui_dir = SRC / "gui"
+if _gui_dir.exists():
+    for _gf in sorted(_gui_dir.glob("*")):
+        if _gf.is_file():
+            datas += [(str(_gf), "gui")]
+
 # Providers multi-pays (v1.2+) : tous les modules providers/*.py sont
 # embarques comme data + declares hiddenimports pour que importlib les trouve
 # en mode frozen (PyInstaller ne suit pas les imports dynamiques).

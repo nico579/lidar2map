@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>lidar2map</title>
+<!-- ═══════════════════════════════ CSS ════════════════════════════════════ -->
+<style>/*__LIDAR2MAP_CSS__*/</style>
+</head>
+<!-- ═══════════════════════════════ HTML ═══════════════════════════════════ -->
+<body>
+<div id="main">
+<div id="btn-bar">
+ <button class="btn btn-run" id="btn-run" onclick="lancer()" data-i18n="btn.run">▶ Lancer</button>
+ <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled data-i18n="btn.stop">■ Arrêter</button>
+ <button class="btn" id="btn-hist" onclick="toggleHistorique()" data-i18n="btn.hist"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
+ <button class="btn" id="btn-log" onclick="toggleLogPanel()" data-i18n="btn.log"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📋 Logs</button>
+ <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
+ <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
+       title="Langue / Language">
+  <button class="btn-lang" data-lang-btn="fr" onclick="setLang('fr', true)">FR</button>
+  <button class="btn-lang" data-lang-btn="en" onclick="setLang('en', true)">EN</button>
+ </span>
+</div>
+<div id="form-inner">
+
+  <!-- Projet -->
+  <div class="section sec-projet">
+   <div class="section-hd" data-i18n="sec.projet">Projet</div>
+   <div class="section-body">
+     <div class="row">
+      <label style="min-width:auto;margin-right:4px" data-i18n="f.name">Nom *</label>
+      <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
+      <label style="min-width:auto;margin-left:12px" data-i18n="f.outdir">Dossier sortie</label>
+      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
+      <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
+      <label style="min-width:auto;margin-left:12px"
+             data-i18n-title="tip.provider" title="Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.">Provider</label>
+      <select id="f-provider" style="min-width:200px">
+       <option value="fr-ign" data-i18n="loading">Chargement...</option>
+      </select>
+      <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
+       <span style="color:var(--dim)" data-i18n="apikey">Clé API :</span>
+       <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
+              placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
+      </span>
+     </div>
+   </div>
+  </div>
+
+  <!-- Zone géographique -->
+  <div class="section sec-zone">
+   <div class="section-hd" data-i18n="sec.zone">Zone géographique</div>
+   <div class="section-body">
+    <div class="row">
+     <div class="seg">
+      <input type="radio" name="mode" id="m-ville" value="ville" checked>
+      <label for="m-ville" data-i18n="mode.ville">Ville</label>
+      <input type="radio" name="mode" id="m-gps" value="gps">
+      <label for="m-gps" data-i18n="mode.gps">GPS</label>
+      <input type="radio" name="mode" id="m-bbox" value="bbox">
+      <label for="m-bbox" data-i18n="mode.bbox">BBox</label>
+      <input type="radio" name="mode" id="m-dep" value="dep">
+      <label for="m-dep" data-i18n="mode.dep">Department</label>
+      <input type="radio" name="mode" id="m-region" value="region">
+      <label for="m-region" data-i18n="mode.region">Région</label>
+     </div>
+    </div>
+    <div class="row z-zone" id="z-ville"><label data-i18n="z.ville">Ville</label>
+     <div class="ac-wrap">
+       <input type="text" id="f-ville" placeholder="ex: Garéoult" autocomplete="off">
+       <div id="f-ville-ac" class="ac-dropdown hidden" role="listbox"></div>
+     </div>
+     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
+     <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short"></div>
+    <div class="row hidden z-zone" id="z-gps"><label data-i18n="z.gps">GPS lat,lon</label>
+     <input type="text" id="f-gps" placeholder="43.3156,6.0423" style="max-width:160px">
+     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
+     <input type="number" id="f-rayon-gps" value="10" min="0" max="500" class="inp-short"></div>
+    <div class="row hidden z-zone" id="z-bbox"><label data-i18n="z.bbox">BBox W,S,E,N</label>
+     <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:200px"></div>
+    <div class="hidden z-zone" id="z-dep">
+     <div class="row">
+      <label data-i18n="z.deps">Department(s)</label>
+      <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
+             data-i18n-title="tip.deps" title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
+     </div>
+     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="dep.syntax">
+      Syntaxe : <code>83</code> &nbsp;·&nbsp;
+      <code>83,06,13</code> &nbsp;·&nbsp;
+      <code>1-10</code> &nbsp;·&nbsp;
+      <code>1-3,75,83</code> &nbsp;·&nbsp;
+      DOM : <code>2A</code> <code>971</code>
+      &nbsp;—&nbsp; Multi-département : un fichier par département
+     </div>
+    </div>
+    <div class="hidden z-zone" id="z-region">
+     <div class="row">
+      <label data-i18n="mode.region">Région</label>
+      <select id="f-region" style="min-width:240px"></select>
+     </div>
+     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="region.hint">
+      Region Geofabrik = bbox englobante de ses départements.
+      &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- Type de carte -->
+  <div class="section sec-type">
+   <div class="section-hd" data-i18n="sec.type">Type de traitement de carte</div>
+   <div class="section-body">
+    <div id="type-sel">
+     <input type="radio" name="type" id="t-lidar"   value="lidar"   checked>
+     <label for="t-lidar" data-i18n="t.lidar">LiDAR MNT</label>
+     <input type="radio" name="type" id="t-scan"    value="scan">
+     <label for="t-scan" id="lbl-raster" data-raster-tab="1">IGN Raster</label>
+     <input type="radio" name="type" id="t-vecteur" value="vecteur">
+     <label for="t-vecteur" data-fr-only="1" data-i18n="t.vecteur">IGN Vectoriel</label>
+     <input type="radio" name="type" id="t-osm"     value="osm">
+     <label for="t-osm" data-i18n="t.osm">OSM Vectoriel</label>
+     <input type="radio" name="type" id="t-fusion"  value="fusion">
+     <label for="t-fusion" data-i18n="t.fusion">Fusion Vectoriel</label>
+     <input type="radio" name="type" id="t-decoupe" value="decoupe">
+     <label for="t-decoupe" data-i18n="t.decoupe">Découpage raster</label>
+    </div>
+   </div>
+  </div>
+
+  <!-- ═══ LIDAR ═══ -->
+  <div id="sec-lidar">
+   <div class="section">
+    <div class="section-hd">
+     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
+    </div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="grid">Grille :</label>
+      <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
+      <span class="hint" style="margin:0 4px">cols ×</span>
+      <input type="number" id="f-priori-rows" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns" title="Lignes Nord-Sud">
+      <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
+      <input type="number" id="f-rayon-priori-l" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk1" title="Rayon km par morceau (alternative à la grille)">
+      <span class="hint" style="margin-left:4px">km</span>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="minfree">min disque</span>
+      <input type="number" id="f-min-free" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.minfree" title="Arrêt propre avant un chunk si disque libre &lt; seuil (0 = désactivé)">
+      <span class="hint" style="margin-left:4px">GB</span>
+     </div>
+     <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
+      <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tel" checked> <span data-i18n="dl.lidar">1 — Télécharger les dalles LiDAR HD IGN</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tel">
+     <div class="row">
+      <label data-i18n="workers">Workers :</label>
+      <input type="number" id="f-workers-l" value="8" min="1" max="32" class="inp-short">
+      <label style="min-width:auto"><input type="checkbox" id="f-comp"> <span data-i18n="compress">Compresser</span></label>
+      <label style="min-width:auto;margin-left:12px" data-i18n="extcache">Cache externe :</label>
+      <input type="text" id="f-dossier-dalles" placeholder="(cache auto)" data-i18n-placeholder="ph.cacheauto">
+      <button class="btn btn-sm" onclick="pickDir('f-dossier-dalles')">…</button>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-no-omb" checked> <span data-i18n="omb2">2 — Calculer les ombrages archéologiques</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-omb"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-omb">
+     <!-- Liste d'instances d'ombrages paramétrées (shuttle list) : chaque
+          instance porte SES paramètres → plusieurs instances du même type
+          (ex. SVF 20 m + SVF 100 m) coexistent. Émise en --shading TYPE:k=v. -->
+     <div class="row" style="align-items:flex-start;">
+      <select id="omb-dispo" size="5" style="min-width:150px"
+              data-i18n-title="tip.ombdispo" title="Ombrages disponibles. Sélectionnez puis + pour ajouter une instance à traiter."
+              ondblclick="ombAdd()">
+       <option value="multi" selected>multi (hillshade)</option>
+       <option value="slope">slope (pente)</option>
+       <option value="315">315° NO</option>
+       <option value="045">045° NE</option>
+       <option value="135">135° SE</option>
+       <option value="225">225° SO</option>
+       <option value="svf">SVF</option>
+       <option value="opos">openness O+</option>
+       <option value="oneg">openness O−</option>
+       <option value="lrm">LRM</option>
+       <option value="rrim">RRIM</option>
+      </select>
+      <div style="display:flex;flex-direction:column;gap:6px;justify-content:center;align-self:center;">
+       <button type="button" onclick="ombAdd()" style="min-width:34px"
+               data-i18n-title="tip.ombadd" title="Ajouter l'ombrage sélectionné à la liste à traiter (une instance de plus, avec ses propres paramètres)">+</button>
+       <button type="button" onclick="ombDel()" style="min-width:34px"
+               data-i18n-title="tip.ombdel" title="Retirer l'instance sélectionnée de la liste à traiter">−</button>
+      </div>
+      <select id="omb-liste" size="5" style="min-width:250px"
+              data-i18n-title="tip.ombliste" title="Instances à calculer, avec leurs paramètres. Sélectionnez-en une pour éditer ses paramètres à droite."
+              onchange="ombShowParams()"></select>
+      <div id="omb-params" style="display:flex;flex-direction:column;gap:6px;margin-left:12px;padding-left:12px;border-left:2px solid var(--border,#3a3f4b);min-width:230px;">
+      </div>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-mbtiles-l" checked> <span data-i18n="tiles3">3 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-mbt"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body hidden" id="body-mbt">
+     <div class="row">
+      <label data-i18n="zoom">Zoom :</label>
+      <input type="number" id="f-zoom-min-l" value="8" min="8" max="20" class="inp-short">
+      <span style="color:var(--dim)">–</span>
+      <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
+      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
+      <div class="seg" style="margin-left:6px">
+       <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg" checked><label for="fl-jpeg">JPEG</label>
+       <input type="radio" name="fmt-l" id="fl-png"  value="png"><label for="fl-png">PNG</label>
+      </div>
+      <span id="wrap-qualite-l">
+       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
+       <input type="number" id="f-qualite-l" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      </span>
+     </div>
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-mbtiles" checked> MBTiles</label>
+       <label><input type="checkbox" id="f-rmap"> RMAP</label>
+       <label><input type="checkbox" id="f-sqlitedb"> SQLiteDB</label>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- ═══ SCAN ═══ -->
+  <div id="sec-scan" class="hidden">
+   <div class="section">
+    <div class="section-hd">
+     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
+    </div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="grid">Grille :</label>
+      <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
+      <span class="hint" style="margin:0 4px">cols ×</span>
+      <input type="number" id="f-priori-rows-s" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns" title="Lignes Nord-Sud">
+      <span class="hint" style="margin:0 4px" data-i18n="rows">lignes</span>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="orradius">ou rayon</span>
+      <input type="number" id="f-rayon-priori-s" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.radiuschunk2" title="Rayon km par morceau">
+      <span class="hint" style="margin-left:4px">km</span>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-nettoyage-s"> <span data-i18n="clean">Nettoyage intermédiaires</span></label>
+      <span class="hint" style="margin:0 6px;color:var(--dim)" data-i18n="minfree">min disque</span>
+      <input type="number" id="f-min-free-s" value="0" min="0" step="10" class="inp-short" data-i18n-title="tip.minfree" title="Arrêt propre avant un chunk si disque libre &lt; seuil (0 = désactivé)">
+      <span class="hint" style="margin-left:4px">GB</span>
+     </div>
+     <div class="row" style="color:var(--dim);font-size:11px;padding-top:0">
+      <span style="padding-left:calc(var(--label-w) + 4px)" data-i18n="split.hint">1×1 = pas de découpage — reprise automatique via manifeste.json</span>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd" id="hd-couche" data-i18n="sec.couche">Couche IGN</div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="couche">Couche :</label>
+      <select id="f-couche"></select>
+      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)" data-i18n="apikey">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN" data-i18n-placeholder="ph.ignpro"></span>
+     </div>
+     <div id="scan-restriction-warning" class="hidden" data-i18n-html="warn.scanpro" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
+      ⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>
+      Une clé API est requise — compte <a href="https://cartes.gouv.fr" target="_blank" style="color:#e07070">cartes.gouv.fr</a> avec SIRET.<br>
+      Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tel-s" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tel-s">
+     <div class="row"><label data-i18n="workers">Workers :</label>
+      <input type="number" id="f-workers-s" value="8" min="1" max="32" class="inp-short"></div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tuiles-s" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tuil-s">
+     <div class="row">
+      <label data-i18n="zoom">Zoom :</label>
+      <input type="number" id="f-zoom-min-s" value="12" min="1" max="20" class="inp-short">
+      <span style="color:var(--dim)">–</span>
+      <input type="number" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
+      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
+      <div class="seg" style="margin-left:6px">
+       <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg" checked><label for="fs-jpeg">JPEG</label>
+       <input type="radio" name="fmt-s" id="fs-png"  value="png"><label for="fs-png">PNG</label>
+      </div>
+      <span id="wrap-qualite-s">
+       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
+       <input type="number" id="f-qualite-s" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
+      </span>
+     </div>
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-mbtiles-s" checked> MBTiles</label>
+       <label><input type="checkbox" id="f-rmap-s"> RMAP</label>
+       <label><input type="checkbox" id="f-sqlitedb-s"> SQLiteDB</label>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- ═══ OSM ═══ -->
+  <div id="sec-osm" class="hidden">
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tel-osm" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tel-osm">
+     <div class="cb-group" id="osm-tag-checks"></div>
+     <div class="row" style="margin-top:4px">
+      <label data-i18n="workers">Workers :</label>
+      <input type="number" id="f-workers-osm" value="4" min="1" max="16" class="inp-short">
+      <span class="hint" style="margin-left:6px" data-i18n="pbfpar">(parallélisme téléchargement PBF)</span>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tuiles-osm" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tuil-osm">
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-map" checked> Mapsforge (.map)</label>
+       <label><input type="checkbox" id="f-osm-geojson" checked> .geojson.gz</label>
+       <label><input type="checkbox" id="f-osm-geojson-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
+      </div>
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- ═══ VECTEUR IGN ═══ -->
+  <div id="sec-vecteur" class="hidden">
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tel-v" checked> <span data-i18n="dl">1 — Télécharger</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body" id="body-tel-v">
+     <div class="cb-group" id="wfs-checks"></div>
+     <div class="row" style="margin-top:4px">
+      <label data-i18n="workers">Workers :</label>
+      <input type="number" id="f-workers-v" value="4" min="1" max="16" class="inp-short">
+      <span class="hint" style="margin-left:6px" data-i18n="max4">(max 4 recommandé)</span>
+     </div>
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-fusion-gz" checked> .geojson.gz</label>
+       <label><input type="checkbox" id="f-fusion-gz-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
+      </div>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd">
+     <label><input type="checkbox" id="f-tuiles-v"> <span data-i18n="gen.map">2 — Générer carte Mapsforge (.map)</span></label>
+     <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
+    </div>
+    <div class="section-body hidden" id="body-map-v">
+     <span class="hint">GeoJSON IGN → OSM XML → osmosis+mapwriter → .map</span>
+     <div class="row" id="row-simplif-v" class="hidden" style="margin-top:6px">
+      <label data-i18n="simplif">Simplification vecteur</label>
+      <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
+             style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
+      <span class="hint" style="margin-left:6px" data-i18n="simplif.hint1">m  (vide = auto : 3 m local → 40 m région)</span>
+     </div>
+    </div>
+   </div>
+  </div>
+
+  <!-- ═══ FUSION ═══ -->
+  <div id="sec-fusion" class="hidden">
+   <div class="section">
+    <div class="section-hd" data-i18n="sec.fusion">Fichiers GeoJSON à fusionner</div>
+    <div class="section-body">
+     <div id="fusion-list"></div>
+     <div class="row" style="margin-top:4px">
+      <button class="btn btn-sm" onclick="fusionAjouter()" data-i18n="add">＋ Ajouter…</button>
+      <button class="btn btn-sm" onclick="fusionSupprimer()" data-i18n="remove">－ Supprimer</button>
+      <button class="btn btn-sm" onclick="fusionVider()" data-i18n="clear">✕ Vider</button>
+      <span class="hint" style="margin-left:8px" data-i18n="extsel">Sélection étendue (Shift/Ctrl)</span>
+     </div>
+     <div class="row">
+      <label data-i18n="fmt">Format :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-fusion-gz2" checked> .geojson.gz</label>
+       <label><input type="checkbox" id="f-fusion-gz2-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
+       <label><input type="checkbox" id="f-fusion-map"> Mapsforge (.map)</label>
+      </div>
+     </div>
+     <div class="row" id="row-simplif-fusion" class="hidden" style="margin-top:6px">
+      <label data-i18n="simplif">Simplification vecteur</label>
+      <input type="number" id="f-simplif-fusion" min="1" max="200" step="1" placeholder="auto"
+             style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
+      <span class="hint" style="margin-left:6px" data-i18n="simplif.hint2">m  (vide = auto)</span>
+     </div>
+    </div>
+   </div>
+  </div>
+
+
+  <!-- ═══ DÉCOUPAGE RASTER ═══ -->
+  <div id="sec-decoupe" class="hidden">
+   <div class="section">
+    <div class="section-hd" data-i18n="sec.src">Fichier source</div>
+    <div class="section-body">
+     <div class="row">
+      <label>Source MBTiles</label>
+      <input type="text" id="f-source-decoupe" placeholder="chemin vers le fichier .mbtiles" data-i18n-placeholder="ph.mbtilespath">
+      <button class="btn btn-sm" onclick="pickFile('f-source-decoupe',false,[])">…</button>
+     </div>
+    </div>
+   </div>
+   <div class="section">
+    <div class="section-hd" data-i18n="sec.split">Découpage</div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="grid">Grille :</label>
+      <input type="number" id="f-cols-decoupe" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew2" title="Colonnes (Est-Ouest)">
+      <span class="hint" style="margin:0 4px">cols ×</span>
+      <input type="number" id="f-rows-decoupe" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.rowsns2" title="Lignes (Nord-Sud)">
+      <span class="hint" style="margin:0 4px">lignes  ou rayon</span>
+      <input type="number" id="f-rayon-decoupe-d" value="0" min="0" step="10" class="inp-short">
+      <span class="hint" style="margin-left:4px">km</span>
+     </div>
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-mbtiles-d" checked> MBTiles</label>
+       <label><input type="checkbox" id="f-rmap-d"> RMAP</label>
+       <label><input type="checkbox" id="f-sqlitedb-d"> SQLiteDB</label>
+      </div>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-ecraser-d"> <span data-i18n="ovr.short">Écraser</span></label>
+     </div>
+    </div>
+   </div>
+  </div>
+
+
+ </div><!-- /form-inner -->
+</div><!-- /main -->
+<!-- ═══ PANNEAU HISTORIQUE ═══ -->
+<div id="panneau-hist" class="hidden"
+     style="position:fixed;top:0;right:0;width:420px;height:100%;background:var(--bg2);
+            border-left:1px solid var(--bd);overflow-y:auto;z-index:100;padding:12px;box-sizing:border-box">
+ <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+  <strong data-i18n="hist.title">Historique des traitements</strong>
+  <div style="display:flex;gap:6px;align-items:center">
+   <button class="btn" onclick="viderHistorique()" data-i18n="clear"
+           style="background:transparent;border:1px solid var(--red);color:var(--red);
+                  font-size:11px;padding:3px 10px;cursor:pointer">🗑 Vider</button>
+   <button class="btn" onclick="toggleHistorique()"
+           style="background:transparent;border:none;font-size:16px;cursor:pointer">✕</button>
+  </div>
+ </div>
+ <div id="hist-list"></div>
+<!-- panneau-hist end -->
+</div>
+
+<!-- ═══ PANNEAU DE LOG ═══ -->
+<div id="panneau-log" class="hidden">
+  <div id="log-resize-handle" data-i18n-title="tip.logresize" title="Redimensionner verticalement"></div>
+  <div id="log-header">
+    <strong>📋 Log</strong>
+    <span id="log-status" style="color:var(--dim)"></span>
+    <div class="log-actions">
+      <button onclick="copierLog()" data-i18n="log.copy" data-i18n-title="tip.logcopy" title="Copier le log dans le presse-papier">⎘ Copier</button>
+      <button onclick="viderLog()" data-i18n="clear" data-i18n-title="tip.logclear" title="Effacer le contenu du log">🗑 Vider</button>
+      <button onclick="toggleLogPanel()" data-i18n-title="tip.loghide" title="Masquer le panneau (ré-affichable via le bouton Logs en haut)">✕</button>
+    </div>
+  </div>
+  <div id="log-progress"><div id="log-progress-bar"></div></div>
+  <div id="log-content"></div>
+</div>
+
+<!-- ═══════════════════════════════ JS ═════════════════════════════════════ -->
+<script>//__LIDAR2MAP_JS__</script>
+</body>
+</html>
