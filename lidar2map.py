@@ -5861,6 +5861,16 @@ _SHADING_TYPES = {
     "vat":   {"dist", "gamma"},
 }
 
+# Source UNIQUE pour toutes les listes de types d'ombrage (argparse choices, menu
+# interactif, expansion "tous"). Dérivées de _SHADING_TYPES → ajouter un type au
+# dict suffit, plus de liste recopiée à la main qui se désynchronise.
+#   SHADING_TYPES_ORDRE : tous les types, dans l'ordre d'affichage (vat inclus).
+#   SHADING_TOUS        : ce que produit `--shadings tous`. 'vat' EXCLU : c'est un
+#       composite qui recalcule svf+opos+slope, donc redondant quand "tous" génère
+#       déjà ces couches. Reste atteignable via --shadings vat / --shading vat / menu.
+SHADING_TYPES_ORDRE = list(_SHADING_TYPES)
+SHADING_TOUS        = [t for t in SHADING_TYPES_ORDRE if t != "vat"]
+
 
 # Presets de stack par résolution : params en METRES (intention indépendante de la
 # taille de pixel) pour cibler la même échelle de structures que le MNT soit à
@@ -8496,14 +8506,14 @@ Examples:
 
     # Ombrages
     parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
-                        choices=["315", "045", "135", "225", "multi", "slope",
-                                 "svf", "opos", "oneg", "lrm", "rrim", "tous", "aucun"],
+                        choices=SHADING_TYPES_ORDRE + ["tous", "aucun"],
                         help=(
                             "Shadings to generate (default: interactive). "
-                            "Values: 315 045 135 225 multi slope svf opos oneg lrm rrim tous(all) aucun(none). "
+                            "Values: " + " ".join(SHADING_TYPES_ORDRE) + " tous(all) aucun(none). "
                             "opos/oneg = openness positive/negative (Yokoyama 2002, rayon/gamma du SVF). "
+                            "vat = composite archeo (svf+opos+slope) ; voir aussi --shading-preset. "
                             "SVF is tuned via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
-                            "svf/lrm/rrim: computed with numpy/scipy (scipy auto-installed). "
+                            "svf/lrm/rrim/vat: computed with numpy/scipy/numba (auto-installed). "
                             "Ex: --shadings multi slope svf rrim"
                         ))
     parser.add_argument("--shading", metavar="TYPE[:k=v,...]", action="append",
@@ -9318,8 +9328,7 @@ Examples:
     # -------------------------------------------------------
     # Ombrages
     # -------------------------------------------------------
-    TOUS_OMBRAGES = ["315", "045", "135", "225", "multi", "slope",
-                     "svf", "opos", "oneg", "lrm", "rrim"]
+    TOUS_OMBRAGES = list(SHADING_TOUS)   # dérivé de _SHADING_TYPES (vat exclu de "tous")
 
     # Dalles disponibles pour les ombrages :
     # 1. Seulement les dalles de la zone courante (filtre par nom)
@@ -10066,7 +10075,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
             if args.ombrages:
-                TOUS = ["315","045","135","225","multi","slope","svf","opos","oneg","lrm","rrim"]
+                TOUS = list(SHADING_TOUS)   # dérivé de _SHADING_TYPES (vat exclu de "tous")
                 choix = (TOUS if "tous" in args.ombrages
                          else [] if "aucun" in args.ombrages
                          else args.ombrages)

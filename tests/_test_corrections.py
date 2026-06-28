@@ -291,6 +291,17 @@ attendus = {"zz_multi_ombrage.tif",            # legacy : nom historique
 check("instances : fichiers attendus produits", produits == attendus,
       f"écart : {produits ^ attendus}")
 
+print("== 10a-bis. Listes d'ombrages dérivées de _SHADING_TYPES ==")
+# Anti-drift : argparse choices et l'expansion "tous" doivent dériver de
+# _SHADING_TYPES (sinon un nouveau type est rejeté par --shadings, cf. bug vat).
+check("SHADING_TYPES_ORDRE == clés de _SHADING_TYPES (ordre préservé)",
+      l2m.SHADING_TYPES_ORDRE == list(l2m._SHADING_TYPES))
+check("tout type de _SHADING_TYPES est une valeur --shadings acceptée",
+      all(t in l2m.SHADING_TYPES_ORDRE for t in l2m._SHADING_TYPES))
+check("SHADING_TOUS = tous sauf vat (composite exclu de l'expansion 'tous')",
+      l2m.SHADING_TOUS == [t for t in l2m._SHADING_TYPES if t != "vat"]
+      and "vat" not in l2m.SHADING_TOUS)
+
 print("== 10b. Composite VAT (_vat_compose) ==")
 assert l2m.parser_shading_spec("vat") == ("vat", {})
 assert l2m.parser_shading_spec("vat:dist=30,gamma=1.5") == \
