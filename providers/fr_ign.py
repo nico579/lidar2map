@@ -21,6 +21,7 @@ import math
 import os
 import subprocess
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -262,6 +263,15 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                             nom += ".tif"
                         entries.append((nom, url_dl, bbox_s))
             return (tx, ty, entries, None)
+        except urllib.error.HTTPError as _he:
+            # 404 = pas de dalle LiDAR HD indexee a cette tuile TMS. La pyramide
+            # TMS est creuse : IGN n'indexe que les zones couvertes, donc un 404
+            # signifie "hors couverture ici", PAS une panne reseau. On renvoie
+            # 0 dalle sans erreur (mis en cache, pas de repli grille declenche).
+            # Les autres codes (5xx, 403, 429...) restent des erreurs a re-tenter.
+            if _he.code == 404:
+                return (tx, ty, [], None)
+            return (tx, ty, [], f"HTTP {_he.code}")
         except Exception as _e:
             return (tx, ty, [], str(_e))
 
@@ -316,16 +326,29 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                         continue
             dalles[nom] = url_dl
 
-    if nb_erreurs == nb_tuiles:
-        print("  ERREUR TMS : toutes les tuiles ont échoué — repli sur grille pure WMS")
-        dalles = {}   # repli total : aucune dalle TMS, on construit tout depuis la grille
-    elif nb_erreurs:
-        print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur (ignorées)")
-    print(f"  TMS : {len(dalles)} dalle(s) trouvée(s)", flush=True)
+    # Le TMS a-t-il indexe au moins une dalle sur la region interrogee ?
+    # (signal de COUVERTURE, mesure AVANT le filtre bbox). La pyramide TMS est
+    # creuse : 404 sur toutes les tuiles = zone hors couverture LiDAR HD.
+    tms_a_couvert = any(cache.get(f"{tx}/{ty}") for tx, ty in tuiles)
 
-    # ── Fallback grille : ajouter les dalles (x_km, y_km) absentes du TMS ────
-    # Utile quand TMS rate des bordures ou n'indexe pas certaines dalles.
-    if bbox_natif is not None:
+    if nb_erreurs == nb_tuiles and nb_tuiles:
+        # Toutes les tuiles en erreur RESEAU (pas 404) : panne transitoire.
+        # Repli grille best-effort ; les dalles vides eventuelles sont ecartees
+        # en aval par le garde-fou nodata (generer_ombrages).
+        print("  ERREUR TMS : toutes les tuiles en erreur reseau — repli sur grille WMS")
+        dalles = {}
+    elif nb_erreurs:
+        print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur reseau (ignorees)")
+    print(f"  TMS : {len(dalles)} dalle(s) trouvee(s)", flush=True)
+
+    # ── Fallback grille : completer les dalles absentes du TMS ───────────────
+    # Utile quand le TMS rate des bordures ou n'indexe pas certaines dalles d'une
+    # zone COUVERTE, ou en repli total sur panne reseau. MAIS si le TMS a repondu
+    # partout SANS erreur et n'a trouve AUCUNE dalle (que des 404), la zone est
+    # hors couverture LiDAR HD : fabriquer la grille rapatrierait des placeholders
+    # IGN 100 % nodata (15 Mo de -9999). On s'abstient alors.
+    zone_hors_couverture = (not tms_a_couvert) and (nb_erreurs == 0)
+    if bbox_natif is not None and not zone_hors_couverture:
         x1, y1, x2, y2 = bbox_natif
         ajoutes = 0
         for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
@@ -334,6 +357,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                 dalles[nom] = dalle_url(x_km, y_km)
                 ajoutes += 1
         if ajoutes:
-            print(f"  Grille : +{ajoutes} dalle(s) complémentaires (WMS direct)")
+            print(f"  Grille : +{ajoutes} dalle(s) complementaires (WMS direct)")
+    elif zone_hors_couverture:
+        print("  Zone hors couverture LiDAR HD IGN (aucune dalle indexee au TMS).")
 
     return dalles

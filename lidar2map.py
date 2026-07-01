@@ -3876,6 +3876,29 @@ def _nodata_mask(arr, nodata=None):
     return mask
 
 
+def _source_a_des_donnees(source, max_dim=512):
+    """True si `source` contient au moins un pixel d'altitude valide.
+
+    Lecture décimée (overview <= max_dim px) : rapide même sur une zone
+    départementale. Garde-fou avant les ombrages : une zone entièrement nodata
+    (dalles IGN non encore publiées = placeholders -9999, ou index TMS
+    indisponible au download → fallback grille qui rapatrie des dalles vides)
+    ne doit ni planter le SVF (percentile sur tableau vide) ni produire un
+    MBTiles vide silencieux. En cas de doute (lecture impossible), on renvoie
+    True pour ne pas bloquer le pipeline.
+    """
+    try:
+        import rasterio
+        with rasterio.open(str(source)) as ds:
+            h, w = ds.height, ds.width
+            scale = max(1, int(max(h, w) / max_dim))
+            arr = ds.read(1, out_shape=(max(1, h // scale), max(1, w // scale)))
+            nd = ds.nodata
+        return bool((~_nodata_mask(arr, nd)).any())
+    except Exception:
+        return True
+
+
 def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
     """Percentiles globaux estimés sur une grille 3×3 de fenêtres réparties
     sur toute l'étendue du raster (fractions 0.2/0.5/0.8 en x et y).
@@ -6136,6 +6159,20 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     source   = sources[0]
     nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
 
+    # Garde-fou zone tout-nodata : si le DEM assemble n'a aucun pixel d'altitude
+    # valide, tous les kernels sont inutiles (et le SVF planterait sur un
+    # percentile de tableau vide). On saute les ombrages avec un message clair
+    # plutot qu'un traceback. Vider les listes suffit : les deux boucles ne
+    # s'executent pas et le nettoyage de fin a quand meme lieu.
+    if (horn_insts or numpy_insts) and not _source_a_des_donnees(source):
+        print("  ATTENTION : aucune donnee d'altitude valide dans la zone "
+              "(dalles entierement nodata).")
+        print("  Cause probable : LiDAR HD pas encore publie ici, ou index TMS "
+              "indisponible au telechargement (dalles vides rapatriees).")
+        print("  Ombrages ignores.")
+        horn_insts  = []
+        numpy_insts = []
+
     try:
         # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked_multi)
         # Traitement par fenêtres 2048×2048 px avec halo 1 px (Horn 3x3).
@@ -6272,6 +6309,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         # > 0 strict : les nodata valent exactement 0.0 et
                         # tireraient p2 vers 0 (stretch délavé).
                         svf_valid = arr_svf[arr_svf > 0]
+                        if svf_valid.size == 0:
+                            print("  SVF : aucun pixel valide (zone nodata) — ombrage ignore")
+                            continue
                         p2  = float(np.percentile(svf_valid, 2))
                         p98 = float(np.percentile(svf_valid, 98))
                         if p98 > p2:
@@ -8633,7 +8673,6 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
 
     # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
@@ -8866,13 +8905,10 @@ Examples:
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
         print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
-        if args.zone_nom:
-            nom_zone = normaliser_nom(args.zone_nom)
-        elif args.oui:
-            print("  ERROR: --zone-name required with --zone-bbox when non-interactive (no terminal)")
+        if not args.zone_nom:
+            print("  ERROR: --zone-name required with --zone-bbox")
             sys.exit(1)
-        else:
-            nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
+        nom_zone = normaliser_nom(args.zone_nom)
         if not nom_zone:
             sys.exit(1)
 
@@ -8883,13 +8919,10 @@ Examples:
         except (ValueError, IndexError):
             print("  Format GPS invalide. Exemple : 43.3156,6.0423")
             sys.exit(1)
-        if args.zone_nom:
-            nom_zone = normaliser_nom(args.zone_nom)
-        elif args.oui:
-            print("  ERROR: --zone-name required with --zone-gps when non-interactive (no terminal)")
+        if not args.zone_nom:
+            print("  ERROR: --zone-name required with --zone-gps")
             sys.exit(1)
-        else:
-            nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
+        nom_zone = normaliser_nom(args.zone_nom)
         if not nom_zone:
             sys.exit(1)
         # BUGFIX : la conversion GPS→L93 doit se faire dans TOUS les cas, pas
@@ -8914,51 +8947,14 @@ Examples:
             sys.exit(1)
 
     else:
-        # Mode interactif
-        print("  Mode de saisie :")
-        print("  [1] Nom de ville")
-        print("  [2] GPS coordinates (lat, lon)")
-        mode = input("  Choix [1] : ").strip() or "1"
-        if mode == "2":
-            gps = input("  GPS (ex: 43.3156, 6.0423) : ").strip()
-            try:
-                parts = [p.strip() for p in gps.replace(";", ",").split(",")]
-                lat, lon = float(parts[0]), float(parts[1])
-            except (ValueError, IndexError):
-                print("  Format invalide.")
-                sys.exit(1)
-            nom_zone = normaliser_nom(input("  Nom du dossier de sortie : ").strip())
-            if not nom_zone: sys.exit(1)
-            # BUGFIX : conversion GPS→L93 dans tous les cas (cf. fix ci-dessus)
-            print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
-            try:
-                t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-                cx, cy = t.transform(lon, lat)
-            except ImportError:
-                cx, cy = wgs84_to_lamb93_approx(lon, lat)
-                print("  (pyproj absent, conversion approchee)")
-            print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
-        else:
-            ville_saisie = input("  Nom de la ville : ").strip()
-            if not ville_saisie:
-                sys.exit(1)
-            nom_zone = normaliser_nom(args.zone_nom or ville_saisie)
-            # BUGFIX : geocodage ville→L93 dans tous les cas (cf. fix ci-dessus)
-            print(f"\n  Geocodage de '{ville_saisie}'...")
-            cx, cy = geocoder_ville_l93(ville_saisie)
-            if cx is None:
-                sys.exit(1)
+        print("  ERROR: a zone option is required "
+              "(--zone-city / --zone-gps / --zone-bbox / --zone-department / --zone-region)")
+        sys.exit(1)
 
-    # Rayon + grille (modes ville / gps / interactif — pas bbox, dept, région, france)
+    # Rayon + grille (modes ville / gps — pas bbox, dept, région, france).
+    # Rayon par defaut 10 km si --zone-radius absent (aucun prompt).
     if not args.zone_bbox and not args.zone_departement and not getattr(args, "zone_region", None):
-        if args.zone_rayon:
-            rayon = args.zone_rayon
-        else:
-            rayon_str = input("  Rayon en km [10] : ").strip()
-            try:
-                rayon = float(rayon_str) if rayon_str else 10.0
-            except ValueError:
-                rayon = 10.0
+        rayon = args.zone_rayon or 10.0
         dalles, bbox = calculer_grille(cx, cy, rayon)
 
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
@@ -9073,22 +9069,11 @@ Examples:
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
 
-    # Compression
-    if args.telechargement_compresser:
-        compresser = True
-    elif args.oui or not args.telechargement:
-        compresser = False  # pas de compression si téléchargement non demandé
-    else:
-        print(f"\n  Cache compression:")
-        print(f"  [1] No  -> fast,  ~{taille_brut} Mo")
-        print(f"  [2] Oui  -> lent,    ~{taille_comp} Mo")
-        compresser = (input("  Choix [1] : ").strip() or "1") == "2"
+    # Compression cache : off par defaut (rapide), activee via --download-compress.
+    # Aucun prompt : l'outil est pilote par flags (CLI + GUI), jamais interactif ici.
+    compresser = bool(args.telechargement_compresser)
     if args.telechargement:
         print(f"  -> {'Compression enabled' if compresser else 'Raw storage'}")
-
-    if not args.oui and args.telechargement:
-        if input(f"\n  Lancer le téléchargement ? [O/n] : ").strip().lower() == "n":
-            sys.exit(0)
 
     racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
     dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
@@ -9216,11 +9201,8 @@ Examples:
         if hors_zone:
             taille_go = sum(f.stat().st_size for f in hors_zone) / 1e9
             print(f"\n  Out-of-zone purge: {len(hors_zone)} tile(s) - {taille_go:.1f} Go")
-            if not args.oui:
-                rep = input("  Confirmer la suppression ? [o/N] : ").strip().lower()
-                if rep != "o":
-                    print("  Purge cancelled.")
-                    hors_zone = []
+            # Purge declenchee explicitement par --tiles-purge-out-of-zone : on
+            # execute sans reconfirmer (pas de prompt interactif).
             for f in hors_zone:
                 f.unlink()
             if hors_zone:
@@ -9266,6 +9248,19 @@ Examples:
             _d = None
         dalles_dict = _d or {}
         noms_attendus = set(dalles_dict.keys())
+
+        # Aucune dalle pour cette zone quand --download est demande :
+        #   _d is None  -> echec reseau/endpoint (deja signale "reessayez")
+        #   _d == {}     -> zone hors couverture (resultat legitime, ex. IGN
+        #                   LiDAR HD non publie : le TMS n'indexe rien)
+        # Rien a telecharger ni a assembler : on sort ici plutot que de laisser
+        # le pipeline planter plus loin sur dalles_zone.txt absent.
+        if args.telechargement and not dalles_dict and not args.source:
+            if _d is None:
+                sys.exit(1)   # echec transitoire : code non-zero (re-tenter)
+            print("  Aucune dalle LiDAR pour cette zone (hors couverture) — "
+                  "rien a telecharger.")
+            return
 
     # -------------------------------------------------------
     # Détecter si on peut sauter le téléchargement
@@ -9479,34 +9474,8 @@ Examples:
         if spec_insts:
             _spec_types = {t for t, _ in spec_insts}
             choix_ombrages = [c for c in choix_ombrages if c not in _spec_types]
-    elif dalles_ombrages and not args.ombrages and not args.oui:
-        # Mode interactif — pas de --ombrages, pas de
-        print(f"\n  Shadings to generate:")
-        print(f"  [1] Rapide      : multi + slope                                   (~1 min)")
-        print(f"  [2] Archaeo     : 315 + 045 + multi + slope                       (~2 min)")
-        print(f"  [3] VAT (archéo, recommandé) : SVF + openness + slope, 1 image    (~20 min)")
-        print(f"  [4] Archaeo+SVF : multi + slope + SVF (flux 20m)                   (~20 min)")
-        print(f"  [5] Archaeo+LRM : multi + slope + LRM gaussien                     (~8 min)")
-        print(f"  [6] Archaeo+RRIM: multi + slope + RRIM (colour composite)         (~25 min)")
-        print(f"  [7] Complet     : 315 045 135 225 multi slope svf lrm rrim        (~60 min)")
-        print(f"  [8] None")
-        print(f"  [9] Choix manuel  ex: multi slope svf rrim vat")
-        print(f"  SVF/openness/LRM/RRIM/VAT : numpy/scipy/numba (auto-installés si besoin)")
-        rep = input("  Choix [1] : ").strip() or "1"
-        if   rep == "1": choix_ombrages = ["multi", "slope"]
-        elif rep == "2": choix_ombrages = ["315", "045", "multi", "slope"]
-        elif rep == "3": choix_ombrages = ["vat"]
-        elif rep == "4": choix_ombrages = ["multi", "slope", "svf"]
-        elif rep == "5": choix_ombrages = ["multi", "slope", "lrm"]
-        elif rep == "6": choix_ombrages = ["multi", "slope", "rrim"]
-        elif rep == "7": choix_ombrages = TOUS_OMBRAGES
-        elif rep == "8": choix_ombrages = []
-        elif rep == "9":
-            saisie = input("  Types : ").strip().lower().split()
-            choix_ombrages = [s for s in saisie if s in _SHADING_TYPES]
-        else:             choix_ombrages = ["multi", "slope"]
     else:
-        choix_ombrages = []  # sans --ombrages → pas d'ombrage
+        choix_ombrages = []  # sans --shadings → pas d'ombrage
 
     if choix_ombrages or spec_insts:
         surface_km2 = len(dalles_ombrages)  # ~1 dalle = 1 km²
@@ -10536,10 +10505,8 @@ def _resoudre_zone_wgs84(args):
             print("  Invalid bbox format. Example: --zone-bbox 5.9,43.1,6.6,43.8")
             sys.exit(1)
         if not nom_zone:
-            if getattr(args, 'oui', False):
-                print("  ERROR: --zone-name required with --zone-bbox when non-interactive (no terminal)")
-                sys.exit(1)
-            nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
+            print("  ERROR: --zone-name required with --zone-bbox")
+            sys.exit(1)
 
     elif args.zone_gps:
         try:
@@ -10549,10 +10516,8 @@ def _resoudre_zone_wgs84(args):
             print("  Invalid GPS format. Example: --zone-gps 43.3156,6.0423")
             sys.exit(1)
         if not nom_zone:
-            if getattr(args, 'oui', False):
-                print("  ERROR: --zone-name required with --zone-gps when non-interactive (no terminal)")
-                sys.exit(1)
-            nom_zone = normaliser_nom(input("  Nom de la zone : ").strip())
+            print("  ERROR: --zone-name required with --zone-gps")
+            sys.exit(1)
         r     = args.zone_rayon / 111.0
         r_lon = args.zone_rayon / (111.0 * math.cos(math.radians(lat_c)))
         lat_min, lat_max = lat_c - r,     lat_c + r
@@ -10570,26 +10535,9 @@ def _resoudre_zone_wgs84(args):
         lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
 
     else:
-        if getattr(args, 'oui', False):
-            print("  ERROR: a zone option is required when non-interactive (no terminal)")
-            sys.exit(1)
-        ville = input("  Ville (ou laisser vide pour GPS) : ").strip()
-        if ville:
-            nom_zone = nom_zone or normaliser_nom(ville)
-            lat_c, lon_c = geocoder_ville_wgs84(ville)
-            if lat_c is None:
-                sys.exit(1)
-        else:
-            gps = input("  GPS (lat,lon) : ").strip()
-            parts = [p.strip() for p in gps.split(",")]
-            lat_c, lon_c = float(parts[0]), float(parts[1])
-            nom_zone = nom_zone or normaliser_nom(input("  Nom de la zone : ").strip())
-        rayon_str = input("  Rayon km [10] : ").strip()
-        rayon = float(rayon_str) if rayon_str else 10.0
-        r     = rayon / 111.0
-        r_lon = rayon / (111.0 * math.cos(math.radians(lat_c)))
-        lat_min, lat_max = lat_c - r,     lat_c + r
-        lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
+        print("  ERROR: a zone option is required "
+              "(--zone-city / --zone-gps / --zone-bbox / --zone-department)")
+        sys.exit(1)
 
     if not nom_zone:
         sys.exit(1)
@@ -10623,8 +10571,6 @@ def main_decouper():
                         metavar="FMT")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
     args = parser.parse_args()
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
@@ -10763,7 +10709,6 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _valider_zooms(args, parser)
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
@@ -10942,11 +10887,6 @@ Examples:
     print(f"  Zooms   : {zoom_min}–{zoom_max}")
     print(f"  Tiles: {total:,}  (~{taille_est} MB estimated)")
     print(f"  Workers : {args.workers}")
-
-    if not args.oui:
-        rep = input("\n  Lancer le téléchargement ? [O/n] : ").strip().lower()
-        if rep == "n":
-            sys.exit(0)
 
     # ── Dossier de sortie ─────────────────────────────────────────────────────
     racine  = Path(args.dossier).resolve() if args.dossier \
@@ -12359,7 +12299,6 @@ def main_wfs():
                              "Without it, computed automatically from the area "
                              "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
     args = parser.parse_args()
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
     _ff = getattr(args, "formats_fichier", ["gz"])
     # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
     _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
@@ -12393,11 +12332,6 @@ def main_wfs():
     print(f"  BBox     : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
     print(f"  Layer(s): {', '.join(c[1] for c in couches_resolues)}")
     print(f"  Output   : {dossier}")
-
-    if not args.oui:
-        rep = input("\n  Lancer ? [O/n] : ").strip().lower()
-        if rep == "n":
-            sys.exit(0)
 
     # ── Téléchargement ────────────────────────────────────────────────────────
     sorties = []
@@ -13130,8 +13064,6 @@ Examples:
                         metavar="M", dest="simplification_vecteur",
                         help="Douglas-Peucker epsilon in metres (default: auto from area).")
     args, _ = parser.parse_known_args()  # ignorer --zone-* et autres args globaux
-    args.oui = not sys.stdin.isatty()   # non-interactif auto si pas de terminal
-
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
 
@@ -13169,11 +13101,6 @@ Examples:
     for f in fichiers:
         print(f"  + {f}")
     print(f"  → {sortie}")
-
-    if not args.oui:
-        rep = input("\n  Lancer ? [O/n] : ").strip().lower()
-        if rep == "n":
-            sys.exit(0)
 
     fusion_result = fusionner_geojson(fichiers, sortie)
     if fusion_result and fusion_result[0] is not None:
@@ -14025,6 +13952,12 @@ def lancer_gui():
                          "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
             if t == "decoupe" and cfg.get("source_decoupe"):
                 self._result_dir = str(Path(cfg["source_decoupe"]).parent)
+            elif cfg.get("dossier"):
+                # --output-dir explicite : chaque main CLI l'utilise comme racine
+                # DIRECTE (racine = args.dossier), sans sous-dossier <nom>/<type>.
+                # Sans ce cas, open_folder visait dossier/nom/type inexistant et
+                # l'explorateur ouvrait Mes Documents. Miroir du CLI, tous types.
+                self._result_dir = str(Path(cfg["dossier"]))
             else:
                 self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
             while not self._log_queue.empty():
