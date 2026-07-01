@@ -67,8 +67,8 @@ def set_apikey(key):
 def _get_api_key():
     key = _APIKEY or os.environ.get("OPENTOPOGRAPHY_API_KEY", "").strip()
     if not key:
-        print("  ⚠ Clé API OpenTopography manquante — passer --apikey <cle> ou "
-              "définir OPENTOPOGRAPHY_API_KEY. Inscription gratuite : "
+        print("  ⚠ OpenTopography API key missing, pass --apikey <key> or "
+              "set OPENTOPOGRAPHY_API_KEY. Free sign up: "
               "https://portal.opentopography.org/myopentopo", flush=True)
     return key
 
@@ -157,9 +157,9 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
         dalles[dalle_filename(x_km, y_km)] = dalle_url(x_km, y_km)
     if len(dalles) > 50:
-        print(f"  ⚠ {len(dalles)} dalles → rate limit OT non-academic est 50/24h. "
-              f"Réduire la bbox.")
-    print(f"  US 3DEP : {len(dalles)} dalle(s) générées (grille km Mercator, {DATASET})")
+        print(f"  ⚠ {len(dalles)} tiles → OT non-academic rate limit is 50/24h. "
+              f"Reduce the bbox.")
+    print(f"  US 3DEP: {len(dalles)} tile(s) generated (km Mercator grid, {DATASET})")
     return dalles
 
 

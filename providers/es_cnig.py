@@ -109,8 +109,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  Espagne : bbox hors de l'étendue du MDT (UTM 30N péninsule)")
+        print("  Spain: bbox out of the MDT extent (UTM 30N peninsula)")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
-    print(f"  ES IGN (MDT 5m) : {len(grille)} dalle(s) générées")
+    print(f"  ES IGN (MDT 5m): {len(grille)} tile(s) generated")
     return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}

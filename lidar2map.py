@@ -562,7 +562,7 @@ if getattr(sys, "frozen", False):
                             f.stat().st_size for f in _c_u.rglob("*") if f.is_file()
                         )
                         _total_u += _taille_u
-                        print(f"  Suppression {_label_u} ({_taille_u / 1e6:.0f} MB)")
+                        print(f"  Removing {_label_u} ({_taille_u / 1e6:.0f} MB)")
                         print(f"    {_c_u}")
                         _sh_u.rmtree(_c_u, ignore_errors=True)
                         print(f"    {'✓ removed' if not _c_u.exists() else '⚠ partial'}")
@@ -1038,7 +1038,7 @@ def _bootstrap_venv_si_besoin():
             print("  ╔══════════════════════════════════════════════════════════════╗")
             print("  ║  Mode --bootstrap=none: auto-install disabled              ║")
             print("  ╚══════════════════════════════════════════════════════════════╝")
-            print(f"  Modules Python manquants : {', '.join(manquantes)}")
+            print(f"  Missing Python modules: {', '.join(manquantes)}")
             print()
             print("  Install them yourself with your preferred method:")
             print(f"    pip install {' '.join(pkgs_pip)} pywebview")
@@ -1249,13 +1249,13 @@ def _bootstrap_pip():
                        capture_output=True)
     if r.returncode == 0:
         return  # pip déjà disponible
-    print("  pip absent — bootstrap via ensurepip...")
+    print("  pip missing, bootstrap via ensurepip...")
     try:
         import ensurepip
         ensurepip.bootstrap(upgrade=True)
         print("  pip installed.")
     except Exception as e:
-        print(f"  ERREUR bootstrap pip : {e}")
+        print(f"  ERROR bootstrap pip: {e}")
         print("  Install pip manually: https://pip.pypa.io/en/stable/installation/")
         sys.exit(1)
 
@@ -1440,7 +1440,7 @@ def _installer_deps():
     print("  ╔══════════════════════════════════════════════════════════════╗")
     print("  ║  ERROR: cannot install the Python dependencies      ║")
     print("  ╚══════════════════════════════════════════════════════════════╝")
-    print(f"  Modules manquants : {', '.join(deps_crit)}")
+    print(f"  Missing modules: {', '.join(deps_crit)}")
     if last_stderr:
         print(f"  Dernier message pip :\n  {last_stderr}")
     print()
@@ -1629,7 +1629,7 @@ if _DESINSTALLER:
             # Calculer la taille avant suppression
             _taille = sum(f.stat().st_size for f in _chemin.rglob("*") if f.is_file())
             _total += _taille
-            print(f"  Suppression {_label} ({_taille / 1e6:.0f} MB)")
+            print(f"  Removing {_label} ({_taille / 1e6:.0f} MB)")
             print(f"    {_chemin}")
             _sh_uninst.rmtree(_chemin, ignore_errors=True)
             # Mêmes états ✓/⚠ que le bloc launcher pour cohérence
@@ -1739,9 +1739,9 @@ if _SMOKETEST:
         """Fusion utilise l'output OSM précédent comme input."""
         src = _smk_projets / "osm_vecteur" / "smoke_osm_highway.geojson.gz"
         out = _smk_projets / "fusion"      / "smoke_fusion.geojson.gz"
-        print(f"\n━━━ Fusion ━━━", flush=True)
+        print(f"\n━━━ Merge ━━━", flush=True)
         if not src.exists():
-            print(f"  ⊘ SKIP : input OSM absent ({src.name})")
+            print(f"  ⊘ SKIP: OSM input missing ({src.name})")
             return None
         out.parent.mkdir(parents=True, exist_ok=True)
         t0 = time.time()
@@ -2197,7 +2197,7 @@ def _garde_disque(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int):
     libre = _espace_libre_go(chemin)
     if libre < seuil_go:
         print(f"\n  ⚠ Disk space low: {libre:.1f} GB free < {seuil_go:.0f} GB threshold.")
-        print(f"  Stopping cleanly before chunk {cle} — {nb_ok}/{n_total} chunks done. "
+        print(f"  Stopping cleanly before chunk {cle}: {nb_ok}/{n_total} chunks done. "
               f"Free space and relaunch to resume.")
         sys.exit(EXIT_DISK_LOW)
 
@@ -2806,7 +2806,7 @@ def geocoder_ville_wgs84(nom_ville):
             data = json.loads(resp.read())
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
             OSError, TimeoutError) as e:
-        print(f"  ERREUR geocodage ({type(e).__name__}) : {e}")
+        print(f"  ERROR geocoding ({type(e).__name__}): {e}")
         return None, None
     if not data:
         print(f"  ERROR: town not found: {nom_ville}")
@@ -2887,7 +2887,7 @@ def geocoder_departement(num_dep):
     # Si en cache, retourner directement
     if num_dep in _cache:
         c = _cache[num_dep]
-        print(f"  Department {num_dep} — {c['nom']} (local cache)", flush=True)
+        print(f"  Department {num_dep}: {c['nom']} (local cache)", flush=True)
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
         try:
@@ -2938,7 +2938,7 @@ def geocoder_departement(num_dep):
                       flush=True)
                 time.sleep(5)
             else:
-                print(f"  ERREUR Overpass : {type(e).__name__}: {e}")
+                print(f"  ERROR Overpass: {type(e).__name__}: {e}")
 
     if lat_min is None:
         print(f"  ERROR: cannot geocode the department {num_dep}.")
@@ -2956,7 +2956,7 @@ def geocoder_departement(num_dep):
     except Exception:
         pass  # cache non critique
 
-    print(f"  Department {num_dep} — {nom}")
+    print(f"  Department {num_dep}: {nom}")
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
     try:
@@ -2992,7 +2992,7 @@ def geocoder_region(slug):
         print(f"  ERROR: region '{slug}' unknown.")
         print(f"  Available regions: {', '.join(_regions_disponibles())}")
         return None, None, None, None, None
-    print(f"  Region {slug} — {len(deps)} departments: {', '.join(deps)}", flush=True)
+    print(f"  Region {slug}, {len(deps)} departments: {', '.join(deps)}", flush=True)
     bx1 = by1 = float("inf")
     bx2 = by2 = float("-inf")
     for d in deps:
@@ -3293,7 +3293,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 # final (3/3) reste visible — la progress bar montre l'avancée.
                 time.sleep(DELAI_RETRY)
             else:
-                print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
+                print(f"\n  ERROR {nom} ({type(_e).__name__}, attempt {tentative}): {_e}")
                 return "erreur"
     return "erreur"
 
@@ -3386,7 +3386,7 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY)
             else:
-                print(f"\n  ERREUR fenêtre {nom} ({type(_e).__name__}) : {_e}")
+                print(f"\n  ERROR window {nom} ({type(_e).__name__}): {_e}")
                 return "erreur"
     return "erreur"
 
@@ -3454,7 +3454,7 @@ def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
                 # le bourrage console quand IGN renvoie 502/400/timeouts en rafale.
                 time.sleep(DELAI_RETRY)
             else:
-                print(f"\n  ERREUR {nom} ({type(_e).__name__}, tentative {tentative}) : {_e}")
+                print(f"\n  ERROR {nom} ({type(_e).__name__}, attempt {tentative}): {_e}")
                 return "erreur"
 
     return "erreur"
@@ -4912,7 +4912,7 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
     mean_g = _acc[0] / _acc[1] if _acc[1] else 0.0
     if p95_g <= p5_g:
         return False  # relief dégénéré (tout plat / tout nodata)
-    print(f"  LRM chunked — p5={p5_g:.2f} m  p95={p95_g:.2f} m (grille 3×3)",
+    print(f"  LRM chunked: p5={p5_g:.2f} m  p95={p95_g:.2f} m (3×3 grid)",
           flush=True)
 
     # ── Profil de sortie ────────────────────────────────────────────────────
@@ -4979,10 +4979,10 @@ def _lrm_chunked(src_path, dst_path, sigma_px, gdal_translate_exe, env_dem):
 
                 n_done += 1
                 pct = n_done * 100 // total_chunks
-                print(f"\r  LRM chunked : {pct:3d} % ({n_done}/{total_chunks} blocs)   ",
+                print(f"\r  LRM chunked: {pct:3d}% ({n_done}/{total_chunks} blocks)   ",
                       end="", flush=True)
 
-    print(f"\r  LRM chunked: done ({total_chunks} blocs, σ={sigma_px} px)          ")
+    print(f"\r  LRM chunked: done ({total_chunks} blocks, σ={sigma_px} px)          ")
     return True
 
 
@@ -5121,13 +5121,13 @@ def _hillshade_chunked_multi(src_path, jobs, dx=0.5, dy=0.5):
 
                 n += 1
                 pct = n * 100 // total
-                print(f"\r  {lbl} chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                print(f"\r  {lbl} chunked: {pct:3d}% ({n}/{total} blocks)   ",
                       end="", flush=True)
     finally:
         src_ds.close()
         for dst in dsts:
             dst.close()
-    print(f"\r  {lbl} chunked: done ({total} blocs)                     ")
+    print(f"\r  {lbl} chunked: done ({total} blocks)                     ")
     return True
 
 
@@ -5169,7 +5169,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     # Openness (conv ≥ 2) : ray-cast obligatoire — le sweep ne maintient qu'un
     # running max clampé via upper hull (pas de min, pas d'angles négatifs).
     if use_sweep and conv >= 2:
-        print("  Openness : kernel sweep non applicable — ray-cast utilisé.",
+        print("  Openness: sweep kernel not applicable, ray-cast used.",
               flush=True)
         use_sweep = False
     _kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
@@ -5177,7 +5177,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
         print("  numba missing - SVF chunked unavailable", flush=True)
         return False
     if use_sweep:
-        print("  SVF chunked : kernel sweep-horizon (deque/upper-hull)", flush=True)
+        print("  SVF chunked: sweep-horizon kernel (deque/upper-hull)", flush=True)
 
     with _rio.open(str(src_path)) as src:
         H, W    = src.height, src.width
@@ -5202,7 +5202,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     # Les p2/p98 calibrent le stretch (point noir/blanc) appliqué à TOUTE
     # l'image — échantillonnage réparti via _percentiles_grille (helper
     # partagé SVF/LRM/RRIM).
-    print("  SVF chunked — compilation Numba + percentiles (grille)...", flush=True)
+    print("  SVF chunked: Numba compilation + percentiles (grid)...", flush=True)
     _pcts = _percentiles_grille(src_path, HALO,
                                 lambda w: _svf_block(w, nd_to=np.nan), 2, 98)
     if _pcts is None:
@@ -5210,7 +5210,7 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     p2_g, p98_g, _n_valid = _pcts
     if p98_g <= p2_g:
         p2_g, p98_g = 0.0, 1.0
-    print(f"  SVF chunked — p2={p2_g:.3f}  p98={p98_g:.3f} (grille 3×3)", flush=True)
+    print(f"  SVF chunked: p2={p2_g:.3f}  p98={p98_g:.3f} (3×3 grid)", flush=True)
 
     out_profile = profile.copy()
     # Purger les clés héritées qui pourraient interférer :
@@ -5269,9 +5269,9 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
 
                 n += 1
                 pct = n * 100 // total
-                print(f"\r  SVF chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                print(f"\r  SVF chunked: {pct:3d}% ({n}/{total} blocks)   ",
                       end="", flush=True)
-    print(f"\r  SVF chunked: done ({total} blocs, halo={HALO} px)        ")
+    print(f"\r  SVF chunked: done ({total} blocks, halo={HALO} px)        ")
     return True
 
 
@@ -5312,7 +5312,7 @@ def _svf_opos_chunked(src_path, svf_dst, opos_dst, max_dist_px, n_directions=16,
         return svf, opos, nd_mask
 
     # ── Passe 1 : percentiles p2/p98 par sortie (échantillon grille 3×3) ────────
-    print("  VAT SVF+opos chunked — compilation Numba + percentiles (grille)...", flush=True)
+    print("  VAT SVF+opos chunked: Numba compilation + percentiles (grid)...", flush=True)
     def _samp(idx):
         def f(win):
             svf, opos, nd = _blocks(win)
@@ -5326,7 +5326,7 @@ def _svf_opos_chunked(src_path, svf_dst, opos_dst, max_dist_px, n_directions=16,
     p2o, p98o, _ = _pc_o
     if p98s <= p2s: p2s, p98s = 0.0, 1.0
     if p98o <= p2o: p2o, p98o = 0.0, 1.0
-    print(f"  VAT SVF+opos — svf p2={p2s:.3f}/p98={p98s:.3f}, "
+    print(f"  VAT SVF+opos: svf p2={p2s:.3f}/p98={p98s:.3f}, "
           f"opos p2={p2o:.3f}/p98={p98o:.3f}", flush=True)
 
     op = profile.copy()
@@ -5363,9 +5363,9 @@ def _svf_opos_chunked(src_path, svf_dst, opos_dst, max_dist_px, n_directions=16,
                 dsv.write(su8[dr0:dr1, dc0:dc1][np.newaxis, :, :], window=ww)
                 dop.write(ou8[dr0:dr1, dc0:dc1][np.newaxis, :, :], window=ww)
                 nblk += 1
-                print(f"\r  VAT SVF+opos : {nblk * 100 // total:3d} % "
-                      f"({nblk}/{total} blocs)   ", end="", flush=True)
-    print(f"\r  VAT SVF+opos: done ({total} blocs, halo={HALO} px)        ")
+                print(f"\r  VAT SVF+opos: {nblk * 100 // total:3d}% "
+                      f"({nblk}/{total} blocks)   ", end="", flush=True)
+    print(f"\r  VAT SVF+opos: done ({total} blocks, halo={HALO} px)        ")
     return True
 
 
@@ -5411,7 +5411,7 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     _svf_kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _svf_kernel is not None:
         try:
-            print("  SVF Numba JIT — compilation au 1er appel (~20s)...", flush=True)
+            print("  SVF Numba JIT: compiling on first call (~20s)...", flush=True)
             svf = _svf_kernel(dem_f, n_directions, max_dist_px, resolution, conv)
             _numba_ok = True
             print(f"\r  SVF Numba JIT - done{' ' * 30}")
@@ -5588,7 +5588,7 @@ def _rrim_chunked(src_path, slope_path, dst_path, sigma_px):
     mean_g = _acc[0] / _acc[1] if _acc[1] else 0.0
     if p95_g <= p5_g:
         return False
-    print(f"  RRIM chunked — LRM p5={p5_g:.2f} m  p95={p95_g:.2f} m (grille 3×3)",
+    print(f"  RRIM chunked: LRM p5={p5_g:.2f} m  p95={p95_g:.2f} m (3×3 grid)",
           flush=True)
 
     out_profile = profile.copy()
@@ -5654,9 +5654,9 @@ def _rrim_chunked(src_path, slope_path, dst_path, sigma_px):
 
                 n += 1
                 pct = n * 100 // total
-                print(f"\r  RRIM chunked : {pct:3d} % ({n}/{total} blocs)   ",
+                print(f"\r  RRIM chunked: {pct:3d}% ({n}/{total} blocks)   ",
                       end="", flush=True)
-    print(f"\r  RRIM chunked: done ({total} blocs, σ={sigma_px} px)          ")
+    print(f"\r  RRIM chunked: done ({total} blocks, σ={sigma_px} px)          ")
     return True
 
 
@@ -5789,7 +5789,7 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
                 chemin_out.unlink(missing_ok=True)
                 continue
         if not success:
-            print(f"  {cle}: provider pre-computed failed -> calcul normal depuis DEM",
+            print(f"  {cle}: provider pre-computed failed -> normal computation from DEM",
                   flush=True)
 
 
@@ -6103,7 +6103,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     insts, _vus = [], set()
     for typ, prm in ([(t, {}) for t in choix] + list(instances or [])):
         if typ not in _SHADING_TYPES:
-            print(f"  ⚠ type d'ombrage inconnu ignoré : {typ}")
+            print(f"  ⚠ unknown shading type ignored: {typ}")
             continue
         p = _resoudre_params(typ, prm)
         sfx = _suffixe_instance(typ, prm, p)
@@ -6165,11 +6165,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # plutot qu'un traceback. Vider les listes suffit : les deux boucles ne
     # s'executent pas et le nettoyage de fin a quand meme lieu.
     if (horn_insts or numpy_insts) and not _source_a_des_donnees(source):
-        print("  ATTENTION : aucune donnee d'altitude valide dans la zone "
-              "(dalles entierement nodata).")
-        print("  Cause probable : LiDAR HD pas encore publie ici, ou index TMS "
-              "indisponible au telechargement (dalles vides rapatriees).")
-        print("  Ombrages ignores.")
+        print("  WARNING: no valid elevation data in the zone "
+              "(tiles are entirely nodata).")
+        print("  Likely cause: no LiDAR data published here yet, or the tile "
+              "index was unavailable at download time (empty tiles fetched).")
+        print("  Shadings skipped.")
         horn_insts  = []
         numpy_insts = []
 
@@ -6202,8 +6202,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                                    chemin_out))
 
             if jobs_h:
-                print(f"  Hillshades chunked — {len(jobs_h)} type(s),"
-                      f" une seule passe de lecture...", flush=True)
+                print(f"  Hillshades chunked: {len(jobs_h)} type(s),"
+                      f" single read pass...", flush=True)
                 t0_hill = time.time()
                 try:
                     ok_h = _hillshade_chunked_multi(
@@ -6227,7 +6227,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             print(f"  Partial file removed: {chemin_out.name}")
                     if isinstance(e_hill, (KeyboardInterrupt, SystemExit)):
                         raise
-                    print(f"\n  ERREUR hillshades chunked : {e_hill}")
+                    print(f"\n  ERROR hillshades chunked: {e_hill}")
 
         # ── SVF / openness / LRM / RRIM — numpy/scipy ────────────────────────
         # NB : rasterio.merge (étape 2 du refactor) produit déjà un GeoTIFF
@@ -6310,7 +6310,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         # tireraient p2 vers 0 (stretch délavé).
                         svf_valid = arr_svf[arr_svf > 0]
                         if svf_valid.size == 0:
-                            print("  SVF : aucun pixel valide (zone nodata) — ombrage ignore")
+                            print("  SVF: no valid pixel (nodata zone), shading skipped")
                             continue
                         p2  = float(np.percentile(svf_valid, 2))
                         p98 = float(np.percentile(svf_valid, 98))
@@ -6328,7 +6328,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
                 except Exception as e_svf:
                     import traceback as _tb
-                    print(f"  ERREUR SVF : {e_svf}")
+                    print(f"  ERROR SVF: {e_svf}")
                     print("  --- full traceback ---")
                     _tb.print_exc()
                     print("  ---------------------------")
@@ -6388,7 +6388,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  scipy missing - LRM skipped (pip install scipy)", flush=True)
                         continue
                     except Exception as e_scipy:
-                        print(f"  ERREUR scipy LRM : {e_scipy}")
+                        print(f"  ERROR scipy LRM: {e_scipy}")
                         continue
 
             elif cle == "rrim":
@@ -6401,8 +6401,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 #       choisi plutôt que le SVF du RRIM canonique : sur
                 #       terrain ouvert SVF ≈ 0.97 partout → dominance bleue)
                 # Révèle simultanément creux ET bosses — optimal prospection.
-                print("  RRIM — Red Relief Image Map (slope × LRM)"
-                      " — peut prendre 5-10 min...", flush=True)
+                print("  RRIM: Red Relief Image Map (slope × LRM)"
+                      ", may take 5-10 min...", flush=True)
 
                 sigma_rrim = _sigma_px   # défaut 15 px ; --shading rrim:sigma=M en mètres
 
@@ -6435,7 +6435,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             Path(src_str), _slope_src, chemin_out,
                             sigma_px=sigma_rrim)
                     except Exception as e_rrim:
-                        print(f"  ERREUR composite RRIM : {e_rrim}")
+                        print(f"  ERROR composite RRIM: {e_rrim}")
                         # Fichier partiellement écrit → supprimer (sinon pris
                         # pour un cache sain au prochain lancement).
                         if chemin_out.exists():
@@ -6492,7 +6492,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             print(f"  RRIM (full memory): {chemin_out.name}"
                                   f" — RGB 3 canaux")
                         except Exception as e_rrim:
-                            print(f"  ERREUR composite RRIM : {e_rrim}")
+                            print(f"  ERROR composite RRIM: {e_rrim}")
                             continue
                 finally:
                     if slope_tmp_path.exists():
@@ -6507,9 +6507,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 # appliqué par le composite.
                 _vat_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
                 _vat_gamma   = float(p_i["gamma"])
-                print(f"  VAT — composite SVF + openness + slope"
-                      f" (rayon {_vat_dist_px * RESOLUTION_M:.0f} m)"
-                      f" — peut prendre 10-20 min...", flush=True)
+                print(f"  VAT: composite SVF + openness + slope"
+                      f" (radius {_vat_dist_px * RESOLUTION_M:.0f} m)"
+                      f", may take 10-20 min...", flush=True)
                 _svf_t   = dossier_ville / nom_fichier.replace(".tif", "_svf_tmp.tif")
                 _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
                 _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
@@ -6523,8 +6523,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         and _hillshade_chunked(Path(src_str), _slope_t, "slope",
                                                {}, dx=RESOLUTION_M, dy=RESOLUTION_M))
                     if not _ok_comp:
-                        print("  VAT : composantes indisponibles (numba requis pour"
-                              " SVF/openness) — ombrage sauté.", flush=True)
+                        print("  VAT: components unavailable (numba required for"
+                              " SVF/openness), shading skipped.", flush=True)
                         continue
                     if not _vat_compose(_svf_t, _opos_t, _slope_t, chemin_out,
                                         gamma=_vat_gamma):
@@ -6532,7 +6532,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             chemin_out.unlink()
                         continue
                 except Exception as e_vat:
-                    print(f"  ERREUR composite VAT : {e_vat}")
+                    print(f"  ERROR composite VAT: {e_vat}")
                     if chemin_out.exists():
                         chemin_out.unlink()
                     continue
@@ -6790,8 +6790,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         else:
             warp_deja_fait = warped.exists() and warped.stat().st_size > 1_000_000 and not ecraser_tuiles
             if warp_deja_fait:
-                print(f"  Warped cache : {warped.name}  "
-                      f"({warped.stat().st_size/1e6:.0f} MB) — réutilisé", flush=True)
+                print(f"  Warped cache: {warped.name}  "
+                      f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
 
         # ── 1. Warp via rasterio ───────────────────────────────────────────
         # Plus de cmd_warp gdalwarp à construire — voir bloc rasterio.warp
@@ -6901,7 +6901,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 print("  " + lbl.ljust(36) + " [" + "█"*30 +
                       f"] 100%  {_hms(elap)}  {taille_w:.0f} Mo")
             except Exception as _e_warp:
-                print(f"  ERREUR rasterio.warp {nom_tr} : {_e_warp}")
+                print(f"  ERROR rasterio.warp {nom_tr}: {_e_warp}")
                 continue
 
             # ── 2. Diagnostic dimensions warped (rasterio) ──────────────────
@@ -6930,7 +6930,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         ds_o.update_tags(ns="rio_overview", resampling="gauss")
                     print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
                 except Exception as _e_ovw:
-                    print(f"  WARNING overviews : {_e_ovw} — tuilage natif")
+                    print(f"  WARNING overviews: {_e_ovw}, native tiling")
 
         # ── 3. Bbox warped (EPSG:3857) ──────────────────────────────────────
         # Priorité : -te calculé lors du warp courant (pas besoin de proj.db).
@@ -7110,7 +7110,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         # warped conservé dans dossier_ville/ pour réutilisation future
         taille_w = warped.stat().st_size / 1e6 if warped.exists() else 0
         print(f"  Tiling cache kept: {warped.name}  ({taille_w:.0f} MB)"
-              f"  — supprimez-le manuellement si inutile")
+              f", delete it manually if not needed")
 
     con.close()
     if _pool is not None:
@@ -7991,7 +7991,7 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
                     f.write(_wl(zoom_hdr_offset[z]))
 
         except Exception as e:
-            print(f"\n  ERREUR RMAP : {e}")
+            print(f"\n  ERROR RMAP: {e}")
             import traceback; traceback.print_exc()
             rmap.unlink(missing_ok=True)
             return None
@@ -8045,7 +8045,7 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
         zoom_max = int(meta.get("maxzoom", 17))
         total = con_mb.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
 
-        print(f"  SQLiteDB ← {mbtiles_path.name}  ({total:,} tuiles)...", flush=True)
+        print(f"  SQLiteDB ← {mbtiles_path.name}  ({total:,} tiles)...", flush=True)
         t0 = time.time()
 
         con_db = sqlite3.connect(str(sqlitedb))
@@ -8087,7 +8087,7 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
                     "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
                 con_db.commit()
         except Exception as e:
-            print(f"\n  ERREUR SQLiteDB : {e}")
+            print(f"\n  ERROR SQLiteDB: {e}")
             sqlitedb.unlink(missing_ok=True)
             return None
 
@@ -8449,7 +8449,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         return chemin_map
     else:
         chemin_map_tmp.unlink(missing_ok=True)
-        print(f"  ERREUR osmosis mapfile-writer (code {rc})")
+        print(f"  ERROR osmosis mapfile-writer (code {rc})")
         if stderr_diag:
             # stderr_diag contient les 500 dernières lignes (toutes confondues).
             # On extrait celles qui contiennent un marqueur d'erreur/warning.
@@ -8704,8 +8704,8 @@ Examples:
         if args.ombrages_elevation is None:
             args.ombrages_elevation = _pelev
         _pd = _pinsts[0][1]["dist"]; _ps = _pinsts[2][1]["sigma"]
-        print(f"  Preset ombrages '{_pname}' (res {RESOLUTION_M:g} m) : "
-              f"svf/opos rayon {_pd:g} m, lrm sigma {_ps:g} m, soleil "
+        print(f"  Shadings preset '{_pname}' (res {RESOLUTION_M:g} m): "
+              f"svf/opos radius {_pd:g} m, lrm sigma {_ps:g} m, sun "
               f"{args.ombrages_elevation}°")
 
     # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
@@ -8728,12 +8728,12 @@ Examples:
 
     print("=" * 55)
     if _osm_seul:
-        print("  Carte OSM vectorielle")
+        print("  OSM vector map")
     else:
         print(f"  LiDAR : {PROVIDER.NAME}")
         print("  Pipeline rasterio + numpy (numba for SVF)")
     print("=" * 55)
-    print(f"  Dossier : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
+    print(f"  Folder : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
     print()
 
     # ── --source : mode autonome selon l'extension + CRS ────────────────────────
@@ -8868,14 +8868,14 @@ Examples:
                 print(f"  Available regions: {', '.join(_regions_disponibles())}")
                 sys.exit(1)
             dalles, bbox = [], (0.0, 0.0, 0.0, 0.0)
-            print(f"  Dossier : {nom_zone}")
+            print(f"  Folder : {nom_zone}")
         else:
             # raster / vecteur / lidar : bbox = union des bbox des départements.
             nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
             if nom_reg is None:
                 sys.exit(1)
             dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-            print(f"  Dossier : {nom_zone}  |  {len(dalles)} dalles")
+            print(f"  Folder : {nom_zone}  |  {len(dalles)} tiles")
 
     elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
@@ -8889,14 +8889,14 @@ Examples:
         # Nom automatique : ex "var_83"
         nom_auto = normaliser_nom(nom_dep) + "_" + num_dep.lower()
         nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
-        print(f"  Dossier : {nom_zone}" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
+        print(f"  Folder : {nom_zone}" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
 
     elif args.zone_bbox:
         try:
             parts = [float(v.strip()) for v in args.zone_bbox.split(",")]
             bx1, by1, bx2, by2 = parts
         except (ValueError, IndexError):
-            print("  Format BBox invalide. Exemple : --bbox 880000,6210000,1080000,6360000")
+            print("  Invalid BBox format. Example: --bbox 880000,6210000,1080000,6360000")
             sys.exit(1)
         if _osm_seul:
             dalles, bbox = [], (bx1, by1, bx2, by2)
@@ -8904,7 +8904,7 @@ Examples:
             dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} dalles"))
+        print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
         if not args.zone_nom:
             print("  ERROR: --zone-name required with --zone-bbox")
             sys.exit(1)
@@ -8917,7 +8917,7 @@ Examples:
             parts = [p.strip() for p in args.zone_gps.replace(";", ",").split(",")]
             lat, lon = float(parts[0]), float(parts[1])
         except (ValueError, IndexError):
-            print("  Format GPS invalide. Exemple : 43.3156,6.0423")
+            print("  Invalid GPS format. Example: 43.3156,6.0423")
             sys.exit(1)
         if not args.zone_nom:
             print("  ERROR: --zone-name required with --zone-gps")
@@ -8941,7 +8941,7 @@ Examples:
 
     elif args.zone_ville:
         nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
-        print(f"  Geocodage de '{args.zone_ville}'...")
+        print(f"  Geocoding '{args.zone_ville}'...")
         cx, cy = geocoder_ville_l93(args.zone_ville)
         if cx is None:
             sys.exit(1)
@@ -8983,7 +8983,7 @@ Examples:
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — already done")
+                    print(f"  [{cle}] {nom_z}: already done")
                     nb_ok += 1
                     continue
 
@@ -9003,7 +9003,7 @@ Examples:
                     print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
                     _n_done, _eta = manifeste.eta_global(n_total)
                     if _eta:
-                        print(f"  [{cle}] {_n_done}/{n_total} done — "
+                        print(f"  [{cle}] {_n_done}/{n_total} done, "
                               f"ETA ~{_hms(_eta)} remaining (coarse)")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
@@ -9057,10 +9057,10 @@ Examples:
             raise KeyboardInterrupt("Interruption demandée — étapes restantes skipped")
         etape_cur[0] += 1
         etape_t0[0] = time.time()
-        print("ETAPE:" + str(etape_cur[0]) + "/" + str(etapes_total) + " " + nom, flush=True)
+        print("STEP:" + str(etape_cur[0]) + "/" + str(etapes_total) + " " + nom, flush=True)
 
     if args.telechargement:
-        print_etape("Téléchargement dalles")
+        print_etape("Downloading tiles")
     if not _osm_seul and not (not args.telechargement and not args.ombrages):
         print(f"\n  Grid: {nb} tile(s) of {DALLE_KM}x{DALLE_KM} km  (~{nb} km²)")
         print(f"  Space: ~{taille_brut} MB raw  /  ~{taille_comp} MB compressed")
@@ -9090,9 +9090,9 @@ Examples:
             sys.exit(1)
     if not _osm_seul:
         dossier_ville.mkdir(parents=True, exist_ok=True)
-    print(f"\n  Racine  : {racine}")
+    print(f"\n  Root    : {racine}")
     if not _osm_seul:
-        print(f"  Dalles  : {dossier_dalles}")
+        print(f"  Tiles   : {dossier_dalles}")
         print(f"  Zone    : {dossier_ville}")
 
     # -------------------------------------------------------
@@ -9200,7 +9200,7 @@ Examples:
         hors_zone = [f for f in toutes if f.name not in noms_zone_purge]
         if hors_zone:
             taille_go = sum(f.stat().st_size for f in hors_zone) / 1e9
-            print(f"\n  Out-of-zone purge: {len(hors_zone)} tile(s) - {taille_go:.1f} Go")
+            print(f"\n  Out-of-zone purge: {len(hors_zone)} tile(s) - {taille_go:.1f} GB")
             # Purge declenchee explicitement par --tiles-purge-out-of-zone : on
             # execute sans reconfirmer (pas de prompt interactif).
             for f in hors_zone:
@@ -9240,11 +9240,11 @@ Examples:
         try:
             _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
             if _d is None:
-                print("  ⚠ Découverte des dalles indisponible (réseau/endpoint),"
-                      " zone ignorée, réessayez.", flush=True)
+                print("  ⚠ Tile discovery unavailable (network/endpoint),"
+                      " zone skipped, retry.", flush=True)
         except Exception as _e_disc:
-            print(f"  ⚠ Découverte des dalles échouée ({type(_e_disc).__name__}:"
-                  f" {_e_disc}), zone ignorée, réessayez.", flush=True)
+            print(f"  ⚠ Tile discovery failed ({type(_e_disc).__name__}:"
+                  f" {_e_disc}), zone skipped, retry.", flush=True)
             _d = None
         dalles_dict = _d or {}
         noms_attendus = set(dalles_dict.keys())
@@ -9258,8 +9258,8 @@ Examples:
         if args.telechargement and not dalles_dict and not args.source:
             if _d is None:
                 sys.exit(1)   # echec transitoire : code non-zero (re-tenter)
-            print("  Aucune dalle LiDAR pour cette zone (hors couverture) — "
-                  "rien a telecharger.")
+            print("  No LiDAR tile for this zone (out of coverage), "
+                  "nothing to download.")
             return
 
     # -------------------------------------------------------
@@ -9284,7 +9284,7 @@ Examples:
             dalles_existantes = _rglob_tif_robuste(dossier_dalles) if dossier_dalles.exists() else []
             if not dalles_existantes:
                 print("\n  WARNING: --download missing but no tile found.")
-                print(f"  Dossier dalles : {dossier_dalles}")
+                print(f"  Tiles folder : {dossier_dalles}")
                 print("  Add --download to fetch the missing tiles.")
                 sys.exit(1)
             # Vérification zone-spécifique : parmi les dalles du cache, combien
@@ -9297,9 +9297,9 @@ Examples:
                                      if d.name in noms_attendus
                                      and d.stat().st_size > SEUIL_DALLE_VALIDE]
                 if not dalles_zone_cache:
-                    print(f"\n  ATTENTION : {len(dalles_existantes)} tile(s) in cache,")
+                    print(f"\n  WARNING: {len(dalles_existantes)} tile(s) in cache,")
                     print(f"              but NONE covers the requested zone.")
-                    print(f"  Cache global : {dossier_dalles}")
+                    print(f"  Global cache: {dossier_dalles}")
                     libelle_zone = args.zone_ville or nom_zone
                     print(f"  Requested zone: {len(noms_attendus)} tile(s) around "
                           f"{libelle_zone}")
@@ -9358,7 +9358,7 @@ Examples:
                     noms_zone = set()
             else:
                 noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
-                print(f"  Zone tiles list: {dalles_zone_txt.name} ({len(noms_zone)} dalles)")
+                print(f"  Zone tiles list: {dalles_zone_txt.name} ({len(noms_zone)} tiles)")
         elif not args.telechargement and noms_attendus:
             # Si seul --osm demandé, pas besoin des dalles
             if args.osm and not args.ombrages and not args.mbtiles:
@@ -9411,7 +9411,7 @@ Examples:
         try:
             import rasterio as _rio_cmp
         except ImportError:
-            print("  ERROR: rasterio absent — pip install rasterio")
+            print("  ERROR: rasterio missing, run pip install rasterio")
         else:
             tifs_bruts = [
                 t for t in dossier_ville.glob("*.tif")
@@ -9457,7 +9457,7 @@ Examples:
                               str(round(taille_cmp)).rjust(5) + " MB  (-" +
                               str(gain) + "%)  " + _hms(elap))
                     except Exception as _e_cmp:
-                        print(f"  ERREUR compression {chemin_out.name} : {_e_cmp}")
+                        print(f"  ERROR compressing {chemin_out.name}: {_e_cmp}")
                         chemin_tmp.replace(chemin_out)
 
     spec_insts = getattr(args, "shading_instances", None) or []
@@ -9483,13 +9483,13 @@ Examples:
             t + (":" + ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}"
                                 for k, v in p.items()) if p else "")
             for t, p in spec_insts]
-        print_etape("Ombrages " + ", ".join(_libelles))
-        print(f"  Ombrages : {', '.join(_libelles)}")
+        print_etape("Shadings " + ", ".join(_libelles))
+        print(f"  Shadings : {', '.join(_libelles)}")
         elev = args.ombrages_elevation if args.ombrages_elevation is not None else ELEVATION_SOLEIL
-        print(f"  Angle solaire : {elev}°")
-        print(f"  Area: ~{surface_km2} km²  — Estimated duration:"
+        print(f"  Sun angle : {elev}°")
+        print(f"  Area: ~{surface_km2} km²  |  Estimated duration:"
               f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
-              f" (selon le type d'ombrage et la machine)", flush=True)
+              f" (depends on the shading type and machine)", flush=True)
         generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
                          ecraser_ombrages=args.ombrages_ecraser,
@@ -9539,7 +9539,7 @@ Examples:
                                            ecraser_tuiles=_ecraser_l,
                                            tile_workers=args.workers)
             elif _mbt_path.exists():
-                print(f"  Existing MBTiles: {_mbt_path.name} — direct split/conversion")
+                print(f"  Existing MBTiles: {_mbt_path.name}, direct split/conversion")
                 _mbt_out = _mbt_path
             _convertir_formats(_mbt_out, args, mbtiles_neuf=_mbt_requis)
         else:
@@ -9578,7 +9578,7 @@ Examples:
                     _mbt_path2 = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
                     _ecraser_l = args.tuiles_ecraser
                     if _mbt_path2.exists() and not _ecraser_l:
-                        print(f"  Existing MBTiles: {_mbt_path2.name} — direct split/conversion")
+                        print(f"  Existing MBTiles: {_mbt_path2.name}, direct split/conversion")
                         _convertir_formats(_mbt_path2, args, mbtiles_neuf=False)
                         continue
                     _mbt_out = generer_mbtiles_lidar(tif, dossier_ville, nom_base,
@@ -9652,8 +9652,8 @@ Examples:
             # Téléchargement PBF commun (national ou régional)
             _SEUIL_PBF = 1_000_000  # 1 MB minimum — PBF vide ou tronqué → re-télécharger
             if pbf.exists() and pbf.stat().st_size >= _SEUIL_PBF:
-                print(f"  PBF existant : {pbf.name}  "
-                      f"({pbf.stat().st_size/1e9:.1f} Go)")
+                print(f"  Existing PBF: {pbf.name}  "
+                      f"({pbf.stat().st_size/1e9:.1f} GB)")
             else:
                 if pbf.exists():
                     print(f"  Truncated PBF ({pbf.stat().st_size} bytes) - re-downloading.")
@@ -9719,7 +9719,7 @@ Examples:
                     bbox_wgs = (min(lon1,lon2), min(lat1,lat2),
                                 max(lon1,lon2), max(lat1,lat2))
                 except (ValueError, TypeError, ImportError) as e:
-                    print(f"  ERREUR conversion bbox WGS84 ({type(e).__name__}) : {e}")
+                    print(f"  ERROR bbox WGS84 conversion ({type(e).__name__}): {e}")
                     bbox_wgs = None
             if bbox_wgs:
                 # Dossier dédié OSM — pas le dossier LiDAR
@@ -9893,7 +9893,7 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         bars = int(done * largeur / max(nb_total, 1))
         elap = int(time.time() - t0_dl)
         barre = "█" * bars + "░" * (largeur - bars)
-        print(f"\r  Dalles LIDAR [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
+        print(f"\r  LiDAR tiles [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
               end="", flush=True)
 
     # Providers servant de grandes mosaïques COG (ca-nrcan…) : lecture fenêtrée
@@ -10032,11 +10032,11 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             try:
                 _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
                 if _d is None:
-                    print("  ⚠ Découverte des dalles indisponible (réseau/endpoint),"
-                          " zone ignorée, réessayez.", flush=True)
+                    print("  ⚠ Tile discovery unavailable (network/endpoint),"
+                          " zone skipped, retry.", flush=True)
             except Exception as _e_disc:
-                print(f"  ⚠ Découverte des dalles échouée ({type(_e_disc).__name__}:"
-                      f" {_e_disc}), zone ignorée, réessayez.", flush=True)
+                print(f"  ⚠ Tile discovery failed ({type(_e_disc).__name__}:"
+                      f" {_e_disc}), zone skipped, retry.", flush=True)
                 _d = None
             dalles_dict = _d or {}
 
@@ -10333,7 +10333,7 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             print(f"  Sub-zone [{i_lat},{i_lon}]: empty - skipped")
             continue
 
-        print(f"  Sub-zone [{i_lat},{i_lon}] : {n_tuiles:,} tuiles → {chemin_z.name}")
+        print(f"  Sub-zone [{i_lat},{i_lon}]: {n_tuiles:,} tiles → {chemin_z.name}")
         sorties.append(chemin_z)
 
     con.close()
@@ -10799,7 +10799,7 @@ Examples:
                 nom_z = f"{nom_zone}_{cle}"
 
                 if manifeste.deja_traite(cle):
-                    print(f"  [{cle}] {nom_z} — already done")
+                    print(f"  [{cle}] {nom_z}: already done")
                     nb_ok += 1
                     continue
 
@@ -10821,7 +10821,7 @@ Examples:
                     print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
                     _n_done, _eta = manifeste.eta_global(n_total)
                     if _eta:
-                        print(f"  [{cle}] {_n_done}/{n_total} done — "
+                        print(f"  [{cle}] {_n_done}/{n_total} done, "
                               f"ETA ~{_hms(_eta)} remaining (coarse)")
                     nb_ok += 1
                     if getattr(args, "nettoyage", False):
@@ -10927,7 +10927,7 @@ Examples:
     _mbtiles_requis = _mbtiles_a_regenerer(chemin_mbtiles, _ecraser)
 
     if not _mbtiles_requis and chemin_mbtiles.exists():
-        print(f"  Existing MBTiles: {chemin_mbtiles.name} — direct split/conversion")
+        print(f"  Existing MBTiles: {chemin_mbtiles.name}, direct split/conversion")
 
     if _mbtiles_requis:
         # ── Génération d'un seul MBTiles complet ──────────────────────────────
@@ -10960,7 +10960,7 @@ Examples:
     # ── Résumé ────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
     print(f"\n  Done in {_hms(elapsed)}")
-    print(f"  Files in: {dossier}")
+    print(f"  Done! Folder: {dossier}")
     _historique_depuis_argv(elapsed, str(dossier))
 
 
@@ -11187,7 +11187,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                     if tentative < 2:
                         time.sleep(3)
                     else:
-                        print(f"\n  ERREUR WFS ({typename}) : {type(e).__name__}: {e}")
+                        print(f"\n  ERROR WFS ({typename}): {type(e).__name__}: {e}")
                         data = None
 
             if data is None:
@@ -11449,7 +11449,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
                 else:
                     gj = json.loads(geojson_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-                print(f"  ERREUR lecture GeoJSON ({type(e).__name__}) : {e}")
+                print(f"  ERROR reading GeoJSON ({type(e).__name__}): {e}")
                 return
             yield from gj.get("features", [])
             return
@@ -11461,7 +11461,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
             with opener() as f:
                 yield from ijson.items(f, "features.item")
         except (OSError, ValueError) as e:
-            print(f"  ERREUR streaming GeoJSON ({type(e).__name__}) : {e}")
+            print(f"  ERROR streaming GeoJSON ({type(e).__name__}): {e}")
             return
 
     # ── Helpers d'écriture XML brute (bien plus rapide qu'ElementTree) ───────
@@ -11703,7 +11703,7 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         print(f"  Carte IGN .map : overwrite {chemin_map.name}")
 
     # ── Étape 1 : GeoJSON → OSM XML ──────────────────────────────────────────
-    print(f"  Conversion GeoJSON → OSM XML...", flush=True)
+    print(f"  Converting GeoJSON → OSM XML...", flush=True)
     ok = geojson_ign_vers_osm_xml(geojson_src, chemin_osm_xml, epsilon=epsilon)
     if not ok:
         return None
@@ -11760,7 +11760,7 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         print(f"  {chemin_osm_xml.name} kept for diagnostics.")
         return None
     else:
-        print(f"  ERREUR osmosis mapfile-writer IGN (code {rc})")
+        print(f"  ERROR osmosis mapfile-writer IGN (code {rc})")
         if stderr_diag:
             print(f"  {stderr_diag.strip()[:2000]}")
         print(f"  {chemin_osm_xml.name} kept - rerun osmosis after fixing.")
@@ -11896,8 +11896,8 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
     gpkg_path = cache_dir / f"{nom_ressource}.gpkg"
 
     if gpkg_path.exists() and gpkg_path.stat().st_size > 10_000_000:
-        print(f"  Cache GPKG : {gpkg_path.name} "
-              f"({gpkg_path.stat().st_size/1e6:.0f} MB) — réutilisé", flush=True)
+        print(f"  GPKG cache: {gpkg_path.name} "
+              f"({gpkg_path.stat().st_size/1e6:.0f} MB) reused", flush=True)
         return gpkg_path
 
     # ── Vérifier que py7zr est disponible pour l'extraction ──────────────────
@@ -11927,7 +11927,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         try:
             resp = _urlopen(url, timeout=120)
         except urllib.error.HTTPError as _e:
-            print(f"  ERREUR HTTP {_e.code} — {url}")
+            print(f"  HTTP ERROR {_e.code}: {url}")
             return None
         # `with` ferme la connexion HTTP même sur exception (pas de FD leak).
         with resp:
@@ -12004,7 +12004,7 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         return gpkg_path
 
     except Exception as e:
-        print(f"  ERREUR extraction .7z ({type(e).__name__}): {e}")
+        print(f"  ERROR .7z extraction ({type(e).__name__}): {e}")
         sz_path.unlink(missing_ok=True)
         return None
 
@@ -12137,7 +12137,7 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         import fiona
         from fiona.transform import transform_geom as _xform_geom
     except ImportError:
-        print("  ERROR: fiona absent — pip install fiona")
+        print("  ERROR: fiona missing, run pip install fiona")
         return None
 
     tmp_geojson = sortie_gz.parent / (sortie_gz.name.replace(".geojson.gz", "_tmp.geojson"))
@@ -12180,7 +12180,7 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                     n_total += 1
                 out.write("\n]}\n")
     except Exception as e:
-        print(f"  ERREUR fiona extraction {layer_name} : {type(e).__name__} : {e}")
+        print(f"  ERROR fiona extraction {layer_name}: {type(e).__name__}: {e}")
         tmp_geojson.unlink(missing_ok=True)
         return None
 
@@ -12416,7 +12416,8 @@ def main_wfs():
 
     # ── Bilan ─────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
-    print(f"\n  Done in {_hms(elapsed)} — {len(sorties)}/{len(couches_resolues)} couches")
+    print(f"\n  Done in {_hms(elapsed)}: {len(sorties)}/{len(couches_resolues)} layers")
+    print(f"  Done! Folder: {dossier}")
     for s in sorties:
         print(f"  → {s}")
     _historique_depuis_argv(elapsed, str(dossier))
@@ -12503,7 +12504,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     try:
         import osmium as _osm
     except ImportError:
-        print("  ERROR: osmium absent — pip install osmium")
+        print("  ERROR: osmium missing, run pip install osmium")
         print("          (official libosmium Python binding, ~2 MB, precompiled wheel)")
         return None
 
@@ -12666,7 +12667,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         _fermer_streams_partiels()
         if isinstance(e_proc, KeyboardInterrupt):
             raise
-        print(f"  ERREUR PyOsmium: {type(e_proc).__name__} : {e_proc}")
+        print(f"  ERROR PyOsmium: {type(e_proc).__name__}: {e_proc}")
         return None
 
     # Finaliser chaque stream par-clé : footer ']}' puis close puis replace atomique
@@ -13096,7 +13097,7 @@ Examples:
         sortie = dossier / f"{base}_fusion{ext_out}"
 
     print("=" * 52)
-    print("  Fusion GeoJSON")
+    print("  GeoJSON merge")
     print("=" * 52)
     for f in fichiers:
         print(f"  + {f}")
@@ -14204,7 +14205,7 @@ def lancer_gui():
                     items.append({"line": f"  History saved: {_HISTORIQUE_PATH}\n",
                                   "tag": "ok"})
                 except Exception as _he:
-                    items.append({"line": f"  ERREUR historique : {_he}\n", "tag": "err"})
+                    items.append({"line": f"  History error: {_he}\n", "tag": "err"})
 
             result_dir = getattr(self, "_result_dir", None) if (self._done and self._retcode == 0) else None
             return {"items": items, "done": self._done, "code": self._retcode,

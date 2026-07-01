@@ -100,7 +100,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  JP-GSI : bbox hors de l'étendue Japon")
+        print("  JP-GSI: bbox outside Japan extent")
         return {}
 
     tx0 = int((ix1 + _R) / _STEP)
@@ -112,8 +112,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         for y in range(ty0, ty1 + 1):
             dalles[dalle_filename(ZOOM, x, y)] = URL_TMPL.format(
                 layer=LAYER, z=ZOOM, x=x, y=y)
-    print(f"  JP-GSI (DEM5A 5 m) : {len(dalles)} tuile(s) z{ZOOM} dans la bbox "
-          f"(couverture DEM5A partielle — tuiles hors zone ignorées au download)")
+    print(f"  JP-GSI (DEM5A 5 m): {len(dalles)} z{ZOOM} tile(s) in the bbox "
+          f"(partial DEM5A coverage, tiles outside zone ignored at download)")
     return dalles
 
 

@@ -95,8 +95,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  LU-ACT : bbox hors de l'étendue Luxembourg")
+        print("  LU-ACT: bbox outside Luxembourg extent")
         return {}
     nom = _nom_fenetre(ix1, iy1, ix2, iy2)
-    print("  LU-ACT (MNT 0,5 m) : 1 fenêtre COG dans la bbox")
+    print("  LU-ACT (MNT 0.5 m): 1 COG window in the bbox")
     return {nom: COG_URL}

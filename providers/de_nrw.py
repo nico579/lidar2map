@@ -106,13 +106,13 @@ def _charger_index(cache_path):
         except Exception:
             pass
 
-    print("  NRW : téléchargement de l'index DGM1 (~3.5 Mo, 1re fois)...", flush=True)
+    print("  NRW: downloading the DGM1 index (~3.5 MB, first time)...", flush=True)
     try:
         req = urllib.request.Request(INDEX_URL, headers={"User-Agent": HTTP_UA})
         with urllib.request.urlopen(req, timeout=60) as resp:
             idx = json.loads(resp.read())
     except Exception as e:
-        print(f"  ERREUR NRW index : {e}")
+        print(f"  ERROR NRW index: {e}")
         return None
 
     tuiles = {}
@@ -129,7 +129,7 @@ def _charger_index(cache_path):
             encoding="utf-8")
     except Exception:
         pass
-    print(f"  NRW : {len(tuiles)} tuiles dans l'index")
+    print(f"  NRW: {len(tuiles)} tiles in the index")
     return tuiles
 
 

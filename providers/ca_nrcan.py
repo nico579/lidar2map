@@ -91,7 +91,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
         url = (f"{STAC_SEARCH}?collections={COLLECTION}"
                f"&bbox={bbox_str}&limit=100")
-        print(f"  NRCan STAC : query {bbox_str}...", flush=True)
+        print(f"  NRCan STAC: query {bbox_str}...", flush=True)
         n_pages = 0
         while url:
             req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
@@ -99,7 +99,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 with urllib.request.urlopen(req, timeout=30) as r:
                     data = json.load(r)
             except Exception as e:
-                print(f"  ERREUR NRCan STAC : {e}")
+                print(f"  ERROR NRCan STAC: {e}")
                 return None
             items_all.extend(data.get("features", []))
             n_pages += 1
@@ -153,5 +153,5 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 candidats[key] = (year, dalle_filename(x_km, y_km), href)
 
     dalles = {nom: href for (_, nom, href) in candidats.values()}
-    print(f"  NRCan : {len(dalles)} dalle(s) 1m retenues")
+    print(f"  NRCan: {len(dalles)} 1m tile(s) selected")
     return dalles

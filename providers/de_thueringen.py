@@ -108,7 +108,7 @@ def _construire_index(cache_path):
                 return idx
         except Exception:
             pass
-    print("  TH TLBG : téléchargement de l'index ATOM (~17k tuiles, une fois)...",
+    print("  TH TLBG: downloading the ATOM index (~17k tiles, once)...",
           flush=True)
     try:
         req = urllib.request.Request(ATOM_TOP, headers={"User-Agent": HTTP_UA})
@@ -116,13 +116,13 @@ def _construire_index(cache_path):
             top = r.read()
         ds_url = _dataset_feed_url(top)
         if not ds_url:
-            print("  TH TLBG : flux dataset introuvable dans le flux top-level")
+            print("  TH TLBG: dataset feed not found in the top-level feed")
             return None
         req = urllib.request.Request(ds_url, headers={"User-Agent": HTTP_UA})
         with urllib.request.urlopen(req, timeout=180) as r:
             root = ET.fromstring(r.read())
     except Exception as e:
-        print(f"  ERREUR index ATOM TH : {type(e).__name__}: {e}")
+        print(f"  ERROR TH ATOM index: {type(e).__name__}: {e}")
         return None
     index = {}
     for link in root.iter(f"{_ATOM}link"):
@@ -138,7 +138,7 @@ def _construire_index(cache_path):
         cache_path.write_text(json.dumps(index), encoding="utf-8")
     except Exception:
         pass
-    print(f"  TH TLBG : {len(index)} tuiles indexées")
+    print(f"  TH TLBG: {len(index)} tiles indexed")
     return index
 
 
@@ -163,8 +163,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             dalles[dalle_filename(x_km, y_km)] = url
         else:
             hors += 1
-    print(f"  TH TLBG (DGM 1–2 m) : {len(dalles)} tuile(s) dans la bbox"
-          + (f" ({hors} hors couverture)" if hors else ""))
+    print(f"  TH TLBG (DGM 1-2 m): {len(dalles)} tile(s) in the bbox"
+          + (f" ({hors} out of coverage)" if hors else ""))
     return dalles
 
 

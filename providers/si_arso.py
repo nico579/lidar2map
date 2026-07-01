@@ -175,8 +175,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         x_km, y_km = n.split("_")
         dalles[dalle_filename(x_km, y_km)] = DALLE_TMPL.format(
             blok=blok, x=x_km, y=y_km)
-    print(f"  ARSO DMR1 : {len(dalles)} dalle(s) dans la bbox"
-          + (f" ({hors_couv} hors couverture)" if hors_couv else ""))
+    print(f"  ARSO DMR1: {len(dalles)} tile(s) in the bbox"
+          + (f" ({hors_couv} out of coverage)" if hors_couv else ""))
     return dalles
 
 

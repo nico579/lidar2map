@@ -140,7 +140,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             pass
 
     if index is None:
-        print(f"  AHN : téléchargement index {JSON_INDEX_URL}...", flush=True)
+        print(f"  AHN: downloading index {JSON_INDEX_URL}...", flush=True)
         try:
             req = urllib.request.Request(JSON_INDEX_URL,
                                          headers={"User-Agent": HTTP_UA})
@@ -148,7 +148,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 index = json.loads(resp.read())
             cache_path.write_text(json.dumps(index), encoding="utf-8")
         except Exception as e:
-            print(f"  ERREUR AHN index : {e}")
+            print(f"  ERROR AHN index: {e}")
             return None
 
     # Filtre bbox (intersection rectangle) sur les features GeoJSON
@@ -184,5 +184,5 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         nom_fichier = f"{nom}.tif" if not nom.endswith(".tif") else nom
         dalles[nom_fichier] = url
 
-    print(f"  AHN : {len(dalles)} dalle(s) dans la bbox")
+    print(f"  AHN: {len(dalles)} tile(s) in the bbox")
     return dalles

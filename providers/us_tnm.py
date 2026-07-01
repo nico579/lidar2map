@@ -143,12 +143,12 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 body = e.read(300).decode("utf-8", "replace").strip()
             except Exception:
                 pass
-            print(f"  ERREUR TNM API HTTP {e.code} {e.reason}"
-                  + (f" — {body[:200]}" if body else ""))
+            print(f"  ERROR TNM API HTTP {e.code} {e.reason}"
+                  + (f": {body[:200]}" if body else ""))
             if e.code in (429, 503):
-                print("  TNM : rate limit ou service indisponible — réessayer dans quelques minutes.")
+                print("  TNM: rate limit or service unavailable, retry in a few minutes.")
             elif e.code == 403:
-                print("  TNM : accès refusé (IP bloquée ou service restreint).")
+                print("  TNM: access denied (IP blocked or restricted service).")
             return None
         except json.JSONDecodeError as e:
             preview = ""
@@ -156,15 +156,15 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 preview = raw[:200].decode("utf-8", "replace")
             except Exception:
                 pass
-            print(f"  ERREUR TNM API : réponse non-JSON ({e})"
-                  + (f"\n  Aperçu : {preview}" if preview else ""))
+            print(f"  ERROR TNM API: non-JSON response ({e})"
+                  + (f"\n  Preview: {preview}" if preview else ""))
             # Panne backend USGS : le serveur Lambda renvoie une erreur non-JSON
             if preview and "errorMessage" in preview and "Connection aborted" in preview:
-                print("  TNM : panne backend USGS (connection aborted côté serveur).")
-                print("  → Réessayer dans quelques minutes : https://apps.nationalmap.gov/services-checker/")
+                print("  TNM: USGS backend outage (connection aborted server-side).")
+                print("  → Retry in a few minutes: https://apps.nationalmap.gov/services-checker/")
             return None
         except Exception as e:
-            print(f"  ERREUR TNM API : {type(e).__name__}: {e}")
+            print(f"  ERROR TNM API: {type(e).__name__}: {e}")
             return None
         items = data.get("items", [])
         all_items.extend(items)
@@ -174,7 +174,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         offset += len(items)
 
     if not all_items:
-        print(f"  TNM : aucune tile DEM 1m trouvée pour cette bbox.")
+        print(f"  TNM: no 1m DEM tile found for this bbox.")
         return {}
 
     try:
@@ -194,8 +194,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         total_size += int(it.get("sizeInBytes") or 0)
 
     size_mb = total_size / 1e6
-    print(f"  TNM : {len(dalles)} tile(s) DEM 1m retenue(s) "
-          f"(~{size_mb:.0f} Mo total)")
+    print(f"  TNM: {len(dalles)} 1m DEM tile(s) selected "
+          f"(~{size_mb:.0f} MB total)")
     if size_mb > 1000:
         print(f"  ⚠ Volume élevé ({size_mb:.0f} Mo). Tiles USGS 1m sont "
               f"10×10 km — beaucoup de données pour une petite zone archéo.")

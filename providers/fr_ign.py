@@ -218,7 +218,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
         # maths stdlib : on bascule dessus plutôt que de renvoyer None (qui donnait
         # zéro dalle → sortie vide, notamment sur binaire PyInstaller où mvt n'est
         # pas bundlé et ne peut pas s'auto-installer, sys.executable étant l'exe gelé).
-        print("  mapbox-vector-tile indisponible — TMS sauté, repli grille pure WMS")
+        print("  mapbox-vector-tile unavailable, TMS skipped, pure WMS grid fallback")
         if bbox_natif is not None:
             x1, y1, x2, y2 = bbox_natif
             return {dalle_filename(x, y): dalle_url(x, y)
@@ -230,7 +230,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
     tx1, ty1 = _deg_to_tile(lat_min, lon_max, TMS_ZOOM)   # SE
     tuiles = [(tx, ty) for tx in range(tx0, tx1 + 1) for ty in range(ty0, ty1 + 1)]
     nb_tuiles = len(tuiles)
-    print(f"  TMS : {nb_tuiles} tuiles à interroger (zoom {TMS_ZOOM}, "
+    print(f"  TMS: {nb_tuiles} tile(s) to query (zoom {TMS_ZOOM}, "
           f"x={tx0}..{tx1}, y={ty0}..{ty1})...", flush=True)
 
     cache_path = Path(cache_path)
@@ -241,8 +241,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
 
     tuiles_a_fetcher = [(tx, ty) for tx, ty in tuiles if f"{tx}/{ty}" not in cache]
     if tuiles_a_fetcher:
-        print(f"  TMS cache : {nb_tuiles - len(tuiles_a_fetcher)} tuiles en cache, "
-              f"{len(tuiles_a_fetcher)} à télécharger...", flush=True)
+        print(f"  TMS cache: {nb_tuiles - len(tuiles_a_fetcher)} tile(s) cached, "
+              f"{len(tuiles_a_fetcher)} to download...", flush=True)
 
     def _fetch_tuile(tx, ty):
         url = f"{TMS_URL}/{TMS_ZOOM}/{tx}/{ty}.pbf"
@@ -295,8 +295,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                     _write_json_atomic(cache_path, cache)   # checkpoint région-scale
                 if done_fetch % 20 == 0 or done_fetch == len(tuiles_a_fetcher):
                     pct = done_fetch * 100 // max(len(tuiles_a_fetcher), 1)
-                    print(f"\r  TMS : {pct:3d}%  {done_fetch}/{len(tuiles_a_fetcher)} "
-                          f"nouvelles tuiles...", end="", flush=True)
+                    print(f"\r  TMS: {pct:3d}%  {done_fetch}/{len(tuiles_a_fetcher)} "
+                          f"new tile(s)...", end="", flush=True)
         if tuiles_a_fetcher:
             print()
         _write_json_atomic(cache_path, cache)
@@ -335,11 +335,11 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
         # Toutes les tuiles en erreur RESEAU (pas 404) : panne transitoire.
         # Repli grille best-effort ; les dalles vides eventuelles sont ecartees
         # en aval par le garde-fou nodata (generer_ombrages).
-        print("  ERREUR TMS : toutes les tuiles en erreur reseau — repli sur grille WMS")
+        print("  TMS ERROR: all tiles failed (network), falling back to WMS grid")
         dalles = {}
     elif nb_erreurs:
-        print(f"  TMS : {nb_erreurs}/{nb_tuiles} tuiles en erreur reseau (ignorees)")
-    print(f"  TMS : {len(dalles)} dalle(s) trouvee(s)", flush=True)
+        print(f"  TMS: {nb_erreurs}/{nb_tuiles} tile(s) failed (network, ignored)")
+    print(f"  TMS: {len(dalles)} tile(s) found", flush=True)
 
     # ── Fallback grille : completer les dalles absentes du TMS ───────────────
     # Utile quand le TMS rate des bordures ou n'indexe pas certaines dalles d'une
@@ -357,8 +357,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                 dalles[nom] = dalle_url(x_km, y_km)
                 ajoutes += 1
         if ajoutes:
-            print(f"  Grille : +{ajoutes} dalle(s) complementaires (WMS direct)")
+            print(f"  Grid: +{ajoutes} extra tile(s) (WMS direct)")
     elif zone_hors_couverture:
-        print("  Zone hors couverture LiDAR HD IGN (aucune dalle indexee au TMS).")
+        print("  Zone out of IGN LiDAR HD coverage (no tile indexed in the TMS).")
 
     return dalles

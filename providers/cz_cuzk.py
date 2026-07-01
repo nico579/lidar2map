@@ -98,14 +98,14 @@ def _construire_index(cache_path):
                 return idx
         except Exception:
             pass
-    print("  ČÚZK : téléchargement de l'index Atom (~16k feuilles, une fois)...",
+    print("  ČÚZK: downloading the Atom index (~16k sheets, once)...",
           flush=True)
     try:
         req = urllib.request.Request(ATOM_URL, headers={"User-Agent": HTTP_UA})
         with urllib.request.urlopen(req, timeout=120) as r:
             root = ET.parse(r).getroot()
     except Exception as e:
-        print(f"  ERREUR index Atom CZ : {e}")
+        print(f"  ERROR CZ Atom index: {e}")
         return None
     index = {}
     for entry in root.findall("atom:entry", _NS):
@@ -130,7 +130,7 @@ def _construire_index(cache_path):
         cache_path.write_text(json.dumps(index), encoding="utf-8")
     except Exception:
         pass
-    print(f"  ČÚZK : {len(index)} feuilles indexées")
+    print(f"  ČÚZK: {len(index)} sheets indexed")
     return index
 
 
@@ -192,7 +192,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             continue
         matches.append((feuille, info))
     if not matches:
-        print("  ČÚZK : aucune feuille dans la bbox")
+        print("  ČÚZK: no sheet in the bbox")
         return {}
 
     dalles = {}
@@ -201,8 +201,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         if url_zip:
             dalles[f"cz_dmr5g_{feuille}.tif"] = url_zip
         else:
-            print(f"  ČÚZK : datasetFeed {feuille} sans lien ZIP")
-    print(f"  ČÚZK : {len(dalles)} tuile(s) LAZ dans la bbox")
+            print(f"  ČÚZK: datasetFeed {feuille} without ZIP link")
+    print(f"  ČÚZK: {len(dalles)} LAZ tile(s) in the bbox")
     return dalles
 
 

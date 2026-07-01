@@ -115,8 +115,8 @@ def _construire_index(cache_path, workers):
     cbase = NATIONAL_COLLECTION.rsplit("/", 1)[0]
     item_urls = [_resolve(cbase, l.get("href", ""))
                  for l in col.get("links", []) if l.get("rel") == "item"]
-    print(f"  LINZ NZ : indexation du DEM 1m national "
-          f"({len(item_urls)} feuilles, une fois)...", flush=True)
+    print(f"  LINZ NZ: indexing the national 1m DEM "
+          f"({len(item_urls)} sheets, once)...", flush=True)
 
     def _fetch(iu):
         it = _get_json(iu)
@@ -143,7 +143,7 @@ def _construire_index(cache_path, workers):
         cache_path.write_text(json.dumps(index), encoding="utf-8")
     except Exception:
         pass
-    print(f"  LINZ NZ : {len(index)} feuilles indexées")
+    print(f"  LINZ NZ: {len(index)} sheets indexed")
     return index
 
 
@@ -167,5 +167,5 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=8):
     for code, info in index.items():
         if _intersecte(info["bbox"], qlon_min, qlat_min, qlon_max, qlat_max):
             dalles[dalle_filename(code)] = info["url"]
-    print(f"  LINZ NZ : {len(dalles)} feuille(s) dans la bbox")
+    print(f"  LINZ NZ: {len(dalles)} sheet(s) in the bbox")
     return dalles

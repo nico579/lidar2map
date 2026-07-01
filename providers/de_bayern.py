@@ -129,14 +129,14 @@ def _charger_couverture(cache_path):
         except Exception:
             pass
 
-    print(f"  Bayern : téléchargement de l'index Metalink (~15 Mo, 1re fois)...",
+    print(f"  Bayern: downloading the Metalink index (~15 MB, first time)...",
           flush=True)
     try:
         req = urllib.request.Request(METALINK_URL, headers={"User-Agent": HTTP_UA})
         with urllib.request.urlopen(req, timeout=120) as resp:
             texte = resp.read().decode("utf-8", "replace")
     except Exception as e:
-        print(f"  ERREUR Bayern Metalink : {e}")
+        print(f"  ERROR Bayern Metalink: {e}")
         return None
 
     couverture = {(int(e), int(n)) for e, n in _NAME_RE.findall(texte)}
@@ -145,7 +145,7 @@ def _charger_couverture(cache_path):
         cache_path.write_text(json.dumps(sorted(couverture)), encoding="utf-8")
     except Exception:
         pass
-    print(f"  Bayern : {len(couverture)} tuiles dans la couverture du Land")
+    print(f"  Bayern: {len(couverture)} tiles in the Land coverage")
     return couverture
 
 
@@ -168,7 +168,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
     couverture = _charger_couverture(cache_path)
     if couverture is None:
-        print("  Bayern : index indisponible — repli grille pure (404 possibles aux bords)")
+        print("  Bayern: index unavailable, pure grid fallback (404 possible at edges)")
         return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}
 
     return {dalle_filename(x, y): dalle_url(x, y)

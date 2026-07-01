@@ -95,14 +95,14 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     url = f"{SEARCH_URL}?collections={COLLECTION}&bbox={bbox_str}&limit=100"
 
     items, n_pages = [], 0
-    print(f"  LGLN STAC : interrogation {COLLECTION} bbox {bbox_str[:60]}...", flush=True)
+    print(f"  LGLN STAC: querying {COLLECTION} bbox {bbox_str[:60]}...", flush=True)
     while url:
         req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = json.load(r)
         except Exception as e:
-            print(f"  ERREUR STAC ({type(e).__name__}) : {e}")
+            print(f"  ERROR STAC ({type(e).__name__}): {e}")
             return None
         items.extend(data.get("features", []))
         n_pages += 1

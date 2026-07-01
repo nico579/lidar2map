@@ -83,7 +83,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  Suède : bbox hors étendue SWEREF99 TM")
+        print("  Sweden: bbox outside SWEREF99 TM extent")
         return {}
 
     # Grille synthétique 2500m
@@ -101,7 +101,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                       if any(f"_{x}_{y}" in k or f"_{x//1000}" in k
                              for x, y in tuiles)}
             if dalles:
-                print(f"  Suède : {len(dalles)} dalle(s) depuis cache")
+                print(f"  Sweden: {len(dalles)} tile(s) from cache")
                 return dalles
         except Exception:
             pass
@@ -125,7 +125,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         url = f"{DOWNLOAD_BASE}/{x}_{y}.zip"
         dalles[nom_interne] = url
 
-    print(f"  Suède : {len(dalles)} tuile(s) (URLs synthétiques — à valider)")
+    print(f"  Sweden: {len(dalles)} tile(s) (synthetic URLs, to validate)")
     try:
         cache_path.write_text(json.dumps(dalles), encoding="utf-8")
     except Exception:

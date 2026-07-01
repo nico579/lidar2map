@@ -126,7 +126,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  Tyrol : bbox hors de l'étendue du coverage M28 (Nordtirol)")
+        print("  Tyrol: bbox out of the M28 coverage extent (Nordtirol)")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
     return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}

@@ -104,8 +104,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  Pologne : bbox hors de l'étendue du NMT (EPSG:2180)")
+        print("  Poland: bbox out of the NMT extent (EPSG:2180)")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
-    print(f"  PL GUGiK (NMT 1m) : {len(grille)} dalle(s) générées")
+    print(f"  PL GUGiK (NMT 1m): {len(grille)} tile(s) generated")
     return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}

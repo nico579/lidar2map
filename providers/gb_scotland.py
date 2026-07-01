@@ -221,7 +221,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  GB-Scotland : bbox hors de l'étendue Écosse")
+        print("  GB-Scotland: bbox outside Scotland extent")
         return {}
 
     cellules = dalles_pour_bbox(ix1, iy1, ix2, iy2)   # [(x_km, y_km)] = sortie 1 km
@@ -292,8 +292,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
     detail = ", ".join(f"{c}:{n}" for c, n in par_collection.items())
     hors = len(restantes)
-    print(f"  GB-Scotland (multi-collection) : {len(dalles)} dalle(s) COG pour "
-          f"{len(cellules)} cellule(s) 1 km"
+    print(f"  GB-Scotland (multi-collection): {len(dalles)} COG tile(s) for "
+          f"{len(cellules)} 1 km cell(s)"
           + (f" [{detail}]" if detail else "")
           + (f" ({hors} hors couverture)" if hors else ""))
     return dalles

@@ -157,7 +157,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  GSI Ireland : bbox hors de l'étendue ITM")
+        print("  GSI Ireland: bbox outside ITM extent")
         return {}
 
     cache_path = Path(cache_path)
@@ -194,11 +194,11 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             dalles.setdefault(nom, url)  # premier service = priorité
 
     if n_services_ok == 0:
-        print("  GSI Ireland : aucun FeatureServer n'a répondu — "
-              "vérifier la connectivité à gsi.geodata.gov.ie/server")
+        print("  GSI Ireland: no FeatureServer responded, "
+              "check connectivity to gsi.geodata.gov.ie/server")
         return None
 
-    print(f"  GSI Ireland : {n_services_ok} service(s) → {len(dalles)} dalle(s)")
+    print(f"  GSI Ireland: {n_services_ok} service(s) → {len(dalles)} tile(s)")
     return dalles
 
 

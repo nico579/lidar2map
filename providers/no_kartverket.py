@@ -99,5 +99,5 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     dalles = {}
     for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
         dalles[dalle_filename(x_km, y_km)] = dalle_url(x_km, y_km)
-    print(f"  Kartverket : {len(dalles)} dalle(s) générées (grille km UTM33N)")
+    print(f"  Kartverket: {len(dalles)} tile(s) generated (km grid UTM33N)")
     return dalles

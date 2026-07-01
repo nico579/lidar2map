@@ -96,13 +96,13 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         "count": 5000,
     }
     url = WFS_URL + "?" + urllib.parse.urlencode(params)
-    print(f"  DataMapWales WFS : bbox 27700 {x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}...", flush=True)
+    print(f"  DataMapWales WFS: bbox 27700 {x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}...", flush=True)
     req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
     try:
         with urllib.request.urlopen(req, timeout=40) as r:
             data = json.load(r)
     except Exception as e:
-        print(f"  ERREUR WFS Wales ({type(e).__name__}) : {e}")
+        print(f"  ERROR WFS Wales ({type(e).__name__}): {e}")
         return None
 
     feats = data.get("features", [])
@@ -124,5 +124,5 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         nom = f"dtm_wales_{gr}.tif"
         dalles.setdefault(nom, link)
 
-    print(f"  Pays de Galles : {len(feats)} feature(s) WFS → {len(dalles)} dalle(s)")
+    print(f"  Wales: {len(feats)} WFS feature(s) → {len(dalles)} tile(s)")
     return dalles

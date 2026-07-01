@@ -108,8 +108,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  EE Maa-amet : bbox hors de l'étendue Estonie")
+        print("  EE Maa-amet: bbox outside Estonia extent")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
-    print(f"  EE Maa-amet (dem_1m_geotiff) : {len(grille)} feuille(s) 5 km générées")
+    print(f"  EE Maa-amet (dem_1m_geotiff): {len(grille)} 5 km sheet(s) generated")
     return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}

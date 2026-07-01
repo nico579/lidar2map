@@ -138,12 +138,12 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  AU-GA : bbox hors de l'enveloppe Australie")
+        print("  AU-GA: bbox outside the Australia envelope")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
     dalles = {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}
-    print(f"  AU-GA (DEM 5 m) : {len(dalles)} dalle(s) WCS dans la bbox "
-          f"(couverture GA dispersée — dalles hors levés ignorées au download)")
+    print(f"  AU-GA (DEM 5 m): {len(dalles)} WCS tile(s) in the bbox "
+          f"(GA coverage is sparse, tiles outside surveys ignored at download)")
     return dalles
 
 

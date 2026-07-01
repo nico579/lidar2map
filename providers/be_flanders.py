@@ -133,8 +133,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     ix1, iy1 = max(x1, cx0), max(y1, cy0)
     ix2, iy2 = min(x2, cx1), min(y2, cy1)
     if ix1 >= ix2 or iy1 >= iy2:
-        print("  BE Flandre : bbox hors de l'étendue du coverage DHMV II")
+        print("  BE Flanders: bbox out of the DHMV II coverage extent")
         return {}
     grille = dalles_pour_bbox(ix1, iy1, ix2, iy2)
-    print(f"  BE Flandre (DHMVII_DTM_1m) : {len(grille)} dalle(s) générées")
+    print(f"  BE Flanders (DHMVII_DTM_1m): {len(grille)} tile(s) generated")
     return {dalle_filename(x, y): dalle_url(x, y) for x, y in grille}
