@@ -111,7 +111,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   Paramètres spécifiques :
     --telechargement            Télécharger les dalles manquantes
     --telechargement-forcer     Re-télécharger même les dalles existantes
-    --telechargement-compresser Compresser les dalles téléchargées (DEFLATE)
+    --no-telechargement-compresser  Désactiver la compression DEFLATE du cache
+                                (active par défaut : ~2× moins de disque)
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
     --ombrages TYPE...          Shadings to generate:
@@ -1945,6 +1946,12 @@ _activer_log()
 
 # ── Requêtes HTTP via urllib (stdlib, zéro dépendance) ──────────────────────
 _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
+
+# Version applicative — SOURCE UNIQUE : utilisée par --version (les 3 mains)
+# et par le check de mise à jour du GUI (Api.check_update). Le bump de
+# release se fait ICI (fini les 3 chaînes argparse à synchroniser).
+VERSION      = "1.14.0"
+VERSION_DATE = "2026-07"
 
 
 def _urlopen(url, headers=None, timeout=15):
@@ -8516,7 +8523,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.13.0 (2026-07), multi-provider")
+                        version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -8574,9 +8581,13 @@ Examples:
                              "OPENTOPOGRAPHY_API_KEY depending on the provider.")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Parallel connections (default: {NB_WORKERS})")
-    parser.add_argument("--download-compress", "--telechargement-compresser", action="store_true",
+    parser.add_argument("--download-compress", "--telechargement-compresser",
+                        action=argparse.BooleanOptionalAction, default=True,
                         dest="telechargement_compresser",
-                        help="Compress cached tiles (DEFLATE, ~x5)")
+                        help="Compress cached tiles (DEFLATE, ~halves the cache: "
+                             "a whole department drops from ~90 GB to ~40 GB). "
+                             "Enabled by default; --no-download-compress keeps "
+                             "raw downloads (slightly faster CPU-wise).")
     parser.add_argument("--download-force", "--telechargement-forcer", action="store_true",
                         dest="telechargement_forcer",
                         help="Re-download tiles already present")
@@ -9076,7 +9087,8 @@ Examples:
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
 
-    # Compression cache : off par defaut (rapide), activee via --download-compress.
+    # Compression cache : ON par defaut depuis v1.14 (16→7 Mo par dalle FR,
+    # ~90→40 Go par departement) ; --no-download-compress pour du brut.
     # Aucun prompt : l'outil est pilote par flags (CLI + GUI), jamais interactif ici.
     compresser = bool(args.telechargement_compresser)
     if args.telechargement:
@@ -10591,7 +10603,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.13.0 (2026-07), multi-provider")
+                        version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -12247,7 +12259,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.13.0 (2026-07), multi-provider")
+                        version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
@@ -13205,7 +13217,9 @@ def _cfg_depuis_argv() -> dict:
         "rayon":   _arg_float("--zone-radius", "--zone-rayon", default=10.0),
         # LiDAR
         "tel":           _flag("--download", "--telechargement"),
-        "comp":          _flag("--download-compress", "--telechargement-compresser"),
+        # Compression ON par defaut : seule la NEGATION apparait dans argv
+        "comp":          not _flag("--no-download-compress",
+                                   "--no-telechargement-compresser"),
         "ecraser_tel":   _flag("--download-overwrite", "--telechargement-ecraser"),
         "workers_l":     _arg_int("--workers", default=8),
         "dossier_dalles":_arg("--tiles-dir", "--dossier-dalles"),
@@ -13748,7 +13762,10 @@ def lancer_gui():
             if t == "lidar":
                 cmd.append("--lidar")
                 if cfg.get("tel"):      cmd.append("--download")
-                if cfg.get("comp"):     cmd.append("--download-compress")
+                # Compression ON par défaut côté CLI : n'émettre que la
+                # déviation (case décochée → --no-download-compress).
+                if not cfg.get("comp", True):
+                    cmd.append("--no-download-compress")
                 if cfg.get("ecraser_tel"): cmd.append("--download-overwrite")
                 if cfg.get("dossier_dalles"):
                     cmd += ["--tiles-dir", cfg["dossier_dalles"]]
@@ -14179,6 +14196,42 @@ def lancer_gui():
                 self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
             threading.Thread(target=_escalade, daemon=True).start()
 
+        def check_update(self):
+            """Compare la dernière release GitHub à la version locale.
+
+            Appelé par le JS après l'init (non bloquant côté UI) ; silencieux
+            et {"update": False} sur toute erreur (hors ligne, rate-limit de
+            l'API GitHub, JSON inattendu). Une requête, timeout court.
+            """
+            try:
+                with _urlopen("https://api.github.com/repos/nico579/lidar2map"
+                              "/releases/latest", timeout=6) as r:
+                    d = json.loads(r.read())
+                tag = str(d.get("tag_name") or "")
+
+                def _triplet(v):
+                    n = re.findall(r"\d+", v)
+                    return tuple(int(x) for x in n[:3]) if n else (0,)
+
+                if tag and _triplet(tag) > _triplet(VERSION):
+                    return {"update": True, "latest": tag,
+                            "url": d.get("html_url") or
+                                   "https://github.com/nico579/lidar2map/releases/latest"}
+            except Exception:
+                pass
+            return {"update": False}
+
+        def open_url(self, url):
+            """Ouvre une URL dans le navigateur système (bandeau update).
+            Restreinte au repo du projet : le bridge JS ne doit pas pouvoir
+            ouvrir des URLs arbitraires."""
+            try:
+                if str(url).startswith("https://github.com/nico579/lidar2map"):
+                    import webbrowser
+                    webbrowser.open(url)
+            except Exception:
+                pass
+
         def open_folder(self, path):
             try:
                 if sys.platform == "win32":
@@ -14317,10 +14370,45 @@ def lancer_gui():
     # Assigner la fenêtre immédiatement — disponible dès create_window
     api.window = win
 
+    def _au_close():
+        """Fermeture de la fenêtre : extinction garantie de tout l'arbre.
+
+        Accroché à l'événement pywebview `closed`, qui se déclenche AVANT le
+        teardown Qt. Indispensable : sous Qt/QtWebEngine, le teardown peut
+        fail-faster le process (STATUS_FAIL_FAST observé) sans que
+        webview.start() ne retourne, donc tout code placé après start() n'est
+        pas fiable. Sans ce handler : (1) un run CLI actif continuait en
+        headless, sans log ni stop ; (2) le process GUI pouvait survivre à la
+        fenêtre (zombies python + QtWebEngineProcess à tuer à la main).
+        """
+        try:
+            proc = getattr(api, "_process", None)
+            if proc and proc.poll() is None:
+                print("  Window closed - stopping the running job...", flush=True)
+                api.stop()            # doux (CTRL_BREAK/SIGINT), escalade 15 s
+                try:
+                    proc.wait(timeout=20)   # laisser l'escalade aboutir
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        print("  GUI window closed - exiting.", flush=True)
+        # os._exit : sortie inconditionnelle AVANT le teardown Qt (évite le
+        # fail-fast et les threads non-daemon qui retiennent le process).
+        # Les écritures critiques (historique, préférences) sont atomiques
+        # et posées au fil de l'eau.
+        os._exit(0)
+
+    win.events.closed += _au_close
+
     # Activable via flag --debug (clic droit → Inspect dans la fenêtre webview,
     # ou F12, pour ouvrir les DevTools et voir la console JS).
     _wv_debug = "--debug" in sys.argv
     webview.start(debug=_wv_debug)
+
+    # Filet de sécurité : si l'événement `closed` n'a pas été délivré (backend
+    # exotique) mais que start() retourne, on passe par le même chemin.
+    _au_close()
 
 
 def _normaliser_argv_valeurs_negatives():
