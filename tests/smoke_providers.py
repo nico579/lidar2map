@@ -128,6 +128,21 @@ def smoke_one(code, mod, lon, lat):
         return "FAIL", f"{type(e).__name__}: {e}"
 
 
+def _echec_reseau(detail):
+    """FAIL candidat au retry : erreur de TRANSPORT (timeout, coupure, 5xx),
+    pas une absence de donnee ('absent', 0 dalle : etat stable cote serveur)
+    ni un bug de code. La moitie des rouges du cron hebdo sont des serveurs
+    qui toussent et repassent au run suivant."""
+    if detail.startswith("discover -> None"):
+        return True
+    if detail.startswith("download=erreur"):
+        return True
+    reseau = ("TimeoutError", "URLError", "RemoteDisconnected", "HTTPError",
+              "ConnectionError", "ConnectionResetError", "IncompleteRead",
+              "RasterioIOError", "socket.timeout")
+    return any(m in detail for m in reseau)
+
+
 def _discover_providers():
     """AUTO : tous les providers du dossier providers/ = source de verite (comme
     coverage_map.py). Retourne ({code: module}, [(fichier, erreur_import)])."""
@@ -180,6 +195,18 @@ def main():
             status, detail = smoke_one(code, discovered[code], *TEST_POINTS[code])
         except Exception as e:
             status, detail = "FAIL", f"{type(e).__name__}: {e}"
+        # Retry UNIQUE sur echec reseau (jamais sur 'absent'/'0 dalle') :
+        # departage transitoire vs durable sans masquer les vraies pannes.
+        if status == "FAIL" and _echec_reseau(detail):
+            print(f"  [....] {code:<22}   echec reseau, retry unique dans 10 s "
+                  f"({detail[:60]})", flush=True)
+            time.sleep(10)
+            try:
+                status, detail = smoke_one(code, discovered[code], *TEST_POINTS[code])
+            except Exception as e:
+                status, detail = "FAIL", f"{type(e).__name__}: {e}"
+            if status == "PASS":
+                detail += "  (retry: transitoire)"
         dt = time.time() - t0
         icon = {"PASS": "OK  ", "FAIL": "FAIL", "SKIP": "SKIP"}.get(status, "????")
         print(f"  [{icon}] {code:<22} {dt:6.1f}s  {detail}", flush=True)

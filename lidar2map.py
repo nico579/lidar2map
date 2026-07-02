@@ -2718,6 +2718,12 @@ def _on_sigint(sig, frame):
     print("\n\nInterruption requested - finishing the current operation.", flush=True)
     print("  Press Ctrl+C again to force exit.", flush=True)
 _signal.signal(_signal.SIGINT, _on_sigint)
+# Windows : le bouton Arrêter du GUI envoie CTRL_BREAK_EVENT au groupe de
+# processus (seul signal envoyable à un child console sous Windows). Python
+# le reçoit en SIGBREAK, dont l'action PAR DÉFAUT est une sortie sèche sans
+# cleanup : on le route vers le même soft-cancel que Ctrl+C.
+if WINDOWS and hasattr(_signal, "SIGBREAK"):
+    _signal.signal(_signal.SIGBREAK, _on_sigint)
 
 # ============================================================
 # UTILITAIRES
@@ -3118,11 +3124,6 @@ def chemin_dalle(dossier_dalles, nom):
     return chemin_racine  # fallback si nom non reconnu
 
 
-def construire_url_wms(x_km, y_km):
-    """Délégation au provider — la logique URL/CRS/format dépend de la source."""
-    return PROVIDER.dalle_url(x_km, y_km)
-
-
 def _lon_lat_to_tile(lon, lat, z):
     """Convertit lon/lat WGS84 en coordonnées tuile XYZ (x, y) au zoom z.
 
@@ -3254,8 +3255,48 @@ def _valider_tif_dalle(chemin):
     return True
 
 
-def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
-    """Télécharge une dalle depuis son URL WMS fournie par le TMS IGN."""
+def _comprimer_dalle_deflate(chemin):
+    """Recomprime une dalle GeoTIFF en DEFLATE (tiled) en place, best-effort.
+
+    - Déjà compressée (DEFLATE/LZW, cas des COG fenêtrés) : no-op.
+    - Predictor selon le dtype : 3 pour flottant (DEM float32), 2 pour entier.
+    - Copie par blocs (block_windows) pour borner la RAM sur les grandes
+      dalles (nl-ahn : ~300 Mo décompressé).
+    - Sur échec, le fichier d'origine est conservé tel quel (warning).
+    Appelée en fin de telecharger_dalle_directe quand --download-compress est
+    actif, APRÈS post_fetch/post_download (qui peuvent réécrire le fichier)."""
+    tmp = chemin.parent / (chemin.name + ".cmp")
+    try:
+        import rasterio as _rio_c
+        with _rio_c.open(str(chemin)) as src:
+            if (src.profile.get("compress") or "").lower() in ("deflate", "lzw"):
+                return
+            profile = src.profile.copy()
+            profile.update({
+                "compress":   "deflate",
+                "predictor":  3 if src.dtypes[0].startswith("float") else 2,
+                "tiled":      True,
+                "blockxsize": 256,
+                "blockysize": 256,
+                "BIGTIFF":    "IF_SAFER",
+            })
+            with _rio_c.open(str(tmp), "w", **profile) as dst:
+                for _ji, win in src.block_windows(1):
+                    for b in range(1, src.count + 1):
+                        dst.write(src.read(b, window=win), b, window=win)
+        tmp.replace(chemin)
+    except Exception as _e_cmp:
+        tmp.unlink(missing_ok=True)
+        print(f"  ⚠ compression skipped for {chemin.name}: "
+              f"{type(_e_cmp).__name__}: {_e_cmp}", flush=True)
+
+
+def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=False):
+    """Télécharge une dalle depuis son URL WMS fournie par le TMS IGN.
+
+    compresser : recompression DEFLATE de la dalle après validation
+    (--download-compress). Les COG fenêtrés (telecharger_cog_fenetre) sont
+    déjà écrits compressés et n'ont pas besoin de ce paramètre."""
     chemin = chemin_dalle(dossier, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
@@ -3273,7 +3314,17 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 chemin_tmp.unlink(missing_ok=True)
                 return "absent"
             if taille < SEUIL_DALLE_VALIDE:
+                with open(chemin_tmp, "rb") as _fh:
+                    _head = _fh.read(200)
                 chemin_tmp.unlink(missing_ok=True)
+                # Erreur serveur déguisée en HTTP 200 : les ImageServer ArcGIS
+                # (au-qld, no-kartverket, us-tnm) renvoient par intermittence
+                # un JSON {"error": 400 "General function failure"} avec
+                # content-type image/tiff. Sans cette détection, un échec
+                # TRANSITOIRE passait pour une dalle "absent", jamais
+                # retentée. IOError → retry (MAX_TENTATIVES).
+                if _head.lstrip().startswith(b"{") and b'"error"' in _head:
+                    raise IOError(f"server error payload: {_head[:120]!r}")
                 return "absent"
             chemin_tmp.replace(chemin)
             _post_fetch_si_besoin(chemin)
@@ -3288,6 +3339,8 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False):
                 except Exception as _e_pd:
                     print(f"  ⚠ post_download {nom} : {type(_e_pd).__name__}: {_e_pd}",
                           flush=True)
+            if compresser:
+                _comprimer_dalle_deflate(chemin)
             _creer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
@@ -3414,73 +3467,11 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     return "erreur"
 
 
-def telecharger_dalle(x_km, y_km, dossier, compresser=False, ecraser=False):
-    nom    = nom_dalle(x_km, y_km)
-    chemin = chemin_dalle(dossier, nom)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-
-    if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        if not ecraser:
-            return "skip"
-        chemin.unlink()
-
-    url = construire_url_wms(x_km, y_km)
-    chemin_tmp = chemin.parent / (nom + ".tmp")
-
-    for tentative in range(1, MAX_TENTATIVES + 1):
-        try:
-            taille = _download_to_tmp(url, chemin_tmp, timeout=(10, 45))
-            if taille == 0:
-                chemin_tmp.unlink(missing_ok=True)
-                return "absent"
-            if taille < SEUIL_DALLE_VALIDE:
-                chemin_tmp.unlink(missing_ok=True)
-                return "absent"
-
-            if compresser:
-                # Compression DEFLATE via rasterio (remplace gdal_translate CLI)
-                try:
-                    import rasterio as _rio_d
-                    with _rio_d.open(str(chemin_tmp)) as src:
-                        profile = src.profile.copy()
-                        profile.update({
-                            "compress":   "deflate",
-                            "predictor":  2,
-                            "tiled":      True,
-                            "blockxsize": 256,
-                            "blockysize": 256,
-                        })
-                        with _rio_d.open(str(chemin), "w", **profile) as dst:
-                            dst.write(src.read())
-                    chemin_tmp.unlink(missing_ok=True)
-                except Exception:
-                    chemin_tmp.replace(chemin)
-            else:
-                chemin_tmp.replace(chemin)
-
-            _post_fetch_si_besoin(chemin)
-            if not _valider_tif_dalle(chemin):
-                chemin.unlink(missing_ok=True)
-                raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
-            _creer_fichier(chemin)
-            return "ok"
-
-        except KeyboardInterrupt:
-            chemin_tmp.unlink(missing_ok=True)
-            # Propagation au handler top-level (sys.exit(130)).
-            raise
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError, IOError) as _e:
-            chemin_tmp.unlink(missing_ok=True)
-            chemin.unlink(missing_ok=True)
-            if tentative < MAX_TENTATIVES:
-                # Cf. telecharger_dalle_directe : retry silencieux pour éviter
-                # le bourrage console quand IGN renvoie 502/400/timeouts en rafale.
-                time.sleep(DELAI_RETRY)
-            else:
-                print(f"\n  ERROR {nom} ({type(_e).__name__}, attempt {tentative}): {_e}")
-                return "erreur"
-
-    return "erreur"
+# NB : l'ancienne telecharger_dalle(x_km, y_km, ...) (grille interne +
+# construire_url_wms) a été supprimée : plus appelée depuis le refactor
+# multi-provider, toutes les URLs viennent de PROVIDER.discover_dalles.
+# Sa gestion de --download-compress vit désormais dans
+# _comprimer_dalle_deflate, appliquée par telecharger_dalle_directe.
 
 # ============================================================
 # ASSEMBLAGE COG (rasterio)
@@ -7054,6 +7045,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     _tuiler_source()
 
+    # Journal DELETE avant fermeture : le header WAL persistant peut bloquer
+    # les lecteurs strictement lecture seule (fichier livré = SQLite classique).
+    try: con.execute("PRAGMA journal_mode=DELETE;")
+    except Exception: pass
     con.close()
     if _pool is not None:
         _pool.shutdown(wait=True)
@@ -7256,17 +7251,29 @@ def deg_to_tile(lat_deg, lon_deg, zoom):
 
 def calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):
     """
-    Retourne la liste de toutes les tuiles (z, x, y) couvrant la bbox WGS84
-    pour tous les zooms demandés.
+    Génère toutes les tuiles (z, x, y) couvrant la bbox WGS84 pour tous les
+    zooms demandés. GÉNÉRATEUR : un département en z18 représente des millions
+    de tuples, la liste matérialisée coûtait des centaines de Mo de RAM avant
+    la première requête. Le total est fourni par compter_tuiles_xyz (formule
+    fermée, mêmes bornes).
     """
-    tuiles = []
     for z in range(zoom_min, zoom_max + 1):
         x0, y0 = deg_to_tile(lat_max, lon_min, z)   # coin NW (y petit)
         x1, y1 = deg_to_tile(lat_min, lon_max, z)   # coin SE (y grand)
         for x in range(x0, x1 + 1):
             for y in range(y0, y1 + 1):
-                tuiles.append((z, x, y))
-    return tuiles
+                yield (z, x, y)
+
+
+def compter_tuiles_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):
+    """Compte les tuiles que calculer_grille_xyz générera (mêmes bornes),
+    sans matérialiser la liste."""
+    total = 0
+    for z in range(zoom_min, zoom_max + 1):
+        x0, y0 = deg_to_tile(lat_max, lon_min, z)
+        x1, y1 = deg_to_tile(lat_min, lon_max, z)
+        total += (x1 - x0 + 1) * (y1 - y0 + 1)
+    return total
 
 
 def estimer_taille(nb_tuiles, format_img="jpeg"):
@@ -7397,6 +7404,10 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
             ct = (ct or "").lower()
             if "xml" in ct or "html" in ct:
                 return None   # réponse d'erreur serveur
+            # Erreur serveur JSON déguisée en 200 (ArcGIS/XYZ, cf.
+            # telecharger_dalle_directe) : IOError → retry, pas "absente".
+            if data and data.lstrip()[:1] == b"{" and b'"error"' in data[:200]:
+                raise IOError(f"server error payload: {data[:120]!r}")
             if len(data) < 500:
                 return None   # tuile vide / 204 (mer, hors couverture)
             return data
@@ -7564,22 +7575,25 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
               f"  {_hms(elapsed)}{eta_str}",
               end="", flush=True)
 
-    tuiles_list = list(tuiles_iter)   # déjà une liste, mais on s'assure
-    z_courant   = tuiles_list[0][0] if tuiles_list else zoom_min
+    # Consommation au fil de l'eau : tuiles_iter peut être un générateur
+    # (calculer_grille_xyz) — on ne matérialise JAMAIS la liste (dept-scale
+    # z18 = millions de tuples). `total` est fourni par l'appelant
+    # (compter_tuiles_xyz) pour la barre de progression.
+    _tuiles_it = iter(tuiles_iter)
+    z_courant  = zoom_min
 
     try:
         with ThreadPoolExecutor(max_workers=workers) as pool:
             # Soumission par fenêtre glissante : on ne soumet FENETRE tâches à la fois
             # → la barre démarre immédiatement, RAM bornée même sur 100k tuiles
             pending = {}
-            idx     = 0
-            n       = len(tuiles_list)
 
             # Remplir la fenêtre initiale
-            while idx < n and len(pending) < FENETRE:
-                t = tuiles_list[idx]
+            while len(pending) < FENETRE:
+                t = next(_tuiles_it, None)
+                if t is None:
+                    break
                 pending[pool.submit(_dl, t)] = t
-                idx += 1
 
             # Boucle principale : on attend qu'au moins une future termine, puis
             # on draine TOUTES les futures terminées avant de re-remplir la fenêtre.
@@ -7618,10 +7632,9 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                                          f"Probable panne réseau / clé API / IGN. "
                                          f"MBTiles non finalisé pour éviter un fichier tronqué.")
                         _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
-                        if idx < n:
-                            t = tuiles_list[idx]
+                        t = next(_tuiles_it, None)
+                        if t is not None:
                             pending[pool.submit(_dl, t)] = t
-                            idx += 1
                         continue
 
                     done      += 1
@@ -7660,16 +7673,21 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
 
                     # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
-                    if idx < n:
-                        t = tuiles_list[idx]
+                    t = next(_tuiles_it, None)
+                    if t is not None:
                         pending[pool.submit(_dl, t)] = t
-                        idx += 1
 
         if batch:
             cur.executemany(
                 "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
             con.commit()
     finally:
+        # Repasser en journal DELETE avant fermeture : le mode WAL persiste
+        # dans le header du fichier, et un lecteur strictement lecture seule
+        # (carte SD verrouillée) peut refuser d'ouvrir un SQLite en WAL.
+        # Fichier livré = SQLite classique.
+        try: con.execute("PRAGMA journal_mode=DELETE;")
+        except Exception: pass
         # Toujours fermer la connexion, même sur exception non capturée
         # (KeyboardInterrupt, MemoryError, OSError disque plein…).
         # Sans ça la WAL reste ouverte, le .mbtiles-wal/-shm traîne.
@@ -8062,8 +8080,11 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
             return None
 
         elapsed   = int(time.time() - t0)
-        # Fermer avant rename (Windows refuse de renommer un fichier ouvert) ;
-        # le close du finally devient un no-op idempotent.
+        # Journal DELETE avant fermeture (header WAL persistant vs lecteurs
+        # lecture seule), puis fermer avant rename (Windows refuse de renommer
+        # un fichier ouvert) ; le close du finally devient un no-op idempotent.
+        try: con_db.execute("PRAGMA journal_mode=DELETE;")
+        except Exception: pass
         try: con_db.close()
         except Exception: pass
         sqlitedb_part.replace(sqlitedb)
@@ -8495,7 +8516,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.12.0 (2026-07), multi-provider")
+                        version="lidar2map 1.13.0 (2026-07), multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
                         help="IGN LiDAR DEM mode")
 
@@ -9813,10 +9834,6 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     bbox        : (x_min, y_min, x_max, y_max) en CRS natif (informatif, pour
                   le header de dalles_zone.txt)
     """
-    # NB : la compression --download-compress n'est PAS appliquée par ce
-    # chemin (telecharger_dalle_directe / telecharger_cog_fenetre) : seule
-    # l'ancienne telecharger_dalle, plus appelée depuis le refactor
-    # multi-provider, la gérait. À recâbler ou retirer l'option.
     ok = skip = absent = erreur = 0
     a_telecharger = []
 
@@ -9853,7 +9870,8 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
                            for nom, url in a_telecharger}
             else:
                 futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
-                                     args.telechargement_ecraser): (nom,)
+                                     args.telechargement_ecraser,
+                                     args.telechargement_compresser): (nom,)
                            for nom, url in a_telecharger}
             for fut in as_completed(futures):
                 nom = futures[fut][0]
@@ -10064,6 +10082,8 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             zoom_min = min(args.zoom_min, args.zoom_max)
             zoom_max = max(args.zoom_min, args.zoom_max)
             tuiles = calculer_grille_xyz(lat_s, lon_w, lat_n, lon_e, zoom_min, zoom_max)
+            total_tuiles = compter_tuiles_xyz(lat_s, lon_w, lat_n, lon_e,
+                                              zoom_min, zoom_max)
             # Structure : <racine>/<nom_zone_base>/raster/<nom_z>/
             racine_base = (Path(args.dossier).resolve() if args.dossier
                            else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "raster")
@@ -10080,7 +10100,7 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
                 generer_mbtiles_wmts(
                     chemin=chemin_mbtiles,
                     tuiles_iter=tuiles,
-                    total=len(tuiles),
+                    total=total_tuiles,
                     nom_zone=nom_z,
                     fmt_ext=fmt_ext,
                     zoom_min=zoom_min,
@@ -10215,7 +10235,11 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
                 continue
             chemin_z.unlink()
 
-        con_z = _sq.connect(str(chemin_z))
+        # Écriture via .part + rename : un sous-mbtiles présent est toujours
+        # complet (un kill mi-découpe laissait un partiel repris tel quel par
+        # le check "Existing chunk" au run suivant).
+        chemin_z_part = _chemin_part(chemin_z)
+        con_z = _sq.connect(str(chemin_z_part))
         con_z.executescript("""
             CREATE TABLE metadata (name TEXT, value TEXT);
             CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,
@@ -10275,10 +10299,11 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
         con_z.close()
 
         if n_tuiles == 0:
-            chemin_z.unlink()
+            chemin_z_part.unlink(missing_ok=True)
             print(f"  Sub-zone [{i_lat},{i_lon}]: empty - skipped")
             continue
 
+        chemin_z_part.replace(chemin_z)
         print(f"  Sub-zone [{i_lat},{i_lon}]: {n_tuiles:,} tiles → {chemin_z.name}")
         sorties.append(chemin_z)
 
@@ -10566,7 +10591,7 @@ Examples:
         """
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.12.0 (2026-07), multi-provider")
+                        version="lidar2map 1.13.0 (2026-07), multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
                              "Use --layer for the layer (default: scan25). "
@@ -10819,7 +10844,8 @@ Examples:
 
     tuiles = calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max,
                                  zoom_min, zoom_max)
-    total  = len(tuiles)
+    total  = compter_tuiles_xyz(lat_min, lon_min, lat_max, lon_max,
+                                zoom_min, zoom_max)
     taille_est = estimer_taille(total, fmt_ext)
 
     # Couches XYZ (USGS Imagery…) : source non-IGN → libellé neutre + vrai template.
@@ -11668,11 +11694,17 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     t0 = time.time()
     print(f"  osmosis → {chemin_map.name}...", flush=True)
 
+    # Écriture via .map.tmp + rename, comme generer_carte_osm : un .map présent
+    # est toujours complet (un kill mi-écriture laissait un binaire tronqué
+    # repris tel quel par le check "already present" au run suivant).
+    chemin_map_tmp = chemin_map.parent / (chemin_map.name + ".tmp")
+    chemin_map_tmp.unlink(missing_ok=True)
+
     cmd = [
         _osmosis_exe,
         "--read-xml", f"file={chemin_osm_xml}",
         "--mapfile-writer",
-        f"file={chemin_map}",
+        f"file={chemin_map_tmp}",
         f"bbox={lat_min:.6f},{lon_min:.6f},{lat_max:.6f},{lon_max:.6f}",
         "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
         "tag-values=true", "polygon-clipping=true",
@@ -11692,7 +11724,8 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         shell=_shell, env=_env_map,
     )
 
-    if chemin_map.exists() and chemin_map.stat().st_size > 0:
+    if chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
+        chemin_map_tmp.replace(chemin_map)
         chemin_osm_xml.unlink(missing_ok=True)  # succès seulement
         taille_b = chemin_map.stat().st_size
         if taille_b < 1_000_000:
@@ -11700,12 +11733,13 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         else:
             print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
         return chemin_map
-    elif chemin_map.exists() and chemin_map.stat().st_size == 0:
-        chemin_map.unlink(missing_ok=True)
+    elif chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size == 0:
+        chemin_map_tmp.unlink(missing_ok=True)
         print(f"  ⚠ {chemin_map.name} created but empty - no feature recognised by mapwriter.")
         print(f"  {chemin_osm_xml.name} kept for diagnostics.")
         return None
     else:
+        chemin_map_tmp.unlink(missing_ok=True)
         print(f"  ERROR osmosis mapfile-writer IGN (code {rc})")
         if stderr_diag:
             print(f"  {stderr_diag.strip()[:2000]}")
@@ -12213,7 +12247,7 @@ def main_wfs():
         )
     )
     parser.add_argument("--version", action="version",
-                        version="lidar2map 1.12.0 (2026-07), multi-provider")
+                        version="lidar2map 1.13.0 (2026-07), multi-provider")
     parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
     parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
                         help="WFS layer(s) to download (default: cadastre). "
@@ -13938,17 +13972,19 @@ def lancer_gui():
                     # comme "ERREUR" qui contient un É (devient un ? si décodé
                     # en cp850 puis lu en utf-8).
                     env["PYTHONIOENCODING"] = "utf-8"
-                    # Créer un nouveau groupe de processus pour pouvoir tuer toute la hiérarchie
+                    # Créer un nouveau groupe de processus pour pouvoir signaler
+                    # toute la hiérarchie (arrêt gracieux puis forcé, cf. stop()).
                     if WINDOWS:
-                        # Note : CREATE_NEW_PROCESS_GROUP est nécessaire pour que
-                        # Ctrl+C puisse tuer le child et ses descendants. Mais
-                        # sur certaines configurations Windows + WebView2, cette
-                        # flag semble causer un blocage du pipe stdout — les
-                        # données restent dans le buffer du child et n'arrivent
-                        # jamais au parent. Test sans la flag :
+                        # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
+                        # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
+                        # avait été retirée sur un soupçon de blocage du pipe
+                        # stdout avec l'ancien backend WebView2 ; sous Qt
+                        # (backend forcé depuis), le pipe fonctionne :
+                        # revalidé par test dédié le 2026-07-02.
                         self._process = subprocess.Popen(
                             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            bufsize=0, env=env)
+                            bufsize=0, env=env,
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
                     else:
                         self._process = subprocess.Popen(
                             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -14095,18 +14131,53 @@ def lancer_gui():
             return {"cmd": " ".join(str(c) for c in cmd)}
 
         def stop(self):
-            if self._process and self._process.poll() is None:
+            """Arrêt gracieux, puis forcé.
+
+            1. Signal doux : CTRL_BREAK au groupe Windows (routé vers le
+               soft-cancel _on_sigint du child : l'opération courante finit
+               proprement, manifeste/.part/sqlite fermés), SIGINT au groupe
+               Unix. L'ancien comportement (taskkill /F immédiat) coupait
+               net sans aucun cleanup.
+            2. Si le child vit encore après _STOP_GRACE_S (kernel numba
+               intuable, child sans console où CTRL_BREAK échoue), kill
+               forcé de toute la hiérarchie, comme avant.
+            L'escalade tourne dans un thread pour ne pas bloquer le bridge
+            JS ; _done est posé par le thread lecteur quand le pipe se ferme.
+            """
+            _STOP_GRACE_S = 15
+            proc = self._process
+            if not (proc and proc.poll() is None):
+                return
+            self._log_queue.put(
+                {"line": f"\n⚠ Stop requested - graceful, forced after {_STOP_GRACE_S} s\n",
+                 "tag": "err"})
+            doux_ok = False
+            try:
+                if WINDOWS:
+                    proc.send_signal(_signal.CTRL_BREAK_EVENT)
+                else:
+                    os.killpg(os.getpgid(proc.pid), _signal.SIGINT)
+                doux_ok = True
+            except Exception:
+                pass
+
+            def _escalade():
+                try:
+                    proc.wait(timeout=_STOP_GRACE_S if doux_ok else 0.1)
+                    return   # sortie propre : le thread lecteur finalise (_done)
+                except subprocess.TimeoutExpired:
+                    pass
                 try:
                     if WINDOWS:
-                        # Tuer tout le groupe de processus Windows
-                        subprocess.call(["taskkill", "/F", "/T", "/PID", str(self._process.pid)],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     else:
-                        os.killpg(os.getpgid(self._process.pid), _signal.SIGKILL)
+                        os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
                 except Exception:
-                    self._process.terminate()
-                self._log_queue.put({"line": "\n⚠ Arrêté\n", "tag": "err"})
-                self._done = True
+                    try: proc.terminate()
+                    except Exception: pass
+                self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
+            threading.Thread(target=_escalade, daemon=True).start()
 
         def open_folder(self, path):
             try:
