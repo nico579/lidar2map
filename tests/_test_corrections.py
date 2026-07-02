@@ -120,8 +120,7 @@ dem_big = np.where((yy2 > 1500) & (xx2 > 1500),
                    0.0).astype(np.float32)
 src_tif = tmp / "dem.tif"; dst_tif = tmp / "lrm.tif"
 write_tif(src_tif, dem_big, nodata=ND)
-ok = l2m._lrm_chunked(src_tif, dst_tif, sigma_px=15,
-                      gdal_translate_exe=None, env_dem=None)
+ok = l2m._lrm_chunked(src_tif, dst_tif, sigma_px=15)
 check("LRM chunked réussit avec coin NW plat (grille 3x3)", ok)
 if ok:
     with rasterio.open(str(dst_tif)) as ds:
