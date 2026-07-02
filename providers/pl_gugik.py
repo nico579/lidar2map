@@ -17,7 +17,6 @@
 # Self-contained : stdlib uniquement.
 
 import urllib.parse
-from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────

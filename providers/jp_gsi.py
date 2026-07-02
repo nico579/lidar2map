@@ -25,7 +25,6 @@
 #
 # Self-contained : stdlib uniquement (numpy/rasterio requis au runtime pour post_fetch).
 
-import math
 import re
 
 

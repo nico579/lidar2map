@@ -6,14 +6,43 @@ on:
       - 'lidar2map.py'
       - 'deploy.py'
       - 'tests/**'
+      - 'providers/**'
+      - 'pyproject.toml'
+      - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'lidar2map.py'
       - 'deploy.py'
       - 'tests/**'
+      - 'providers/**'
+      - 'pyproject.toml'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 jobs:
+  # Lint rapide (quelques secondes) : échoue avant de payer la matrice 3 OS.
+  # Règles F (pyflakes) seulement, config dans pyproject.toml : imports
+  # inutilisés, variables mortes, noms non définis. Dès son premier run
+  # local, a attrapé un F821 réel (variable supprimée encore référencée
+  # dans une branche que ni py_compile ni les tests n'exercent).
+  lint:
+    name: ruff (pyflakes)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Installer ruff
+        run: pip install ruff
+
+      - name: Ruff check
+        run: ruff check .
+
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

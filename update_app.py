@@ -388,20 +388,29 @@ def _do_release(tag, new_script, dry_run=False):
             _download_with_progress(t["url"], dest)
         t["local"] = dest
 
-    # 3b. Collecter les fichiers additionnels à injecter (providers/*.py v1.2+).
-    # Les bundles v1.1 n'ont pas de providers/ — on l'ajoute via extras.
+    # 3b. Collecter les fichiers additionnels à injecter (providers/*.py v1.2+,
+    # gui/ v1.12+). Les bundles v1.1 n'ont pas de providers/ — on l'ajoute via
+    # extras. Même mécanisme pour le front GUI (index.html/style.css/app.js,
+    # bundlé en datas par les specs sous _internal/gui/) : sans ça, un fix
+    # gui-only poussé sur main n'atteignait JAMAIS les bundles via patch,
+    # seul un rebuild --new-tag le livrait.
     extras = {}
     _providers_dir = HERE / "providers"
     if _providers_dir.exists():
         for _f in sorted(_providers_dir.glob("*.py")):
             extras[f"_internal/providers/{_f.name}"] = _f.read_bytes()
-        if extras:
-            print(f"\n  Extras à injecter (providers/) : {len(extras)} fichiers")
-            for path in extras:
-                print(f"    + {path}")
+    _gui_dir = HERE / "gui"
+    if _gui_dir.exists():
+        for _f in sorted(_gui_dir.glob("*")):
+            if _f.is_file():
+                extras[f"_internal/gui/{_f.name}"] = _f.read_bytes()
+    if extras:
+        print(f"\n  Extras à injecter (providers/ + gui/) : {len(extras)} fichiers")
+        for path in extras:
+            print(f"    + {path}")
 
     # 4. Patcher chaque archive
-    print(f"\n[3/5] Patch des bundles internes...")
+    print("\n[3/5] Patch des bundles internes...")
     for t in targets:
         print(f"  • {t['name']} :")
         msg = _patch_asset(t["local"], t["kind"], new_script, extras=extras)
@@ -413,17 +422,17 @@ def _do_release(tag, new_script, dry_run=False):
         print(f"      taille = {t['new_size']:,} bytes")
 
     if dry_run:
-        print(f"\n[4/5] Upload — DRY-RUN, skip.")
-        print(f"\n[5/5] Patch body — DRY-RUN, simulation :")
+        print("\n[4/5] Upload — DRY-RUN, skip.")
+        print("\n[5/5] Patch body — DRY-RUN, simulation :")
         sha_by_name = {t["name"]: t["new_sha"] for t in targets}
         _patch_release_body(rel["body"] or "", sha_by_name)  # affiche les remplacements
         print(f"\nDRY-RUN terminé. Archives patchées en cache : {cache_dir}")
-        print(f"  Pour pousser : python update_app.py --release  (sans --dry-run)\n")
+        print("  Pour pousser : python update_app.py --release  (sans --dry-run)\n")
         return
 
     # 5. Replace assets : DELETE puis UPLOAD (GitHub n'accepte pas de PATCH
     #    sur le binaire d'un asset existant — il faut delete+upload).
-    print(f"\n[4/5] Upload des assets patchés...")
+    print("\n[4/5] Upload des assets patchés...")
     for t in targets:
         print(f"  • {t['name']} :")
         code, _ = _gh_api(
@@ -443,7 +452,7 @@ def _do_release(tag, new_script, dry_run=False):
         print(f"      UPLOAD {t['new_size'] / 1e6:.0f} Mo OK")
 
     # 6. Patcher le body de la release avec les nouveaux SHA256
-    print(f"\n[5/5] Mise à jour du body de la release...")
+    print("\n[5/5] Mise à jour du body de la release...")
     sha_by_name = {t["name"]: t["new_sha"] for t in targets}
     new_body = _patch_release_body(rel["body"] or "", sha_by_name)
     code, _ = _gh_api(

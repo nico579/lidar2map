@@ -174,7 +174,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         offset += len(items)
 
     if not all_items:
-        print(f"  TNM: no 1m DEM tile found for this bbox.")
+        print("  TNM: no 1m DEM tile found for this bbox.")
         return {}
 
     try:
@@ -197,8 +197,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     print(f"  TNM: {len(dalles)} 1m DEM tile(s) selected "
           f"(~{size_mb:.0f} MB total)")
     if size_mb > 1000:
-        print(f"  ⚠ Volume élevé ({size_mb:.0f} Mo). Tiles USGS 1m sont "
-              f"10×10 km — beaucoup de données pour une petite zone archéo.")
+        print(f"  ⚠ Large volume ({size_mb:.0f} MB). USGS 1m tiles are "
+              f"10×10 km, a lot of data for a small archaeological area.")
     return dalles
 
 

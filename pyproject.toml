@@ -1,0 +1,18 @@
+# pyproject.toml — configuration de l'outillage dev uniquement.
+# Le projet n'est pas packagé en module pip : lidar2map.py est un script
+# autonome, distribué via les releases PyInstaller. Ce fichier ne sert
+# qu'à ruff (lint), en local (`python -m ruff check .`) et dans le CI.
+
+[tool.ruff]
+target-version = "py38"    # version Python minimale supportée par lidar2map
+# News/ : vieille copie de travail locale, jamais poussée sur le repo ;
+# sans cette exclusion, `ruff check .` en local remonterait ses défauts.
+extend-exclude = ["News"]
+
+[tool.ruff.lint]
+# Règles F (pyflakes) uniquement : imports inutilisés, variables mortes,
+# noms non définis, f-strings sans placeholder. Volontairement AUCUNE règle
+# de style (E/W/…) : le style du code est établi, on ne veut détecter que
+# les vrais défauts. Premier run (2026-07-02) : 74 trouvailles dont un
+# F821 réel (nom supprimé encore référencé dans une branche non testée).
+select = ["F"]

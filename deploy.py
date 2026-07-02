@@ -38,6 +38,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import NoReturn
 
 # Force UTF-8 sur stdout/stderr : sous Windows, le défaut cp1252 fait planter
 # print() dès qu'on écrit un caractère non-Latin1 (flèches →, accents corrompus
@@ -86,6 +87,7 @@ MAP = {
     "README_Github.md":              "README.md",
     "README_Github.fr.md":           "README.fr.md",
     "README_LIDAR2MAP.md":           "BUILD.md",
+    "pyproject.toml":                "pyproject.toml",
     "ci_github.yml":                 ".github/workflows/ci.yml",
     "release_github.yml":            ".github/workflows/release.yml",
     "update_github.yml":             ".github/workflows/update.yml",
@@ -152,7 +154,7 @@ def cprint(msg: str, color: str = "") -> None:
     else:
         print(msg)
 
-def fail(msg: str) -> "NoReturn":
+def fail(msg: str) -> NoReturn:
     cprint(f"\nERREUR : {msg}", "red")
     sys.exit(1)
 
@@ -468,7 +470,7 @@ def main():
     if code_changed:
         tag = args.patch_tag or get_latest_tag(args.repo)
         cprint(f"\n==> [2/2] {APP_PY} modifié → patch via --mode {args.mode} sur {tag}", "cyan")
-        cprint(f"    Avertissement : si tu as touché au BLOC LAUNCHER ou aux DEPS dans", "yellow")
+        cprint("    Avertissement : si tu as touché au BLOC LAUNCHER ou aux DEPS dans", "yellow")
         cprint(f"    {APP_PY}, le patch ne suffit pas → rebuild via release.yml.", "yellow")
         invoke_patch(args.mode, args.repo, tag)
         return 0

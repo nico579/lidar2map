@@ -129,7 +129,7 @@ def _charger_couverture(cache_path):
         except Exception:
             pass
 
-    print(f"  Bayern: downloading the Metalink index (~15 MB, first time)...",
+    print("  Bayern: downloading the Metalink index (~15 MB, first time)...",
           flush=True)
     try:
         req = urllib.request.Request(METALINK_URL, headers={"User-Agent": HTTP_UA})

@@ -17,7 +17,6 @@
 
 import json
 import re
-import urllib.request
 from pathlib import Path
 
 
@@ -106,13 +105,9 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         except Exception:
             pass
 
-    # Requête API par bbox SWEREF99 TM
+    # Requête API par bbox SWEREF99 TM : non implémentée (l'API Lantmäteriet
+    # nécessite une inscription) → on passe directement au fallback grille.
     print(f"  Lantmäteriet API : query bbox {ix1},{iy1},{ix2},{iy2}...", flush=True)
-    params = urllib.parse.urlencode({
-        "bbox":   f"{ix1},{iy1},{ix2},{iy2}",
-        "crs":    "EPSG:3006",
-        "limit":  500,
-    }) if False else ""  # API nécessite inscription → fallback grille
 
     # Fallback : URL synthétique depuis la grille (pattern Lantmäteriet)
     # Format URL : https://download.lantmateriet.se/laserdata/nh/<E>_<N>.zip

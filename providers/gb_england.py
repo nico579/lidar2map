@@ -19,7 +19,6 @@
 #
 # Self-contained : stdlib uniquement.
 
-from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────

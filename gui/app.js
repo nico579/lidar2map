@@ -476,7 +476,13 @@ async function initAsync() {
     pywebview.api.get_historique().then(hist => {
       if (hist && hist.length) {
         buildHistorique(hist);
-        const last = hist[0];
+        // Préremplissage : la plus récente entrée lancée depuis le GUI
+        // (id suffixé '-gui') = snapshot complet du formulaire (getConfig).
+        // Une entrée CLI n'a que les clés déductibles d'argv (~la moitié) :
+        // l'utiliser laisserait le reste du formulaire aux défauts HTML.
+        // Fallback hist[0] si l'historique est 100 % CLI (mieux que rien).
+        const last = hist.find(e => e.params && String(e.id || '').endsWith('-gui'))
+                     || hist[0];
         if (last && last.params) loadConfig(last.params);
       }
     }).catch(e => console.error('get_historique init error:', e));

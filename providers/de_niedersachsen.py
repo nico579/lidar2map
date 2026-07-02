@@ -150,6 +150,6 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             candidats[key] = (year, nom, href)
 
     dalles = {nom: href for (_y, nom, href) in candidats.values()}
-    print(f"  Basse-Saxe : {n_pages} page(s) STAC → {len(items)} items "
-          f"→ {len(dalles)} dalles (dernier millésime/tuile)")
+    print(f"  Lower Saxony: {n_pages} STAC page(s) → {len(items)} items "
+          f"→ {len(dalles)} tiles (latest vintage per tile)")
     return dalles

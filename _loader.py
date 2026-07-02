@@ -25,7 +25,7 @@ if not _script.exists():
 
 if not _script.exists():
     print(f"ERREUR : lidar2map.py introuvable dans {_base}")
-    print(f"  Vérifiez que _internal/lidar2map.py est présent dans le bundle.")
+    print("  Vérifiez que _internal/lidar2map.py est présent dans le bundle.")
     sys.exit(1)
 
 # sys.argv[0] doit pointer vers le script pour que __file__ soit cohérent

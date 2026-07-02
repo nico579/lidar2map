@@ -22,7 +22,6 @@
 import os
 import ssl
 import urllib.parse
-from pathlib import Path
 
 # NLS Finland utilise un certificat auto-signé dans la chaîne SSL → bypass nécessaire
 _SSL_CTX = ssl.create_default_context()
