@@ -6,7 +6,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Script Python autonome qui télécharge les données LiDAR publiques de portails nationaux dans **22 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **22 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -95,53 +95,19 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 ## Installation et utilisation
 
+**Démarrage rapide : téléchargez l'exécutable autonome de votre OS depuis la [page Releases](https://github.com/nico579/lidar2map/releases), décompressez, lancez. Pas de Python, pas de dépendances, rien à installer.**
+
 Deux façons d'utiliser lidar2map :
 
-| | **A. Script Python** | **B. Exécutable autonome** |
+| | **A. Exécutable autonome** | **B. Script Python** |
 |---|---|---|
-| **Prérequis** | Python 3.12 | Aucun |
-| **Première install** | ~5 min (bootstrap deps) | Aucun |
-| **Mises à jour** | `git pull` + relance | Patcher les 3 binaires existants sur la release GitHub en une commande : `python update_app.py --release` (voir [`update_app.py`](update_app.py)) |
-| **Distribuable** | Non, chaque utilisateur installe Python | Oui, `.exe` / `.app` / binaire Linux + bundle zip côte à côte |
-| **Idéal pour** | dev / Linux / contribuer au code | utilisateur final / Windows / distribuer |
+| **Prérequis** | Aucun | Python 3.12 |
+| **Première install** | Aucune | ~5 min (bootstrap auto dans son propre venv) |
+| **Mises à jour** | Patcher les 3 binaires existants sur la release GitHub en une commande : `python update_app.py --release` (voir [`update_app.py`](update_app.py)) | `git pull` + relance |
+| **Distribuable** | Oui, `.exe` / `.app` / binaire Linux + bundle zip côte à côte | Non, chaque utilisateur installe Python |
+| **Idéal pour** | utilisateur final / Windows / distribuer | dev / Linux / contribuer au code |
 
-### A. Script Python
-
-Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les dépendances critiques (Pillow, pyproj, numpy, rasterio, pywebview + PyQt6/QtWebEngine…). Téléchargement de GDAL (Windows), du JRE Temurin 21 et d'osmosis à la demande. ~400 Mo total, **une seule fois**.
-
-#### Windows 10+
-
-1. Installer [Python 3.12+](https://www.python.org/downloads/)
-2. Récupérer le code :
-   ```powershell
-   git clone https://github.com/nico579/lidar2map
-   cd lidar2map
-   python lidar2map.py
-   ```
-
-#### macOS 11+
-
-```bash
-brew install python@3.12
-git clone https://github.com/nico579/lidar2map
-cd lidar2map
-python3.12 lidar2map.py
-```
-
-#### Linux (Debian / Ubuntu)
-
-```bash
-sudo apt install python3.12 python3.12-venv git
-git clone https://github.com/nico579/lidar2map
-cd lidar2map
-python3.12 lidar2map.py
-```
-
-Le script demandera l'autorisation d'installer GDAL via `sudo apt install gdal-bin`.
-
-Résolution de problèmes : section *Dépannage* de [BUILD.md](BUILD.md) (incluant les cas spécifiques Linux/macOS : PEP 668, Qt distro packages, Wayland, Gatekeeper sur le JRE…).
-
-### B. Exécutable autonome
+### A. Exécutable autonome
 
 Pas de Python à installer côté utilisateur final. Le livrable contient son propre runtime (Python embarqué, deps, JRE, osmosis).
 
@@ -207,6 +173,40 @@ Le premier lancement extrait le bundle (~30-60 s, une fois, il contient Qt) dans
 - Linux : `~/.local/share/lidar2map/`
 
 Désinstallation propre : `lidar2map(.exe) --desinstaller`.
+### B. Script Python
+
+Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les dépendances critiques (Pillow, pyproj, numpy, rasterio, pywebview + PyQt6/QtWebEngine…) : votre Python système n'est jamais touché (`--bootstrap=none` si vous préférez gérer l'environnement vous-même). Téléchargement du JRE Temurin 21 et d'osmosis à la demande ; aucun GDAL système requis, les wheels rasterio embarquent le leur. ~400 Mo total, **une seule fois**.
+
+#### Windows 10+
+
+1. Installer [Python 3.12+](https://www.python.org/downloads/)
+2. Récupérer le code :
+   ```powershell
+   git clone https://github.com/nico579/lidar2map
+   cd lidar2map
+   python lidar2map.py
+   ```
+
+#### macOS 11+
+
+```bash
+brew install python@3.12
+git clone https://github.com/nico579/lidar2map
+cd lidar2map
+python3.12 lidar2map.py
+```
+
+#### Linux (Debian / Ubuntu)
+
+```bash
+sudo apt install python3.12 python3.12-venv git
+git clone https://github.com/nico579/lidar2map
+cd lidar2map
+python3.12 lidar2map.py
+```
+
+Résolution de problèmes : section *Dépannage* de [BUILD.md](BUILD.md) (incluant les cas spécifiques Linux/macOS : PEP 668, Qt distro packages, Wayland, Gatekeeper sur le JRE…).
+
 
 ---
 
@@ -325,7 +325,7 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 ## Fonctionnalités principales
 
-- **Auto-bootstrap** : aucune dépendance pré-installée requise. Le script télécharge à la demande Python deps (Pillow, pyproj, numpy, scipy), GDAL (Windows) ou demande l'installation système (Linux/macOS), JRE Temurin 21, osmosis, mapwriter.
+- **Auto-bootstrap** : aucune dépendance pré-installée requise. Le script télécharge à la demande les deps Python (Pillow, pyproj, numpy, scipy, rasterio, dont les wheels embarquent leur propre GDAL), le JRE Temurin 21, osmosis, mapwriter.
 - **Streaming mémoire** : traitement département-scale sans saturer la RAM (ijson, rasterio windowed reads, génération MBTiles tuile par tuile).
 - **Cancellation propre** : `Ctrl+C` une fois → arrêt après le morceau en cours. `Ctrl+C` deux fois → arrêt immédiat.
 - **Reprise après interruption** : la même commande reprend où elle s'est arrêtée, via un manifeste `.json` qui suit les morceaux terminés.
