@@ -92,6 +92,10 @@ n_s = con_s.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
 zmin_s, zmax_s = con_s.execute("SELECT minzoom, maxzoom FROM info").fetchone()
 assert n_s == n, f"{n_s} tuiles SQLiteDB vs {n} MBTiles"
 assert (zmin_s, zmax_s) == (15, 17), (zmin_s, zmax_s)
+# tilenumbering='simple' : sans lui OsmAnd suppose BigPlanet (z inversé 17-z)
+# et n'affiche rien ; Locus ignore la colonne (bug remonté par un user OsmAnd).
+tn = con_s.execute("SELECT tilenumbering FROM info").fetchone()[0]
+assert tn == "simple", f"tilenumbering={tn!r} (OsmAnd exige != 'BigPlanet')"
 # Chaque (x, y, z) XYZ doit pointer le même blob que (x, y_tms) dans le MBTiles
 x_s, y_s, z_s, im_s = con_s.execute(
     "SELECT x, y, z, image FROM tiles LIMIT 1").fetchone()

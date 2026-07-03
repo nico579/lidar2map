@@ -8002,13 +8002,19 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     Schéma SQLiteDB (format interne Locus / RMaps Android) :
       CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB)
       CREATE TABLE android_metadata (locale TEXT)
-      CREATE TABLE info (minzoom INT, maxzoom INT)
+      CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT)
 
     Coordonnées : x=col, y=row XYZ (y=0 en haut/Nord), z=zoom, s=0 (inutilisé).
     Conversion TMS→XYZ : y_xyz = (2^z - 1) - tile_row_tms.
 
     C'est le format que Locus utilise en interne pour son cache de cartes en ligne.
     Zéro risque de compatibilité, auto-load et Quick map switch fonctionnent.
+
+    tilenumbering='simple' : indispensable pour OsmAnd. Quand la colonne est
+    absente, OsmAnd (SQLiteTileSource) suppose le schéma BigPlanet à zoom
+    INVERSÉ (z' = 17 - z) et ne trouve donc jamais nos tuiles (couche
+    sélectionnable mais vide). 'simple' = numérotation XYZ normale. Locus
+    ignore la colonne supplémentaire (lecture par nom, minzoom/maxzoom).
     """
 
     sqlitedb = mbtiles_path.with_suffix(".sqlitedb")
@@ -8044,11 +8050,12 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
         con_db.executescript("""
             CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
             CREATE TABLE android_metadata (locale TEXT);
-            CREATE TABLE info (minzoom INT, maxzoom INT);
+            CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT);
             CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
         """)
         con_db.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
-        con_db.execute("INSERT INTO info VALUES (?, ?)", (zoom_min, zoom_max))
+        con_db.execute("INSERT INTO info VALUES (?, ?, ?)",
+                       (zoom_min, zoom_max, "simple"))
         con_db.commit()
 
         BATCH   = BATCH_SQLITEDB_INSERT
