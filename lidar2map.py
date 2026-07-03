@@ -9767,7 +9767,8 @@ Examples:
                         _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
                         rasteriser_geojson_transparent(
                             _gj, dossier_osm / f"{nom_zone}_osm_transparent.sqlitedb",
-                            _zmin, _zmax, ecraser=args.tuiles_ecraser)
+                            _zmin, _zmax, ecraser=args.tuiles_ecraser,
+                            bbox_wgs84=bbox_wgs)
 
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
@@ -11448,7 +11449,7 @@ def _overlay_sequences(geom):
 
 
 def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
-                                   ecraser=False, supersample=2):
+                                   ecraser=False, supersample=2, bbox_wgs84=None):
     """Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent -> .sqlitedb
     OsmAnd/Locus (schema RMaps, tilenumbering='simple', cf. generer_sqlitedb...).
 
@@ -11510,6 +11511,40 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         for feat in json.loads(payload).get("features", []):
             yield feat
 
+    # Clip des segments à la zone (marge ~15%) dès la lecture. Une feature IGN
+    # peut courir sur des dizaines/centaines de km hors zone (itinéraire GR :
+    # 45 000 sommets, 380 km). Sans clip on reprojetterait tous ces sommets pour
+    # chaque tuile (lent), ou on rendrait des tuiles vides sur toute l'étendue.
+    # On ne garde que les sous-séquences dont un segment touche la zone.
+    _clip = None
+    if bbox_wgs84:
+        _bl, _bs, _br, _bn = bbox_wgs84
+        _mlon = (_br - _bl) * 0.15 + 1e-4
+        _mlat = (_bn - _bs) * 0.15 + 1e-4
+        _clip = (_bl - _mlon, _bs - _mlat, _br + _mlon, _bn + _mlat)
+
+    def _clip_seq(seq):
+        """Sous-séquences de seq dont un segment intersecte la bbox de clip
+        (test bbox segment × bbox zone). Sans clip → la séquence entière."""
+        if _clip is None or len(seq) < 2:
+            return [seq] if len(seq) >= 2 else []
+        cw, cs, ce, cn = _clip
+        out, cur = [], []
+        for i in range(len(seq) - 1):
+            (x0, y0), (x1, y1) = seq[i], seq[i + 1]
+            if (max(x0, x1) >= cw and min(x0, x1) <= ce
+                    and max(y0, y1) >= cs and min(y0, y1) <= cn):
+                if not cur:
+                    cur.append(seq[i])
+                cur.append(seq[i + 1])
+            else:
+                if len(cur) >= 2:
+                    out.append(cur)
+                cur = []
+        if len(cur) >= 2:
+            out.append(cur)
+        return out
+
     feats = []   # (color, width, fill, lignes[list of [lon,lat]], anneaux)
     lon_min = lat_min = float("inf")
     lon_max = lat_max = float("-inf")
@@ -11526,9 +11561,13 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         if not lignes and not anneaux:
             continue
         # ijson rend les nombres en Decimal → caster en float une fois pour
-        # toutes (sinon deg_to_tile plante sur Decimal + float).
-        lignes  = [[(float(c[0]), float(c[1])) for c in seq] for seq in lignes]
-        anneaux = [[(float(c[0]), float(c[1])) for c in seq] for seq in anneaux]
+        # toutes (sinon deg_to_tile plante sur Decimal + float), puis clip zone.
+        lignes  = [s for seq in lignes
+                   for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
+        anneaux = [s for seq in anneaux
+                   for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
+        if not lignes and not anneaux:
+            continue
         for seq in (*lignes, *anneaux):
             for lon, lat in seq:
                 if lon < lon_min: lon_min = lon
@@ -11539,6 +11578,18 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
 
     if not feats or lon_min > lon_max:
         print(f"  transparent-raster: no drawable feature in {geojson_path.name}")
+        return None
+    # Clip de la grille à la zone demandée. Indispensable côté IGN : le WFS
+    # renvoie les features ENTIÈRES qui touchent la bbox (un itinéraire ancien
+    # peut courir sur des dizaines de km hors zone). Sans ce clip, la grille de
+    # tuiles couvrirait toute l'étendue de la feature → des millions de tuiles
+    # et un run qui ne finit jamais. OSM ne le montrait pas (osmosis pré-clippe).
+    if bbox_wgs84:
+        _bl, _bs, _br, _bn = bbox_wgs84
+        lon_min = max(lon_min, _bl); lat_min = max(lat_min, _bs)
+        lon_max = min(lon_max, _br); lat_max = min(lat_max, _bn)
+    if lon_min > lon_max or lat_min > lat_max:
+        print("  transparent-raster: features outside the requested zone")
         return None
     print(f"  transparent-raster <- {geojson_path.name} "
           f"({len(feats)} features, z{zoom_min}-{zoom_max})...", flush=True)
@@ -12736,13 +12787,17 @@ def main_wfs():
             )
 
     # ── Overlay raster transparent si demandé (transparent-raster) ────────────
-    if getattr(args, "transparent_raster", False):
+    # main_wfs a son propre parser et ne résout PAS args.transparent_raster
+    # (contrairement au pipeline principal) : on teste la présence dans _ff,
+    # comme "map" ci-dessus, sinon le bloc serait toujours sauté.
+    if "transparent-raster" in _ff:
         if _src_geojson and Path(_src_geojson).exists():
             _zmax = int(getattr(args, "zoom_max", 18))
             _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
             rasteriser_geojson_transparent(
                 _src_geojson, dossier / f"{nom_zone}_ign_transparent.sqlitedb",
-                _zmin, _zmax, ecraser=args.tuiles_ecraser)
+                _zmin, _zmax, ecraser=args.tuiles_ecraser,
+                bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
         else:
             print("\n  ⚠ transparent-raster skipped: no feature available.")
 
@@ -13466,7 +13521,7 @@ Examples:
             _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
             rasteriser_geojson_transparent(
                 result, sortie.parent / f"{nom_zone}_transparent.sqlitedb",
-                _zmin, _zmax, ecraser=True)
+                _zmin, _zmax, ecraser=True, bbox_wgs84=bbox)
         print(f"\n  Done in {_hms(int(time.time()-t_debut))}")
     _historique_depuis_argv(int(time.time()-t_debut))
 
