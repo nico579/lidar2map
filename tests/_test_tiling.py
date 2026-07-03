@@ -107,3 +107,50 @@ orig = con_m.execute(
 assert orig is not None and orig[0] == im_s, "blob XYZ != blob TMS source"
 con_s.close(); con_m.close()
 print(f"SQLITEDB OK ({n_s} tuiles, z{zmin_s}-{zmax_s})")
+
+# ── Migration : un sqlitedb au schéma périmé (sans tilenumbering) est régénéré ──
+# Simule un fichier d'AVANT le fix OsmAnd : table info sans la colonne
+# tilenumbering. Sans ecraser, generer_sqlitedb doit le détecter et le
+# régénérer (sinon l'utilisateur garde un overlay vide après mise à jour).
+con_stale = sqlite3.connect(str(sdb))
+con_stale.executescript("DROP TABLE info; CREATE TABLE info (minzoom INT, maxzoom INT);"
+                        "INSERT INTO info VALUES (15, 17);")
+con_stale.commit(); con_stale.close()
+assert not l2m._sqlitedb_schema_courant(sdb), "schéma périmé non détecté"
+sdb2 = l2m.generer_sqlitedb_depuis_mbtiles(mbt)   # ecraser=False
+assert l2m._sqlitedb_schema_courant(sdb2), "sqlitedb périmé non régénéré"
+con_mig = sqlite3.connect(str(sdb2))
+tn_mig = con_mig.execute("SELECT tilenumbering FROM info").fetchone()[0]
+con_mig.close()
+assert tn_mig == "simple", tn_mig
+print("MIGRATION SQLITEDB OK (schéma périmé régénéré sans --overwrite)")
+
+# ── transparent-raster : GeoJSON (OSM/IGN) → tuiles PNG transparentes ────────
+# Un mini GeoJSON (une ligne highway + un polygone building) rasterisé en
+# .sqlitedb transparent, schéma OsmAnd (tilenumbering='simple'), tuiles vides
+# absentes. Couvre le pivot commun OSM/IGN du format transparent-raster.
+gj = tmp / "zone_osm.geojson"
+gj.write_text('{"type":"FeatureCollection","features":['
+              '{"type":"Feature","properties":{"_cle":"highway","highway":"track"},'
+              '"geometry":{"type":"LineString","coordinates":'
+              '[[6.040,43.326],[6.045,43.330],[6.050,43.333]]}},'
+              '{"type":"Feature","properties":{"_cle":"building","building":"yes"},'
+              '"geometry":{"type":"Polygon","coordinates":'
+              '[[[6.046,43.328],[6.047,43.328],[6.047,43.329],[6.046,43.329],[6.046,43.328]]]}}'
+              ']}', encoding="utf-8")
+ov = l2m.rasteriser_geojson_transparent(gj, tmp / "zone_transparent.sqlitedb",
+                                        15, 17, ecraser=True)
+assert ov is not None and ov.exists(), "transparent-raster non généré"
+con_o = sqlite3.connect(str(ov))
+zmin_o, zmax_o, tn_o = con_o.execute(
+    "SELECT minzoom, maxzoom, tilenumbering FROM info").fetchone()
+assert (zmin_o, zmax_o) == (15, 17), (zmin_o, zmax_o)
+assert tn_o == "simple", f"tilenumbering={tn_o!r} (OsmAnd exige != 'BigPlanet')"
+n_o = con_o.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+assert n_o > 0, "aucune tuile transparente écrite"
+# Chaque tuile stockée doit être un PNG RGBA non entièrement transparent
+png0 = con_o.execute("SELECT image FROM tiles LIMIT 1").fetchone()[0]
+im0 = Image.open(io.BytesIO(png0)).convert("RGBA")
+assert im0.size == (256, 256) and im0.getbbox() is not None, "tuile vide stockée"
+con_o.close()
+print(f"TRANSPARENT-RASTER OK ({n_o} tuiles, z{zmin_o}-{zmax_o}, {tn_o})")

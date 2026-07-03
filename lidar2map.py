@@ -85,8 +85,11 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   --formats-fichier FMT...    Formats de fichiers de sortie (multi-valeurs) :
                                 ignlidar/ignraster : mbtiles rmap sqlitedb
-                                osm                : map geojson gz
-                                ignvecteur/fusion  : geojson gz
+                                osm                : map geojson gz transparent-raster
+                                ignvecteur/fusion  : geojson gz transparent-raster
+                              transparent-raster = tuiles PNG à fond transparent
+                                (.sqlitedb) rasterisant le vecteur (OSM ou IGN),
+                                pour superposition dans OsmAnd par-dessus le LiDAR
   --formats-image   FMT       Format des images dans les tuiles (ignlidar/ignraster) :
                                 auto (défaut) | jpeg | png
   --qualite-image   Q         Qualité JPEG des images (1-100, défaut: 85)
@@ -240,7 +243,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   Paramètres :
     --couche NOM...     Couche(s) à télécharger (multi-valeurs)
     --workers N         Connexions parallèles (défaut: 4)
-    --formats-fichier   geojson | gz (défaut: gz)
+    --formats-fichier   geojson | gz | transparent-raster (défaut: gz)
 
   Arborescence de sortie :
     ign_vecteur/
@@ -260,7 +263,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --source CHEMIN     PBF source (téléchargé depuis Geofabrik si absent)
     --couche TAGS       Tags OSM inclus (défaut: rando)
                           ex: "highway=* waterway=* natural=water"
-    --formats-fichier   map geojson gz (défaut: map gz)
+    --formats-fichier   map geojson gz transparent-raster (défaut: map gz)
 
   Arborescence de sortie :
     osm_vecteur/
@@ -269,6 +272,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
         <nom>.map                  carte Mapsforge
         <nom>_filtered.pbf         PBF filtré (réutilisable)
         <nom>_osm.geojson.gz       GeoJSON de superposition
+        <nom>_osm_transparent.sqlitedb  overlay raster transparent (OsmAnd)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MODE --fusionner
@@ -7995,6 +7999,21 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
         except Exception: pass
 
 
+def _sqlitedb_schema_courant(path):
+    """True si le .sqlitedb a le schéma courant (colonne info.tilenumbering,
+    ajoutée avec le fix OsmAnd). Un fichier illisible ou plus ancien → False,
+    donc régénéré. Sert à ne pas laisser un overlay périmé après mise à jour."""
+    try:
+        con = sqlite3.connect(str(path))
+        try:
+            cols = [r[1] for r in con.execute("PRAGMA table_info(info)")]
+        finally:
+            con.close()
+        return "tilenumbering" in cols
+    except Exception:
+        return False
+
+
 def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     """
     Génère un fichier .sqlitedb (format natif Locus Map) depuis un .mbtiles.
@@ -8019,8 +8038,16 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
 
     sqlitedb = mbtiles_path.with_suffix(".sqlitedb")
     if sqlitedb.exists() and not ecraser:
-        print(f"  {sqlitedb.name} → already present")
-        return sqlitedb
+        # Ne pas garder un fichier au schéma périmé : un sqlitedb généré AVANT le
+        # fix tilenumbering serait "already present" et jamais remplacé, laissant
+        # l'utilisateur avec un overlay vide dans OsmAnd après mise à jour. On
+        # régénère si la colonne info.tilenumbering manque (migration transparente,
+        # sans exiger "Écraser" ni supprimer le fichier à la main).
+        if _sqlitedb_schema_courant(sqlitedb):
+            print(f"  {sqlitedb.name} → already present")
+            return sqlitedb
+        print(f"  {sqlitedb.name} → stale schema (no tilenumbering), regenerating")
+        sqlitedb.unlink()
     if sqlitedb.exists() and ecraser:
         sqlitedb.unlink()
     if not mbtiles_path.exists():
@@ -8693,9 +8720,13 @@ Examples:
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Overwrite existing tiles/MBTiles/.map")
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
-                        choices=["mbtiles","rmap","sqlitedb","map","gz","geojson"],
+                        choices=["mbtiles","rmap","sqlitedb","map","gz","geojson",
+                                 "transparent-raster"],
                         default=[], metavar="FMT",
-                        help="Output file formats: mbtiles rmap sqlitedb (multi-value).")
+                        help="Output file formats (multi-value): mbtiles rmap sqlitedb "
+                             "(raster) ; map geojson gz (vector) ; transparent-raster "
+                             "(transparent PNG tiles rasterizing OSM/IGN vector -> .sqlitedb "
+                             "overlay for OsmAnd over the LiDAR).")
     parser.add_argument("--source", metavar="PATH", default=None,
                         help="Existing source file (standalone mode, no zone required). "
                              ".tif/.tiff: existing shading → MBTiles/RMAP "
@@ -8772,6 +8803,7 @@ Examples:
     args.mbtiles  = "mbtiles"  in _ff
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
+    args.transparent_raster = "transparent-raster" in _ff
     if not args.formats_image:
         args.formats_image = "auto"
 
@@ -9711,6 +9743,10 @@ Examples:
                 dossier_osm.mkdir(parents=True, exist_ok=True)
                 # Liste des formats GeoJSON demandés (parmi "gz" et "geojson")
                 _gj_formats = [f for f in ("gz", "geojson") if f in args.formats_fichier]
+                # transparent-raster derive du GeoJSON : le forcer si demande seul.
+                _want_overlay = getattr(args, "transparent_raster", False)
+                if _want_overlay and not _gj_formats:
+                    _gj_formats = ["gz"]
                 # Mode région : traiter tout le PBF régional sans re-clip
                 # (le PBF EST déjà la région — c'est le gain vs boucle départements).
                 generer_carte_osm(bbox_wgs, dossier_osm, nom_zone, pbf,
@@ -9721,6 +9757,16 @@ Examples:
                                   ecraser_tuiles=args.tuiles_ecraser,
                                   skip_bbox=_region_mode,
                                   geojson_formats=_gj_formats or ["gz"])
+                if _want_overlay:
+                    _gj = (dossier_osm / f"{nom_zone}_osm.geojson.gz")
+                    if not _gj.exists():
+                        _gj = dossier_osm / f"{nom_zone}_osm.geojson"
+                    if _gj.exists():
+                        _zmax = int(getattr(args, "zoom_max", 18))
+                        _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
+                        rasteriser_geojson_transparent(
+                            _gj, dossier_osm / f"{nom_zone}_osm_transparent.sqlitedb",
+                            _zmin, _zmax, ecraser=args.tuiles_ecraser)
 
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
@@ -10556,6 +10602,8 @@ def main_decouper():
                         help="Number of grid rows (North-South).")
     parser.add_argument("--split-radius", "--rayon-decoupe", type=float, default=0.0, metavar="KM",
                         dest="rayon_decoupe", help="Split into ~KM km squares.")
+    # Mode raster uniquement : pas de map/geojson/transparent-raster (sorties
+    # vecteur) — spécialisation intentionnelle, cf. le parser principal (l.~8699).
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["mbtiles", "rmap", "sqlitedb"], default=["mbtiles"],
                         metavar="FMT")
@@ -10566,6 +10614,7 @@ def main_decouper():
     args.mbtiles  = "mbtiles"  in _ff
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
+    args.transparent_raster = "transparent-raster" in _ff
 
     src = Path(args.source)
     if not src.exists():
@@ -10669,7 +10718,8 @@ Examples:
     parser.add_argument("--zoom-min", type=int, default=10, metavar="N")
     parser.add_argument("--zoom-max", type=int, default=16, metavar="N")
 
-    # Sorties
+    # Sorties. Mode raster uniquement : pas de map/geojson/transparent-raster
+    # (sorties vecteur) — spécialisation intentionnelle, cf. parser principal (l.~8699).
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
                         choices=["mbtiles","rmap","sqlitedb"],
                         default=[], metavar="FMT",
@@ -10705,6 +10755,7 @@ Examples:
     args.mbtiles  = "mbtiles"  in _ff
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
+    args.transparent_raster = "transparent-raster" in _ff
     if not args.formats_image:
         args.formats_image = "auto"
 
@@ -11321,6 +11372,267 @@ def _coords_flat(geom):
     elif gtype == "GeometryCollection":
         for sub in geom.get("geometries", []):
             yield from _coords_flat(sub)
+
+
+# ── Overlay raster transparent (--file-formats transparent-raster) ───────────
+# Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent, ecrites dans un
+# .sqlitedb OsmAnd/Locus. Sert a superposer un vecteur (chemins, cours d'eau,
+# bati IGN...) par-dessus le LiDAR dans OsmAnd, qui n'a pas de couche vecteur
+# transparente native (seulement des overlays raster). Cle de style = cle de tag
+# OSM top-level ; l'IGN y est ramene via _IGN_LAYER_TAGS. Le pivot commun aux deux
+# sources est le GeoJSON, donc un seul rasteriseur sert les deux.
+_OVERLAY_STYLE = {
+    # cle OSM      trait RGBA            largeur_px  remplir_polygone
+    "highway":  ((232,  80,  20, 255),   1.4,        False),
+    "waterway": (( 30, 110, 220, 255),   1.4,        False),
+    "railway":  (( 70,  70,  70, 255),   1.2,        False),
+    "building": ((150, 100,  70, 255),   1.0,        True),
+    "natural":  (( 30, 140, 200, 255),   1.2,        False),
+    "landuse":  (( 70, 150,  70, 255),   1.0,        False),
+    "leisure":  (( 70, 150,  90, 255),   1.0,        False),
+    "boundary": ((160,  70, 160, 255),   0.9,        False),
+    "barrier":  ((150, 120,  40, 255),   0.8,        False),
+    "place":    (( 90,  90,  90, 255),   1.2,        False),
+}
+_OVERLAY_DEFAUT = ((120, 120, 120, 255), 1.0, False)
+
+
+def _overlay_style_key(props, layer_hint=""):
+    """Cle de style d'une feature GeoJSON : la cle de tag OSM top-level.
+    - GeoJSON OSM : la propriete '_cle' porte deja la cle (highway, waterway...).
+    - GeoJSON IGN : deduite de 'source' (ou du nom de fichier) via _IGN_LAYER_TAGS.
+    - Sinon : 1er tag connu present dans les proprietes. None => style par defaut.
+    """
+    cle = props.get("_cle")
+    if cle:
+        return cle
+    src = str(props.get("source", "")) or layer_hint
+    for k, tagd in _IGN_LAYER_TAGS.items():
+        if k in src:
+            return next(iter(tagd))
+    for k in _OVERLAY_STYLE:
+        if k in props:
+            return k
+    return None
+
+
+def _overlay_sequences(geom):
+    """Decompose une geometrie GeoJSON en (sequences_lignes, sequences_anneaux).
+    Point/MultiPoint ignores (pas de trait a l'echelle overlay)."""
+    gt = geom.get("type", "")
+    co = geom.get("coordinates", [])
+    lignes, anneaux = [], []
+    if gt == "LineString":
+        lignes.append(co)
+    elif gt == "MultiLineString":
+        lignes.extend(co)
+    elif gt == "Polygon":
+        anneaux.extend(co)
+    elif gt == "MultiPolygon":
+        for poly in co:
+            anneaux.extend(poly)
+    elif gt == "GeometryCollection":
+        for sub in geom.get("geometries", []):
+            sl, sa = _overlay_sequences(sub)
+            lignes.extend(sl); anneaux.extend(sa)
+    return lignes, anneaux
+
+
+def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
+                                   ecraser=False, supersample=2):
+    """Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent -> .sqlitedb
+    OsmAnd/Locus (schema RMaps, tilenumbering='simple', cf. generer_sqlitedb...).
+
+    Chaque feature est stylee par sa cle de tag OSM (_OVERLAY_STYLE) : trait pour
+    les LineString, contour (+ remplissage leger) pour les polygones. Seules les
+    tuiles non vides sont ecrites, ce qui donne un vrai overlay transparent.
+
+    Charge la geometrie en RAM (usage a l'echelle d'une zone, pas d'un departement
+    entier : un overlay dept serait enorme et sans objet). Streaming ijson en
+    lecture pour ne pas exploser sur un GeoJSON de plusieurs centaines de Mo.
+
+    Retourne le Path du sqlitedb, ou None si aucune tuile produite.
+    """
+    import io as _io
+    from PIL import Image as _Image, ImageDraw as _ImageDraw
+
+    geojson_path = Path(geojson_path)
+    sqlitedb_out = Path(sqlitedb_out)
+    if sqlitedb_out.exists() and not ecraser:
+        print(f"  {sqlitedb_out.name} -> already present")
+        return sqlitedb_out
+    if not geojson_path.exists():
+        print(f"  ERROR: {geojson_path.name} not found")
+        return None
+
+    TILE = 256
+    SS = max(1, int(supersample))
+    layer_hint = ""
+    _stem = geojson_path.name
+    if "_ign_" in _stem:
+        layer_hint = _stem.split("_ign_", 1)[1].split(".geojson", 1)[0]
+
+    def _deg2num_f(lat, lon, z):
+        n = 1 << z
+        x = (lon + 180.0) / 360.0 * n
+        y = (1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n
+        return x, y
+
+    # ── Lecture GeoJSON (streaming) -> liste de features stylees ─────────────
+    opener = ((lambda: gzip.open(geojson_path, "rb"))
+              if geojson_path.suffix == ".gz"
+              else (lambda: open(geojson_path, "rb")))
+
+    def _iter_features():
+        try:
+            import ijson as _ijson
+            with opener() as fh:
+                for feat in _ijson.items(fh, "features.item"):
+                    yield feat
+            return
+        except ImportError:
+            pass
+        except (OSError, ValueError):
+            pass
+        with opener() as fh:
+            payload = fh.read()
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8", errors="replace")
+        for feat in json.loads(payload).get("features", []):
+            yield feat
+
+    feats = []   # (color, width, fill, lignes[list of [lon,lat]], anneaux)
+    lon_min = lat_min = float("inf")
+    lon_max = lat_max = float("-inf")
+    for feat in _iter_features():
+        if _stop_event.is_set():
+            raise KeyboardInterrupt("transparent-raster interrompu")
+        geom = feat.get("geometry")
+        if not geom:
+            continue
+        props = feat.get("properties") or {}
+        color, width, fill = _OVERLAY_STYLE.get(
+            _overlay_style_key(props, layer_hint), _OVERLAY_DEFAUT)
+        lignes, anneaux = _overlay_sequences(geom)
+        if not lignes and not anneaux:
+            continue
+        # ijson rend les nombres en Decimal → caster en float une fois pour
+        # toutes (sinon deg_to_tile plante sur Decimal + float).
+        lignes  = [[(float(c[0]), float(c[1])) for c in seq] for seq in lignes]
+        anneaux = [[(float(c[0]), float(c[1])) for c in seq] for seq in anneaux]
+        for seq in (*lignes, *anneaux):
+            for lon, lat in seq:
+                if lon < lon_min: lon_min = lon
+                if lon > lon_max: lon_max = lon
+                if lat < lat_min: lat_min = lat
+                if lat > lat_max: lat_max = lat
+        feats.append((color, width, fill, lignes, anneaux))
+
+    if not feats or lon_min > lon_max:
+        print(f"  transparent-raster: no drawable feature in {geojson_path.name}")
+        return None
+    print(f"  transparent-raster <- {geojson_path.name} "
+          f"({len(feats)} features, z{zoom_min}-{zoom_max})...", flush=True)
+
+    def _render_tile(z, tx, ty):
+        big = _Image.new("RGBA", (TILE * SS, TILE * SS), (0, 0, 0, 0))
+        dr = _ImageDraw.Draw(big)
+        ox, oy = tx * TILE * SS, ty * TILE * SS
+        drew = False
+
+        def _proj(seq):
+            out = []
+            for lon, lat in ((c[0], c[1]) for c in seq):
+                fx, fy = _deg2num_f(lat, lon, z)
+                out.append((fx * TILE * SS - ox, fy * TILE * SS - oy))
+            return out
+
+        def _hors_tuile(pts, marge):
+            return (all(px < -marge for px, _ in pts)
+                    or all(px > TILE * SS + marge for px, _ in pts)
+                    or all(py < -marge for _, py in pts)
+                    or all(py > TILE * SS + marge for _, py in pts))
+
+        # Polygones (fond) : remplissage leger + contour
+        for color, width, fill, lignes, anneaux in feats:
+            for ring in anneaux:
+                pts = _proj(ring)
+                if len(pts) < 2 or _hors_tuile(pts, 2 * SS):
+                    continue
+                if fill:
+                    dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
+                dr.line(pts, fill=color, width=max(1, int(round(width * SS))),
+                        joint="curve")
+                drew = True
+        # Lignes : liseree blanche puis trait colore par-dessus tout
+        for color, width, fill, lignes, anneaux in feats:
+            for seq in lignes:
+                pts = _proj(seq)
+                if len(pts) < 2 or _hors_tuile(pts, 3 * SS):
+                    continue
+                dr.line(pts, fill=(255, 255, 255, 210),
+                        width=max(1, int(round(width * SS))) + 2 * SS, joint="curve")
+                drew = True
+        for color, width, fill, lignes, anneaux in feats:
+            for seq in lignes:
+                pts = _proj(seq)
+                if len(pts) < 2 or _hors_tuile(pts, 3 * SS):
+                    continue
+                dr.line(pts, fill=color,
+                        width=max(1, int(round(width * SS))), joint="curve")
+
+        if not drew:
+            return None
+        small = big.resize((TILE, TILE), _Image.LANCZOS) if SS > 1 else big
+        if small.getbbox() is None:
+            return None
+        buf = _io.BytesIO()
+        small.save(buf, "PNG", optimize=True)
+        return buf.getvalue()
+
+    # ── Ecriture sqlitedb (schema lidar2map + tilenumbering='simple') ────────
+    if sqlitedb_out.exists():
+        sqlitedb_out.unlink()
+    out_part = _chemin_part(sqlitedb_out)
+    con = sqlite3.connect(str(out_part))
+    con.execute("PRAGMA journal_mode=WAL;")
+    con.executescript("""
+        CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
+        CREATE TABLE android_metadata (locale TEXT);
+        CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT);
+        CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
+    """)
+    con.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
+    con.execute("INSERT INTO info VALUES (?, ?, ?)", (zoom_min, zoom_max, "simple"))
+
+    total = 0
+    for z in range(zoom_min, zoom_max + 1):
+        tx0, ty0 = deg_to_tile(lat_max, lon_min, z)   # coin NW
+        tx1, ty1 = deg_to_tile(lat_min, lon_max, z)   # coin SE
+        zt = 0
+        for tx in range(tx0, tx1 + 1):
+            for ty in range(ty0, ty1 + 1):
+                png = _render_tile(z, tx, ty)
+                if png is None:
+                    continue
+                con.execute("INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)",
+                            (tx, ty, z, 0, png))
+                zt += 1
+                total += 1
+        if zt:
+            print(f"    z{z}: {zt} tiles", flush=True)
+    con.execute("PRAGMA journal_mode=DELETE;")   # fichier expedie = pas de -wal
+    con.commit()
+    con.close()
+
+    if total == 0:
+        out_part.unlink(missing_ok=True)
+        print("  transparent-raster: no non-empty tile")
+        return None
+    out_part.replace(sqlitedb_out)
+    print(f"  {sqlitedb_out.name} : {total} tiles  "
+          f"({sqlitedb_out.stat().st_size / 1024:.0f} Ko)")
+    return sqlitedb_out
 
 
 def _douglas_peucker(coords, epsilon):
@@ -12286,10 +12598,12 @@ def main_wfs():
     parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
                         help="Overwrite existing GeoJSON (force re-download)")
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
-                        choices=["geojson","gz","map"],
+                        choices=["geojson","gz","map","transparent-raster"],
                         default=["gz"], metavar="FMT",
-                        help="Output formats: geojson gz map (default: gz). "
-                             "map generates a Mapsforge map via osmosis.")
+                        help="Output formats: geojson gz map transparent-raster (default: gz). "
+                             "map generates a Mapsforge map via osmosis ; transparent-raster "
+                             "rasterizes the vector into transparent PNG tiles (.sqlitedb) "
+                             "for OsmAnd overlay over the LiDAR.")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Overwrite existing .map")
     parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
@@ -12382,15 +12696,14 @@ def main_wfs():
         # du retour bbox du fusionner_geojson, on prend le compat wrapper.
         _geojson_fusionne = _fusionner_geojson_compat(sorties, sortie_fusion)
 
+    # Source GeoJSON unifiée, partagée par .map et transparent-raster
+    # (fusion si plusieurs couches, sinon l'unique sortie).
+    _src_geojson = ((_geojson_fusionne if len(sorties) > 1 else sorties[0])
+                    if sorties else None)
+
     # ── Génération Mapsforge .map si demandé ──────────────────────────────────
     _ff = getattr(args, "formats_fichier", ["gz"])
     if "map" in _ff and sorties:
-        # Déterminer la source GeoJSON
-        if len(sorties) > 1:
-            _src_geojson = _geojson_fusionne  # None si fusion vide
-        else:
-            _src_geojson = sorties[0]
-
         if _src_geojson is None or not Path(_src_geojson).exists():
             print("\n  ⚠ Map generation skipped: no feature available.")
         else:
@@ -12412,6 +12725,17 @@ def main_wfs():
                 ecraser       = args.tuiles_ecraser,
                 epsilon       = _eps_deg,
             )
+
+    # ── Overlay raster transparent si demandé (transparent-raster) ────────────
+    if getattr(args, "transparent_raster", False):
+        if _src_geojson and Path(_src_geojson).exists():
+            _zmax = int(getattr(args, "zoom_max", 18))
+            _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
+            rasteriser_geojson_transparent(
+                _src_geojson, dossier / f"{nom_zone}_ign_transparent.sqlitedb",
+                _zmin, _zmax, ecraser=args.tuiles_ecraser)
+        else:
+            print("\n  ⚠ transparent-raster skipped: no feature available.")
 
     # ── Bilan ─────────────────────────────────────────────────────────────────
     elapsed = int(time.time() - t_debut)
@@ -13059,7 +13383,7 @@ Examples:
     parser.add_argument("--no-gz", action="store_true",
                         help="Uncompressed .geojson output (default: .geojson.gz)")
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", default=["gz"], dest="formats_fichier",
-                        metavar="FMT", help="gz geojson map")
+                        metavar="FMT", help="gz geojson map transparent-raster")
     parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
                         metavar="M", dest="simplification_vecteur",
                         help="Douglas-Peucker epsilon in metres (default: auto from area).")
@@ -13126,6 +13450,14 @@ Examples:
                                                epsilon=_eps_deg)
             except Exception as _e:
                 print(f"  ERROR generating .map: {_e}")
+        # Overlay raster transparent depuis le GeoJSON fusionné (OSM+IGN → 1 overlay)
+        if "transparent-raster" in fmts:
+            nom_zone = sortie.stem.split(".")[0]
+            _zmax = int(getattr(args, "zoom_max", 18))
+            _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
+            rasteriser_geojson_transparent(
+                result, sortie.parent / f"{nom_zone}_transparent.sqlitedb",
+                _zmin, _zmax, ecraser=True)
         print(f"\n  Done in {_hms(int(time.time()-t_debut))}")
     _historique_depuis_argv(int(time.time()-t_debut))
 
@@ -13867,6 +14199,7 @@ def lancer_gui():
                     if cfg.get("map"):        fmts.append("map")
                     if cfg.get("osm_geojson"):     fmts.append("gz")
                     if cfg.get("osm_geojson_raw"): fmts.append("geojson")
+                    if cfg.get("osm_transparent"): fmts.append("transparent-raster")
                     if fmts: cmd += ["--file-formats"] + fmts
                     if cfg.get("ecraser_tuil_osm"): cmd.append("--tiles-overwrite")
 
@@ -13883,6 +14216,7 @@ def lancer_gui():
                 if cfg.get("fusion_gz_raw"):     fmts.append("geojson")
                 if not fmts: fmts = ["gz"]  # défaut si rien coché
                 if cfg.get("tuiles_v"): fmts.append("map")
+                if cfg.get("vec_transparent"): fmts.append("transparent-raster")
                 cmd += ["--file-formats"] + fmts
                 if cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
                     cmd.append("--tiles-overwrite")
@@ -13905,6 +14239,7 @@ def lancer_gui():
                 if cfg.get("fusion_gz2", True):   fmts.append("gz")
                 if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
                 if cfg.get("fusion_map"):          fmts.append("map")
+                if cfg.get("fusion_transparent"):  fmts.append("transparent-raster")
                 if not fmts: fmts = ["gz"]
                 cmd += ["--file-formats"] + fmts
                 if cfg.get("fusion_map") and cfg.get("simplif_fusion"):

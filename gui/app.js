@@ -1074,6 +1074,7 @@ function getConfig() {
     map:           g('f-map')?.checked,
     osm_geojson:     g('f-osm-geojson')?.checked,
     osm_geojson_raw: g('f-osm-geojson-raw')?.checked,
+    osm_transparent: g('f-osm-transparent')?.checked,
     ecraser_tuil_osm: g('f-ecraser-tuil-osm')?.checked,
     // Vecteur
     tel_v:         g('f-tel-v')?.checked,
@@ -1082,12 +1083,14 @@ function getConfig() {
     ecraser_tel_v: g('f-ecraser-tel-v')?.checked,
     fusion_gz:      g('f-fusion-gz')?.checked,
     fusion_gz_raw:  g('f-fusion-gz-raw')?.checked,
+    vec_transparent: g('f-vec-transparent')?.checked,
     tuiles_v:      g('f-tuiles-v')?.checked,
     ecraser_tuil_v:g('f-ecraser-tuil-v')?.checked,
     // Fusion
     fusion_fichiers: fusionFiles,
     fusion_gz2:    g('f-fusion-gz2')?.checked,
     fusion_gz2_raw:g('f-fusion-gz2-raw')?.checked,
+    fusion_transparent: g('f-fusion-transparent')?.checked,
     fusion_map:    g('f-fusion-map')?.checked,
     simplif_v:     parseFloat(g('f-simplif-v')?.value) || null,
     simplif_fusion:parseFloat(g('f-simplif-fusion')?.value) || null,
@@ -1222,6 +1225,7 @@ function loadConfig(cfg) {
   s('f-map',              cfg.map !== undefined ? cfg.map : true);
   s('f-osm-geojson',      cfg.osm_geojson !== undefined ? cfg.osm_geojson : true);
   s('f-osm-geojson-raw',  cfg.osm_geojson_raw);
+  s('f-osm-transparent',  cfg.osm_transparent);
   s('f-ecraser-tuil-osm', cfg.ecraser_tuil_osm);
   // FIX: était cfg.osm_tags — la clé sauvée par getConfig est osm_tags_sel
   if (cfg.osm_tags_sel) {
@@ -1238,6 +1242,7 @@ function loadConfig(cfg) {
   s('f-ecraser-tel-v',  cfg.ecraser_tel_v);
   s('f-fusion-gz',      cfg.fusion_gz !== undefined ? cfg.fusion_gz : true);
   s('f-fusion-gz-raw',  cfg.fusion_gz_raw);
+  s('f-vec-transparent', cfg.vec_transparent);
   s('f-tuiles-v',       cfg.tuiles_v);
   s('f-ecraser-tuil-v', cfg.ecraser_tuil_v);
   // FIX: était cfg.wfs_couches — la clé sauvée par getConfig est wfs_couches_sel
@@ -1252,6 +1257,7 @@ function loadConfig(cfg) {
   // Fusion
   s('f-fusion-gz2',     cfg.fusion_gz2 !== undefined ? cfg.fusion_gz2 : true);
   s('f-fusion-gz2-raw', cfg.fusion_gz2_raw);        // FIX: n'était jamais restauré
+  s('f-fusion-transparent', cfg.fusion_transparent);
   s('f-fusion-map',     cfg.fusion_map);             // FIX: n'était jamais restauré
   if (cfg.simplif_v     != null) { const el=g('f-simplif-v');     if(el) el.value=cfg.simplif_v; }
   if (cfg.simplif_fusion!= null) { const el=g('f-simplif-fusion');if(el) el.value=cfg.simplif_fusion; }
