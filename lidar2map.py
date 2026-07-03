@@ -8848,10 +8848,11 @@ Examples:
                 print("  ERROR: --rmap or --sqlitedb required for MBTiles conversion.")
                 print(f"  Ex: --source {src_path.name} --rmap")
                 sys.exit(1)
+            # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
             if args.rmap:
-                generer_rmap_depuis_mbtiles(src_path, ecraser=args.tuiles_ecraser)
+                generer_rmap_depuis_mbtiles(src_path, ecraser=True)
             if args.sqlitedb:
-                generer_sqlitedb_depuis_mbtiles(src_path, ecraser=args.tuiles_ecraser)
+                generer_sqlitedb_depuis_mbtiles(src_path, ecraser=True)
             sys.exit(0)
 
         elif ext in (".pbf", ".osm"):
@@ -10385,9 +10386,15 @@ def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
     mbtiles_neuf=False : MBTiles préexistant sur disque (run précédent ou
         copié manuellement). JAMAIS removed — on respecte le travail de
         l'utilisateur, même si seul --rmap/--sqlitedb a été demandé.
+
+    Livrables finaux (rmap/sqlitedb) régénérés d'office : cocher le format =
+    "je veux ce fichier à jour". Sinon un ancien fichier resterait "already
+    present" (schéma périmé, contenu obsolète) alors que le mbtiles source a
+    pu changer. Le coûteux (tuilage mbtiles) reste caché en amont
+    (_mbtiles_a_regenerer) ; "Écraser le fichier résultat" ne pilote plus que lui.
     """
-    if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
-    if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
+    if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=True)
+    if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=True)
     if mbtiles_neuf and not args.mbtiles and sf.exists():
         sf.unlink()
         print(f"  MBTiles removed: {sf.name}")
@@ -10636,8 +10643,9 @@ def main_decouper():
                                n_cols=args.cols, n_rows=args.rows,
                                ecraser=args.tuiles_ecraser)
     for sf in sorties:
-        if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
-        if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=args.tuiles_ecraser)
+        # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
+        if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=True)
+        if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=True)
         if not args.mbtiles and sf != src and sf.exists():
             sf.unlink()
     print("\n  Splitting done.")
@@ -10776,10 +10784,11 @@ Examples:
             print(f"  Ex: --source {p.name} --rmap")
             print(f"  Ex: --source {p.name} --sqlitedb")
             sys.exit(1)
+        # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
         if args.rmap:
-            generer_rmap_depuis_mbtiles(p, ecraser=args.tuiles_ecraser)
+            generer_rmap_depuis_mbtiles(p, ecraser=True)
         if args.sqlitedb:
-            generer_sqlitedb_depuis_mbtiles(p, ecraser=args.tuiles_ecraser)
+            generer_sqlitedb_depuis_mbtiles(p, ecraser=True)
         sys.exit(0)
 
     # ── Normalisation des sorties ────────────────────────────────────────────
