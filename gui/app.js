@@ -1341,6 +1341,8 @@ const OMB_DEFS = {
                                        gamma:{lbl:'γ (miroir)',   def:2.0, min:0.3, max:3.0, step:0.1}}},
   lrm:   {label:'LRM',    fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
   rrim:  {label:'RRIM',   fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
+  vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                           gamma:{lbl:'γ',            def:1.0, min:0.3, max:3.0, step:0.1}}},
 };
 let ombInstances = [{type:'multi', params:{elevation:25}}];   // défaut = multi
 
