@@ -89,7 +89,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*
 
-- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (format RMaps, Locus Map / OsmAnd), Mapsforge `.map` (OsmAnd / Locus)
+- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (format RMaps, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map)
 
 ---
 
@@ -273,7 +273,7 @@ Le slug est celui de [Geofabrik France](https://download.geofabrik.de/europe/fra
 ```bash
 python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
-Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible Locus Map / OsmAnd).
+Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible par Locus Map ; OsmAnd utilise son propre format vectoriel OBF et ne lit pas le Mapsforge, mais sa carte offline intégrée fournit déjà la couche vectorielle : sur OsmAnd, il suffit de poser le raster LiDAR par-dessus en overlay).
 
 ## Providers LiDAR, ajouter un pays
 

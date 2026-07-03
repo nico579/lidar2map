@@ -91,7 +91,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*
 
-- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema, Locus Map / OsmAnd), Mapsforge `.map` (OsmAnd / Locus)
+- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map)
 
 ---
 
@@ -275,7 +275,7 @@ The slug is the one from [Geofabrik France](https://download.geofabrik.de/europe
 ```bash
 python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
-The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map / OsmAnd).
+The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map; OsmAnd uses its own OBF vector format and cannot read Mapsforge files, but its built-in offline map already provides the vector layer, so on OsmAnd simply put the LiDAR raster on top as an overlay).
 
 ## LiDAR providers, adding a country
 
