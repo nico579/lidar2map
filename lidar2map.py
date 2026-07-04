@@ -11583,7 +11583,13 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         feats.append((color, width, fill, lignes, anneaux))
 
     if not feats or lon_min > lon_max:
-        print(f"  transparent-raster: no drawable feature in {geojson_path.name}")
+        # Cas fréquent en IGN : des features existent mais aucune ne traverse la
+        # petite zone (elles la frôlent). Message actionnable plutôt que cryptique.
+        if bbox_wgs84:
+            print("  transparent-raster: no feature within the zone "
+                  "(features exist nearby but none cross it - try a larger --zone-radius)")
+        else:
+            print(f"  transparent-raster: no drawable feature in {geojson_path.name}")
         return None
     # Clip de la grille à la zone demandée. Indispensable côté IGN : le WFS
     # renvoie les features ENTIÈRES qui touchent la bbox (un itinéraire ancien
