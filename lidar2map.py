@@ -11406,6 +11406,12 @@ _OVERLAY_STYLE = {
 }
 _OVERLAY_DEFAUT = ((120, 120, 120, 255), 1.0, False)
 
+# Au-dela de ce nombre de tuiles de grille (toutes profondeurs), on previent que
+# l'overlay transparent peut etre long. Depuis le binning, le cout suit la densite
+# de geometrie (tuiles non vides) plus que la grille : ~155k tuiles de grille sur
+# un trace clairseme = ~50s ; le seuil vise la zone franchement grande.
+_OVERLAY_TILE_WARN = 200_000
+
 
 def _overlay_style_key(props, layer_hint=""):
     """Cle de style d'une feature GeoJSON : la cle de tag OSM top-level.
@@ -11593,62 +11599,25 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         return None
     print(f"  transparent-raster <- {geojson_path.name} "
           f"({len(feats)} features, z{zoom_min}-{zoom_max})...", flush=True)
+    _t0 = time.time()
 
-    def _render_tile(z, tx, ty):
-        big = _Image.new("RGBA", (TILE * SS, TILE * SS), (0, 0, 0, 0))
-        dr = _ImageDraw.Draw(big)
-        ox, oy = tx * TILE * SS, ty * TILE * SS
-        drew = False
+    # Garde-fou : compter la grille avant de rendre. Le hang est déjà évité (clip
+    # zone), mais une grande zone ou un zoom élevé reste lent en silence : on
+    # prévient au lieu de laisser croire à un blocage.
+    _grid_total = 0
+    for _z in range(zoom_min, zoom_max + 1):
+        _a, _b = deg_to_tile(lat_max, lon_min, _z)
+        _c, _d = deg_to_tile(lat_min, lon_max, _z)
+        _grid_total += (_c - _a + 1) * (_d - _b + 1)
+    if _grid_total > _OVERLAY_TILE_WARN:
+        print(f"  WARNING: large overlay ({_grid_total:,} grid tiles) - this may "
+              f"take a while; reduce the zone or lower --zoom-max.", flush=True)
 
-        def _proj(seq):
-            out = []
-            for lon, lat in ((c[0], c[1]) for c in seq):
-                fx, fy = _deg2num_f(lat, lon, z)
-                out.append((fx * TILE * SS - ox, fy * TILE * SS - oy))
-            return out
+    SCALE = TILE * SS   # côté d'une tuile en pixels supersamplés
 
-        def _hors_tuile(pts, marge):
-            return (all(px < -marge for px, _ in pts)
-                    or all(px > TILE * SS + marge for px, _ in pts)
-                    or all(py < -marge for _, py in pts)
-                    or all(py > TILE * SS + marge for _, py in pts))
-
-        # Polygones (fond) : remplissage leger + contour
-        for color, width, fill, lignes, anneaux in feats:
-            for ring in anneaux:
-                pts = _proj(ring)
-                if len(pts) < 2 or _hors_tuile(pts, 2 * SS):
-                    continue
-                if fill:
-                    dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
-                dr.line(pts, fill=color, width=max(1, int(round(width * SS))),
-                        joint="curve")
-                drew = True
-        # Lignes : liseree blanche puis trait colore par-dessus tout
-        for color, width, fill, lignes, anneaux in feats:
-            for seq in lignes:
-                pts = _proj(seq)
-                if len(pts) < 2 or _hors_tuile(pts, 3 * SS):
-                    continue
-                dr.line(pts, fill=(255, 255, 255, 210),
-                        width=max(1, int(round(width * SS))) + 2 * SS, joint="curve")
-                drew = True
-        for color, width, fill, lignes, anneaux in feats:
-            for seq in lignes:
-                pts = _proj(seq)
-                if len(pts) < 2 or _hors_tuile(pts, 3 * SS):
-                    continue
-                dr.line(pts, fill=color,
-                        width=max(1, int(round(width * SS))), joint="curve")
-
-        if not drew:
-            return None
-        small = big.resize((TILE, TILE), _Image.LANCZOS) if SS > 1 else big
-        if small.getbbox() is None:
-            return None
-        buf = _io.BytesIO()
-        small.save(buf, "PNG", optimize=True)
-        return buf.getvalue()
+    def _proj_pt(lon, lat, z):
+        fx, fy = _deg2num_f(lat, lon, z)
+        return fx * SCALE, fy * SCALE
 
     # ── Ecriture sqlitedb (schema lidar2map + tilenumbering='simple') ────────
     if sqlitedb_out.exists():
@@ -11667,18 +11636,88 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
 
     total = 0
     for z in range(zoom_min, zoom_max + 1):
-        tx0, ty0 = deg_to_tile(lat_max, lon_min, z)   # coin NW
-        tx1, ty1 = deg_to_tile(lat_min, lon_max, z)   # coin SE
-        zt = 0
-        for tx in range(tx0, tx1 + 1):
-            for ty in range(ty0, ty1 + 1):
-                png = _render_tile(z, tx, ty)
-                if png is None:
+        # Binning : ranger chaque SEGMENT (et chaque anneau) dans les tuiles qu'il
+        # couvre, puis ne rendre QUE les tuiles non vides. On ne parcourt jamais la
+        # grille entière → coût borné par la géométrie, pas par la grille (une zone
+        # de 30 km ne fait plus exploser le temps). C'est le standard des serveurs
+        # de tuiles. gtx/gty : bornes de la zone (ignore ce qui déborde).
+        gtx0, gty0 = deg_to_tile(lat_max, lon_min, z)
+        gtx1, gty1 = deg_to_tile(lat_min, lon_max, z)
+        buckets = {}   # (tx,ty) -> liste d'items ("lin"/"pol", ...)
+
+        def _add(tx, ty, item):
+            if gtx0 <= tx <= gtx1 and gty0 <= ty <= gty1:
+                buckets.setdefault((tx, ty), []).append(item)
+
+        for color, width, fill, lignes, anneaux in feats:
+            wpx = max(1, int(round(width * SS)))
+            mg  = wpx + 2 * SS   # marge = demi-largeur du liseré
+            for seq in lignes:
+                gp = [_proj_pt(lon, lat, z) for lon, lat in seq]
+                for i in range(len(gp) - 1):
+                    p0, p1 = gp[i], gp[i + 1]
+                    itm = ("lin", color, wpx, p0, p1)
+                    for tx in range(int((min(p0[0], p1[0]) - mg) // SCALE),
+                                    int((max(p0[0], p1[0]) + mg) // SCALE) + 1):
+                        for ty in range(int((min(p0[1], p1[1]) - mg) // SCALE),
+                                        int((max(p0[1], p1[1]) + mg) // SCALE) + 1):
+                            _add(tx, ty, itm)
+            for ring in anneaux:
+                gp = [_proj_pt(lon, lat, z) for lon, lat in ring]
+                if len(gp) < 2:
                     continue
-                con.execute("INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)",
-                            (tx, ty, z, 0, png))
-                zt += 1
-                total += 1
+                xs = [p[0] for p in gp]; ys = [p[1] for p in gp]
+                itm = ("pol", color, wpx, fill, gp)
+                for tx in range(int((min(xs) - mg) // SCALE),
+                                int((max(xs) + mg) // SCALE) + 1):
+                    for ty in range(int((min(ys) - mg) // SCALE),
+                                    int((max(ys) + mg) // SCALE) + 1):
+                        _add(tx, ty, itm)
+
+        zt = 0
+        for (tx, ty), items in buckets.items():
+            ox, oy = tx * SCALE, ty * SCALE
+            big = _Image.new("RGBA", (SCALE, SCALE), (0, 0, 0, 0))
+            dr = _ImageDraw.Draw(big)
+            # Polygones (fond) : remplissage léger + contour
+            for it in items:
+                if it[0] != "pol":
+                    continue
+                _, color, wpx, fill, gp = it
+                pts = [(x - ox, y - oy) for x, y in gp]
+                if fill:
+                    dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
+                dr.line(pts, fill=color, width=wpx, joint="curve")
+            # Liserés blancs : segment + pastilles aux jonctions (traits continus
+            # malgré le rendu segment par segment), sous tous les traits colorés...
+            for it in items:
+                if it[0] != "lin":
+                    continue
+                _, color, wpx, p0, p1 = it
+                a = (p0[0] - ox, p0[1] - oy); b = (p1[0] - ox, p1[1] - oy)
+                r = (wpx + 2 * SS) / 2.0
+                dr.line([a, b], fill=(255, 255, 255, 210), width=wpx + 2 * SS)
+                for cx, cy in (a, b):
+                    dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 210))
+            # ...puis les traits colorés
+            for it in items:
+                if it[0] != "lin":
+                    continue
+                _, color, wpx, p0, p1 = it
+                a = (p0[0] - ox, p0[1] - oy); b = (p1[0] - ox, p1[1] - oy)
+                r = wpx / 2.0
+                dr.line([a, b], fill=color, width=wpx)
+                for cx, cy in (a, b):
+                    dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+            small = big.resize((TILE, TILE), _Image.LANCZOS) if SS > 1 else big
+            if small.getbbox() is None:
+                continue
+            buf = _io.BytesIO()
+            small.save(buf, "PNG", optimize=True)
+            con.execute("INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)",
+                        (tx, ty, z, 0, buf.getvalue()))
+            zt += 1
+            total += 1
         if zt:
             print(f"    z{z}: {zt} tiles", flush=True)
     con.execute("PRAGMA journal_mode=DELETE;")   # fichier expedie = pas de -wal
@@ -11691,7 +11730,7 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         return None
     out_part.replace(sqlitedb_out)
     print(f"  {sqlitedb_out.name} : {total} tiles  "
-          f"({sqlitedb_out.stat().st_size / 1024:.0f} Ko)")
+          f"({sqlitedb_out.stat().st_size / 1024:.0f} Ko)  {time.time() - _t0:.1f}s")
     return sqlitedb_out
 
 
