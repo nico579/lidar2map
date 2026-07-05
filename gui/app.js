@@ -4,6 +4,11 @@ let fusionFiles = [];
 let fusionSel = -1;
 let polling = null;
 let _initialized = false;
+// Résolution native (m/px) du provider actif, mise à jour via get_init_data et au
+// changement de provider. Sert au défaut LRM/RRIM = 15 px (cf. sigma_defaut_m
+// côté pipeline), pour pré-remplir le champ σ à la bonne valeur selon le provider.
+let _resolutionM = 0.5;
+const sigmaDefautM = () => Math.round(15 * _resolutionM * 100) / 100;
 
 // ── i18n ───────────────────────────────────────────────────────────────────────
 // Pattern web standard : dico inline par locale + attribut data-i18n sur les
@@ -96,6 +101,7 @@ const I18N = {
     // Libellés dynamiques d'ombrage (OMB_DEFS), rendus via t()
     "omb.gamma":"γ (1 clair, 2 foncé)", "omb.gamma.mirror":"γ miroir (1 clair, 2 foncé)",
     "omb.sigma":"rayon (σ, m)",
+    "tip.ombsigma":"Rayon du lissage gaussien (LRM/RRIM). Défaut = 15 px de la résolution native (≈ 7,5 m à 0,5 m/px). Petit = détails fins (fossés), grand = structures larges (terrasses). Vider = auto.",
     // Infobulles de grille
     "tip.deps":"Un ou plusieurs départements\nExemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Colonnes Est-Ouest", "tip.rowsns":"Lignes Nord-Sud",
@@ -175,6 +181,7 @@ const I18N = {
     "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
     "omb.gamma":"γ (1 light, 2 dark)", "omb.gamma.mirror":"γ mirror (1 light, 2 dark)",
     "omb.sigma":"radius (σ, m)",
+    "tip.ombsigma":"Gaussian smoothing radius (LRM/RRIM). Default = 15 px of native resolution (≈ 7.5 m at 0.5 m/px). Small = fine detail (ditches), large = broad structures (terraces). Clear = auto.",
     "tip.deps":"One or more departments\nExamples: 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Columns East-West", "tip.rowsns":"Rows North-South",
     "tip.colsew2":"Columns (East-West)", "tip.rowsns2":"Rows (North-South)",
@@ -469,6 +476,7 @@ async function initAsync() {
   _initialized = true;
   try {
     const d = await pywebview.api.get_init_data();
+    if (d.resolution_m) _resolutionM = d.resolution_m;   // défaut σ LRM/RRIM (provider actif)
     if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
     if (d.ui_zoom) applyUiZoom(d.ui_zoom, false);   // zoom UI sauvé
     // buildCouches AVANT buildProviders : ce dernier appelle applyProviderCountry
@@ -559,20 +567,23 @@ function buildProviders(providers, activeCode) {
     return;
   }
   sel.innerHTML = providers.map(p =>
-    `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}">${p.name}</option>`
+    `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${p.name}</option>`
   ).join('');
   sel.value = activeCode;
   const opt = sel.options[sel.selectedIndex];
   const country = (opt && opt.dataset.country) || 'fr';
   sel.dataset.country = country;
+  if (opt && opt.dataset.res) _resolutionM = parseFloat(opt.dataset.res);   // défaut σ selon provider
   applyProviderCountry(country);
   applyProviderApiKey(opt);
   sel.addEventListener('change', () => {
     const o = sel.options[sel.selectedIndex];
     const c = (o && o.dataset.country) || 'fr';
     sel.dataset.country = c;
+    if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);   // MAJ défaut σ LRM/RRIM
     applyProviderCountry(c);
     applyProviderApiKey(o);
+    ombShowParams();   // rafraîchit le champ σ ouvert avec le nouveau défaut
   });
 }
 
@@ -1348,8 +1359,8 @@ const OMB_DEFS = {
                                        gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                        gamma:{lbl:'omb.gamma.mirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
-  lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', def:'', min:1, max:100, step:0.5, opt:true}}},
-  rrim:  {label:'RRIM',   fields:{sigma:{lbl:'omb.sigma', def:'', min:1, max:100, step:0.5, opt:true}}},
+  lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
+  rrim:  {label:'RRIM',   fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
   multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   '045': {label:'045°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
@@ -1385,6 +1396,7 @@ function ombAdd() {
   const params = {};
   Object.entries(OMB_DEFS[t].fields).forEach(([k, f]) => {
     if (!f.opt) params[k] = f.def;
+    else if (k === 'sigma') params[k] = sigmaDefautM();   // pré-remplir σ (LRM/RRIM) au défaut résolution
   });
   ombInstances.push({type: t, params});
   ombRender(ombInstances.length - 1);
@@ -1433,7 +1445,7 @@ function ombShowParams() {
       inp.type = 'number'; inp.className = 'inp-short';
       inp.min = f.min; inp.max = f.max; inp.step = f.step;
       inp.value = inst.params[k] ?? '';
-      if (f.opt) inp.placeholder = 'auto';
+      if (f.opt) inp.placeholder = 'auto (15 px)';
       inp.onchange = () => {
         const v = inp.value;
         if (v === '') delete inst.params[k];
@@ -1441,6 +1453,7 @@ function ombShowParams() {
         ombRender(i);
       };
     }
+    if (f.tip) inp.title = t(f.tip);
     row.appendChild(inp);
     box.appendChild(row);
   });

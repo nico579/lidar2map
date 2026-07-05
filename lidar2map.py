@@ -2268,6 +2268,7 @@ def _discover_providers():
                 "name":           getattr(mod, "NAME",           f.stem),
                 "country":        getattr(mod, "COUNTRY",        ""),
                 "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
+                "resolution_m":   float(getattr(mod, "RESOLUTION_M", 0.5)),
             })
         except Exception as e:
             print(f"  [provider scan] {f.name} skipped: {type(e).__name__}: {e}",
@@ -6074,8 +6075,10 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 gtag = f"{p['gamma']:.1f}".replace(".", "p")
                 return f"vat_{int(round(p['dist']))}m_g{gtag}_ombrage"
             return "vat_ombrage"
-        # lrm / rrim
-        if "sigma" in (prm or {}) and p["sigma"] != sigma_defaut_m:
+        # lrm / rrim : encode sigma dès qu'il est explicite (comme svf/opos/vat),
+        # pour que le nom porte toujours l'échelle. Bare `--shading lrm` (sans
+        # sigma) reste canonique `lrm_ombrage`.
+        if "sigma" in (prm or {}):
             return f"{typ}_s{_tag(p['sigma'])}m_ombrage"
         return f"{typ}_ombrage"
 
@@ -14062,6 +14065,8 @@ def lancer_gui():
                 "historique": _lire_historique(),
                 "providers":  _discover_providers(),
                 "active_provider": PROVIDER.CODE,
+                "resolution_m": RESOLUTION_M,   # défaut LRM/RRIM = 15 px × résolution
+
                 "regions":    _regions_disponibles(),
                 "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
                 "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
