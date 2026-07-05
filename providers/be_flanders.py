@@ -27,7 +27,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Belgique (Flandre) — DHMV II DTM 1m (Digitaal Vlaanderen WCS)"
+NAME       = "Belgique (Flandre) — DHMV II DTM (Digitaal Vlaanderen WCS)"
 CODE       = "be-flanders"
 COUNTRY    = "be"
 LICENSE    = "Gratis Open Data Licentie Vlaanderen"

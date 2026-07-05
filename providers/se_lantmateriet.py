@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Suède — Laserdata NH 1m (Lantmäteriet)"
+NAME       = "Suède — Laserdata NH (Lantmäteriet)"
 CODE       = "se-lantmateriet"
 COUNTRY    = "se"
 LICENSE    = "CC0 — Lantmäteriet"

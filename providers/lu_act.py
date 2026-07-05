@@ -28,7 +28,7 @@ import re
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Luxembourg — MNT 0,5 m (ACT, LiDAR 2024)"
+NAME       = "Luxembourg — MNT (ACT, LiDAR 2024)"
 CODE       = "lu-act"
 COUNTRY    = "lu"
 LICENSE    = "Open Data ACT Luxembourg — CC0"

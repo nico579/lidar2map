@@ -15,7 +15,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Autriche (Osttirol) — DGM 0.5 m (tiris)"
+NAME       = "Autriche (Osttirol) — DGM (tiris)"
 CODE       = "at-osttirol"
 COUNTRY    = "at"          # ISO 3166-1 alpha-2 — utilisé pour cache/lidar/<country>/
 LICENSE    = "CC BY 4.0 — © Land Tirol / tiris (attribution requise)"

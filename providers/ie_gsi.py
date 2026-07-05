@@ -24,7 +24,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Irlande — LiDAR DTM 1m (GSI FeatureServer)"
+NAME       = "Irlande — LiDAR DTM (GSI FeatureServer)"
 CODE       = "ie-gsi"
 COUNTRY    = "ie"
 LICENSE    = "CC BY 4.0 — © Geological Survey Ireland"

@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Canada — HRDEM Mosaic 1m (NRCan)"
+NAME       = "Canada — HRDEM Mosaic (NRCan)"
 CODE       = "ca-nrcan"
 COUNTRY    = "ca"
 LICENSE    = "Open Government Licence — Canada"

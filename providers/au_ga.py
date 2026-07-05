@@ -26,7 +26,7 @@ import os
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Australie (national) — DEM 5 m LiDAR (Geoscience Australia)"
+NAME       = "Australie (national) — DEM LiDAR (Geoscience Australia)"
 CODE       = "au-ga"
 COUNTRY    = "au"
 LICENSE    = "CC BY 4.0 — Commonwealth of Australia (Geoscience Australia)"

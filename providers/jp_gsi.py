@@ -29,7 +29,7 @@ import re
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Japon — DEM 5m (GSI 標高タイル DEM5A, LiDAR)"
+NAME       = "Japon — DEM (GSI 標高タイル DEM5A, LiDAR)"
 CODE       = "jp-gsi"
 COUNTRY    = "jp"
 LICENSE    = "GSI コンテンツ利用規約 — réutilisation libre (出典：国土地理院)"

@@ -9,6 +9,8 @@ let _initialized = false;
 // côté pipeline), pour pré-remplir le champ σ à la bonne valeur selon le provider.
 let _resolutionM = 0.5;
 const sigmaDefautM = () => Math.round(15 * _resolutionM * 100) / 100;
+// Formate une résolution (m/px) pour affichage : virgule décimale en FR.
+const fmtRes = (r) => (_lang === 'fr' ? String(r).replace('.', ',') : String(r)) + ' m';
 
 // ── i18n ───────────────────────────────────────────────────────────────────────
 // Pattern web standard : dico inline par locale + attribut data-i18n sur les
@@ -566,9 +568,12 @@ function buildProviders(providers, activeCode) {
     applyProviderCountry('fr');
     return;
   }
-  sel.innerHTML = providers.map(p =>
-    `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${p.name}</option>`
-  ).join('');
+  sel.innerHTML = providers.map(p => {
+    // Résolution déjà dans le nom officiel (ex. "DEM 5m", "50 cm") ? Ne pas la dupliquer.
+    const hasRes = /\d[\d.,]*\s?(m|cm)\b/i.test(p.name);
+    const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
+    return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${label}</option>`;
+  }).join('');
   sel.value = activeCode;
   const opt = sel.options[sel.selectedIndex];
   const country = (opt && opt.dataset.country) || 'fr';
@@ -1346,9 +1351,11 @@ function loadConfig(cfg) {
 // Chaque instance = {type, params}. Plusieurs instances du même type avec des
 // params différents coexistent (les params sont encodés dans le nom de fichier
 // côté pipeline). Émission CLI : --shading TYPE:k=v,... (répétable).
-// Ordre = utilité archéo décroissante (cf. _SHADING_TYPES côté pipeline) :
-// composite VAT, SVF, paire openness, LRM/RRIM, hillshades, slope en dernier.
+// Ordre = utilité pratique (cf. _SHADING_TYPES côté pipeline) : LRM en tête
+// (rapide + lisible pour un néophyte, donc défaut), puis VAT (détecteur complet),
+// SVF, paire openness, RRIM, hillshades, slope en dernier.
 const OMB_DEFS = {
+  lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
   vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                            gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
@@ -1359,7 +1366,6 @@ const OMB_DEFS = {
                                        gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                        gamma:{lbl:'omb.gamma.mirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
-  lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
   rrim:  {label:'RRIM',   fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
   multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
@@ -1368,7 +1374,7 @@ const OMB_DEFS = {
   '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   slope: {label:'slope',  fields:{}},
 };
-let ombInstances = [{type:'vat', params:{dist:20, gamma:2.0}}];   // défaut = VAT (meilleure visu archéo)
+let ombInstances = [{type:'lrm', params:{sigma: sigmaDefautM()}}];   // défaut = LRM (rapide + lisible)
 
 function ombLabel(inst) {
   const d = OMB_DEFS[inst.type]; if (!d) return inst.type;

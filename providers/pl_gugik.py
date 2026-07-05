@@ -20,7 +20,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Pologne — NMT 1m LiDAR (GUGiK / ISOK)"
+NAME       = "Pologne — NMT LiDAR (GUGiK / ISOK)"
 CODE       = "pl-gugik"
 COUNTRY    = "pl"
 LICENSE    = "Dane otwarte — GUGiK (données ouvertes, gratuit)"

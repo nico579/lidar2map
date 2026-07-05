@@ -27,7 +27,7 @@ import re
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Estonie — DTM 1m (Maa-amet, LiDAR national)"
+NAME       = "Estonie — DTM (Maa-amet, LiDAR national)"
 CODE       = "ee-maaamet"
 COUNTRY    = "ee"
 LICENSE    = "Maa-amet open data — utilisation libre"

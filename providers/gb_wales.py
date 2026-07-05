@@ -24,7 +24,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Royaume-Uni (Pays de Galles) — LiDAR DTM 1 m (DataMapWales)"
+NAME       = "Royaume-Uni (Pays de Galles) — LiDAR DTM (DataMapWales)"
 CODE       = "gb-wales"
 COUNTRY    = "gb"
 LICENSE    = "Open Government Licence v3 — © Welsh Government / NRW"

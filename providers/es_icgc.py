@@ -27,7 +27,7 @@ import re
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Catalogne (Espagne) — MET 50 cm (ICGC, LiDAR 2021-2023)"
+NAME       = "Catalogne (Espagne) — MET (ICGC, LiDAR 2021-2023)"
 CODE       = "es-icgc"
 COUNTRY    = "es"
 LICENSE    = "CC BY 4.0 — Institut Cartogràfic i Geològic de Catalunya (ICGC)"

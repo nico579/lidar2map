@@ -17,7 +17,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Danemark — DHM DTM 0.4m (Datafordeler)"
+NAME       = "Danemark — DHM DTM (Datafordeler)"
 CODE       = "dk-datafordeler"
 COUNTRY    = "dk"
 LICENSE    = "CC BY — © Klimadatastyrelsen / SDFI"

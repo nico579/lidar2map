@@ -119,7 +119,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
-                                  vat svf opos oneg lrm rrim
+                                  lrm vat svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
                                   (opos/oneg = openness ± Yokoyama 2002,
                                    rayon --svf-dist, gamma --svf-gamma)
@@ -5852,17 +5852,18 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
     return True
 
 
-# Ordre = utilité archéo décroissante : le composite VAT d'abord (révèle creux
-# ET bosses en une image), puis SVF et la paire openness, puis LRM/RRIM, puis
-# les hillshades dépendants de l'éclairage (multi > directionnels), slope en
-# dernier (terne seul, surtout couche du VAT). Pilote le dropdown GUI, le menu
-# interactif, les choices argparse et l'ordre de `--shadings tous`.
+# Ordre = utilité pratique. LRM d'abord : le plus rapide (flou gaussien, pas de
+# ray-cast) et le plus lisible pour un néophyte (structures continues), donc le
+# défaut. Puis VAT (détecteur multi-échelle complet), SVF, la paire openness,
+# RRIM, les hillshades (multi > directionnels), slope en dernier (terne seul,
+# surtout couche du VAT). Pilote le dropdown GUI, le menu interactif, les
+# choices argparse et l'ordre de `--shadings tous`.
 _SHADING_TYPES = {
+    "lrm":   {"sigma"},
     "vat":   {"dist", "gamma"},
     "svf":   {"conv", "dist", "gamma", "sweep"},
     "opos":  {"dist", "gamma"},
     "oneg":  {"dist", "gamma"},
-    "lrm":   {"sigma"},
     "rrim":  {"sigma"},
     "multi": {"elevation"},
     "315":   {"elevation"},

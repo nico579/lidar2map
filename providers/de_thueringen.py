@@ -30,7 +30,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Allemagne (Thuringe) — DGM 1–2m (TLBG, LiDAR)"
+NAME       = "Allemagne (Thuringe) — DGM (TLBG, LiDAR)"
 CODE       = "de-thueringen"
 COUNTRY    = "de"
 LICENSE    = "dl-de/by-2-0 — GDI-Th / Freistaat Thüringen (TLBG)"

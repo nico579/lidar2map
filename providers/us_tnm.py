@@ -32,7 +32,7 @@ import urllib.request
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "USA — USGS 3DEP 1m (TNMAccess, sans compte)"
+NAME       = "USA — USGS 3DEP (TNMAccess, sans compte)"
 CODE       = "us-tnm"
 COUNTRY    = "us"
 LICENSE    = "Public domain (USGS / TNM)"

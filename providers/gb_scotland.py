@@ -48,7 +48,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Royaume-Uni (Écosse) — DTM 50 cm / 1 m (Scottish Remote Sensing Portal)"
+NAME       = "Royaume-Uni (Écosse) — DTM (Scottish Remote Sensing Portal)"
 CODE       = "gb-scotland"
 COUNTRY    = "gb"
 LICENSE    = "Open Government Licence v3 — © Scottish Government / JNCC"

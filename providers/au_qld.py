@@ -22,7 +22,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Australie (Queensland) — DEM LiDAR 0.5m (QSpatial)"
+NAME       = "Australie (Queensland) — DEM LiDAR (QSpatial)"
 CODE       = "au-qld"
 COUNTRY    = "au"
 LICENSE    = "CC BY 4.0 — © State of Queensland (Dept of Resources)"

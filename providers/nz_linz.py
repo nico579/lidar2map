@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Nouvelle-Zélande — LiDAR 1m DEM (LINZ)"
+NAME       = "Nouvelle-Zélande — LiDAR DEM (LINZ)"
 CODE       = "nz-linz"
 COUNTRY    = "nz"
 LICENSE    = "CC BY 4.0 — © Toitū Te Whenua Land Information New Zealand"

@@ -24,7 +24,7 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Espagne — MDT 5m (IGN/CNIG, WCS)"
+NAME       = "Espagne — MDT (IGN/CNIG, WCS)"
 CODE       = "es-cnig"
 COUNTRY    = "es"
 LICENSE    = "CC BY 4.0 — © IGN España / CNIG"

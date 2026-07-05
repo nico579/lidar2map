@@ -22,7 +22,7 @@
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Royaume-Uni (Angleterre) — LIDAR Composite DTM 1 m (EA)"
+NAME       = "Royaume-Uni (Angleterre) — LIDAR Composite DTM (EA)"
 CODE       = "gb-england"
 COUNTRY    = "gb"          # ISO 3166-1 alpha-2 — utilisé pour cache/lidar/<country>/
 LICENSE    = "Open Government Licence v3 — © Environment Agency"

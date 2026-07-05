@@ -28,7 +28,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Slovénie — DMR1 1m (ARSO eVode, LiDAR 2011-2015)"
+NAME       = "Slovénie — DMR1 (ARSO eVode, LiDAR 2011-2015)"
 CODE       = "si-arso"
 COUNTRY    = "si"
 LICENSE    = "Donnée publique ARSO/MOP — réutilisation libre avec attribution"
