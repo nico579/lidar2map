@@ -93,6 +93,8 @@ const I18N = {
     "tip.svfdist":"Rayon d'horizon du SVF en mètres. 20 = micro-relief (fossés, murs) ; 100 = enceintes/voiries. Plus grand = plus lent.",
     "tip.svfgamma":"Gamma après stretch percentile. <1 éclaircit (√), 1 = linéaire, >1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.",
     "tip.svfsweep":"Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px.",
+    // Libellés dynamiques d'ombrage (OMB_DEFS), rendus via t()
+    "omb.gamma":"γ (1 clair, 2 foncé)", "omb.gamma.mirror":"γ miroir (1 clair, 2 foncé)",
     // Infobulles de grille
     "tip.deps":"Un ou plusieurs départements\nExemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Colonnes Est-Ouest", "tip.rowsns":"Lignes Nord-Sud",
@@ -170,6 +172,7 @@ const I18N = {
     "tip.svfdist":"SVF horizon radius in metres. 20 = micro-relief (ditches, walls); 100 = enclosures/roads. Larger = slower.",
     "tip.svfgamma":"Gamma after percentile stretch. <1 lightens (√), 1 = linear, >1 darkens. ~2.0 optimal for flux, ~1.0 for RVT.",
     "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
+    "omb.gamma":"γ (1 light, 2 dark)", "omb.gamma.mirror":"γ mirror (1 light, 2 dark)",
     "tip.deps":"One or more departments\nExamples: 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Columns East-West", "tip.rowsns":"Rows North-South",
     "tip.colsew2":"Columns (East-West)", "tip.rowsns2":"Rows (North-South)",
@@ -1339,16 +1342,16 @@ const OMB_DEFS = {
   '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
                                   dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                  gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1},
+                                  gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1},
                                   sweep:{lbl:'sweep-horizon', def:1, bool:true}}},
   opos:  {label:'O+ openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                       gamma:{lbl:'γ',            def:2.0, min:0.3, max:3.0, step:0.1}}},
+                                       gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                       gamma:{lbl:'γ (miroir)',   def:2.0, min:0.3, max:3.0, step:0.1}}},
+                                       gamma:{lbl:'omb.gamma.mirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
   lrm:   {label:'LRM',    fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
   rrim:  {label:'RRIM',   fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
   vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                           gamma:{lbl:'γ',            def:1.0, min:0.3, max:3.0, step:0.1}}},
+                                           gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
 };
 let ombInstances = [{type:'multi', params:{elevation:25}}];   // défaut = multi
 
@@ -1406,7 +1409,7 @@ function ombShowParams() {
   Object.entries(defs).forEach(([k, f]) => {
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;align-items:center;';
-    row.appendChild(dimSpan(f.lbl));
+    row.appendChild(dimSpan(t(f.lbl)));
     let inp;
     if (f.opts) {
       inp = document.createElement('select');

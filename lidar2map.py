@@ -6042,10 +6042,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             p.setdefault("dist", float(svf_dist))
             p.setdefault("gamma", float(svf_gamma))
         if typ == "vat":
-            # dist = rayon SVF/openness ; gamma = gamma FINAL du composite (les
-            # composantes entrent linéaires dans le blend → pas de double gamma).
+            # dist = rayon SVF/openness ; gamma = gamma FINAL du composite,
+            # défaut = --svf-gamma comme SVF (les composantes entrent linéaires
+            # dans le blend → pas de double gamma).
             p.setdefault("dist", float(svf_dist))
-            p.setdefault("gamma", 1.0)
+            p.setdefault("gamma", float(svf_gamma))
         if typ in ("lrm", "rrim"):
             p.setdefault("sigma", float(sigma_defaut_m))
         return p
@@ -14234,8 +14235,14 @@ def lancer_gui():
                     if cfg.get("svf_gamma"):
                         cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
                     if cfg.get("ecraser_omb"): cmd.append("--shadings-overwrite")
-                    # BooleanOptionalAction : émettre explicitement on/off
-                    cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
+                    # BooleanOptionalAction : émettre explicitement on/off.
+                    # Le sweep ne concerne que le SVF (l'openness retombe de
+                    # toute façon sur le ray-cast). N'émettre le flag global que
+                    # si une instance SVF est présente : sinon il fuit sur un
+                    # run openness-only et déclenche un message "sweep not
+                    # applicable" trompeur (le GUI n'expose pas de sweep hors SVF).
+                    if any(str(s).startswith("svf") for s in cfg.get("shading_specs", []) or []):
+                        cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
                 fmts = []
                 if cfg.get("mbtiles_l"): fmts.append("mbtiles")
                 if cfg.get("rmap"):      fmts.append("rmap")
