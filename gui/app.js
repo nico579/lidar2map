@@ -95,6 +95,7 @@ const I18N = {
     "tip.svfsweep":"Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px.",
     // Libellés dynamiques d'ombrage (OMB_DEFS), rendus via t()
     "omb.gamma":"γ (1 clair, 2 foncé)", "omb.gamma.mirror":"γ miroir (1 clair, 2 foncé)",
+    "omb.sigma":"rayon (σ, m)",
     // Infobulles de grille
     "tip.deps":"Un ou plusieurs départements\nExemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Colonnes Est-Ouest", "tip.rowsns":"Lignes Nord-Sud",
@@ -173,6 +174,7 @@ const I18N = {
     "tip.svfgamma":"Gamma after percentile stretch. <1 lightens (√), 1 = linear, >1 darkens. ~2.0 optimal for flux, ~1.0 for RVT.",
     "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
     "omb.gamma":"γ (1 light, 2 dark)", "omb.gamma.mirror":"γ mirror (1 light, 2 dark)",
+    "omb.sigma":"radius (σ, m)",
     "tip.deps":"One or more departments\nExamples: 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Columns East-West", "tip.rowsns":"Rows North-South",
     "tip.colsew2":"Columns (East-West)", "tip.rowsns2":"Rows (North-South)",
@@ -1333,13 +1335,11 @@ function loadConfig(cfg) {
 // Chaque instance = {type, params}. Plusieurs instances du même type avec des
 // params différents coexistent (les params sont encodés dans le nom de fichier
 // côté pipeline). Émission CLI : --shading TYPE:k=v,... (répétable).
+// Ordre = utilité archéo décroissante (cf. _SHADING_TYPES côté pipeline) :
+// composite VAT, SVF, paire openness, LRM/RRIM, hillshades, slope en dernier.
 const OMB_DEFS = {
-  multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  slope: {label:'slope',  fields:{}},
-  '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '045': {label:'045°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '135': {label:'135°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                           gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
                                   dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                   gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1},
@@ -1348,12 +1348,16 @@ const OMB_DEFS = {
                                        gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                        gamma:{lbl:'omb.gamma.mirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
-  lrm:   {label:'LRM',    fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
-  rrim:  {label:'RRIM',   fields:{sigma:{lbl:'σ (m)', def:'', min:1, max:100, step:0.5, opt:true}}},
-  vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                           gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
+  lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', def:'', min:1, max:100, step:0.5, opt:true}}},
+  rrim:  {label:'RRIM',   fields:{sigma:{lbl:'omb.sigma', def:'', min:1, max:100, step:0.5, opt:true}}},
+  multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '045': {label:'045°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '135': {label:'135°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  slope: {label:'slope',  fields:{}},
 };
-let ombInstances = [{type:'multi', params:{elevation:25}}];   // défaut = multi
+let ombInstances = [{type:'vat', params:{dist:20, gamma:2.0}}];   // défaut = VAT (meilleure visu archéo)
 
 function ombLabel(inst) {
   const d = OMB_DEFS[inst.type]; if (!d) return inst.type;

@@ -118,9 +118,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                 (active par défaut : ~2× moins de disque)
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
-    --ombrages TYPE...          Shadings to generate:
-                                  315 045 135 225 multi slope svf opos oneg
-                                  lrm rrim | tous | aucun
+    --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
+                                  vat svf opos oneg lrm rrim
+                                  multi 315 045 135 225 slope | tous | aucun
                                   (opos/oneg = openness ± Yokoyama 2002,
                                    rayon --svf-dist, gamma --svf-gamma)
     --shading TYPE[:k=v,...]    Instance d'ombrage PARAMÉTRÉE, répétable —
@@ -5851,19 +5851,24 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
     return True
 
 
+# Ordre = utilité archéo décroissante : le composite VAT d'abord (révèle creux
+# ET bosses en une image), puis SVF et la paire openness, puis LRM/RRIM, puis
+# les hillshades dépendants de l'éclairage (multi > directionnels), slope en
+# dernier (terne seul, surtout couche du VAT). Pilote le dropdown GUI, le menu
+# interactif, les choices argparse et l'ordre de `--shadings tous`.
 _SHADING_TYPES = {
-    "315":   {"elevation"},
-    "045":   {"elevation"},
-    "135":   {"elevation"},
-    "225":   {"elevation"},
-    "multi": {"elevation"},
-    "slope": set(),
+    "vat":   {"dist", "gamma"},
     "svf":   {"conv", "dist", "gamma", "sweep"},
     "opos":  {"dist", "gamma"},
     "oneg":  {"dist", "gamma"},
     "lrm":   {"sigma"},
     "rrim":  {"sigma"},
-    "vat":   {"dist", "gamma"},
+    "multi": {"elevation"},
+    "315":   {"elevation"},
+    "045":   {"elevation"},
+    "135":   {"elevation"},
+    "225":   {"elevation"},
+    "slope": set(),
 }
 
 # Source UNIQUE pour toutes les listes de types d'ombrage (argparse choices, menu
