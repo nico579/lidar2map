@@ -43,15 +43,15 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
   | Type | What it reveals | Parameters |
   |------|-----------------|------------|
-  | `multi` | Multidirectional hillshade (Mark 1992), general relief without azimuth bias, the default basemap | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
+  | `multi` | Multidirectional hillshade (Mark 1992), general relief without azimuth bias | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
   | `315` `045` `135` `225` | Directional hillshades, emphasize structures perpendicular to the chosen azimuth | `elevation` (same) |
   | `slope` | Slope 0-90° stretched to 1-255, banks, breaks, terraces | (none) |
   | `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
   | `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
   | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
-  | `lrm` | Local Relief Model, subtracts the smoothed terrain (gaussian σ): removes hills and valleys, keeps only local anomalies | `sigma` (gaussian radius in m ≈ max scale of preserved structures; default 15 px of the provider) |
+  | `lrm` | Local Relief Model, subtracts the smoothed terrain (gaussian σ): removes hills and valleys, keeps only local anomalies. Fast and readable: the GUI default | `sigma` (gaussian radius in m ≈ max scale of preserved structures; default 15 px of the provider) |
   | `rrim` | Red Relief Image Map (Chiba 2008), color composite: slope in red (absolute 0-45° ramp), LRM as light/dark, hollows AND mounds at a glance | `sigma` (of the internal LRM) |
-  | `vat` | **Visualization for Archaeological Topography**, the recommended one-shot archaeology view: SVF + positive openness + slope blended into a single grayscale, reveals hollows AND mounds without picking a method (RVT style, ZRC SAZU). Needs numba | `dist` (SVF/openness radius in m, default 20), `gamma` (final composite contrast, default 1.0) |
+  | `vat` | **Visualization for Archaeological Topography**, the most complete detector: SVF + positive openness + slope blended into a single grayscale, reveals hollows AND mounds without picking a method (RVT style, ZRC SAZU). Slower than `lrm`, grainier too. Needs numba | `dist` (SVF/openness radius in m, default 20), `gamma` (final composite contrast, default 2.0, 1 light, 2 dark) |
 
   Two ways to request them:
 
@@ -89,9 +89,11 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
 - **USGS Imagery** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16), pairs with the 3DEP LiDAR (`us-tnm`).
 
-- **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*
+- **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*. Both can also render as **`transparent-raster`**: the selected layers (paths, roads, rivers...) drawn on transparent tiles (.sqlitedb), to float above the LiDAR relief as an OsmAnd overlay (OsmAnd cannot overlay vector data natively)
 
-- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map)
+- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map), transparent overlay `.sqlitedb` (`transparent-raster`)
+
+- **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan with the phone, download, then "Open with" OsmAnd or Locus: no cable, no cloud, nothing leaves your network. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
 
 ---
 
@@ -396,6 +398,10 @@ Six tabs to drive LiDAR, IGN raster/vector, OSM, merge and splitting.
 | OSM vector (Mapsforge) | Vector merge | Raster splitting |
 |---|---|---|
 | ![OSM tab](screenshots/GUI/OSM_Vectoriel.PNG) | ![Merge tab](screenshots/GUI/Fusion_Vectoriel.PNG) | ![Splitting tab](screenshots/GUI/Decoupage_Raster.PNG) |
+
+Send to phone: the 📲 button serves the generated maps over local WiFi, scan the QR code and "Open with" OsmAnd or Locus.
+
+![Send to phone (QR)](screenshots/GUI/Phone.PNG)
 
 ### Rendering in Locus Map
 
