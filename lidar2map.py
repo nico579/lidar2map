@@ -14277,6 +14277,8 @@ def lancer_gui():
             self._tail_lines      = []
             self._modal_error_msg = ""
             self._partage         = _PartageServeur()   # transfert LAN vers téléphone
+            self._stop_t          = None   # horodatage de la demande d'arrêt (stop)
+            self._reader_t        = None   # thread lecteur stdout du run courant
 
         # ── Données initiales ─────────────────────────────────────────────
         def get_init_data(self):
@@ -14653,9 +14655,43 @@ def lancer_gui():
             return cmd
 
         # ── Lancement ────────────────────────────────────────────────────
+        def _kill_tree(self, proc):
+            """Kill forcé de toute la hiérarchie du subprocess (Windows/Unix).
+            Partagé par stop() (escalade après grâce) et launch() (relance
+            après un Arrêter : l'intention utilisateur annule la grâce)."""
+            try:
+                if WINDOWS:
+                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
         def launch(self, cfg):
-            if self._process and self._process.poll() is None:
-                return {"error": "Un processus est déjà en cours."}
+            proc = self._process
+            if proc and proc.poll() is None:
+                if self._stop_t is None:
+                    return {"error": "Un processus est déjà en cours."}
+                # Arrêter PUIS Lancer = intention sans ambiguïté : ne pas faire
+                # attendre la grâce de 15 s à l'utilisateur (sinon « Un processus
+                # est déjà en cours » tant que l'arrêt gracieux n'a pas abouti).
+                # Escalade immédiate + courte attente de la mort effective.
+                self._kill_tree(proc)
+                try:
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    return {"error": "Arrêt encore en cours, réessayez dans quelques secondes."}
+            # Laisser le thread lecteur de l'ANCIEN run se terminer avant de
+            # réinitialiser l'état : son finally pose _done=True et écraserait
+            # le _done=False du nouveau run (course). Le pipe étant clos par la
+            # mort du process, il sort en quelques ms.
+            if self._reader_t and self._reader_t.is_alive():
+                self._reader_t.join(timeout=5)
+            self._stop_t = None
             cmd = self._build_cmd(cfg)
             self._done = False
             self._retcode = None
@@ -14873,7 +14909,8 @@ def lancer_gui():
                 finally:
                     self._done = True
 
-            threading.Thread(target=run, daemon=True).start()
+            self._reader_t = threading.Thread(target=run, daemon=True)
+            self._reader_t.start()
             return {"cmd": " ".join(str(c) for c in cmd)}
 
         def stop(self):
@@ -14894,6 +14931,7 @@ def lancer_gui():
             proc = self._process
             if not (proc and proc.poll() is None):
                 return
+            self._stop_t = time.time()   # lu par launch() : relance = escalade immédiate
             self._log_queue.put(
                 {"line": f"\n⚠ Stop requested - graceful, forced after {_STOP_GRACE_S} s\n",
                  "tag": "err"})
@@ -14913,15 +14951,7 @@ def lancer_gui():
                     return   # sortie propre : le thread lecteur finalise (_done)
                 except subprocess.TimeoutExpired:
                     pass
-                try:
-                    if WINDOWS:
-                        subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
-                except Exception:
-                    try: proc.terminate()
-                    except Exception: pass
+                self._kill_tree(proc)
                 self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
             threading.Thread(target=_escalade, daemon=True).start()
 
