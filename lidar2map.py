@@ -6019,7 +6019,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         print("  ⚠ No tile available in this chunk "
               "(outside LiDAR coverage or downloads failed), "
               "shadings skipped.", flush=True)
-        return
+        return []
 
     # Ombrages precalcules fournis par le provider (PROVIDES_SHADINGS) :
     # telecharges directement depuis le WCS du provider (ex. Digitaal Vlaanderen
@@ -6027,12 +6027,15 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # ainsi servies soient retirees de choix et NON recalculees localement.
     # Seules les instances "par defaut" (issues de choix) sont servies — une
     # instance --shading aux params explicites est toujours calculee localement.
+    _cles_provider = []   # clés servies par le provider (pour la liste des cibles)
     if bbox_natif is not None and hasattr(PROVIDER, "PROVIDES_SHADINGS") and choix:
+        _choix_avant = list(choix)
         choix = list(choix)
         _fetch_provider_shadings(
             choix, bbox_natif, dossier_ville, nom_zone, ecraser_ombrages,
             PROVIDER.PROVIDES_SHADINGS
         )
+        _cles_provider = [c for c in _choix_avant if c not in choix]
 
     # ── Résolution en instances (typ, params_explicites, params_résolus, suffixe)
     # Le suffixe encode un param uniquement s'il est EXPLICITE et différent du
@@ -6540,6 +6543,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
 
     print("\n  Shadings in: " + str(dossier_ville))
+    # Fichiers cibles de CE run (instances + pré-calculés provider) : permet à
+    # l'étape MBTiles de ne tuiler QUE les ombrages demandés au lieu de tout le
+    # dossier projet (sinon --tiles-overwrite re-tuile aussi les anciens).
+    return ([dossier_ville / f"{nom_base}_{sfx}.tif" for _t, _p, sfx in insts]
+            + [dossier_ville / f"{nom_base}_{c}_ombrage.tif" for c in _cles_provider])
 
 
 def _bbox_depuis_gdalinfo(chemin):
@@ -9518,6 +9526,7 @@ Examples:
     else:
         choix_ombrages = []  # sans --shadings → pas d'ombrage
 
+    tifs_run = None   # cibles du run courant (None = pas d'étape shadings)
     if choix_ombrages or spec_insts:
         surface_km2 = len(dalles_ombrages)  # ~1 dalle = 1 km²
         _libelles = choix_ombrages + [
@@ -9531,7 +9540,7 @@ Examples:
         print(f"  Area: ~{surface_km2} km²  |  Estimated duration:"
               f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
               f" (depends on the shading type and machine)", flush=True)
-        generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
+        tifs_run = generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
                          elevation_soleil=elev, nom_zone=nom_zone,
                          ecraser_ombrages=args.ombrages_ecraser,
                          use_sweep=args.sweep_horizon,
@@ -9587,6 +9596,14 @@ Examples:
                 if not t.name.startswith("_")
                 and not re.search(r'_tuilage_z\d+\.tif$', t.name)
             ]
+            # Ne tuiler que les ombrages demandés par CE run : sans ce filtre,
+            # --tiles-overwrite re-tuilait TOUS les ombrages du dossier projet
+            # (constaté : --shading lrm:sigma=3 re-tuilait aussi s7p5m et multi).
+            # Un run SANS étape shadings (tifs_run=None) garde le comportement
+            # historique : conversion de tout le dossier.
+            if tifs_run:
+                _noms_run = {p.name for p in tifs_run}
+                ombrages_tifs = [t for t in ombrages_tifs if t.name in _noms_run]
             if ombrages_tifs:
                 print_etape("MBTiles")
                 for tif in sorted(ombrages_tifs):
@@ -10097,12 +10114,13 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 if _spec_i:
                     _spec_types = {t for t, _ in _spec_i}
                     choix = [c for c in choix if c not in _spec_types]
+                tifs_run = None   # cibles du run (cf. site jumeau dans main)
                 if choix or _spec_i:
                     dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
                                                           dossier_ville, bbox)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
                             else ELEVATION_SOLEIL)
-                    generer_ombrages(dalles_ombrages, dossier_ville, choix,
+                    tifs_run = generer_ombrages(dalles_ombrages, dossier_ville, choix,
                                      elevation_soleil=elev, nom_zone=nom_z,
                                      ecraser_ombrages=args.ombrages_ecraser,
                                      use_sweep=args.sweep_horizon,
@@ -10120,6 +10138,11 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 ombrages_tifs = [t for t in sorted(dossier_ville.glob("*.tif"))
                                  if not t.name.startswith("_")
                                  and not re.search(r'_tuilage_z\d+\.tif$', t.name)]
+                # Comme dans main : ne tuiler que les cibles de CE run quand
+                # l'étape shadings a tourné (sinon conversion de tout le dossier).
+                if tifs_run:
+                    _noms_run = {p.name for p in tifs_run}
+                    ombrages_tifs = [t for t in ombrages_tifs if t.name in _noms_run]
                 for tif in ombrages_tifs:
                     stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
                     suffix = stem[len(nom_z)+1:] if stem.startswith(nom_z+"_") else stem
