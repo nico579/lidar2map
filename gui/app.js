@@ -702,17 +702,19 @@ function buildHistorique(hist) {
     'en cours': ['⚠', '#e08000'],
   };
   list.innerHTML = _historique.map((e, i) => {
-    const zone = e.dep  ? `Dep ${e.dep}`  :
-                 e.ville ? e.ville         :
-                 e.bbox  ? 'BBox'          :
-                 e.gps   ? 'GPS'           : '';
+    // _acEsc sur les valeurs venant de l'utilisateur (nom de projet, ville) :
+    // injectées en innerHTML, un nom contenant du HTML casserait le panneau.
+    const zone = e.dep  ? `Dep ${_acEsc(e.dep)}` :
+                 e.ville ? _acEsc(e.ville)        :
+                 e.bbox  ? 'BBox'                 :
+                 e.gps   ? 'GPS'                  : '';
     const st = e.statut || 'ok';  // entrées pré-v2 : pas de statut → 'ok' implicite
     const [sym, col] = BADGES[st] || ['', 'var(--dim)'];
     return `<div style="border:1px solid var(--bd);border-radius:4px;padding:8px;
                         margin-bottom:6px;cursor:pointer;font-size:12px"
                  onclick="rappelHistorique(${i})">
       <div style="display:flex;justify-content:space-between">
-        <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} — ${e.nom||'?'}</strong>
+        <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} — ${_acEsc(e.nom||'?')}</strong>
         <span style="color:var(--dim)">${e.date}</span>
       </div>
       <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree || (st === 'en cours' ? t('status.running') : st)}</div>
@@ -1548,7 +1550,7 @@ function ombFromSpecs(specs) {
   });
   ombRender(0);
 }
-// Rendu initial (défaut multi) — re-rendu par la restauration de cfg ensuite.
+// Rendu initial (défaut LRM) — re-rendu par la restauration de cfg ensuite.
 document.addEventListener('DOMContentLoaded', () => ombRender(0));
 
 // ── Zoom de l'interface (persisté) ───────────────────────────────────────────
@@ -1598,8 +1600,10 @@ async function fusionAjouter() {
   const files = await pywebview.api.pick_file(true, false, []);
   if (!files) return;
   const all = Array.isArray(files) ? files : [files];
-  const valid = all.filter(f => f.endsWith('.geojson') || f.endsWith('.gz'));
-  const invalid = all.filter(f => !f.endsWith('.geojson') && !f.endsWith('.gz'));
+  // .geojson.gz strict (pas tout .gz) : aligne le filtre sur le message
+  // d'erreur ci-dessous et sur ce que la fusion sait réellement lire.
+  const valid = all.filter(f => f.endsWith('.geojson') || f.endsWith('.geojson.gz'));
+  const invalid = all.filter(f => !valid.includes(f));
   if (invalid.length) alert(tf('fusion.ignored', {files: invalid.map(f=>f.split(/[\\/]/).pop()).join(', ')}));
   valid.forEach(f => { if (!fusionFiles.includes(f)) fusionFiles.push(f); });
   renderFusionList();
@@ -1655,8 +1659,17 @@ async function lancer() {
   document.getElementById('log-status').textContent = t('running');
   setLogProgress(0, '');
 
-  const res = await pywebview.api.launch(cfg);
-  if (res && res.error) { alert(res.error); btnReset(); return; }
+  // try/catch : si le bridge pywebview rejette (API bloquée, exception
+  // Python), les boutons resteraient verrouillés à jamais sans le catch.
+  let res;
+  try {
+    res = await pywebview.api.launch(cfg);
+  } catch (e) {
+    alert(t('apiunavail') + ' : ' + e);
+    btnReset();
+    return;
+  }
+  if (!res || res.error) { alert((res && res.error) || t('apiunavail')); btnReset(); return; }
 
   // Afficher la commande lancée dans le footer
   // (elle est aussi mise dans la log queue côté Python, ne pas dupliquer ici)
@@ -1742,31 +1755,9 @@ function btnReset() {
   document.getElementById('btn-stop').disabled = true;
   setFormLocked(false);
 }
-  // ── Zoom Ctrl+molette ────────────────────────────────────────────────
-  // Fonctionne sur tous les OS et clients VNC (RealVNC Windows → macOS VM).
-  // Ctrl+molette haut = zoom in, Ctrl+molette bas = zoom out.
-  // Pinch-to-zoom trackpad fonctionne nativement via le navigateur embarqué.
-  (function() {
-    let _zoomLevel = 1.0;
-    const _ZOOM_STEP = 0.1;
-    const _ZOOM_MIN  = 0.5;
-    const _ZOOM_MAX  = 2.5;
-    document.addEventListener('wheel', function(e) {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      _zoomLevel += e.deltaY < 0 ? _ZOOM_STEP : -_ZOOM_STEP;
-      _zoomLevel  = Math.min(_ZOOM_MAX, Math.max(_ZOOM_MIN, _zoomLevel));
-      document.body.style.zoom = _zoomLevel;
-    }, { passive: false });
-    // Ctrl+0 pour réinitialiser le zoom
-    document.addEventListener('keydown', function(e) {
-      if (e.ctrlKey && (e.key === '0' || e.key === 'NumPad0')) {
-        e.preventDefault();
-        _zoomLevel = 1.0;
-        document.body.style.zoom = 1.0;
-      }
-    });
-  })();
+// (L'ancien bloc zoom Ctrl+molette non persisté a été retiré : applyUiZoom
+//  ci-dessus est l'unique gestionnaire — les deux tournaient en concurrence
+//  et appliquaient chacun leur valeur de zoom au même événement.)
 
 
 // ── QR code (qrcode-generator, Kazuhiko Arase, MIT) ──────────────
