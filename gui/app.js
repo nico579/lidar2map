@@ -1578,7 +1578,13 @@ window.addEventListener('keydown', e => {
 // ── Dialogs ───────────────────────────────────────────────────────────────────
 async function pickDir(fieldId) {
   const p = await pywebview.api.pick_dir();
-  if (p) document.getElementById(fieldId).value = p;
+  if (p) {
+    const el = document.getElementById(fieldId);
+    el.value = p;
+    // Une valeur posée par script ne déclenche pas onchange : dispatcher
+    // l'événement comme le ferait une saisie (ex. f-dossier → refreshProjets).
+    el.dispatchEvent(new Event('change'));
+  }
 }
 async function pickFile(fieldId, multiple, exts) {
   const p = await pywebview.api.pick_file(multiple, false, exts);

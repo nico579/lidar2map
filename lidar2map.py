@@ -14004,6 +14004,10 @@ class _PartageServeur:
         self._httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 0), _H)
         self._httpd._table = table
         self._httpd._noms = self.fichiers
+        # Un téléchargement annulé côté téléphone (BrokenPipe) est un événement
+        # normal, pas une erreur : sans ça, socketserver imprime une traceback
+        # complète dans le terminal à chaque annulation (--serve CLI).
+        self._httpd.handle_error = lambda *a: None
         self.url = f"http://{_ip_lan()}:{self._httpd.server_address[1]}/"
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
         return self.url

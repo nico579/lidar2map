@@ -59,7 +59,8 @@
               title="Projets existants" data-i18n-title="tip.projlist"
               style="flex:none;max-width:180px"></select>
       <label style="min-width:auto;margin-left:12px" data-i18n="f.outdir">Dossier sortie</label>
-      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
+      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3"
+             onchange="refreshProjets()">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
       <label style="min-width:auto;margin-left:12px"
              data-i18n-title="tip.provider" title="Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.">Provider</label>
