@@ -14023,6 +14023,13 @@ class _PartageServeur:
 _EXTS_LIVRABLES = {".sqlitedb", ".rmap", ".mbtiles", ".map", ".obf"}
 
 
+def _base_projets(dossier=None):
+    """Racine des projets : dossier de sortie custom, sinon <travail>/Projets.
+    Convention UNIQUE (get_projets, start_share, main_serve, fusion GUI) :
+    toute résolution d'un chemin de projet passe par ici."""
+    return Path(dossier) if dossier else DOSSIER_TRAVAIL / "Projets"
+
+
 def _livrables_projet(proj):
     """Livrables d'un projet (récursif, toutes sorties confondues), du plus
     récent au plus vieux. Partagé par start_share (GUI) et main_serve (CLI)."""
@@ -14049,8 +14056,7 @@ def main_serve():
                         help="Dossier de sortie custom (défaut : <travail>/Projets)")
     args = parser.parse_args()
 
-    base = Path(args.dossier) if args.dossier else DOSSIER_TRAVAIL / "Projets"
-    proj = base / args.zone_nom
+    proj = _base_projets(args.dossier) / args.zone_nom
     fichiers = _livrables_projet(proj)
     if not fichiers:
         print(f"  No deliverable (sqlitedb/rmap/mbtiles/map) in {proj}")
@@ -14270,8 +14276,7 @@ def lancer_gui():
             nom = (cfg.get("nom") or "").strip()
             if not nom:
                 return {"ok": False, "error": "Aucun projet : lance d'abord une génération."}
-            base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-            proj = base / nom
+            proj = _base_projets(cfg.get("dossier")) / nom
             fichiers = _livrables_projet(proj)
             if not fichiers:
                 return {"ok": False,
@@ -14295,12 +14300,11 @@ def lancer_gui():
             """Noms des projets existants (sous-dossiers de Projets/, ou du
             dossier de sortie custom), récents d'abord. Alimente la datalist
             du champ Nom (combobox éditable : saisie libre + suggestions)."""
-            base = Path(dossier) if dossier else DOSSIER_TRAVAIL / "Projets"
             try:
-                dirs = [d for d in base.iterdir() if d.is_dir()]
+                dirs = [d for d in _base_projets(dossier).iterdir() if d.is_dir()]
+                dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
             except OSError:
                 return []
-            dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
             return [d.name for d in dirs]
 
         def get_historique(self):
@@ -14589,8 +14593,7 @@ def lancer_gui():
                 # Extension du GeoJSON intermédiaire
                 ext = ".geojson" if cfg.get("fusion_gz2_raw") and not cfg.get("fusion_gz2", True) else ".geojson.gz"
                 # Dossier de sortie automatique : <Projets>/<nom>/fusion
-                base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-                sortie_dir = base / nom / "fusion"
+                sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion"
                 cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
                 fmts = []
                 if cfg.get("fusion_gz2", True):   fmts.append("gz")

@@ -11,7 +11,7 @@ ajout/retrait d'un provider.
 Contours : Nominatim (OSM), polygon_geojson, simplifiés (~1 km via shapely).
 Style : simplestyle-spec (fill/stroke) lu par le rendu GitHub.
 """
-import glob, importlib.util, json, os, sys, time, urllib.parse, urllib.request
+import glob, importlib.util, json, os, re, sys, time, urllib.parse, urllib.request
 
 # Console Windows cp1252 : les noms natifs (Česko, Österreich…) planteraient
 # les print — forcer UTF-8 (best effort).
@@ -76,7 +76,15 @@ def load_providers():
             continue
         code = getattr(m, "CODE", None)
         if code:
-            prov[code] = {"name":    getattr(m, "NAME", None) or code,
+            name = getattr(m, "NAME", None) or code
+            # Résolution apposée si absente du nom officiel — même règle que le
+            # sélecteur GUI (buildProviders/hasRes dans gui/app.js) : les NAME
+            # ne portent plus la résolution descriptive, elle vient de
+            # RESOLUTION_M. Garder les deux affichages alignés.
+            res = getattr(m, "RESOLUTION_M", None)
+            if res and not re.search(r"\d[\d.,]*\s?(m|cm)\b", name, re.I):
+                name = f"{name} ({res:g} m)"
+            prov[code] = {"name":    name,
                           "country": getattr(m, "COUNTRY", "") or ""}
     return prov
 
