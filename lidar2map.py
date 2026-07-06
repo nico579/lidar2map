@@ -65,6 +65,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --ignvecteur    WFS IGN (cadastre, hydrographie…) → GeoJSON(.gz)
   --osm           PBF Geofabrik → carte Mapsforge (.map) + GeoJSON(.gz)
   --fusionner     Fusion de GeoJSON/GeoJSON.gz en un seul fichier
+  --serve         Sert les livrables d'un projet sur le WiFi (URL + QR)
+                  pour import direct sur le téléphone (OsmAnd/Locus)
 
   Sans argument   → GUI pywebview (interface HTML/JS)
 
@@ -13899,6 +13901,192 @@ def _lire_historique() -> list:
 # INTERFACE GRAPHIQUE (PyWebView)
 # ============================================================
 
+# ── Partage LAN (transfert PC → téléphone via QR) ─────────────────────────────
+# Sert les livrables (sqlitedb/rmap/mbtiles/map/obf) sur le réseau local via un
+# petit serveur HTTP éphémère. Le téléphone (même WiFi) scanne un QR, télécharge
+# le fichier, puis « Ouvrir avec OsmAnd/Locus » l'importe. Idiome standard (cf.
+# qrcp) : pas de câble, pas de cloud, pas de compte, hors-ligne (LAN seul).
+def _ip_lan():
+    """IP LAN de la machine (truc UDP sans trafic réel). 127.0.0.1 en repli."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+class _PartageServeur:
+    """Serveur HTTP LAN servant une whitelist de fichiers + page d'index mobile.
+    Rien hors whitelist n'est exposé ; bind 0.0.0.0 sur port éphémère ; thread
+    daemon (s'éteint avec le process). Réutilisable : demarrer() puis arreter()."""
+    def __init__(self):
+        self._httpd = None
+        self.url = None
+        self.fichiers = []
+
+    def demarrer(self, fichiers):
+        import http.server, shutil, threading
+        import html as _html
+        from urllib.parse import unquote, quote
+        self.arreter()
+        # Une passe : whitelist + ordre d'affichage. `fichiers` arrive trié par
+        # récence (start_share) ; en collision de nom (même basename dans deux
+        # sous-dossiers), le premier vu = le plus récent gagne. L'index téléphone
+        # garde cet ordre (le fichier fraîchement généré en tête, pas un tri alpha).
+        table, noms = {}, []
+        for p in fichiers:
+            if p.exists() and p.name not in table:
+                table[p.name] = p
+                noms.append(p.name)
+        self.fichiers = noms
+
+        class _H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass   # silencieux (pas de spam stderr)
+
+            # Page d'index bilingue : langue du TÉLÉPHONE via le header
+            # Accept-Language (standard HTTP ; ex. "fr-FR,fr;q=0.9,en;q=0.8").
+            _TXT = {
+                "fr": {"h": "Fichiers à importer",
+                       "p": "Tape un fichier, puis « Ouvrir avec » OsmAnd ou Locus.",
+                       "w": "Android peut avertir « Impossible de télécharger de "
+                            "façon sécurisée » : choisir <b>Enregistrer</b>. "
+                            "Transfert local en WiFi (HTTP sans certificat), "
+                            "rien ne sort du réseau."},
+                "en": {"h": "Files to import",
+                       "p": "Tap a file, then “Open with” OsmAnd or Locus.",
+                       "w": "Android may warn the download is insecure: choose "
+                            "<b>Save</b>. Local WiFi transfer (plain HTTP, no "
+                            "certificate), nothing leaves your network."},
+            }
+
+            def do_GET(self):
+                name = unquote(self.path.lstrip("/"))
+                if name in ("", "index.html"):
+                    _al = (self.headers.get("Accept-Language") or "").lower()
+                    txt = self._TXT["fr" if _al.startswith("fr") else "en"]
+                    items = "".join(
+                        f'<li><a href="/{quote(n)}">{_html.escape(n)}</a> '
+                        f'<span>{self.server._table[n].stat().st_size // 1024} Ko</span></li>'
+                        for n in self.server._noms)
+                    page = (
+                        "<!doctype html><meta name=viewport "
+                        "content='width=device-width,initial-scale=1'>"
+                        "<title>lidar2map</title>"
+                        "<style>body{font-family:sans-serif;margin:1.5em;font-size:1.15em}"
+                        "li{margin:.7em 0}span{color:#888;font-size:.85em}a{color:#1565c0}</style>"
+                        f"<h2>{txt['h']}</h2>"
+                        f"<ul>{items}</ul>"
+                        f"<p style='color:#888'>{txt['p']}</p>"
+                        f"<p style='color:#888;font-size:.85em'>{txt['w']}</p>").encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(page)))
+                    self.end_headers()
+                    self.wfile.write(page)
+                    return
+                p = self.server._table.get(name)
+                if p is None or not p.exists():
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(p.stat().st_size))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                self.end_headers()
+                with open(p, "rb") as f:
+                    shutil.copyfileobj(f, self.wfile)
+
+        self._httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 0), _H)
+        self._httpd._table = table
+        self._httpd._noms = self.fichiers
+        self.url = f"http://{_ip_lan()}:{self._httpd.server_address[1]}/"
+        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        return self.url
+
+    def arreter(self):
+        if self._httpd:
+            try:
+                self._httpd.shutdown()
+                self._httpd.server_close()
+            except Exception:
+                pass
+            self._httpd = None
+
+
+# Extensions des livrables transférables vers le téléphone. Source unique pour
+# le GUI (start_share) et le CLI (main_serve) : ne pas dupliquer.
+_EXTS_LIVRABLES = {".sqlitedb", ".rmap", ".mbtiles", ".map", ".obf"}
+
+
+def _livrables_projet(proj):
+    """Livrables d'un projet (récursif, toutes sorties confondues), du plus
+    récent au plus vieux. Partagé par start_share (GUI) et main_serve (CLI)."""
+    if not proj.exists():
+        return []
+    return sorted(
+        (p for p in proj.rglob("*") if p.suffix.lower() in _EXTS_LIVRABLES),
+        key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def main_serve():
+    """Mode --serve : sert les livrables d'un projet existant sur le réseau
+    local (URL + QR ASCII) pour import direct sur le téléphone. Ctrl+C arrête."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="lidar2map.py --serve",
+        description="Partage LAN des livrables d'un projet (téléphone via QR).")
+    parser.add_argument("--serve", action="store_true",
+                        help="Mode partage LAN (ce mode)")
+    parser.add_argument("--zone-name", "--zone-nom", dest="zone_nom", required=True,
+                        metavar="NOM", help="Nom du projet (dossier sous Projets/)")
+    parser.add_argument("--output-dir", "--dossier", dest="dossier", default=None,
+                        metavar="CHEMIN",
+                        help="Dossier de sortie custom (défaut : <travail>/Projets)")
+    args = parser.parse_args()
+
+    base = Path(args.dossier) if args.dossier else DOSSIER_TRAVAIL / "Projets"
+    proj = base / args.zone_nom
+    fichiers = _livrables_projet(proj)
+    if not fichiers:
+        print(f"  No deliverable (sqlitedb/rmap/mbtiles/map) in {proj}")
+        sys.exit(1)
+
+    srv = _PartageServeur()
+    url = srv.demarrer(fichiers)
+    print(f"  Serving {len(srv.fichiers)} file(s) from {proj}:")
+    for n in srv.fichiers:
+        print(f"    {n}")
+    print(f"\n  URL: {url}\n")
+    # QR ASCII (lib `qrcode`, installée à la volée ; repli silencieux : l'URL
+    # ci-dessus suffit à taper à la main).
+    try:
+        try:
+            import qrcode
+        except ImportError:
+            subprocess.run([sys.executable, "-m", "pip", "install", "qrcode", "-q"],
+                           check=True, timeout=120)
+            import qrcode
+        _qr = qrcode.QRCode(border=1)
+        _qr.add_data(url)
+        _qr.print_ascii(invert=True)
+    except Exception:
+        pass
+    print("  Phone on the same WiFi: scan (or type the URL), download a file,")
+    print("  then 'Open with' OsmAnd or Locus. Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        srv.arreter()
+        print("\n  Share server stopped.")
+        sys.exit(0)
+
+
 def lancer_gui():
     """
     GUI PyWebView — fenêtre native affichant un formulaire HTML/CSS/JS.
@@ -14055,6 +14243,7 @@ def lancer_gui():
             self._err_lines       = []
             self._tail_lines      = []
             self._modal_error_msg = ""
+            self._partage         = _PartageServeur()   # transfert LAN vers téléphone
 
         # ── Données initiales ─────────────────────────────────────────────
         def get_init_data(self):
@@ -14072,6 +14261,47 @@ def lancer_gui():
                 "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
                 "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
             }
+
+        # ── Partage LAN vers le téléphone (QR) ────────────────────────────
+        def start_share(self, cfg=None):
+            """Sert les livrables du dernier run (ou de `cfg`) sur le LAN.
+            Renvoie {ok, url, fichiers} ou {ok:False, error}."""
+            cfg = cfg or getattr(self, "_cfg_launch", None) or {}
+            nom = (cfg.get("nom") or "").strip()
+            if not nom:
+                return {"ok": False, "error": "Aucun projet : lance d'abord une génération."}
+            base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
+            proj = base / nom
+            fichiers = _livrables_projet(proj)
+            if not fichiers:
+                return {"ok": False,
+                        "error": f"Aucun livrable (sqlitedb/rmap/mbtiles/map) dans {proj}"}
+            try:
+                url = self._partage.demarrer(fichiers)
+            except Exception as e:
+                return {"ok": False, "error": f"Partage impossible : {e}"}
+            # Liste du serveur (dédupliquée, ordre par récence) : le modal PC
+            # affiche exactement ce que la page téléphone sert.
+            return {"ok": True, "url": url, "fichiers": self._partage.fichiers}
+
+        def stop_share(self):
+            try:
+                self._partage.arreter()
+            except Exception:
+                pass
+            return {"ok": True}
+
+        def get_projets(self, dossier=None):
+            """Noms des projets existants (sous-dossiers de Projets/, ou du
+            dossier de sortie custom), récents d'abord. Alimente la datalist
+            du champ Nom (combobox éditable : saisie libre + suggestions)."""
+            base = Path(dossier) if dossier else DOSSIER_TRAVAIL / "Projets"
+            try:
+                dirs = [d for d in base.iterdir() if d.is_dir()]
+            except OSError:
+                return []
+            dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+            return [d.name for d in dirs]
 
         def get_historique(self):
             """Retourne la liste historique — appelable depuis JS à tout moment."""
@@ -14932,6 +15162,7 @@ if __name__ == "__main__":
             # mode et laisse intact le reste de sys.argv pour le sub-main.
             _DISPATCH = {
                 # mode_key: (sous-main, [flags reconnus : anglais canonique + alias FR])
+                "serve":      (main_serve,     ["--serve"]),
                 "decouper":   (main_decouper,  ["--split", "--decouper"]),
                 "ignraster":  (main_wmts,      ["--raster", "--ignraster"]),
                 "ignvecteur": (main_wfs,       ["--vector", "--ignvecteur"]),

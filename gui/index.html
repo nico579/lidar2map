@@ -17,12 +17,30 @@
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
  <button class="btn" id="btn-log" onclick="toggleLogPanel()" data-i18n="btn.log"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📋 Logs</button>
+ <button class="btn" id="btn-share" onclick="partagerTelephone()" data-i18n="btn.share"
+         data-i18n-title="tip.share" title="Envoyer les cartes générées sur le téléphone via QR (même WiFi)"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📲 Téléphone</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
  <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
        title="Langue / Language">
   <button class="btn-lang" data-lang-btn="fr" onclick="setLang('fr', true)">FR</button>
   <button class="btn-lang" data-lang-btn="en" onclick="setLang('en', true)">EN</button>
  </span>
+</div>
+<!-- Partage vers téléphone (QR + serveur LAN) -->
+<div id="share-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:20px 24px;max-width:92vw;max-height:88vh;overflow:auto;text-align:center;
+      box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="font-weight:600;font-size:1.1em;margin-bottom:4px" data-i18n="share.title">📲 Envoyer au téléphone</div>
+  <div style="font-size:.85em;color:var(--dim,#999);margin-bottom:12px;max-width:340px" data-i18n="share.hint">Même WiFi. Scanne, télécharge, puis « Ouvrir avec » OsmAnd ou Locus.</div>
+  <div id="share-qr" style="display:inline-block;background:#fff;padding:10px;border-radius:8px"></div>
+  <div id="share-url" style="margin-top:10px;font-family:monospace;font-size:.9em;word-break:break-all"></div>
+  <div id="share-files" style="margin-top:10px;font-size:.85em;color:var(--dim,#999);text-align:left;max-width:340px"></div>
+  <button class="btn" onclick="fermerPartage()" data-i18n="share.close"
+          style="margin-top:16px;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
+ </div>
 </div>
 <div id="form-inner">
 
@@ -33,6 +51,13 @@
      <div class="row">
       <label style="min-width:auto;margin-right:4px" data-i18n="f.name">Nom *</label>
       <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
+      <!-- Reprise d'un projet existant : select standard avec placeholder
+           textuel, remplit le champ Nom. (Pas de datalist : 2e flèche Chromium
+           et filtrage par la valeur courante ; pas de select 30px : widget
+           non idiomatique.) -->
+      <select id="f-nom-liste" onchange="choisirProjet(this)"
+              title="Projets existants" data-i18n-title="tip.projlist"
+              style="flex:none;max-width:180px"></select>
       <label style="min-width:auto;margin-left:12px" data-i18n="f.outdir">Dossier sortie</label>
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
