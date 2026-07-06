@@ -6614,10 +6614,15 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     nom_base = nom_ville if nom_ville else tif_source.stem
     mbtiles  = dossier_ville / (nom_base + f"_z{zoom_min}-{zoom_max}.mbtiles")
 
-    if mbtiles.exists() and not ecraser_tuiles:
+    # MÊME décideur que les call sites (_mbtiles_a_regenerer) : fraîcheur vs
+    # TIF source incluse. L'ancien gate `exists and not ecraser` court-circuitait
+    # la décision du caller ("older than ... regenerating" suivi d'un
+    # "already present" → l'ancien rendu restait servi).
+    if not _mbtiles_a_regenerer(mbtiles, ecraser_tuiles,
+                                source=None if source_already_warped else tif_source):
         print(f"  {mbtiles.name} → already present")
         return mbtiles
-    if mbtiles.exists() and ecraser_tuiles:
+    if mbtiles.exists():
         mbtiles.unlink()
         print(f"  {mbtiles.name} → overwrite")
 
@@ -6754,7 +6759,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             warp_deja_fait = True
             print("  Source already in EPSG:3857 - warp skipped", flush=True)
         else:
-            warp_deja_fait = warped.exists() and warped.stat().st_size > 1_000_000 and not ecraser_tuiles
+            # Fraîcheur : un cache warpé plus VIEUX que le TIF source signifie
+            # que l'ombrage a été régénéré (--shadings-overwrite) → re-warper,
+            # sinon les tuiles resserviraient l'ancien rendu.
+            warp_deja_fait = (warped.exists() and warped.stat().st_size > 1_000_000
+                              and not ecraser_tuiles
+                              and warped.stat().st_mtime >= tif_source.stat().st_mtime)
             if warp_deja_fait:
                 print(f"  Warped cache: {warped.name}  "
                       f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
@@ -9055,12 +9065,19 @@ Examples:
             if nb_done:
                 print(f"  Resume: {nb_done}/{n_total} chunks already done")
 
+            # Un flag overwrite explicite perce l'état de reprise : sans ça, un
+            # re-run avec --tiles-overwrite (ou shadings/download) sur une zone
+            # déjà terminée sortait "already done" partout et ne refaisait rien.
+            # Les caches internes (dalles, ombrages) limitent le re-run au
+            # niveau réellement écrasé.
+            _overwrite_actif = (args.tuiles_ecraser or args.ombrages_ecraser
+                                or args.telechargement_ecraser)
             nb_ok = 0
             for i_z, (i_lat, i_lon, bx1_z, by1_z, bx2_z, by2_z) in enumerate(sous_zones):
                 cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
                 nom_z = f"{nom_zone}_{cle}"
 
-                if manifeste.deja_traite(cle):
+                if manifeste.deja_traite(cle) and not _overwrite_actif:
                     print(f"  [{cle}] {nom_z}: already done")
                     nb_ok += 1
                     continue
@@ -9569,7 +9586,7 @@ Examples:
             # Générer MBTiles si demandé explicitement, ou si nécessaire pour RMAP/SQLiteDB
             _mbt_path = dossier_ville / f"{_nom_mbt}.mbtiles"
             _ecraser_l = args.tuiles_ecraser
-            _mbt_requis = _mbtiles_a_regenerer(_mbt_path, _ecraser_l)
+            _mbt_requis = _mbtiles_a_regenerer(_mbt_path, _ecraser_l, source=_tif_src)
             _mbt_out = None
             if _mbt_requis:
                 _mbt_out = generer_mbtiles_lidar(_tif_src, dossier_ville, _nom_base,
@@ -9615,7 +9632,10 @@ Examples:
                     nom_base = f"{nom_zone}_{suffix}"
                     _mbt_path2 = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
                     _ecraser_l = args.tuiles_ecraser
-                    if _mbt_path2.exists() and not _ecraser_l:
+                    # _mbtiles_a_regenerer (et non un simple exists()) : détecte
+                    # aussi mbtiles corrompu/vide et TIF plus récent (drift
+                    # réconcilié avec le site jumeau des chunks).
+                    if not _mbtiles_a_regenerer(_mbt_path2, _ecraser_l, source=tif):
                         print(f"  Existing MBTiles: {_mbt_path2.name}, direct split/conversion")
                         _convertir_formats(_mbt_path2, args, mbtiles_neuf=False)
                         continue
@@ -10020,12 +10040,15 @@ def _mbtiles_est_complete(mbt_path):
         return False
 
 
-def _mbtiles_a_regenerer(mbt_path, ecraser):
+def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
     """Détermine si un mbtiles doit être (re)généré.
 
     Retourne True si :
     - le fichier n'existe pas,
     - --tuiles-ecraser est passé,
+    - `source` (TIF d'ombrage) est PLUS RÉCENT que le mbtiles : un
+      --shadings-overwrite sans --tiles-overwrite recalcule l'ombrage, les
+      tuiles doivent suivre (sinon l'utilisateur regarde l'ancien rendu),
     - le fichier existe mais contient 0 tuiles (artefact d'un run interrompu),
     - le fichier existe mais est corrompu (SQLite unreadable).
 
@@ -10034,6 +10057,14 @@ def _mbtiles_a_regenerer(mbt_path, ecraser):
     """
     if not mbt_path.exists() or ecraser:
         return True
+    if source is not None:
+        try:
+            if Path(source).stat().st_mtime > mbt_path.stat().st_mtime:
+                print(f"  {mbt_path.name} → older than {Path(source).name}, regenerating",
+                      flush=True)
+                return True
+        except OSError:
+            pass
     # Distinguer fichier illisible vs vide pour un log clair
     try:
         with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
@@ -10149,7 +10180,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                     nom_base = f"{nom_z}_{suffix}"
                     mbt_path = (dossier_ville
                                 / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles")
-                    _mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser)
+                    _mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser,
+                                                     source=tif)
                     if _mbt_neuf:
                         mbt_out = generer_mbtiles_lidar(
                             tif, dossier_ville, nom_base,
@@ -10879,12 +10911,14 @@ Examples:
             if nb_done:
                 print(f"  Resume: {nb_done}/{n_total} chunks already done")
 
+            # Overwrite explicite = percer la reprise (cf. site jumeau LiDAR).
+            _overwrite_actif = (args.tuiles_ecraser or args.telechargement_ecraser)
             nb_ok = 0
             for i_z, (i_lat, i_lon, lon_w, lat_s, lon_e, lat_n) in enumerate(sous_zones):
                 cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
                 nom_z = f"{nom_zone}_{cle}"
 
-                if manifeste.deja_traite(cle):
+                if manifeste.deja_traite(cle) and not _overwrite_actif:
                     print(f"  [{cle}] {nom_z}: already done")
                     nb_ok += 1
                     continue
