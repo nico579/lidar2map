@@ -421,6 +421,15 @@ def main():
     changed = compute_diff()
 
     if not changed:
+        # --new-tag sans diff : cas légitime (sources déjà poussées lors d'un
+        # patch précédent, on veut ensuite un vrai rebuild taggé). L'ancien
+        # early return court-circuitait la création du tag.
+        if args.new_tag:
+            cprint(f"\n==> Aucun changement à pousser ; tag {args.new_tag} sur le HEAD courant.", "cyan")
+            git("tag", "-a", args.new_tag, "-m", args.message)
+            git("push", "origin", args.new_tag)
+            cprint(f"\n==> Tag {args.new_tag} poussé → release.yml va se déclencher (rebuild ~30 min sur 3 OS).", "green")
+            print(f"    Suivi : https://github.com/{args.repo}/actions/workflows/release.yml")
         return 0  # message déjà affiché par compute_diff
 
     if args.dry_run:
