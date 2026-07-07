@@ -238,6 +238,11 @@ function setLang(code, persist){
 function ajouterLigneLog(text, tag) {
   const c = document.getElementById('log-content');
   if (!c) return;
+  // Sémantique \r du terminal : la ligne de progression temporaire (barres
+  // de download/tuilage) est remplacée par la première vraie ligne qui suit
+  // (qui est sa version finale émise au \n).
+  const prog = document.getElementById('log-progress-line');
+  if (prog) prog.remove();
   const span = document.createElement('span');
   span.className = 'log-' + (tag || 'ok');
   span.textContent = text;
@@ -247,6 +252,24 @@ function ajouterLigneLog(text, tag) {
   if (isAtBottom) c.scrollTop = c.scrollHeight;
   // Limiter à ~5000 lignes pour éviter de saturer le DOM sur les longs runs
   while (c.children.length > 5000) c.removeChild(c.firstChild);
+}
+
+// Ligne de progression "en place" dans le panneau de log : équivalent du \r
+// terminal. Sans elle, pendant un long download le panneau paraît figé (la
+// barre ne vivait que dans le footer) : constaté sur un download Lyon de 3 min.
+function majLigneProgression(label) {
+  const c = document.getElementById('log-content');
+  if (!c || !label) return;
+  let el = document.getElementById('log-progress-line');
+  const atBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 30;
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'log-progress-line';
+    el.className = 'log-ok';
+    c.appendChild(el);
+  }
+  el.textContent = label;
+  if (atBottom) c.scrollTop = c.scrollHeight;
 }
 
 function viderLog() {
@@ -1683,16 +1706,20 @@ async function lancer() {
         if (item.line !== undefined) {
           ajouterLigneLog(item.line, item.tag || 'ok');
         }
-        // Pourcentage (carriage return du child) → barre de progression + footer
+        // Pourcentage (carriage return du child) → barre de progression +
+        // footer + ligne de progression EN PLACE dans le panneau de log
+        // (sinon le panneau paraît figé pendant les longues étapes \r).
         if (item.pct !== undefined && item.pct >= 0) {
           setLogProgress(item.pct, '');
           document.getElementById('footer-status').textContent =
             item.pct + '%  ' + (item.label || '').substring(0, 80);
+          majLigneProgression(item.label);
         }
-        // Label seul (action en cours sans pct) → footer
+        // Label seul (action en cours sans pct) → footer + panneau
         if (item.pct === -1 && item.label) {
           document.getElementById('footer-status').textContent =
             item.label.substring(0, 100);
+          majLigneProgression(item.label);
         }
       });
     }

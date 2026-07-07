@@ -411,6 +411,14 @@ Archaeological LiDAR relief shown as an overlay on the terrain in Locus Map.
 |---|---|
 | ![SVF in Locus Map](screenshots/LIDAR_Samples/Svf_LocusMap.jpg) | ![Multi-hillshade in Locus Map](screenshots/LIDAR_Samples/Multi_LocusMap.jpg) |
 
+### Rendering in OsmAnd
+
+LiDAR relief (LRM) as a semi-transparent Overlay map above the standard
+OsmAnd map (Configure map > Overlay map, transparency slider around the
+middle).
+
+![LRM overlay in OsmAnd](screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg)
+
 ### What SVF reveals, same area, three sources
 
 Under tree cover, the aerial photo and OSM show nothing. The LiDAR SVF makes

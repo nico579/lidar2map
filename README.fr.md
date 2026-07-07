@@ -407,6 +407,14 @@ Ombrages LiDAR archéo affichés en superposition sur le terrain dans Locus Map.
 |---|---|
 | ![SVF dans Locus Map](screenshots/LIDAR_Samples/Svf_LocusMap.jpg) | ![Multi-ombrages dans Locus Map](screenshots/LIDAR_Samples/Multi_LocusMap.jpg) |
 
+### Rendu sur OsmAnd
+
+Relief LiDAR (LRM) en surcouche semi-transparente au-dessus de la carte
+OsmAnd standard (Configurer la carte > Carte de superposition, curseur de
+transparence vers le milieu).
+
+![Surcouche LRM dans OsmAnd](screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg)
+
 ### Ce que le SVF révèle, même zone, trois sources
 
 Sous le couvert végétal, la photo aérienne et OSM ne montrent rien. Le SVF
