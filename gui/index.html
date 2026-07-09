@@ -13,6 +13,9 @@
 <div id="btn-bar">
  <button class="btn btn-run" id="btn-run" onclick="lancer()" data-i18n="btn.run">▶ Lancer</button>
  <button class="btn btn-stop" id="btn-stop" onclick="arreter()" disabled data-i18n="btn.stop">■ Arrêter</button>
+ <button class="btn" id="btn-queue" onclick="ajouterFile()" data-i18n="btn.queue"
+         data-i18n-title="tip.queue" title="Ajouter la configuration courante à la file d'attente"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">＋ File</button>
  <button class="btn" id="btn-hist" onclick="toggleHistorique()" data-i18n="btn.hist"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:12px">⏱ Historique</button>
  <button class="btn" id="btn-log" onclick="toggleLogPanel()" data-i18n="btn.log"
@@ -27,6 +30,9 @@
   <button class="btn-lang" data-lang-btn="en" onclick="setLang('en', true)">EN</button>
  </span>
 </div>
+<!-- File d'attente des traitements (traitée en série par « Lancer ») -->
+<div id="file-attente" style="display:none;padding:6px 10px;background:var(--bg2);
+     border-bottom:1px solid var(--bd);line-height:1.9;font-size:12px"></div>
 <!-- Partage vers téléphone (QR + serveur LAN) -->
 <div id="share-modal" style="display:none;position:fixed;inset:0;z-index:1000;
      background:rgba(0,0,0,.55);align-items:center;justify-content:center">

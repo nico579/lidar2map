@@ -89,6 +89,11 @@ const I18N = {
     "req.name":"Le nom du projet est obligatoire.",
     "req.source":"Le fichier source MBTiles est obligatoire.",
     "req.field":"Le champ « {f} » est obligatoire.",
+    "btn.queue":"＋ File", "tip.queue":"Ajouter la configuration courante à la file d'attente",
+    "run.queue":"▶ Lancer la file ({n})",
+    "queue.count":"File ({n}) :", "queue.remove":"Retirer", "queue.clear":"× tout vider",
+    "queue.running":"File {i}/{n} : {label}",
+    "queue.done":"✓ File terminée : {ok} ok, {ko} échec(s)",
     "running":"En cours...", "done":"✓ Terminé", "stopped":"⚠ Arrêté",
     "err.code":"✗ Erreur (code {c})",
     "fail.detail":"Le traitement a échoué (code {c}).\n\n{msg}\n\n(détails complets dans le panneau de log ci-dessous)",
@@ -174,6 +179,11 @@ const I18N = {
     "req.name":"Project name is required.",
     "req.source":"Source MBTiles file is required.",
     "req.field":"The « {f} » field is required.",
+    "btn.queue":"＋ Queue", "tip.queue":"Add the current configuration to the queue",
+    "run.queue":"▶ Run queue ({n})",
+    "queue.count":"Queue ({n}):", "queue.remove":"Remove", "queue.clear":"× clear all",
+    "queue.running":"Queue {i}/{n}: {label}",
+    "queue.done":"✓ Queue done: {ok} ok, {ko} failed",
     "running":"Running...", "done":"✓ Done", "stopped":"⚠ Stopped",
     "err.code":"✗ Error (code {c})",
     "fail.detail":"Processing failed (code {c}).\n\n{msg}\n\n(full details in the log panel below)",
@@ -229,6 +239,9 @@ function setLang(code, persist){
   // Le placeholder du select projets est créé dynamiquement (hors applyI18n) :
   // re-peupler pour le traduire. No-op silencieux si l'API n'est pas prête.
   refreshProjets();
+  // applyI18n a réécrit btn-run depuis sa clé « btn.run » : ré-applique le
+  // libellé « Lancer la file (N) » si la file a des items en attente.
+  renderFile();
   if (persist && window.pywebview && pywebview.api && pywebview.api.set_lang) {
     pywebview.api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
   }
@@ -1650,131 +1663,234 @@ function setFormLocked(locked) {
   els.forEach(el => { el.disabled = locked; });
 }
 
-async function lancer() {
+// ── File d'attente des traitements ────────────────────────────────────────
+// La file est un simple tableau JS ; « Lancer » la traite en série via le
+// MÊME moteur que le lancement simple (launch/poll_log, un subprocess à la
+// fois). Continue-on-error façon `job1 ; job2` du shell : un échec n'arrête
+// pas la file. Pas de persistance (la file vit le temps de la session GUI).
+let fileAttente  = [];      // [{cfg, label, status}]  status: pending|running|ok|err
+let arretDemande = false;   // « Arrêter » : coupe le job courant ET annule la file
+
+const _LABELS_TYPE = {lidar:'LiDAR', scan:'Raster', osm:'OSM',
+                      vecteur:'Vecteur', fusion:'Fusion', decoupe:'Découpe'};
+
+function labelPourCfg(cfg) {
+  const zone = cfg.nom || cfg.ville || cfg.dep || cfg.region || cfg.gps || cfg.bbox || '?';
+  return (_LABELS_TYPE[cfg.type] || cfg.type) + ' · ' + zone;
+}
+
+// Valide le formulaire courant ; renvoie la config, ou null (avec alerte) si
+// invalide. Partagé par « Lancer » (mode simple) et « Ajouter à la file ».
+function validerFormulaire() {
   const nom = document.getElementById('f-nom').value.trim();
-  if (!nom) { alert(t('req.name')); return; }
+  if (!nom) { alert(t('req.name')); return null; }
   const cfg = getConfig();
-  if (cfg.type === 'decoupe' && !cfg.source_decoupe) {
-    alert(t('req.source'));
-    return;
-  }
-  // Valider que la zone géographique est renseignée (sauf Fusion et Découpage raster)
+  if (cfg.type === 'decoupe' && !cfg.source_decoupe) { alert(t('req.source')); return null; }
   if (cfg.type !== 'fusion' && cfg.type !== 'decoupe') {
     const zoneOk = (cfg.mode === 'ville'  && cfg.ville)  ||
                    (cfg.mode === 'gps'    && cfg.gps)    ||
                    (cfg.mode === 'bbox'   && cfg.bbox)   ||
                    (cfg.mode === 'dep'    && cfg.dep)    ||
-                   (cfg.mode === 'region' && cfg.region) ||
-                    false;
+                   (cfg.mode === 'region' && cfg.region) || false;
     if (!zoneOk) {
-      const labels = {ville:t('mode.ville'), gps:t('mode.gps'), bbox:t('mode.bbox'), dep:t('mode.dep'), region:t('mode.region')};
+      const labels = {ville:t('mode.ville'), gps:t('mode.gps'), bbox:t('mode.bbox'),
+                      dep:t('mode.dep'), region:t('mode.region')};
       alert(tf('req.field', {f: labels[cfg.mode] || cfg.mode}));
-      return;
+      return null;
     }
   }
+  return cfg;
+}
+
+function ajouterFile() {
+  const cfg = validerFormulaire();
+  if (!cfg) return;
+  fileAttente.push({cfg: cfg, label: labelPourCfg(cfg), status: 'pending'});
+  renderFile();
+}
+
+function retirerFile(i) {
+  if (polling) return;   // pas de réindexation pendant qu'un job tourne
+  fileAttente.splice(i, 1);
+  renderFile();
+}
+
+function viderFile() {
+  if (polling) return;
+  fileAttente = [];
+  renderFile();
+}
+
+// Affiche la file (puces d'items avec statut + retrait) et relibelle « Lancer »
+// en « Lancer la file (N) » selon le nombre d'items EN ATTENTE.
+function renderFile() {
+  const box = document.getElementById('file-attente');
+  const btn = document.getElementById('btn-run');
+  const pending = fileAttente.filter(it => it.status === 'pending').length;
+  if (btn) btn.textContent = pending ? tf('run.queue', {n: pending}) : t('btn.run');
+  if (!box) return;
+  if (!fileAttente.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const icone   = {pending:'•', running:'⏳', ok:'✓', err:'✗'};
+  const couleur = {pending:'var(--dim)', running:'var(--ac)', ok:'#4caf50', err:'#e07070'};
+  box.style.display = 'block';
+  box.innerHTML =
+    '<span style="color:var(--dim);margin-right:8px">' +
+      tf('queue.count', {n: fileAttente.length}) + '</span>' +
+    fileAttente.map((it, i) =>
+      '<span style="display:inline-flex;align-items:center;gap:5px;margin:2px 6px 2px 0;' +
+      'padding:2px 8px;border:1px solid var(--bd);border-radius:12px">' +
+      '<span style="color:' + couleur[it.status] + '">' + icone[it.status] + '</span>' +
+      '<span>' + _acEsc(it.label) + '</span>' +
+      '<span onclick="retirerFile(' + i + ')" title="' + _acEsc(t('queue.remove')) + '" ' +
+      'style="cursor:pointer;color:var(--dim);font-weight:700">×</span></span>'
+    ).join('') +
+    '<a onclick="viderFile()" style="cursor:pointer;color:var(--dim);' +
+      'text-decoration:underline;margin-left:4px">' + _acEsc(t('queue.clear')) + '</a>';
+}
+
+// Exécute UNE config : lance le subprocess et résout {code, result_dir} quand
+// poll_log signale la fin. silent=true (mode file) supprime l'alerte bloquante
+// d'échec et l'ouverture du dossier (sinon la file se figerait sur un OK à
+// cliquer) ; le récap se fait alors en fin de file.
+function executerCfg(cfg, silent) {
+  return new Promise(resolve => {
+    viderLog();
+    document.getElementById('log-status').textContent = t('running');
+    setLogProgress(0, '');
+    // try/catch via .catch : si le bridge pywebview rejette (API bloquée),
+    // la promesse doit quand même se résoudre, sinon la file se fige.
+    Promise.resolve(pywebview.api.launch(cfg)).then(res => {
+      if (!res || res.error) {
+        const msg = (res && res.error) || t('apiunavail');
+        if (!silent) alert(msg); else ajouterLigneLog('\n✗ ' + msg + '\n', 'err');
+        resolve({code: -1});
+        return;
+      }
+      document.getElementById('footer-status').textContent =
+        '▶ ' + (res.cmd || '').split(' ').slice(-3).join(' ') + '…';
+      polling = setInterval(async () => {
+        const r = await pywebview.api.poll_log();
+        if (r.items) {
+          r.items.forEach(item => {
+            if (item.line !== undefined) ajouterLigneLog(item.line, item.tag || 'ok');
+            if (item.pct !== undefined && item.pct >= 0) {
+              setLogProgress(item.pct, '');
+              document.getElementById('footer-status').textContent =
+                item.pct + '%  ' + (item.label || '').substring(0, 80);
+              majLigneProgression(item.label);
+            }
+            if (item.pct === -1 && item.label) {
+              document.getElementById('footer-status').textContent =
+                item.label.substring(0, 100);
+              majLigneProgression(item.label);
+            }
+          });
+        }
+        if (r.done) {
+          clearInterval(polling); polling = null;
+          setLogProgress(100, r.code === 0 ? 'ok' : 'err');
+          // Footer/statut : le mode simple les pose ici ; le mode file les
+          // gère dans lancerFile (ligne « File i/n » puis récap). Idem si
+          // arretDemande : ne pas écraser le « ⚠ Arrêté » posé par arreter().
+          if (!silent && !arretDemande) {
+            const lbl = r.code === 0 ? t('done') : tf('err.code', {c: r.code});
+            document.getElementById('footer-status').textContent = lbl;
+            document.getElementById('log-status').textContent = lbl;
+          }
+          if (r.code !== 0) {
+            // Erreur → ouvrir le panneau de log s'il est caché (les deux modes).
+            const p = document.getElementById('panneau-log');
+            if (p && p.classList.contains('hidden')) toggleLogPanel();
+            if (!silent && !arretDemande) {
+              try {
+                const err = await pywebview.api.get_last_error();
+                if (err && err.msg) alert(tf('fail.detail', {c: err.retcode, msg: err.msg}));
+                else alert(tf('fail.generic', {c: r.code}));
+              } catch (e) {
+                console.error('get_last_error:', e);
+                alert(tf('fail.generic', {c: r.code}));
+              }
+            }
+          }
+          if (r.code === 0 && !silent && !arretDemande) {
+            refreshProjets();   // le run peut avoir créé un nouveau projet
+            pywebview.api.get_historique().then(hist => {
+              if (hist && hist.length) {
+                buildHistorique(hist);
+                const last = hist[0];
+                if (last && last.params) loadConfig(last.params);
+              }
+            }).catch(e => console.error('get_historique error:', e));
+            if (r.result_dir) pywebview.api.open_folder(r.result_dir);
+          }
+          resolve({code: r.code, result_dir: r.result_dir});
+        }
+      }, 250);
+    }).catch(e => {
+      alert(t('apiunavail') + ' : ' + e);
+      resolve({code: -1});
+    });
+  });
+}
+
+async function lancer() {
+  // Items en attente → traiter la file. Sinon → run simple du form courant.
+  const pending = fileAttente.filter(it => it.status === 'pending').length;
+  if (pending) return lancerFile();
+  const cfg = validerFormulaire();
+  if (!cfg) return;
+  arretDemande = false;
   document.getElementById('btn-run').disabled = true;
   document.getElementById('btn-stop').disabled = false;
   document.getElementById('footer-status').textContent = t('running');
   setFormLocked(true);
+  await executerCfg(cfg, false);
+  btnReset();
+}
 
-  // Vider le panneau de log et préparer la barre de progression
-  viderLog();
-  document.getElementById('log-status').textContent = t('running');
-  setLogProgress(0, '');
-
-  // try/catch : si le bridge pywebview rejette (API bloquée, exception
-  // Python), les boutons resteraient verrouillés à jamais sans le catch.
-  let res;
-  try {
-    res = await pywebview.api.launch(cfg);
-  } catch (e) {
-    alert(t('apiunavail') + ' : ' + e);
-    btnReset();
-    return;
+// Traite la file en série (un job à la fois, même moteur que « Lancer »).
+// Continue-on-error : un échec n'arrête pas la file. « Arrêter » pose
+// arretDemande → coupe le job courant (le process tué remonte via poll_log)
+// et sort de la boucle.
+async function lancerFile() {
+  arretDemande = false;
+  document.getElementById('btn-run').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  setFormLocked(true);
+  let ok = 0, ko = 0;
+  for (let i = 0; i < fileAttente.length; i++) {
+    if (arretDemande) break;
+    if (fileAttente[i].status !== 'pending') continue;   // déjà traité (re-Lancer)
+    fileAttente[i].status = 'running';
+    renderFile();
+    document.getElementById('footer-status').textContent =
+      tf('queue.running', {i: i + 1, n: fileAttente.length, label: fileAttente[i].label});
+    const r = await executerCfg(fileAttente[i].cfg, true);
+    fileAttente[i].status = r.code === 0 ? 'ok' : 'err';
+    if (r.code === 0) ok++; else ko++;
+    renderFile();
   }
-  if (!res || res.error) { alert((res && res.error) || t('apiunavail')); btnReset(); return; }
-
-  // Afficher la commande lancée dans le footer
-  // (elle est aussi mise dans la log queue côté Python, ne pas dupliquer ici)
-  document.getElementById('footer-status').textContent = '▶ ' + (res.cmd || '').split(' ').slice(-3).join(' ') + '…';
-
-  polling = setInterval(async () => {
-    const r = await pywebview.api.poll_log();
-    if (r.items) {
-      r.items.forEach(item => {
-        // Lignes de texte → panneau de log avec colorisation par tag
-        if (item.line !== undefined) {
-          ajouterLigneLog(item.line, item.tag || 'ok');
-        }
-        // Pourcentage (carriage return du child) → barre de progression +
-        // footer + ligne de progression EN PLACE dans le panneau de log
-        // (sinon le panneau paraît figé pendant les longues étapes \r).
-        if (item.pct !== undefined && item.pct >= 0) {
-          setLogProgress(item.pct, '');
-          document.getElementById('footer-status').textContent =
-            item.pct + '%  ' + (item.label || '').substring(0, 80);
-          majLigneProgression(item.label);
-        }
-        // Label seul (action en cours sans pct) → footer + panneau
-        if (item.pct === -1 && item.label) {
-          document.getElementById('footer-status').textContent =
-            item.label.substring(0, 100);
-          majLigneProgression(item.label);
-        }
-      });
-    }
-    if (r.done) {
-      clearInterval(polling); polling = null;
-      document.getElementById('footer-status').textContent =
-        r.code === 0 ? t('done') : tf('err.code', {c: r.code});
-      document.getElementById('log-status').textContent =
-        r.code === 0 ? t('done') : tf('err.code', {c: r.code});
-      setLogProgress(100, r.code === 0 ? 'ok' : 'err');
-      // Récap d'erreur en fin de run via API dédiée (plus fiable que
-      // le passage par poll_log : pywebview/WebView2 peut perdre des
-      // clés non-standard dans les dicts complexes sérialisés).
-      if (r.code !== 0) {
-        // Erreur → ouvrir automatiquement le panneau de log s'il est caché,
-        // sinon le message "voir le panneau" est inutile.
-        const p = document.getElementById('panneau-log');
-        if (p && p.classList.contains('hidden')) {
-          toggleLogPanel();
-        }
-        try {
-          const err = await pywebview.api.get_last_error();
-          if (err && err.msg) {
-            alert(tf('fail.detail', {c: err.retcode, msg: err.msg}));
-          } else {
-            // Fallback générique si _modal_error_msg n'a pas été rempli
-            alert(tf('fail.generic', {c: r.code}));
-          }
-        } catch (e) {
-          console.error('get_last_error:', e);
-          alert(tf('fail.generic', {c: r.code}));
-        }
-      }
-      if (r.code === 0) {
-        refreshProjets();   // le run peut avoir créé un nouveau projet
-        // Recharger l'historique via appel dédié (plus fiable que poll_log)
-        pywebview.api.get_historique().then(hist => {
-          if (hist && hist.length) {
-            buildHistorique(hist);
-            const last = hist[0];
-            if (last && last.params) loadConfig(last.params);
-          }
-        }).catch(e => console.error('get_historique error:', e));
-        if (r.result_dir) pywebview.api.open_folder(r.result_dir);
-      }
-      btnReset();
-    }
-  }, 250);
+  // Récap une seule fois en fin de file (moins de churn qu'un rafraîchissement
+  // par job).
+  refreshProjets();
+  pywebview.api.get_historique().then(hist => {
+    if (hist && hist.length) buildHistorique(hist);
+  }).catch(e => console.error('get_historique error:', e));
+  const recap = arretDemande ? t('stopped') : tf('queue.done', {ok: ok, ko: ko});
+  document.getElementById('footer-status').textContent = recap;
+  document.getElementById('log-status').textContent = recap;
+  btnReset();
 }
 
 async function arreter() {
+  // Pose arretDemande AVANT stop() : le job courant sera tué, poll_log verra
+  // r.done (code ≠ 0) et résoudra executerCfg — c'est ce qui débloque la
+  // boucle de file. Ne PAS clearInterval ici : sinon la promesse reste
+  // pendante et la file se fige. btnReset est fait par le done handler
+  // (mode simple) ou en fin de lancerFile (mode file).
+  arretDemande = true;
   await pywebview.api.stop();
-  if (polling) { clearInterval(polling); polling = null; }
   document.getElementById('footer-status').textContent = t('stopped');
-  btnReset();
 }
 
 function btnReset() {
