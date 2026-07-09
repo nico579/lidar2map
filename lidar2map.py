@@ -3372,6 +3372,16 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
                 # final (3/3) reste visible — la progress bar montre l'avancée.
                 time.sleep(DELAI_RETRY)
             else:
+                # Un HTTP 400 encore présent après tous les retries = "hors
+                # couverture" côté WMS IGN (bbox sans données : mer, zone non
+                # publiée), pas une panne. On le classe 'absent' (silencieux,
+                # colonne Missing) au lieu de 'erreur' rouge. Le transitoire IGN
+                # est en 502/503/timeout : il a profité des retries ci-dessus et
+                # reste 'erreur' visible s'il persiste. Le code est préservé via
+                # __cause__ (_download_to_tmp re-emballe le HTTPError en IOError).
+                _cause = getattr(_e, "__cause__", None)
+                if isinstance(_cause, urllib.error.HTTPError) and _cause.code == 400:
+                    return "absent"
                 print(f"\n  ERROR {nom} ({type(_e).__name__}, attempt {tentative}): {_e}")
                 return "erreur"
     return "erreur"

@@ -348,7 +348,14 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
     # hors couverture LiDAR HD : fabriquer la grille rapatrierait des placeholders
     # IGN 100 % nodata (15 Mo de -9999). On s'abstient alors.
     zone_hors_couverture = (not tms_a_couvert) and (nb_erreurs == 0)
-    if bbox_natif is not None and not zone_hors_couverture:
+    # Le TMS fait AUTORITE quand il a repondu partout sans erreur : il indexe
+    # TOUTES les dalles couvertes, donc l'absence d'une dalle = pas de dalle
+    # (mer, hors couverture). On ne fabrique la grille de repli QUE si des
+    # tuiles TMS ont echoue reseau (nb_erreurs > 0) : on ignore alors quelles
+    # dalles existent dans leur zone. Sans ce garde, un departement cotier
+    # ajoutait des centaines de dalles fantomes de mer, toutes en HTTP 400
+    # (constate sur le Var : TMS 509 trouvees + 349 fantomes grille).
+    if bbox_natif is not None and not zone_hors_couverture and nb_erreurs > 0:
         x1, y1, x2, y2 = bbox_natif
         ajoutes = 0
         for x_km, y_km in dalles_pour_bbox(x1, y1, x2, y2):
@@ -357,7 +364,8 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
                 dalles[nom] = dalle_url(x_km, y_km)
                 ajoutes += 1
         if ajoutes:
-            print(f"  Grid: +{ajoutes} extra tile(s) (WMS direct)")
+            print(f"  Grid: +{ajoutes} extra tile(s) (WMS direct, "
+                  f"{nb_erreurs} TMS tile(s) failed)")
     elif zone_hors_couverture:
         print("  Zone out of IGN LiDAR HD coverage (no tile indexed in the TMS).")
 
