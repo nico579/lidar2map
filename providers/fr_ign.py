@@ -353,8 +353,11 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=16):
     # (mer, hors couverture). On ne fabrique la grille de repli QUE si des
     # tuiles TMS ont echoue reseau (nb_erreurs > 0) : on ignore alors quelles
     # dalles existent dans leur zone. Sans ce garde, un departement cotier
-    # ajoutait des centaines de dalles fantomes de mer, toutes en HTTP 400
-    # (constate sur le Var : TMS 509 trouvees + 349 fantomes grille).
+    # ajoutait des CENTAINES de dalles de mer que le WMS sert en placeholder
+    # nodata ~15 Mo (constate sur le Var : chunk SE 63 dalles reelles + 795
+    # dalles de mer grille = ~12 Go telecharges puis ecartes du VRT d'ombrage).
+    # Verifie sans perte : le VRT n'utilise JAMAIS une dalle de la grille
+    # (VRT <= TMS sur tous les chunks du Var).
     if bbox_natif is not None and not zone_hors_couverture and nb_erreurs > 0:
         x1, y1, x2, y2 = bbox_natif
         ajoutes = 0
