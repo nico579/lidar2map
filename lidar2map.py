@@ -7623,7 +7623,13 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
             if data and dossier_cache is not None:
                 _cache_file = _cache_path(z, x, y)
                 _cache_file.parent.mkdir(parents=True, exist_ok=True)
-                _cache_tmp = _cache_file.with_suffix(_cache_file.suffix + ".part")
+                # Suffixe PID : le cache est PARTAGÉ entre projets, et deux
+                # process lidar2map parallèles peuvent télécharger la même
+                # tuile. Un .part de nom fixe serait alors écrit par les deux
+                # (l'un tronque pendant que l'autre rename = corruption
+                # persistante, exactement ce que l'atomique doit empêcher).
+                _cache_tmp = _cache_file.with_suffix(
+                    _cache_file.suffix + f".{os.getpid()}.part")
                 try:
                     _cache_tmp.write_bytes(data)
                     os.replace(_cache_tmp, _cache_file)
@@ -10073,34 +10079,38 @@ def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
     return False
 
 
-def _bbox_geojson(text):
-    """bbox WGS84 (lon0,lat0,lon1,lat1) d'un GeoJSON : champ `bbox` si présent,
-    sinon calcul depuis les coordonnées. None si vide."""
-    obj = json.loads(text)
-    b = obj.get("bbox")
-    if isinstance(b, (list, tuple)) and len(b) >= 4:
-        return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
-    lons = []; lats = []
+def _bbox_geojson_stream(fh):
+    """bbox WGS84 d'un GeoJSON lu en STREAMING (ijson) : un département de
+    vecteurs fait des centaines de Mo décompressés — le charger entier en RAM
+    juste pour une bbox serait absurde. RAM O(1) : on ne garde que les min/max."""
+    import ijson
+    from decimal import Decimal   # ijson rend les nombres en Decimal
+    lon0 = lat0 = float("inf"); lon1 = lat1 = float("-inf")
     def _walk(c):
+        nonlocal lon0, lat0, lon1, lat1
         if isinstance(c, (list, tuple)):
-            if (len(c) >= 2 and isinstance(c[0], (int, float))
-                    and isinstance(c[1], (int, float))):
-                lons.append(c[0]); lats.append(c[1])
+            if (len(c) >= 2 and isinstance(c[0], (int, float, Decimal))
+                    and isinstance(c[1], (int, float, Decimal))):
+                x = float(c[0]); y = float(c[1])
+                if x < lon0: lon0 = x
+                if x > lon1: lon1 = x
+                if y < lat0: lat0 = y
+                if y > lat1: lat1 = y
             else:
                 for e in c:
                     _walk(e)
-    feats = obj.get("features")
-    for ft in (feats if feats is not None else [obj]):
-        g = ft.get("geometry") if isinstance(ft, dict) else None
-        if g:
-            _walk(g.get("coordinates"))
-    return (min(lons), min(lats), max(lons), max(lats)) if lons else None
+    for coords in ijson.items(fh, "features.item.geometry.coordinates"):
+        _walk(coords)
+    return (lon0, lat0, lon1, lat1) if lon1 > lon0 else None
 
 
 def _bbox_sqlite_tiles(path, rmaps=False):
     """bbox WGS84 d'un magasin de tuiles SQLite, best-effort. mbtiles : metadata
-    `bounds` sinon étendue des tuiles (y TMS). sqlitedb RMaps : tuiles (x,y,z),
-    z stocké = 17-zoom, numbering 'simple' = XYZ. None si illisible/incohérent."""
+    `bounds`, sinon étendue des tuiles. sqlitedb RMaps : selon info.tilenumbering
+    ('simple' = z réel + y XYZ, notre writer ; défaut BigPlanet = z stocké 17-zoom).
+    IMPORTANT : l'agrégat min/max est fait À UN SEUL NIVEAU de zoom — mélanger
+    les colonnes/lignes de zooms différents donnerait une bbox fausse.
+    None si illisible/incohérent."""
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         cur = con.cursor()
@@ -10113,23 +10123,39 @@ def _bbox_sqlite_tiles(path, rmaps=False):
                     return (l, b, r, t)
             except Exception:
                 pass
-            r = cur.execute("SELECT min(tile_column),max(tile_column),"
-                            "min(tile_row),max(tile_row),max(zoom_level) "
-                            "FROM tiles").fetchone()
-            if not r or r[4] is None:
+            zrow = cur.execute("SELECT max(zoom_level) FROM tiles").fetchone()
+            if not zrow or zrow[0] is None:
                 return None
-            xmin, xmax, ytmin, ytmax, z = r
+            z = int(zrow[0])
+            xmin, xmax, ytmin, ytmax = cur.execute(
+                "SELECT min(tile_column),max(tile_column),"
+                "min(tile_row),max(tile_row) FROM tiles WHERE zoom_level=?",
+                (z,)).fetchone()
             ymin = (1 << z) - 1 - ytmax     # TMS -> XYZ
             ymax = (1 << z) - 1 - ytmin
         else:
-            r = cur.execute("SELECT min(x),max(x),min(y),max(y),min(z) "
-                            "FROM tiles").fetchone()
-            if not r or r[4] is None:
-                return None
-            xmin, xmax, ymin, ymax, zst = r
-            z = 17 - zst
+            numbering = "simple"            # notre writer (tilenumbering='simple')
+            try:
+                row = cur.execute("SELECT tilenumbering FROM info").fetchone()
+                if row and row[0]:
+                    numbering = str(row[0]).lower()
+            except Exception:
+                numbering = ""              # pas de colonne = vieux schéma BigPlanet
+            if numbering == "simple":
+                zrow = cur.execute("SELECT max(z) FROM tiles").fetchone()
+                if not zrow or zrow[0] is None:
+                    return None
+                zst = int(zrow[0]); z = zst
+            else:
+                zrow = cur.execute("SELECT min(z) FROM tiles").fetchone()
+                if not zrow or zrow[0] is None:
+                    return None
+                zst = int(zrow[0]); z = 17 - zst
             if not (0 <= z <= 25):
                 return None
+            xmin, xmax, ymin, ymax = cur.execute(
+                "SELECT min(x),max(x),min(y),max(y) FROM tiles WHERE z=?",
+                (zst,)).fetchone()
         tl = _tile_to_geo(xmin, ymin, z)    # coin NO : (lon_min, lat_min, lon_max, lat_max)
         br = _tile_to_geo(xmax, ymax, z)    # coin SE
         bbox = (tl[0], br[1], br[2], tl[3])
@@ -10153,19 +10179,24 @@ def _extraire_bbox_wgs84(fichier):
         if nom.endswith(".sqlitedb"):
             return _bbox_sqlite_tiles(f, rmaps=True)
         if nom.endswith(".geojson"):
-            return _bbox_geojson(f.read_text(encoding="utf-8"))
+            with open(f, "rb") as fh:
+                return _bbox_geojson_stream(fh)
         if nom.endswith(".geojson.gz"):
-            return _bbox_geojson(gzip.decompress(f.read_bytes()).decode("utf-8"))
+            with gzip.open(f, "rb") as fh:
+                return _bbox_geojson_stream(fh)
     except Exception:
         return None
     return None
 
 
 def _planche_depuis_dossier(dossier, args, nom_zone=None):
-    """Balaie un dossier projet, extrait l'emprise de chaque livrable, groupe par
-    cellule (numéro NNNxNNN dans le chemin) et génère la planche d'assemblage.
-    Indépendant du run : rejouable sur un projet existant (mode --planche DOSSIER).
-    Une cellule mer sans fichier n'apparaît pas (rien à charger là) : c'est voulu."""
+    """Balaie un dossier projet et génère UNE planche d'assemblage PAR PRODUIT
+    (ombrage / couche : lrm, svf, ortho…) : sinon leurs emprises se
+    superposeraient sur une même planche, illisible. Groupe par (produit, cellule
+    NNNxNNN) ; le produit = le nom de fichier sans le token de cellule ni
+    l'extension → le mbtiles et le sqlitedb d'un même produit restent groupés.
+    Indépendant du run (mode --planche DIR). Une cellule sans fichier (mer)
+    n'apparaît pas : c'est voulu."""
     if not getattr(args, "index_map", True):
         return
     try:
@@ -10175,31 +10206,44 @@ def _planche_depuis_dossier(dossier, args, nom_zone=None):
             print(f"  (index sheet: {d} is not a folder)", flush=True)
             return
         nom_zone = nom_zone or d.name
+        _SUFS = (".geojson.gz", ".mbtiles", ".sqlitedb", ".rmap", ".map", ".geojson")
         # mbtiles/geojson d'abord (emprise fiable), sqlitedb en dernier recours.
         _prio = {".mbtiles": 0, ".geojson": 1, ".gz": 2, ".sqlitedb": 3}
         fichiers = sorted(
             [p for pat in ("*.mbtiles", "*.sqlitedb", "*.geojson", "*.geojson.gz")
              for p in d.rglob(pat)],
             key=lambda p: _prio.get(p.suffix.lower(), 9))
-        cellules = {}   # cle -> bbox  ('__single__' hors découpage)
+        produits = {}   # produit -> {cle: bbox}  ('__single__' hors découpage)
         for f in fichiers:
-            m = (_re.search(r"(\d{3})x(\d{3})", f.name)
-                 or _re.search(r"(\d{3})x(\d{3})", f.parent.name))
+            stem = f.name
+            for suf in _SUFS:
+                if stem.lower().endswith(suf):
+                    stem = stem[:-len(suf)]; break
+            m = _re.search(r"(\d{3})x(\d{3})", stem)
             cle = f"{m.group(1)}x{m.group(2)}" if m else "__single__"
-            if cle in cellules:
+            produit = _re.sub(r"_?\d{3}x\d{3}", "", stem).strip("_") or nom_zone
+            cells = produits.setdefault(produit, {})
+            if cle in cells:
                 continue
             bbox = _extraire_bbox_wgs84(f)
             if bbox:
-                cellules[cle] = bbox
-        if not cellules:
+                cells[cle] = bbox
+        produits = {k: v for k, v in produits.items() if v}
+        if not produits:
             print("  (index sheet: no readable deliverable found)", flush=True)
             return
-        cells = sorted((k, v) for k, v in cellules.items() if k != "__single__")
-        allb = list(cellules.values())
-        lons = [b[0] for b in allb] + [b[2] for b in allb]
-        lats = [b[1] for b in allb] + [b[3] for b in allb]
-        _generer_planche((min(lons), min(lats), max(lons), max(lats)),
-                         cells or None, nom_zone, d, args)
+        # Contour(s) département : une seule requête Nominatim pour tous les
+        # produits (même zone), sur l'emprise globale.
+        allb = [b for v in produits.values() for b in v.values()]
+        gbbox = (min(b[0] for b in allb), min(b[1] for b in allb),
+                 max(b[2] for b in allb), max(b[3] for b in allb))
+        contours = _planche_contours_dept(gbbox, args)
+        for produit, cells_d in sorted(produits.items()):
+            cells = sorted((k, v) for k, v in cells_d.items() if k != "__single__")
+            pb = list(cells_d.values())
+            bbox = (min(b[0] for b in pb), min(b[1] for b in pb),
+                    max(b[2] for b in pb), max(b[3] for b in pb))
+            _generer_planche(bbox, cells or None, produit, d, args, contours=contours)
     except Exception as e:
         print(f"  (index sheet skipped: {type(e).__name__}: {e})", flush=True)
 
@@ -10261,11 +10305,12 @@ def _planche_contours_dept(bbox_wgs84, args):
     return contours
 
 
-def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args):
-    """<zone>_planche.png : planche d'assemblage (index/key map) des livrables.
+def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
+    """<zone>_planche.png : planche d'assemblage (index/key map) d'UN produit.
     Emprise (cadre) + contour(s) département réels + cellules numérotées (si
-    découpage). PIL seul (bundle app). Entièrement best-effort : toute erreur
-    est avalée (l'artefact est un bonus, jamais un point de panne du run)."""
+    découpage). `contours` pré-calculé (partagé entre produits) sinon récupéré
+    ici. PIL seul (bundle app). Entièrement best-effort : toute erreur est
+    avalée (l'artefact est un bonus, jamais un point de panne du run)."""
     if not getattr(args, "index_map", True):
         return
     try:
@@ -10274,15 +10319,28 @@ def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args):
         lon0, lat0, lon1, lat1 = bbox_wgs84
         if lon1 <= lon0 or lat1 <= lat0:
             return
-        contours = _planche_contours_dept(bbox_wgs84, args)
+        if contours is None:
+            contours = _planche_contours_dept(bbox_wgs84, args)
 
-        # Emprise d'affichage = union(zone, contours) + marge, ratio corrigé du
-        # cos(lat) pour des pixels ~carrés au sol.
+        # Emprise d'affichage = union(zone, contours), mais CAPÉE pour la
+        # lisibilité : si l'emprise est minuscule vs le département, les cellules
+        # deviennent illisibles (numéros qui se chevauchent). On limite la vue à
+        # _CAP× l'emprise, centrée dessus, sans jamais exclure l'emprise. À
+        # l'échelle départementale (emprise ≈ département) le cap ne mord pas :
+        # tout le contour reste visible. Ratio corrigé du cos(lat) plus bas.
         lons = [lon0, lon1]; lats = [lat0, lat1]
         for ring in contours:
             lons += [p[0] for p in ring]; lats += [p[1] for p in ring]
-        dlon0, dlon1 = min(lons), max(lons)
-        dlat0, dlat1 = min(lats), max(lats)
+        ulon0, ulon1 = min(lons), max(lons)
+        ulat0, ulat1 = min(lats), max(lats)
+        _CAP = 4.0
+        ecx = (lon0 + lon1) / 2; ecy = (lat0 + lat1) / 2
+        _hw = max(lon1 - lon0, 1e-6) * _CAP / 2
+        _hh = max(lat1 - lat0, 1e-6) * _CAP / 2
+        dlon0 = min(lon0, max(ulon0, ecx - _hw))
+        dlon1 = max(lon1, min(ulon1, ecx + _hw))
+        dlat0 = min(lat0, max(ulat0, ecy - _hh))
+        dlat1 = max(lat1, min(ulat1, ecy + _hh))
         mlon = (dlon1 - dlon0) * 0.04 or 0.01
         mlat = (dlat1 - dlat0) * 0.04 or 0.01
         dlon0 -= mlon; dlon1 += mlon; dlat0 -= mlat; dlat1 += mlat
