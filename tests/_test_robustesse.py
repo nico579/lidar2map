@@ -369,6 +369,88 @@ check("sqlitedb 'simple' multi-zoom → bbox du zoom max, z NON inversé",
       bbox is not None and all(abs(a - b) < 1e-6 for a, b in zip(bbox, att)),
       f"{bbox}")
 
+print("== 6. _download_to_tmp : 404 absent, XML/HTML = erreur de service ==")
+_saved_dl_urlopen = l2m._urlopen
+
+class _RespDL:
+    def __init__(self, ct, body):
+        self.headers = {"content-type": ct, "content-length": str(len(body))}
+        self._b = body
+        self._pos = 0
+    def read(self, n=-1):
+        if n < 0:
+            n = len(self._b)
+        chunk = self._b[self._pos:self._pos + n]
+        self._pos += len(chunk)
+        return chunk
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+def _dl_to_tmp(rep):
+    l2m._urlopen = (rep if callable(rep) else (lambda url, timeout=None: rep))
+    try:
+        return l2m._download_to_tmp("https://fake/dalle.tif",
+                                    tmp / "dalle_test.tmp")
+    finally:
+        l2m._urlopen = _saved_dl_urlopen
+
+def _raise_404(url, timeout=None):
+    raise urllib.error.HTTPError(url, 404, "Not Found", None, io.BytesIO(b""))
+
+check("404 → 0 (absent)", _dl_to_tmp(_raise_404) == 0)
+n = _dl_to_tmp(_RespDL("image/tiff", b"II\x2a\x00" + b"\0" * 100))
+check("binaire 200 → octets écrits", n == 104, f"n={n}")
+try:
+    _dl_to_tmp(_RespDL("application/xml", b"<ServiceExceptionReport/>"))
+    check("XML en 200 → IOError (erreur de service)", False)
+except (IOError, OSError):
+    check("XML en 200 → IOError (erreur de service)", True)
+n = _dl_to_tmp(_RespDL("multipart/related; type=\"text/xml\"", b"\0" * 64))
+check("multipart WCS (type=text/xml) NON rejeté", n == 64, f"n={n}")
+
+
+print("== 7. _telecharger_dalles_zone : erreurs = pipeline stoppé ==")
+import argparse as _ap
+_saved_directe = l2m.telecharger_dalle_directe
+_args_dl = _ap.Namespace(telechargement_forcer=False, telechargement_ecraser=False,
+                         telechargement_compresser=False, workers=2)
+_dz = tmp / "dz"; _dv = tmp / "dv"
+_dz.mkdir(exist_ok=True); _dv.mkdir(exist_ok=True)
+
+l2m.telecharger_dalle_directe = lambda nom, url, dd, ecraser, comp: "erreur"
+try:
+    l2m._telecharger_dalles_zone({"a.tif": "https://fake/a", "b.tif": "https://fake/b"},
+                                 (0, 0, 1, 1), _dz, _dv, _args_dl)
+    check("dalles en erreur → RuntimeError (pas de pipeline aval)", False)
+except RuntimeError:
+    check("dalles en erreur → RuntimeError (pas de pipeline aval)", True)
+except Exception as e:
+    check("dalles en erreur → RuntimeError (pas de pipeline aval)", False,
+          f"{type(e).__name__}: {e}")
+finally:
+    l2m.telecharger_dalle_directe = _saved_directe
+check("dalles_zone.txt NON écrit sur échec (source de vérité protégée)",
+      not (_dv / "dalles_zone.txt").exists())
+
+def _fake_ok(nom, url, dd, ecraser, comp):
+    p = l2m.chemin_dalle(dd, nom)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"\0" * (l2m.SEUIL_DALLE_VALIDE + 1))
+    return "ok"
+l2m.telecharger_dalle_directe = _fake_ok
+try:
+    l2m._telecharger_dalles_zone({"a.tif": "https://fake/a"},
+                                 (0, 0, 1, 1), _dz, _dv, _args_dl)
+    check("tout OK → pas d'exception + dalles_zone.txt écrit",
+          (_dv / "dalles_zone.txt").exists())
+except Exception as e:
+    check("tout OK → pas d'exception + dalles_zone.txt écrit", False,
+          f"{type(e).__name__}: {e}")
+finally:
+    l2m.telecharger_dalle_directe = _saved_directe
+
 time.sleep = _real_sleep
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")

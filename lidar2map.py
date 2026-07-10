@@ -3159,7 +3159,8 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     """
     Télécharge url vers chemin_tmp (streaming).
     Retourne le nombre d'octets écrits, ou lève une exception.
-    Gère les réponses WMS XML/HTML d'erreur → retourne 0 (dalle absente).
+    404 → 0 (dalle absente) ; réponse d'erreur XML/HTML en 200 → IOError
+    (erreur de service, retry côté caller — pas une absence).
     timeout : tuple (connexion_s, lecture_s) ou entier.
 
     Protection contre les coupures TCP silencieuses (typiques sur VM/macOS) :
@@ -3186,14 +3187,21 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     # (cas observé avec 8 workers parallèles × centaines de dalles).
     with resp:
         ct = resp.headers.get("content-type", "").lower()
-        # Rejeter les réponses d'erreur WMS/WCS (page XML/HTML) → dalle absente.
+        # Réponse d'erreur WMS/WCS (page XML/HTML en 200) : ERREUR de service
+        # (auth, quota, paramètre), PAS une dalle absente — la classer absente
+        # contournait retry et échec global (revue 2026-07-10 ; miroir du fix
+        # WMTS). L'absence, elle, se signale en 404 (géré plus haut).
         # MAIS un conteneur WCS 2.0 multipart/related annonce type="text/xml"
         # dans ses paramètres (la partie GML) tout en transportant le GeoTIFF
         # binaire — ne pas le confondre avec une erreur (sinon Digitaal
         # Vlaanderen & co. seraient rejetés à tort). Le désencapsulage a lieu
         # ensuite dans _extraire_tiff_multipart.
+        # NB : si un provider WCS à découverte par grille renvoie une exception
+        # XML pour ses dalles de bord hors couverture (au lieu d'un 404), ses
+        # runs échoueront désormais visiblement — à corriger ALORS côté
+        # provider (classer ce cas précis), pas en ré-avalant tout XML ici.
         if not ct.startswith("multipart") and ("xml" in ct or "html" in ct):
-            return 0
+            raise IOError(f"server error response ({ct or 'no content-type'})")
 
         try:
             content_length = int(resp.headers.get("content-length", 0))
@@ -3320,7 +3328,11 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
         # On évite de tirer dans une dalle valide qui pourrait servir de fallback
         # en cas d'échec — mais c'est explicitement ce que l'utilisateur demande.
         chemin.unlink()
-    chemin_tmp = chemin.parent / (nom + ".tmp")
+    # Tmp UNIQUE par process : le cache de dalles est partagé, deux process
+    # sur la même dalle s'écrasaient le .tmp fixe (l'un tronque pendant que
+    # l'autre replace). Cf. le .part PID du cache WMTS, même raison.
+    chemin_tmp = chemin.parent / (nom + f".{os.getpid()}.tmp")
+    _publie_par_moi = False   # True dès que CE process a fait replace(chemin)
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
             taille = _download_to_tmp(url_wms, chemin_tmp, timeout=(10, 45))
@@ -3341,6 +3353,7 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
                     raise IOError(f"server error payload: {_head[:120]!r}")
                 return "absent"
             chemin_tmp.replace(chemin)
+            _publie_par_moi = True
             _post_fetch_si_besoin(chemin)
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
@@ -3365,7 +3378,13 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
             raise
         except (OSError, urllib.error.URLError, urllib.error.HTTPError, IOError) as _e:
             chemin_tmp.unlink(missing_ok=True)
-            chemin.unlink(missing_ok=True)
+            # Ne purger la dalle FINALE que si CE process l'a publiée dans
+            # cette tentative (elle est alors suspecte : post_fetch/validation
+            # a échoué après le replace). L'unlink inconditionnel d'avant
+            # détruisait la dalle valide qu'un AUTRE process venait de publier.
+            if _publie_par_moi:
+                chemin.unlink(missing_ok=True)
+                _publie_par_moi = False
             if tentative < MAX_TENTATIVES:
                 # Retry silencieux : IGN renvoie 502/400/timeouts en rafale en
                 # journée, chaque retry print bourrait la console. Seul l'échec
@@ -3408,10 +3427,12 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
 
     bx1, by1, bx2, by2 = bbox
     vsi = "/vsicurl/" + url
-    # Écriture via .tmp + replace atomique, comme telecharger_dalle et
-    # telecharger_dalle_directe : un kill mi-écriture ne laisse pas de dalle
-    # tronquée que le run suivant skiperait comme valide.
-    chemin_tmp = chemin.parent / (nom + ".tmp")
+    # Écriture via .tmp + replace atomique, comme telecharger_dalle_directe :
+    # un kill mi-écriture ne laisse pas de dalle tronquée que le run suivant
+    # skiperait comme valide. Tmp UNIQUE par process (cache partagé, cf.
+    # telecharger_dalle_directe : deux process sur la même dalle).
+    chemin_tmp = chemin.parent / (nom + f".{os.getpid()}.tmp")
+    _publie_par_moi = False
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
             with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
@@ -3461,6 +3482,7 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
                 chemin_tmp.unlink(missing_ok=True)
                 raise IOError("COG fenêtré invalide après écriture")
             chemin_tmp.replace(chemin)
+            _publie_par_moi = True
             # Hook post-download (ex. us-tnm : reproject UTM local -> CRS_NATIF),
             # comme le chemin de download direct.
             if hasattr(PROVIDER, "post_download"):
@@ -3478,7 +3500,11 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
             raise
         except (OSError, IOError, rasterio.errors.RasterioIOError) as _e:
             chemin_tmp.unlink(missing_ok=True)
-            chemin.unlink(missing_ok=True)
+            # Cf. telecharger_dalle_directe : ne purger la dalle finale que si
+            # CE process l'a publiée (sinon on détruit celle d'un autre process).
+            if _publie_par_moi:
+                chemin.unlink(missing_ok=True)
+                _publie_par_moi = False
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY)
             else:
@@ -10049,6 +10075,17 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         print()  # fin barre
         print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
 
+    # Invariant (miroir WMTS, revue 2026-07-10) : ne JAMAIS continuer sur une
+    # couverture trouée. Sans ce garde, les ombrages/exports étaient générés
+    # depuis les seules dalles disponibles, le chunk était marqué fait, et
+    # dalles_zone.txt (source de vérité des runs tiles-only, cf. ~l.9443)
+    # listait un sous-ensemble — les trous devenaient permanents. Les dalles
+    # réussies sont en cache : le re-run ne retélécharge que les échecs.
+    if erreur > 0:
+        raise RuntimeError(f"{erreur} tile download error(s) - pipeline "
+                           f"stopped before shading/tiling (rerun to retry "
+                           f"the failed tiles; successful ones are cached)")
+
     # Persister dalles_zone.txt — utile pour --dalles-purger-hors-zone et la
     # reprise (cf. _lister_dalles_zone qui lit ce fichier).
     noms_persistance = [nom for nom in dalles_dict.keys()
@@ -12944,7 +12981,9 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
     sz_path = cache_dir / f"{nom_ressource}.7z"
     print(f"  Downloading BD TOPO D{dep_padded} (~200-800 MB)...", flush=True)
     _log_req(url, "IGN bulk GPKG")
-    tmp = cache_dir / f"{nom_ressource}.7z.tmp"
+    # Tmp unique par process : deux runs du même département ne doivent pas
+    # s'écraser le .7z en cours de téléchargement (cache partagé).
+    tmp = cache_dir / f"{nom_ressource}.7z.{os.getpid()}.tmp"
     t0 = time.time()
     try:
         try:
@@ -13011,7 +13050,9 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             if len(gpkg_names) > 1:
                 print(f"  ({len(gpkg_names)} .gpkg in archive - using {gpkg_names[0]})")
             _tmp_dir.mkdir(parents=True, exist_ok=True)
-            z.extract(targets=gpkg_names, path=_tmp_dir)
+            # N'extraire QUE le membre utilisé (pas toute la liste : pic
+            # disque et surface d'échec inutiles si l'archive en a plusieurs).
+            z.extract(targets=[gpkg_names[0]], path=_tmp_dir)
 
         extracted = _tmp_dir / gpkg_names[0]
         if not extracted.exists():
@@ -13071,52 +13112,63 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
         dst_gz = Path(str(dst_gz) + ".gz")
     dst_gz.parent.mkdir(parents=True, exist_ok=True)
 
+    # Écriture ATOMIQUE (.part + replace, helper maison) : le dst_gz final ne
+    # doit JAMAIS exister à l'état partiel — interrompu/disque plein, l'ancien
+    # code laissait un .gz tronqué que _extraire_couche_bdtopo réutilisait au
+    # run suivant comme s'il était complet (revue 2026-07-10).
+    dst_tmp = _chemin_part(dst_gz)
     try:
-        import ijson
-    except ImportError:
-        # Fallback non-streaming (peut faire OOM sur dept-scale — averti)
-        print("  ⚠ ijson missing - full RAM load (OOM risk at dept-scale)")
-        with open(src_geojson, encoding="utf-8") as f:
-            gj = json.load(f)
-        feats = gj.get("features", [])
-        for feat in feats:
-            props = feat.get("properties") or {}
-            props.setdefault("source", source_name)
-            feat["properties"] = props
-        gj["features"] = feats
-        data_bytes = json.dumps(gj, ensure_ascii=False,
-                                 separators=(",", ":"),
-                                 default=_enc_default).encode("utf-8")
-        with gzip.open(dst_gz, "wb", compresslevel=6) as f:
-            f.write(data_bytes)
-        return len(feats)
-
-    # ── Streaming feature par feature ────────────────────────────────────────
-    n = 0
-    crs_obj = {"type": "name",
-               "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
-    header = (
-        '{"type":"FeatureCollection","name":'
-        + json.dumps(source_name, ensure_ascii=False)
-        + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
-        + ',"features":['
-    )
-    # Écriture binaire dans gzip pour éviter le double encoding text→bytes
-    with gzip.open(dst_gz, "wb", compresslevel=6) as out:
-        out.write(header.encode("utf-8"))
-        with open(src_geojson, "rb") as src:
-            for feat in ijson.items(src, "features.item"):
+        try:
+            import ijson
+        except ImportError:
+            # Fallback non-streaming (peut faire OOM sur dept-scale — averti)
+            print("  ⚠ ijson missing - full RAM load (OOM risk at dept-scale)")
+            with open(src_geojson, encoding="utf-8") as f:
+                gj = json.load(f)
+            feats = gj.get("features", [])
+            for feat in feats:
                 props = feat.get("properties") or {}
                 props.setdefault("source", source_name)
                 feat["properties"] = props
-                if n > 0:
-                    out.write(b",")
-                out.write(json.dumps(feat, ensure_ascii=False,
-                                      separators=(",", ":"),
-                                      default=_enc_default).encode("utf-8"))
-                n += 1
-        out.write(b"]}")
-    return n
+            gj["features"] = feats
+            data_bytes = json.dumps(gj, ensure_ascii=False,
+                                     separators=(",", ":"),
+                                     default=_enc_default).encode("utf-8")
+            with gzip.open(dst_tmp, "wb", compresslevel=6) as f:
+                f.write(data_bytes)
+            dst_tmp.replace(dst_gz)
+            return len(feats)
+
+        # ── Streaming feature par feature ────────────────────────────────────
+        n = 0
+        crs_obj = {"type": "name",
+                   "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
+        header = (
+            '{"type":"FeatureCollection","name":'
+            + json.dumps(source_name, ensure_ascii=False)
+            + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
+            + ',"features":['
+        )
+        # Écriture binaire dans gzip pour éviter le double encoding text→bytes
+        with gzip.open(dst_tmp, "wb", compresslevel=6) as out:
+            out.write(header.encode("utf-8"))
+            with open(src_geojson, "rb") as src:
+                for feat in ijson.items(src, "features.item"):
+                    props = feat.get("properties") or {}
+                    props.setdefault("source", source_name)
+                    feat["properties"] = props
+                    if n > 0:
+                        out.write(b",")
+                    out.write(json.dumps(feat, ensure_ascii=False,
+                                          separators=(",", ":"),
+                                          default=_enc_default).encode("utf-8"))
+                    n += 1
+            out.write(b"]}")
+        dst_tmp.replace(dst_gz)
+        return n
+    except BaseException:
+        dst_tmp.unlink(missing_ok=True)
+        raise
 
 
 def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
