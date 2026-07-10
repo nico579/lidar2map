@@ -3636,9 +3636,13 @@ def _telecharger_jre_local():
                     if _nm.startswith(("/", "\\")) or ".." in Path(_nm).parts \
                             or (len(_nm) > 1 and _nm[1] == ":"):
                         raise ValueError(f"Archive JRE suspecte : {_nm!r}")
+                    if _m.isdev():
+                        # device/FIFO : jamais légitime dans un JRE
+                        raise ValueError(f"Fichier spécial dans le JRE : {_nm!r}")
                     if _m.issym() or _m.islnk():
                         _lnk = _m.linkname
-                        if _lnk.startswith(("/", "\\")):
+                        if _lnk.startswith(("/", "\\")) \
+                                or (len(_lnk) > 1 and _lnk[1] == ":"):
                             raise ValueError(f"Lien absolu dans le JRE : {_nm!r}")
                         # symlink : cible relative au dossier du membre ;
                         # hardlink : cible relative à la racine de l'archive.
@@ -7469,7 +7473,11 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
                 raise IOError(f"HTTP {status}")
             ct = (ct or "").lower()
             if "xml" in ct or "html" in ct:
-                return None   # réponse d'erreur serveur
+                # Rapport d'exception WMTS/HTML servi en 200 : erreur de
+                # service/auth/paramètre, PAS une tuile absente. La classer
+                # "absente" contournait le circuit-breaker (revue 2026-07-10).
+                raise IOError(f"server error response ({ct}): "
+                              f"{bytes(data[:120] if data else b'')!r}")
             # Erreur serveur JSON déguisée en 200 (ArcGIS/XYZ, cf.
             # telecharger_dalle_directe) : IOError → retry, pas "absente".
             if data and data.lstrip()[:1] == b"{" and b'"error"' in data[:200]:
@@ -11684,11 +11692,15 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     ecrire_geojson = "geojson" in formats
 
     # Nom de sortie : suffixe seul pour BDTOPO_V3 (défaut historique, cache
-    # préservé) ; pour tout AUTRE namespace, le préfixer — deux namespaces
-    # peuvent partager le même suffixe et leurs fichiers s'écrasaient.
+    # préservé) ; pour tout AUTRE namespace, préfixer + hash court du typename
+    # COMPLET — deux namespaces peuvent partager le même suffixe, et la seule
+    # normalisation collisionnait encore (ns:a-b vs ns:a_b → même nom).
     _ns, _sep, _suf = typename.partition(":")
     if _sep and _ns.strip().upper() != "BDTOPO_V3":
-        layer_short = re.sub(r"[^a-z0-9]+", "_", f"{_ns}_{_suf}".lower()).strip("_")
+        import hashlib as _hl
+        _h6 = _hl.md5(typename.encode("utf-8")).hexdigest()[:6]
+        layer_short = (re.sub(r"[^a-z0-9]+", "_", f"{_ns}_{_suf}".lower()).strip("_")
+                       + f"_{_h6}")
     else:
         layer_short = (_suf or _ns).lower()
     sortie    = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
@@ -12980,42 +12992,45 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         return None
 
     # ── Extraction du .gpkg depuis le .7z ────────────────────────────────────
+    # Dans un dossier temporaire UNIQUE (pid) puis promotion replace() : le
+    # membre est sélectionné par son CHEMIN EXACT dans l'archive. L'ancien
+    # rglob sur le cache PARTAGÉ était ambigu : .gpkg d'un AUTRE département
+    # renommé à sa place (multi-dép 83,84 → données du mauvais département,
+    # cache détruit), homonyme périmé d'une extraction crashée, ou process
+    # concurrent. Le .gpkg est validé (taille + ouverture SQLite) AVANT
+    # d'entrer au cache.
     print(f"  Extracting GPKG from {sz_path.name}...", flush=True)
+    _tmp_dir = cache_dir / f"_extract_{os.getpid()}"
     try:
         with _py7zr.SevenZipFile(sz_path, mode="r") as z:
-            # Trouver le .gpkg dans l'archive
             gpkg_names = [n for n in z.getnames() if n.lower().endswith(".gpkg")]
             if not gpkg_names:
                 print("  ERROR: no .gpkg in the 7z archive")
                 sz_path.unlink(missing_ok=True)
                 return None
-            # Extraire uniquement le .gpkg (peut être dans un sous-dossier)
-            z.extract(targets=gpkg_names, path=cache_dir)
+            if len(gpkg_names) > 1:
+                print(f"  ({len(gpkg_names)} .gpkg in archive - using {gpkg_names[0]})")
+            _tmp_dir.mkdir(parents=True, exist_ok=True)
+            z.extract(targets=gpkg_names, path=_tmp_dir)
 
-        # Trouver le fichier extrait (py7zr peut placer le .gpkg dans un
-        # sous-dossier du cache_dir selon la structure interne du 7z).
-        # IMPÉRATIF : matcher par le NOM DE MEMBRE de l'archive, pas "premier
-        # .gpkg du cache" — le cache est PARTAGÉ entre départements : un
-        # rglob aveugle trouvait le .gpkg d'un AUTRE département (à la racine,
-        # avant le sous-dossier fraîchement extrait) et le RENOMMAIT en
-        # gpkg_path → données du mauvais département servies silencieusement
-        # + cache de l'autre département détruit. Déclenché systématiquement
-        # par un run multi-départements (83,84).
-        _noms_membres = {Path(n).name for n in gpkg_names}
-        extracted = next((p for p in cache_dir.rglob("*.gpkg")
-                          if p.name in _noms_membres), None)
-        if extracted is None:
+        extracted = _tmp_dir / gpkg_names[0]
+        if not extracted.exists():
             print("  ERROR: .gpkg not found after extraction")
             return None
-        if extracted != gpkg_path:
-            extracted.replace(gpkg_path)
-            # Nettoyer le sous-dossier laissé par py7zr s'il est devenu vide
-            try:
-                if extracted.parent != cache_dir and not any(extracted.parent.iterdir()):
-                    extracted.parent.rmdir()
-            except OSError:
-                pass
+        # Validation avant promotion : taille plausible + SQLite lisible.
+        if extracted.stat().st_size < 10_000_000:
+            print(f"  ERROR: extracted GPKG too small "
+                  f"({extracted.stat().st_size} B) - discarded")
+            return None
+        try:
+            _con_v = sqlite3.connect(f"file:{extracted}?mode=ro", uri=True)
+            _con_v.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+            _con_v.close()
+        except Exception as _e_v:
+            print(f"  ERROR: extracted GPKG unreadable ({_e_v}) - discarded")
+            return None
 
+        extracted.replace(gpkg_path)      # promotion atomique vers le cache
         sz_path.unlink(missing_ok=True)   # libérer l'espace du .7z
         print(f"  ✓ GPKG extrait : {gpkg_path.name} "
               f"({gpkg_path.stat().st_size/1e6:.0f} MB)", flush=True)
@@ -13025,6 +13040,8 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
         print(f"  ERROR .7z extraction ({type(e).__name__}): {e}")
         sz_path.unlink(missing_ok=True)
         return None
+    finally:
+        shutil.rmtree(_tmp_dir, ignore_errors=True)
 
 
 def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
