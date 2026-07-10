@@ -10214,11 +10214,20 @@ def _planche_depuis_dossier(dossier, args, nom_zone=None):
              for p in d.rglob(pat)],
             key=lambda p: _prio.get(p.suffix.lower(), 9))
         produits = {}   # produit -> {cle: bbox}  ('__single__' hors découpage)
+        geo_bboxes = []; geo_stems = []
         for f in fichiers:
             stem = f.name
             for suf in _SUFS:
                 if stem.lower().endswith(suf):
                     stem = stem[:-len(suf)]; break
+            # Famille GeoJSON (vecteur IGN/OSM/fusion) : les couches d'un même
+            # run décrivent la MÊME zone → UNE planche pour l'ensemble (demande
+            # de Nico), pas une par couche. Collectées à part, groupées après.
+            if f.name.lower().endswith((".geojson", ".geojson.gz")):
+                bbox = _extraire_bbox_wgs84(f)
+                if bbox:
+                    geo_bboxes.append(bbox); geo_stems.append(stem)
+                continue
             m = _re.search(r"(\d{3})x(\d{3})", stem)
             cle = f"{m.group(1)}x{m.group(2)}" if m else "__single__"
             produit = _re.sub(r"_?\d{3}x\d{3}", "", stem).strip("_") or nom_zone
@@ -10228,22 +10237,50 @@ def _planche_depuis_dossier(dossier, args, nom_zone=None):
             bbox = _extraire_bbox_wgs84(f)
             if bbox:
                 cells[cle] = bbox
+        if geo_bboxes:
+            # Emprise du groupe = INTERSECTION des couches, pas l'union : les
+            # couches d'itinéraires (GR) portent des features ENTIÈRES
+            # traversant la région — l'union donnerait une emprise de centaines
+            # de km (et un centre potentiellement en mer, vécu). L'intersection
+            # approxime la zone réellement demandée. Union en repli si vide.
+            ib = (max(b[0] for b in geo_bboxes), max(b[1] for b in geo_bboxes),
+                  min(b[2] for b in geo_bboxes), min(b[3] for b in geo_bboxes))
+            if not (ib[0] < ib[2] and ib[1] < ib[3]):
+                ib = (min(b[0] for b in geo_bboxes), min(b[1] for b in geo_bboxes),
+                      max(b[2] for b in geo_bboxes), max(b[3] for b in geo_bboxes))
+            import os.path as _osp
+            nom_geo = _osp.commonprefix(geo_stems).strip("_") or nom_zone
+            produits[nom_geo] = {"__single__": ib}
         produits = {k: v for k, v in produits.items() if v}
         if not produits:
             print("  (index sheet: no readable deliverable found)", flush=True)
             return
         # Contour(s) département : une seule requête Nominatim pour tous les
         # produits (même zone), sur l'emprise globale.
+        # Contour département : viser le centre du produit le PLUS LOCAL (plus
+        # petite bbox), pas l'union. Les couches d'itinéraires (GR) contiennent
+        # des features ENTIÈRES traversant la région : l'union est énorme et
+        # son centre peut tomber en mer (vécu : centre en Méditerranée → reverse
+        # sans département → aucune planche avec contour). Repli sur l'union si
+        # le produit local ne résout rien.
+        def _pbbox(cells_d):
+            v = list(cells_d.values())
+            return (min(b[0] for b in v), min(b[1] for b in v),
+                    max(b[2] for b in v), max(b[3] for b in v))
+        pb_all = {k: _pbbox(v) for k, v in produits.items()}
+        ref_bbox = min(pb_all.values(),
+                       key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
         allb = [b for v in produits.values() for b in v.values()]
         gbbox = (min(b[0] for b in allb), min(b[1] for b in allb),
                  max(b[2] for b in allb), max(b[3] for b in allb))
-        contours = _planche_contours_dept(gbbox, args)
+        contours = _planche_contours_dept(ref_bbox, args)
+        if not contours and gbbox != ref_bbox:
+            time.sleep(1.1)   # Nominatim : 1 req/s
+            contours = _planche_contours_dept(gbbox, args)
         for produit, cells_d in sorted(produits.items()):
             cells = sorted((k, v) for k, v in cells_d.items() if k != "__single__")
-            pb = list(cells_d.values())
-            bbox = (min(b[0] for b in pb), min(b[1] for b in pb),
-                    max(b[2] for b in pb), max(b[3] for b in pb))
-            _generer_planche(bbox, cells or None, produit, d, args, contours=contours)
+            _generer_planche(pb_all[produit], cells or None, produit, d, args,
+                             contours=contours)
     except Exception as e:
         print(f"  (index sheet skipped: {type(e).__name__}: {e})", flush=True)
 
@@ -10281,8 +10318,17 @@ def _planche_contours_dept(bbox_wgs84, args):
             n = addr.get("county") or addr.get("state_district") or addr.get("state")
             if n:
                 noms.append(n)
-        except Exception:
-            pass
+            else:
+                # Pas d'exception mais rien de résolu (centre en mer, hors
+                # couverture admin...) : le dire, sinon indiagnosticable.
+                print(f"  (index sheet: no department at "
+                      f"{latc:.4f},{lonc:.4f} - outline skipped)", flush=True)
+        except Exception as _e_rev:
+            # Visible : un best-effort qui échoue en silence est indiagnosticable
+            # (leçon du 2026-07-10 : la planche sortait sans département sans
+            # aucun indice sur la cause).
+            print(f"  (index sheet: reverse geocoding failed: "
+                  f"{type(_e_rev).__name__}: {_e_rev})", flush=True)
     contours = []
     for nom in noms[:4]:   # borne : ne pas spammer Nominatim
         try:
@@ -10300,8 +10346,9 @@ def _planche_contours_dept(bbox_wgs84, args):
                 for poly in g["coordinates"]:
                     contours.append(poly[0])
             time.sleep(1.1)   # Nominatim : 1 req/s
-        except Exception:
-            pass
+        except Exception as _e_sea:
+            print(f"  (index sheet: no outline for '{nom}': "
+                  f"{type(_e_sea).__name__}: {_e_sea})", flush=True)
     return contours
 
 
@@ -10388,6 +10435,55 @@ def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
 
         titre = nom_zone + (f"  -  {len(cells)} zones" if cells else "")
         dr.text((8, 6), titre, fill=(30, 41, 59), font=font)
+
+        # Carton de localisation (locator inset, standard cartes IGN papier) :
+        # quand la vue principale est zoomée (cap 4× sur petite zone), le
+        # contour du département est hors-champ — le fond couvre tout et la
+        # planche perd son contexte. On dessine alors en coin le département
+        # ENTIER avec l'emprise en rouge. Sauté quand la vue montre déjà le
+        # département (run départemental : le carton serait redondant).
+        if contours:
+            klon0 = min(p[0] for ring in contours for p in ring)
+            klon1 = max(p[0] for ring in contours for p in ring)
+            klat0 = min(p[1] for ring in contours for p in ring)
+            klat1 = max(p[1] for ring in contours for p in ring)
+            # Test de CONFINEMENT (pas un ratio d'aires : sur un petit
+            # département, une vue capée 4× peut en couvrir 30 % et un seuil
+            # d'aire sautait le carton à tort) : si le département ne tient
+            # pas entier dans la vue, on ajoute le carton.
+            _tol = 0.02 * max(klon1 - klon0, klat1 - klat0)
+            _dept_visible = (klon0 >= dlon0 - _tol and klon1 <= dlon1 + _tol
+                             and klat0 >= dlat0 - _tol and klat1 <= dlat1 + _tol)
+            if not _dept_visible:
+                kmid = _m.cos(_m.radians((klat0 + klat1) / 2))
+                kw_g = (klon1 - klon0) * kmid
+                kh_g = (klat1 - klat0)
+                iw = int(W * 0.30)
+                ih = max(24, int(iw * kh_g / max(kw_g, 1e-9)))
+                if ih > int(H * 0.38):          # borne : carton ≤ ~1/3 de haut
+                    ih = int(H * 0.38)
+                    iw = max(24, int(ih * kw_g / max(kh_g, 1e-9)))
+                pad = 6; marge = 8
+                x0i = W - iw - 2 * pad - marge
+                y0i = H - ih - 2 * pad - marge   # coin bas-droit
+                dr.rectangle([x0i, y0i, x0i + iw + 2 * pad, y0i + ih + 2 * pad],
+                             fill=(255, 255, 255), outline=(140, 150, 165))
+
+                def _kpx(lon, lat):
+                    return (x0i + pad + (lon - klon0) / (klon1 - klon0) * iw,
+                            y0i + pad + (klat1 - lat) / (klat1 - klat0) * ih)
+
+                for ring in contours:
+                    pts = [_kpx(lon, lat) for lon, lat in ring]
+                    if len(pts) >= 3:
+                        dr.polygon(pts, fill=(228, 233, 240),
+                                   outline=(140, 150, 165))
+                # Emprise en rouge, épaissie à 3 px minimum pour rester
+                # visible même quand la zone est minuscule vs le département.
+                kx0, ky0 = _kpx(lon0, lat1); kx1, ky1 = _kpx(lon1, lat0)
+                if kx1 - kx0 < 3: kx1 = kx0 + 3
+                if ky1 - ky0 < 3: ky1 = ky0 + 3
+                dr.rectangle([kx0, ky0, kx1, ky1], outline=(220, 38, 38), width=2)
 
         out = Path(dossier) / f"{nom_zone}_planche.png"
         out.parent.mkdir(parents=True, exist_ok=True)
