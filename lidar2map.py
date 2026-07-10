@@ -7474,6 +7474,15 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
 # GÉNÉRATION MBTILES
 # ============================================================
 
+class ZoneHorsCouvertureWMTS(RuntimeError):
+    """Abort couverture WMTS : la zone est (quasi) entièrement hors de la couche
+    (que des 204). Distincte d'une panne I/O systémique (qui reste un RuntimeError
+    nu). En run simple, elle remonte : bbox probablement erronée, message d'aide
+    utile. En chunk de grille auto-généré, la boucle de split la rattrape et
+    saute la cellule (mer, hors frontière) : légitimement vide, pas une erreur."""
+    pass
+
+
 def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     zoom_min, zoom_max, layer, style, img_fmt,
                     apikey, apikey_requis, workers,
@@ -7552,6 +7561,8 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     erreurs     = 0    # exceptions worker (timeout, 401, 5xx, parsing) — diagnostic
     err_consec  = 0    # erreurs consécutives — utile pour détection panne globale
     abort_msg   = None # set si on abort à mi-parcours (clé expirée, etc.)
+    abort_hors_couv = False  # True si l'abort est un hors-couverture (que des 204),
+                             # False si panne I/O systémique — pilote le type d'exception.
     # Seuil d'abandon : au-delà de SEUIL_ERR_CONSEC erreurs consécutives,
     # on assume une panne systémique (clé API expirée, IGN down, réseau coupé)
     # et on n'écrit pas un MBTiles tronqué qui aurait l'apparence d'un succès.
@@ -7602,11 +7613,23 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     data = buf.getvalue()
                 except Exception:
                     pass  # fallback : garder le PNG original
-            # Écrire dans le cache
+            # Écrire dans le cache — écriture ATOMIQUE (temp + os.replace).
+            # Une écriture interrompue (Ctrl+C, crash, disque plein) ne doit pas
+            # laisser une tuile tronquée : au run suivant _cache_file.exists()
+            # serait vrai et read_bytes() relirait les octets partiels comme une
+            # tuile valide → pavé corrompu inséré dans le MBTiles. Miroir du
+            # .part + rename du chemin LiDAR (dalles). Pas de collision entre
+            # workers : chaque (z,x,y) n'est soumis qu'une fois.
             if data and dossier_cache is not None:
                 _cache_file = _cache_path(z, x, y)
                 _cache_file.parent.mkdir(parents=True, exist_ok=True)
-                _cache_file.write_bytes(data)
+                _cache_tmp = _cache_file.with_suffix(_cache_file.suffix + ".part")
+                try:
+                    _cache_tmp.write_bytes(data)
+                    os.replace(_cache_tmp, _cache_file)
+                except Exception:
+                    _cache_tmp.unlink(missing_ok=True)
+                    raise
                 _creer_fichier(_cache_file)
         return z, x, y, data
 
@@ -7705,6 +7728,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                         # abort tôt au lieu de tenter 100k tuiles vides en silence.
                         if (absentes >= SEUIL_HORS_COUVERTURE
                                 and ok * 50 < absentes and abort_msg is None):
+                            abort_hors_couv = True
                             abort_msg = (
                                 f"{absentes} tuiles hors couverture (204) pour "
                                 f"seulement {ok} dans la couche. Zone hors de la "
@@ -7747,6 +7771,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     # présenté comme un succès.
     if (abort_msg is None and not _stop_event.is_set()
             and absentes > 0 and ok * 50 < absentes):
+        abort_hors_couv = True
         abort_msg = (f"{ok} tuile(s) dans la couverture pour {absentes} hors couche "
                      f"(204). Zone hors de la couche, ou ordre de --zone-bbox inversé "
                      f": il attend W,S,E,N (longitude d'abord, ex. -5.0,47.8,-2.6,49.0).")
@@ -7757,8 +7782,16 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # logs.
         try: chemin_part.unlink(missing_ok=True)
         except Exception: pass
-        print(f"\n  ✗ ABANDON : {abort_msg}")
-        raise RuntimeError(f"WMTS abort : {abort_msg}")
+        if abort_hors_couv:
+            # Ligne neutre et factuelle : en chunk de grille la boucle de split
+            # ajoute « skipped » (pas d'alarme « ✗ ABANDON ... bbox inversé »
+            # trompeuse sur une cellule mer légitime). Le hint bbox complet
+            # reste dans l'exception, donc un run simple à bbox erronée le voit.
+            print(f"\n  ⊘ {absentes} tiles out of coverage (204) for {ok} in layer.")
+        else:
+            print(f"\n  ✗ ABANDON : {abort_msg}")
+        _exc_cls = ZoneHorsCouvertureWMTS if abort_hors_couv else RuntimeError
+        raise _exc_cls(f"WMTS abort : {abort_msg}")
 
     if _stop_event.is_set():
         # Partiel supprimé : sans valeur de reprise (les tuiles déjà reçues
@@ -9062,74 +9095,19 @@ Examples:
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
                          else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
-            manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
-            n_total   = len(sous_zones)
-            nb_done   = sum(1 for z in sous_zones
-                            if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
-            print(f"\n  ══ A-priori splitting: {mode_desc} ══")
-            print(f"  Manifeste : {manifeste.path}")
-            if nb_done:
-                print(f"  Resume: {nb_done}/{n_total} chunks already done")
-
-            # Un flag overwrite explicite perce l'état de reprise : sans ça, un
-            # re-run avec --tiles-overwrite (ou shadings/download) sur une zone
-            # déjà terminée sortait "already done" partout et ne refaisait rien.
-            # Les caches internes (dalles, ombrages) limitent le re-run au
-            # niveau réellement écrasé.
+            # Overwrite explicite perce la reprise (cf. jumeau WMTS). LiDAR inclut
+            # ombrages_ecraser (pas de shadings côté WMTS) : spécialisation gardée.
             _overwrite_actif = (args.tuiles_ecraser or args.ombrages_ecraser
                                 or args.telechargement_ecraser)
-            nb_ok = 0
-            for i_z, (i_lat, i_lon, bx1_z, by1_z, bx2_z, by2_z) in enumerate(sous_zones):
-                cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
-                nom_z = f"{nom_zone}_{cle}"
-
-                if manifeste.deja_traite(cle) and not _overwrite_actif:
-                    print(f"  [{cle}] {nom_z}: already done")
-                    nb_ok += 1
-                    continue
-
-                _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
-                              cle, nb_ok, n_total)
-
-                surface = (bx2_z-bx1_z)/1000 * (by2_z-by1_z)/1000
-                print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
-                print(f"     BBox L93 : {bx1_z:.0f},{by1_z:.0f} → "
-                      f"{bx2_z:.0f},{by2_z:.0f}  (~{surface:.0f} km²)")
-                manifeste.debut_morceau(cle, nom_z)
-                t0_z = time.time()
-                try:
-                    _traiter_bbox_lidar(args, (bx1_z, by1_z, bx2_z, by2_z),
-                                        nom_z, nom_zone, manifeste, cle)
-                    manifeste.fin_morceau(cle, int(time.time() - t0_z))
-                    print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
-                    _n_done, _eta = manifeste.eta_global(n_total)
-                    if _eta:
-                        print(f"  [{cle}] {_n_done}/{n_total} done, "
-                              f"ETA ~{_hms(_eta)} remaining (coarse)")
-                    nb_ok += 1
-                    if getattr(args, "nettoyage", False):
-                        # Si le chunk a produit un mbtiles vide OU aucun mbtiles
-                        # (chunk en mer hors couverture IGN, ou bug à diagnostiquer),
-                        # on conserve les .tif intermédiaires pour permettre
-                        # l'inspection — sinon l'utilisateur perd le contexte.
-                        _dossier_chunk = (
-                            (Path(args.dossier).resolve() if args.dossier
-                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
-                            / nom_z)
-                        _mbts = list(_dossier_chunk.glob("*.mbtiles"))
-                        _has_empty = (not _mbts) or any(
-                            not _mbtiles_est_complete(mbt) for mbt in _mbts)
-                        if _has_empty:
-                            print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
-                        else:
-                            _supprimer_fichiers(manifeste.fichiers_morceau(cle))
-                except Exception as _e_z:
-                    print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
-                    raise
-
-            elapsed = int(time.time() - t_debut)
-            print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
-            print(f"  Total time: {_hms(elapsed)}")
+            def _entete_lidar(c):
+                bx1, by1, bx2, by2 = c
+                surface = (bx2-bx1)/1000 * (by2-by1)/1000
+                return (f"BBox L93 : {bx1:.0f},{by1:.0f} → "
+                        f"{bx2:.0f},{by2:.0f}  (~{surface:.0f} km²)")
+            def _chunk_lidar(coords, nom_z, cle, manifeste):
+                _traiter_bbox_lidar(args, coords, nom_z, nom_zone, manifeste, cle)
+            _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
+                              _overwrite_actif, _entete_lidar, _chunk_lidar, t_debut)
             return
         print("  A-priori splitting: zone too small -> single pass")
 
@@ -10084,6 +10062,95 @@ def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
     return False
 
 
+def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
+                      overwrite_actif, entete_chunk, traiter_chunk, t_debut):
+    """Boucle de découpage a-priori commune aux pipelines LiDAR et WMTS.
+
+    Squelette partagé (itération des sous-zones + reprise via Manifeste + garde
+    disque + ETA + cleanup + gestion d'échec). Historiquement dupliqué entre les
+    deux mains (jumeaux ~90 %), source de drift : le skip couverture avait été
+    ajouté d'un seul côté. Les deux points de variation légitimes passent en
+    callbacks :
+      entete_chunk(coords) -> str : ligne « BBox ... (~N km²) » (unités et CRS
+                                    propres au pipeline : L93 m vs WGS84°).
+      traiter_chunk(coords, nom_z, cle, manifeste) : le travail par chunk
+                                    (_traiter_bbox_lidar / _traiter_bbox_wmts).
+
+    coords = tuple bbox de la sous-zone (L93 pour LiDAR, WGS84 pour WMTS), opaque
+    pour la boucle : seuls les callbacks l'interprètent. Suppose len(sous_zones)>1
+    (les appelants font le garde-fou et le message « single pass »).
+
+    Un chunk entièrement hors couverture (ZoneHorsCouvertureWMTS, cas mer/hors
+    frontière côté WMTS) est sauté, pas fatal ; le LiDAR ne lève jamais cette
+    exception (il gère le vide dans son chunk), le catch lui est inoffensif.
+    Toute autre exception remonte (fail-fast + reprise via le manifeste)."""
+    manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
+    n_total   = len(sous_zones)
+    nb_done   = sum(1 for z in sous_zones
+                    if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
+    print(f"\n  ══ A-priori splitting: {mode_desc} ══")
+    print(f"  Manifeste : {manifeste.path}")
+    if nb_done:
+        print(f"  Resume: {nb_done}/{n_total} chunks already done")
+
+    nb_ok = 0
+    for i_z, sz in enumerate(sous_zones):
+        i_lat, i_lon = sz[0], sz[1]
+        coords = tuple(sz[2:])
+        cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
+        nom_z = f"{nom_zone}_{cle}"
+
+        if manifeste.deja_traite(cle) and not overwrite_actif:
+            print(f"  [{cle}] {nom_z}: already done")
+            nb_ok += 1
+            continue
+
+        _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
+                      cle, nb_ok, n_total)
+
+        print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
+        print(f"     {entete_chunk(coords)}")
+        manifeste.debut_morceau(cle, nom_z)
+        t0_z = time.time()
+        try:
+            traiter_chunk(coords, nom_z, cle, manifeste)
+            manifeste.fin_morceau(cle, int(time.time() - t0_z))
+            print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
+            _n_done, _eta = manifeste.eta_global(n_total)
+            if _eta:
+                print(f"  [{cle}] {_n_done}/{n_total} done, "
+                      f"ETA ~{_hms(_eta)} remaining (coarse)")
+            nb_ok += 1
+            if getattr(args, "nettoyage", False):
+                # Chunk au mbtiles vide OU sans mbtiles (mer hors couverture, ou
+                # bug à diagnostiquer) : on conserve les intermédiaires pour
+                # inspection plutôt que tout supprimer silencieusement.
+                _dossier_chunk = racine_pr / nom_z
+                _mbts = list(_dossier_chunk.glob("*.mbtiles"))
+                _has_empty = (not _mbts) or any(
+                    not _mbtiles_est_complete(mbt) for mbt in _mbts)
+                if _has_empty:
+                    print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
+                else:
+                    _supprimer_fichiers(manifeste.fichiers_morceau(cle))
+        except ZoneHorsCouvertureWMTS:
+            # Chunk auto-généré entièrement hors couverture (mer, hors frontière) :
+            # légitimement vide, pas une bbox erronée. On le marque fait et on
+            # continue — sinon un département côtier en grille meurt au premier
+            # chunk mer et le relaunch le rejoue à l'infini.
+            manifeste.fin_morceau(cle, int(time.time() - t0_z))
+            print(f"  [{cle}] ⊘ No coverage (sea / outside layer) - chunk skipped")
+            nb_ok += 1
+            continue
+        except Exception as _e_z:
+            print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
+            raise
+
+    elapsed = int(time.time() - t_debut)
+    print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
+    print(f"  Total time: {_hms(elapsed)}")
+
+
 def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
     """
     Traite un morceau LiDAR directement en Python (sans subprocess).
@@ -10908,70 +10975,20 @@ Examples:
         if len(sous_zones) > 1:
             racine_pr = (Path(args.dossier).resolve() if args.dossier
                          else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster")
-            manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
-            n_total   = len(sous_zones)
-            nb_done   = sum(1 for z in sous_zones
-                            if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
-            print(f"\n  ══ A-priori splitting: {mode_desc} ══")
-            print(f"  Manifeste : {manifeste.path}")
-            if nb_done:
-                print(f"  Resume: {nb_done}/{n_total} chunks already done")
-
-            # Overwrite explicite = percer la reprise (cf. site jumeau LiDAR).
+            # Overwrite explicite perce la reprise (cf. jumeau LiDAR). Pas de
+            # ombrages_ecraser ici : le WMTS n'a pas d'étape shadings.
             _overwrite_actif = (args.tuiles_ecraser or args.telechargement_ecraser)
-            nb_ok = 0
-            for i_z, (i_lat, i_lon, lon_w, lat_s, lon_e, lat_n) in enumerate(sous_zones):
-                cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
-                nom_z = f"{nom_zone}_{cle}"
-
-                if manifeste.deja_traite(cle) and not _overwrite_actif:
-                    print(f"  [{cle}] {nom_z}: already done")
-                    nb_ok += 1
-                    continue
-
-                _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
-                              cle, nb_ok, n_total)
-
-                surface_km2 = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
-                              ((lat_n-lat_s)*111)
-                print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
-                print(f"     BBox WGS84 : {lon_w:.4f},{lat_s:.4f} → "
-                      f"{lon_e:.4f},{lat_n:.4f}  (~{surface_km2:.0f} km²)")
-                manifeste.debut_morceau(cle, nom_z)
-                t0_z = time.time()
-                try:
-                    _traiter_bbox_wmts(args, (lon_w, lat_s, lon_e, lat_n),
-                                       nom_z, nom_zone, layer, style, img_fmt, fmt_ext,
-                                       apikey_requis, manifeste, cle)
-                    manifeste.fin_morceau(cle, int(time.time() - t0_z))
-                    print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
-                    _n_done, _eta = manifeste.eta_global(n_total)
-                    if _eta:
-                        print(f"  [{cle}] {_n_done}/{n_total} done, "
-                              f"ETA ~{_hms(_eta)} remaining (coarse)")
-                    nb_ok += 1
-                    if getattr(args, "nettoyage", False):
-                        # Cf. boucle LiDAR : si chunk vide ou aucun mbtiles, on
-                        # conserve les intermédiaires pour inspection plutôt que
-                        # de tout supprimer silencieusement.
-                        _dossier_chunk = (
-                            (Path(args.dossier).resolve() if args.dossier
-                             else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster")
-                            / nom_z)
-                        _mbts = list(_dossier_chunk.glob("*.mbtiles"))
-                        _has_empty = (not _mbts) or any(
-                            not _mbtiles_est_complete(mbt) for mbt in _mbts)
-                        if _has_empty:
-                            print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
-                        else:
-                            _supprimer_fichiers(manifeste.fichiers_morceau(cle))
-                except Exception as _e_z:
-                    print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
-                    raise
-
-            elapsed = int(time.time() - t_debut)
-            print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
-            print(f"  Total time: {_hms(elapsed)}")
+            def _entete_wmts(c):
+                lon_w, lat_s, lon_e, lat_n = c
+                surface = ((lon_e-lon_w)*111*math.cos(math.radians((lat_s+lat_n)/2))) * \
+                          ((lat_n-lat_s)*111)
+                return (f"BBox WGS84 : {lon_w:.4f},{lat_s:.4f} → "
+                        f"{lon_e:.4f},{lat_n:.4f}  (~{surface:.0f} km²)")
+            def _chunk_wmts(coords, nom_z, cle, manifeste):
+                _traiter_bbox_wmts(args, coords, nom_z, nom_zone, layer, style,
+                                   img_fmt, fmt_ext, apikey_requis, manifeste, cle)
+            _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
+                              _overwrite_actif, _entete_wmts, _chunk_wmts, t_debut)
             return
         print("  A-priori splitting: zone too small -> single pass")
 
