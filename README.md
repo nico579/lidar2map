@@ -407,6 +407,10 @@ Send to phone: the 📲 button serves the generated maps over local WiFi, scan t
 
 ![Send to phone (QR)](screenshots/GUI/Phone.PNG)
 
+The index sheet dropped next to the deliverables: real department outline and numbered chunk cells (here a Var department VAT run split into 3×4 zones; the slight overlaps are the real shared edge tiles at low zooms).
+
+![Index sheet](screenshots/index_sheet.png)
+
 ### Rendering in Locus Map
 
 Archaeological LiDAR relief shown as an overlay on the terrain in Locus Map.

@@ -403,6 +403,10 @@ Envoi vers le téléphone : le bouton 📲 sert les cartes générées sur le Wi
 
 ![Envoi vers le téléphone (QR)](screenshots/GUI/Phone.PNG)
 
+La planche d'assemblage déposée à côté des livrables : contour réel du département et cellules numérotées (ici un run VAT du Var découpé en 3×4 zones ; les légers chevauchements sont les vraies tuiles de bord partagées aux zooms bas).
+
+![Planche d'assemblage](screenshots/index_sheet.png)
+
 ### Rendu sur Locus Map
 
 Ombrages LiDAR archéo affichés en superposition sur le terrain dans Locus Map.
