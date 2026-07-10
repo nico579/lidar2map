@@ -97,7 +97,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Processing queue**: in the GUI, stack several zones with the `＋ Queue` button, then `Run queue` runs them one after another, unattended. A failed job doesn't stop the queue (each item shows its status), so you can line up a batch of areas and walk away. The CLI equivalent is chaining commands in a shell script.
 
-- **Index sheet**: each run drops a `<product>_planche.png` next to the deliverables, showing the coverage extent, the real department outline (with a locator inset when the view is zoomed in), and the numbered chunk cells when the area was split. One sheet per map product (each shading gets its own); the vector layers of a run share a single sheet. Built by scanning the actual files (mbtiles/sqlitedb/geojson), so you can also regenerate it for any existing project folder with `--planche DIR`, without re-running anything. Disable per-run with `--no-index-map`.
+- **Index sheet**: each run drops a `<product>_planche.png` next to the deliverables, showing the coverage extent, the real department outline (with a locator inset when the view is zoomed in), and the numbered chunk cells when the area was split. One sheet per map product (each shading gets its own); the vector layers of a run share a single sheet. Built by scanning the actual files (mbtiles/sqlitedb/geojson), so you can also regenerate it for any existing project folder with `--index-sheet DIR`, without re-running anything. Disable per-run with `--no-index-map`.
 
 ---
 

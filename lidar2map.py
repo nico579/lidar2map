@@ -8798,7 +8798,7 @@ Examples:
                              "an index sheet (extent + department outline + numbered "
                              "chunk cells for splits). Enabled by default; "
                              "--no-index-map disables it. Standalone on an existing "
-                             "project folder: --planche DIR.")
+                             "project folder: --index-sheet DIR (alias --planche).")
 
     # Ombrages
     parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
@@ -15958,7 +15958,8 @@ if __name__ == "__main__":
                                   dest=f"_mode_{_key}")
             # Mode standalone : (re)générer la planche d'assemblage d'un dossier
             # projet existant, sans rejouer le traitement. Balaie les livrables.
-            _pre.add_argument("--planche", "--index-sheet", dest="_planche_dir",
+            # Anglais canonique + alias FR, comme tous les flags (--split/--decouper).
+            _pre.add_argument("--index-sheet", "--planche", dest="_planche_dir",
                               default=None)
             _ns_pre, _ = _pre.parse_known_args()
             if getattr(_ns_pre, "_planche_dir", None):

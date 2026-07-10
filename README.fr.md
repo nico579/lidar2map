@@ -95,7 +95,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **File d'attente des traitements** : dans la GUI, on empile plusieurs zones avec le bouton `＋ File`, puis `Lancer la file` les traite l'une après l'autre, sans surveillance. Un job en échec n'arrête pas la file (chaque item affiche son statut), on peut donc aligner un lot de zones et laisser tourner. En CLI, l'équivalent est l'enchaînement de commandes dans un script shell.
 
-- **Planche d'assemblage** : chaque run dépose un `<produit>_planche.png` à côté des livrables : emprise couverte, contour réel du département (avec un carton de localisation quand la vue est zoomée), et cellules numérotées quand la zone a été découpée. Une planche par produit carto (chaque ombrage a la sienne) ; les couches vecteur d'un run partagent une planche unique. Construite en balayant les fichiers réels (mbtiles/sqlitedb/geojson), donc régénérable sur un dossier projet existant avec `--planche DOSSIER`, sans rien rejouer. Désactivable par run avec `--no-index-map`.
+- **Planche d'assemblage** : chaque run dépose un `<produit>_planche.png` à côté des livrables : emprise couverte, contour réel du département (avec un carton de localisation quand la vue est zoomée), et cellules numérotées quand la zone a été découpée. Une planche par produit carto (chaque ombrage a la sienne) ; les couches vecteur d'un run partagent une planche unique. Construite en balayant les fichiers réels (mbtiles/sqlitedb/geojson), donc régénérable sur un dossier projet existant avec `--index-sheet DOSSIER` (alias `--planche`), sans rien rejouer. Désactivable par run avec `--no-index-map`.
 
 ---
 
