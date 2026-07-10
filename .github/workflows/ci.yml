@@ -267,3 +267,6 @@ jobs:
 
       - name: Tests tuilage MBTiles/RMAP/SQLiteDB
         run: python tests/_test_tiling.py
+
+      - name: Tests robustesse reseau/pagination/cache (sans reseau, mocks)
+        run: python tests/_test_robustesse.py

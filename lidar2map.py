@@ -13205,9 +13205,28 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
             bbox_filter = (xmin, ymin, xmax, ymax)
 
         # Streaming feature par feature → fichier GeoJSON temp.
-        # On reprojete chaque géométrie via fiona.transform (Pyproj sous-jacent).
         with fiona.open(str(gpkg_path), layer=layer_name) as src:
             src_crs = src.crs
+            # UN SEUL Transformer pyproj réutilisé pour toute la couche :
+            # fiona.transform_geom en recrée un PAR APPEL (~15 ms) → mesuré
+            # 2026-07-10 sur les 422 240 tronçons du Var : 66 feats/s ≈ 106 min,
+            # PIRE que les 44 min du fallback WFS que ce chemin doit éviter.
+            # Transformer unique : ~2 900 feats/s (×43), département en ~2,5 min.
+            # (La coordonnée Z de BD TOPO est abandonnée au passage : inutile
+            # pour le rendu carto, et fichiers plus petits.)
+            _tr = _get_transformer(str(src_crs), "EPSG:4326")
+
+            def _tx(c):
+                if not c:
+                    return c
+                if isinstance(c[0], (int, float)):           # point [x, y, ...]
+                    _x, _y = _tr.transform(c[0], c[1])
+                    return [_x, _y]
+                if isinstance(c[0][0], (int, float)):        # ligne/anneau : vectorisé
+                    _xs, _ys = _tr.transform([p[0] for p in c], [p[1] for p in c])
+                    return [[_px, _py] for _px, _py in zip(_xs, _ys)]
+                return [_tx(e) for e in c]
+
             n_total = 0
             with open(tmp_geojson, "w", encoding="utf-8") as out:
                 out.write('{"type":"FeatureCollection","features":[\n')
@@ -13219,19 +13238,32 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                     geom = feat["geometry"]
                     if geom is None:
                         continue
-                    # Reprojection en EPSG:4326 (WGS84)
-                    geom_4326 = _xform_geom(src_crs, "EPSG:4326", geom)
+                    gd = dict(_fiona_to_dict(geom))   # copie : ne pas muter fiona
+                    if "coordinates" in gd:
+                        gd["coordinates"] = _tx(gd["coordinates"])
+                    else:
+                        # Type exotique (GeometryCollection…) : chemin lent OK,
+                        # inexistant dans les couches BD TOPO courantes.
+                        gd = _fiona_to_dict(_xform_geom(src_crs, "EPSG:4326", geom))
                     props = dict(feat["properties"]) if feat.get("properties") else {}
                     if not first:
                         out.write(",\n")
                     first = False
                     json.dump({
                         "type":       "Feature",
-                        "geometry":   _fiona_to_dict(geom_4326),
+                        "geometry":   gd,
                         "properties": props,
                     }, out, ensure_ascii=False, default=_json_default)
                     n_total += 1
+                    # Progression : l'extraction était totalement muette — un
+                    # département entier semblait figé (vécu : 45 min sans un
+                    # octet de sortie, indiscernable d'un blocage).
+                    if n_total % 20000 == 0:
+                        print(f"\r  {layer_name}: {n_total} features...",
+                              end="", flush=True)
                 out.write("\n]}\n")
+            if n_total >= 20000:
+                print(flush=True)   # clore la ligne de progression
     except Exception as e:
         print(f"  ERROR fiona extraction {layer_name}: {type(e).__name__}: {e}")
         tmp_geojson.unlink(missing_ok=True)
