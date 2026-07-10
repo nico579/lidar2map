@@ -2368,7 +2368,7 @@ NB_WORKERS     = 8    # workers parallèles par défaut (téléchargement dalles
 # ── MBTiles / WMTS — paramètres de batch ─────────────────────────────────────
 SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne systémique)
 SEUIL_HORS_COUVERTURE = 300  # tuiles toutes en 204 avec 0 succès → bbox hors couche
-BATCH_MBTILES_INSERT  = 500  # tuiles par INSERT executemany dans MBTiles WMTS
+BATCH_MBTILES_INSERT  = 2000 # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
@@ -7581,6 +7581,10 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 
     con = sqlite3.connect(str(chemin_part))
     con.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
+    # synchronous=OFF sans risque : la cible est un .part jeté sur échec (au
+    # pire un crash OS laisse un .part corrompu, purgé au run suivant). Le
+    # fichier LIVRÉ repasse en journal DELETE au finally avant publication.
+    con.execute("PRAGMA synchronous=OFF;")
     cur = con.cursor()
     cur.executescript("""
         CREATE TABLE metadata (name TEXT, value TEXT);
@@ -8028,7 +8032,6 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
         print(f"  {n_zooms} zoom(s), {total_tiles:,} tile positions", flush=True)
 
         # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──
-        tile_off = {}
         zoom_hdr_offset = {}
 
         largeur = 30
@@ -8052,38 +8055,57 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
                     f.write(_wl(0))
 
                 # --- ZOOM HEADERS + TILE DATA ---
+                from array import array as _array
                 for z in zooms:
                     zd = zm[z]
+                    nx, ny = zd['nx'], zd['ny']
 
-                    # Pré-chargement des tuiles de ce zoom en mémoire : une seule
-                    # requête au lieu de nx×ny SELECTs (gain ×100 à ×1000 sur les
-                    # gros MBTiles). Mémoire bornée par le zoom courant — libérée
-                    # avant de passer au zoom suivant.
-                    tuiles_z = {
-                        (col, row): data
-                        for col, row, data in con.execute(
-                            "SELECT tile_column, tile_row, tile_data FROM tiles "
-                            "WHERE zoom_level=?", (z,))
-                    }
+                    # FUSION SÉQUENTIELLE curseur SQL ↔ balayage de grille :
+                    # l'ordre d'écriture (tx externe, ty interne = colonne
+                    # ascendante, y_xyz ascendant = tile_row TMS DESCENDANT)
+                    # correspond exactement à ORDER BY tile_column, tile_row
+                    # DESC. Remplace le dict {(col,row): blob} qui chargeait
+                    # TOUS les JPEG du zoom en RAM (plusieurs Go au niveau
+                    # départemental z18) — désormais un seul blob à la fois.
+                    cur_t = con.execute(
+                        "SELECT tile_column, tile_row, tile_data FROM tiles "
+                        "WHERE zoom_level=? "
+                        "ORDER BY tile_column ASC, tile_row DESC", (z,))
+                    suivant = cur_t.fetchone()
 
                     zoom_hdr_offset[z] = f.tell()
                     f.write(_wi(zd['w'])); f.write(_wi(-zd['h']))
                     f.write(_wi(zd['nx'])); f.write(_wi(zd['ny']))
                     tile_hdr_pos = f.tell()
-                    for _ in range(zd['nx'] * zd['ny']):
+                    for _ in range(nx * ny):
                         f.write(_wl(0))
 
-                    tile_off[z] = {}
+                    # Offsets en array('q') indexé tx*ny+ty : ~8 octets par
+                    # position au lieu d'un dict {(tx,ty): int} (~200 octets
+                    # par entrée, ~150 Mo au niveau départemental).
+                    offs = _array("q", bytes(8 * nx * ny))
 
-                    for tx in range(zd['nx']):
-                        for ty in range(zd['ny']):
-                            col     = zd['x0'] + tx
-                            y_xyz   = zd['y0'] + ty
-                            y_tms   = (1 << z) - 1 - y_xyz
+                    for tx in range(nx):
+                        col = zd['x0'] + tx
+                        for ty in range(ny):
+                            y_xyz = zd['y0'] + ty
+                            y_tms = (1 << z) - 1 - y_xyz
 
-                            jpeg = tuiles_z.get((col, y_tms), EMPTY_JPEG)
+                            # Défensif : sauter d'éventuelles lignes "derrière"
+                            # le balayage (ne devrait pas arriver, l'étendue
+                            # couvre toutes les tuiles du zoom).
+                            while suivant is not None and (
+                                    suivant[0] < col
+                                    or (suivant[0] == col and suivant[1] > y_tms)):
+                                suivant = cur_t.fetchone()
+                            if (suivant is not None and suivant[0] == col
+                                    and suivant[1] == y_tms):
+                                jpeg = suivant[2]
+                                suivant = cur_t.fetchone()
+                            else:
+                                jpeg = EMPTY_JPEG
 
-                            tile_off[z][(tx, ty)] = f.tell()
+                            offs[tx * ny + ty] = f.tell()
                             f.write(_wi(7))
                             f.write(_wi(len(jpeg)))
                             f.write(jpeg)
@@ -8098,15 +8120,12 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
                                       f"  {_hms(elapsed)}",
                                       end="", flush=True)
 
-                    # Libérer la mémoire des tuiles de ce zoom avant le suivant
-                    tuiles_z = None
-
                     # --- RÉÉCRIRE le zoom header avec les vrais offsets ---
                     pos_after = f.tell()
                     f.seek(tile_hdr_pos)
-                    for ty in range(zd['ny']):
-                        for tx in range(zd['nx']):
-                            f.write(_wl(tile_off[z][(tx, ty)]))
+                    for ty in range(ny):
+                        for tx in range(nx):
+                            f.write(_wl(offs[tx * ny + ty]))
                     f.seek(pos_after)
 
                 # --- MAP INFO ---
@@ -8220,6 +8239,7 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
 
         con_db = sqlite3.connect(str(sqlitedb_part))
         con_db.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
+        con_db.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec, cf. WMTS
         con_db.executescript("""
             CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
             CREATE TABLE android_metadata (locale TEXT);
@@ -10964,6 +10984,11 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
         # le check "Existing chunk" au run suivant).
         chemin_z_part = _chemin_part(chemin_z)
         con_z = _sq.connect(str(chemin_z_part))
+        # Écritures rapides SANS risque : la cible est un .part, jeté sur
+        # échec (au pire un crash OS laisse un .part corrompu, purgé par
+        # _chemin_part au run suivant). fsync par commit inutile ici.
+        con_z.execute("PRAGMA journal_mode=MEMORY;")
+        con_z.execute("PRAGMA synchronous=OFF;")
         con_z.executescript("""
             CREATE TABLE metadata (name TEXT, value TEXT);
             CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,
@@ -10987,10 +11012,12 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             con_z.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
         con_z.commit()
 
-        # Copier les tuiles in the bbox
+        # Copier les tuiles de la bbox — itération INCRÉMENTALE (fetchmany) :
+        # l'ancien fetchall() chargeait TOUTES les tuiles du zoom (BLOBs
+        # compris) en RAM — plusieurs Go au niveau z18 départemental ; le
+        # batch de 500 ne bornait que l'INSERT, pas le pic de lecture.
         n_tuiles = 0
-        batch    = []
-        BATCH    = 500
+        BATCH    = 2000
         for z in range(zoom_min, zoom_max + 1):
             n  = 2 ** z
             # bbox WGS84 → colonnes/lignes XYZ
@@ -11003,23 +11030,20 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
             # TMS : tile_row = n-1-y_xyz
             row0 = n - 1 - y1   # lat_s → y_xyz max → tms min
             row1 = n - 1 - y0   # lat_n → y_xyz min → tms max
-            rows = con.execute(
+            cur_src = con.execute(
                 "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles "
                 "WHERE zoom_level=? AND tile_column BETWEEN ? AND ? "
                 "AND tile_row BETWEEN ? AND ?",
                 (z, x0, x1, row0, row1)
-            ).fetchall()
-            batch.extend(rows)
-            n_tuiles += len(rows)
-            if len(batch) >= BATCH:
+            )
+            while True:
+                rows = cur_src.fetchmany(BATCH)
+                if not rows:
+                    break
                 con_z.executemany(
-                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
+                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", rows)
                 con_z.commit()
-                batch = []
-        if batch:
-            con_z.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-            con_z.commit()
+                n_tuiles += len(rows)
         con_z.close()
 
         if n_tuiles == 0:
