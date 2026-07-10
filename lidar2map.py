@@ -8694,6 +8694,14 @@ Examples:
     parser.add_argument("--download-force", "--telechargement-forcer", action="store_true",
                         dest="telechargement_forcer",
                         help="Re-download tiles already present")
+    parser.add_argument("--index-map",
+                        action=argparse.BooleanOptionalAction, default=True,
+                        dest="index_map",
+                        help="Generate <zone>_planche.png next to the deliverables: "
+                             "an index sheet (extent + department outline + numbered "
+                             "chunk cells for splits). Enabled by default; "
+                             "--no-index-map disables it. Standalone on an existing "
+                             "project folder: --planche DIR.")
 
     # Ombrages
     parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
@@ -9809,6 +9817,9 @@ Examples:
         print(f"  ✓ Step {etape_cur[0]} finished in {_hms(elap)}  (cumulative {_hms(cumul)})")
     total = int(time.time() - t_debut)
     m, s  = divmod(total, 60)
+    # Planche d'assemblage : balaie les livrables du dossier (best-effort).
+    _dpl = dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville
+    _planche_depuis_dossier(_dpl, args, nom_zone)
     print(f"\n  Done! Folder: {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
     print(f"  Total time: {m}m{s:02d}s")
     dossier_res = str(dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville)
@@ -10062,6 +10073,272 @@ def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
     return False
 
 
+def _bbox_geojson(text):
+    """bbox WGS84 (lon0,lat0,lon1,lat1) d'un GeoJSON : champ `bbox` si présent,
+    sinon calcul depuis les coordonnées. None si vide."""
+    obj = json.loads(text)
+    b = obj.get("bbox")
+    if isinstance(b, (list, tuple)) and len(b) >= 4:
+        return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+    lons = []; lats = []
+    def _walk(c):
+        if isinstance(c, (list, tuple)):
+            if (len(c) >= 2 and isinstance(c[0], (int, float))
+                    and isinstance(c[1], (int, float))):
+                lons.append(c[0]); lats.append(c[1])
+            else:
+                for e in c:
+                    _walk(e)
+    feats = obj.get("features")
+    for ft in (feats if feats is not None else [obj]):
+        g = ft.get("geometry") if isinstance(ft, dict) else None
+        if g:
+            _walk(g.get("coordinates"))
+    return (min(lons), min(lats), max(lons), max(lats)) if lons else None
+
+
+def _bbox_sqlite_tiles(path, rmaps=False):
+    """bbox WGS84 d'un magasin de tuiles SQLite, best-effort. mbtiles : metadata
+    `bounds` sinon étendue des tuiles (y TMS). sqlitedb RMaps : tuiles (x,y,z),
+    z stocké = 17-zoom, numbering 'simple' = XYZ. None si illisible/incohérent."""
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        cur = con.cursor()
+        if not rmaps:
+            try:
+                row = cur.execute(
+                    "SELECT value FROM metadata WHERE name='bounds'").fetchone()
+                if row and row[0]:
+                    l, b, r, t = (float(x) for x in str(row[0]).split(","))
+                    return (l, b, r, t)
+            except Exception:
+                pass
+            r = cur.execute("SELECT min(tile_column),max(tile_column),"
+                            "min(tile_row),max(tile_row),max(zoom_level) "
+                            "FROM tiles").fetchone()
+            if not r or r[4] is None:
+                return None
+            xmin, xmax, ytmin, ytmax, z = r
+            ymin = (1 << z) - 1 - ytmax     # TMS -> XYZ
+            ymax = (1 << z) - 1 - ytmin
+        else:
+            r = cur.execute("SELECT min(x),max(x),min(y),max(y),min(z) "
+                            "FROM tiles").fetchone()
+            if not r or r[4] is None:
+                return None
+            xmin, xmax, ymin, ymax, zst = r
+            z = 17 - zst
+            if not (0 <= z <= 25):
+                return None
+        tl = _tile_to_geo(xmin, ymin, z)    # coin NO : (lon_min, lat_min, lon_max, lat_max)
+        br = _tile_to_geo(xmax, ymax, z)    # coin SE
+        bbox = (tl[0], br[1], br[2], tl[3])
+        if -180 <= bbox[0] <= 180 and -85 <= bbox[1] <= 85 and bbox[2] > bbox[0]:
+            return bbox
+        return None
+    except Exception:
+        return None
+    finally:
+        try: con.close()
+        except Exception: pass
+
+
+def _extraire_bbox_wgs84(fichier):
+    """Emprise WGS84 (lon0,lat0,lon1,lat1) d'un livrable, ou None. Best-effort."""
+    f = Path(fichier)
+    nom = f.name.lower()
+    try:
+        if nom.endswith(".mbtiles"):
+            return _bbox_sqlite_tiles(f, rmaps=False)
+        if nom.endswith(".sqlitedb"):
+            return _bbox_sqlite_tiles(f, rmaps=True)
+        if nom.endswith(".geojson"):
+            return _bbox_geojson(f.read_text(encoding="utf-8"))
+        if nom.endswith(".geojson.gz"):
+            return _bbox_geojson(gzip.decompress(f.read_bytes()).decode("utf-8"))
+    except Exception:
+        return None
+    return None
+
+
+def _planche_depuis_dossier(dossier, args, nom_zone=None):
+    """Balaie un dossier projet, extrait l'emprise de chaque livrable, groupe par
+    cellule (numéro NNNxNNN dans le chemin) et génère la planche d'assemblage.
+    Indépendant du run : rejouable sur un projet existant (mode --planche DOSSIER).
+    Une cellule mer sans fichier n'apparaît pas (rien à charger là) : c'est voulu."""
+    if not getattr(args, "index_map", True):
+        return
+    try:
+        import re as _re
+        d = Path(dossier)
+        if not d.is_dir():
+            print(f"  (index sheet: {d} is not a folder)", flush=True)
+            return
+        nom_zone = nom_zone or d.name
+        # mbtiles/geojson d'abord (emprise fiable), sqlitedb en dernier recours.
+        _prio = {".mbtiles": 0, ".geojson": 1, ".gz": 2, ".sqlitedb": 3}
+        fichiers = sorted(
+            [p for pat in ("*.mbtiles", "*.sqlitedb", "*.geojson", "*.geojson.gz")
+             for p in d.rglob(pat)],
+            key=lambda p: _prio.get(p.suffix.lower(), 9))
+        cellules = {}   # cle -> bbox  ('__single__' hors découpage)
+        for f in fichiers:
+            m = (_re.search(r"(\d{3})x(\d{3})", f.name)
+                 or _re.search(r"(\d{3})x(\d{3})", f.parent.name))
+            cle = f"{m.group(1)}x{m.group(2)}" if m else "__single__"
+            if cle in cellules:
+                continue
+            bbox = _extraire_bbox_wgs84(f)
+            if bbox:
+                cellules[cle] = bbox
+        if not cellules:
+            print("  (index sheet: no readable deliverable found)", flush=True)
+            return
+        cells = sorted((k, v) for k, v in cellules.items() if k != "__single__")
+        allb = list(cellules.values())
+        lons = [b[0] for b in allb] + [b[2] for b in allb]
+        lats = [b[1] for b in allb] + [b[3] for b in allb]
+        _generer_planche((min(lons), min(lats), max(lons), max(lats)),
+                         cells or None, nom_zone, d, args)
+    except Exception as e:
+        print(f"  (index sheet skipped: {type(e).__name__}: {e})", flush=True)
+
+
+def _planche_contours_dept(bbox_wgs84, args):
+    """Contour(s) RÉEL(s) du/des département(s) couvrant la zone (polygone, pas
+    la bbox), best-effort via Nominatim polygon_geojson. Retourne une liste
+    d'anneaux extérieurs [(lon,lat), ...] en WGS84, ou [] si rien de résolvable
+    (offline, hors FR, etc.) — la planche est alors dessinée sans fond dép."""
+    lon0, lat0, lon1, lat1 = bbox_wgs84
+    noms = []
+    dep_arg = str(getattr(args, "zone_departement", "") or "").strip()
+    if dep_arg:
+        # Numéros simples séparés par des virgules : nom lu dans le cache rempli
+        # par geocoder_departement pendant le run (pas de nouvel Overpass).
+        try:
+            _cache = json.loads((DOSSIER_TRAVAIL / "dep_bbox_cache.json")
+                                .read_text(encoding="utf-8"))
+        except Exception:
+            _cache = {}
+        for tok in dep_arg.replace(";", ",").split(","):
+            n = (_cache.get(tok.strip()) or {}).get("nom")
+            if n and n not in noms:
+                noms.append(n)
+    if not noms:
+        # Reverse-geocode du centre → département (address.county en FR).
+        lonc = (lon0 + lon1) / 2; latc = (lat0 + lat1) / 2
+        try:
+            url = ("https://nominatim.openstreetmap.org/reverse?"
+                   + urllib.parse.urlencode({"lat": f"{latc:.5f}", "lon": f"{lonc:.5f}",
+                                             "format": "jsonv2", "zoom": 8}))
+            req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                addr = (json.load(r) or {}).get("address", {}) or {}
+            n = addr.get("county") or addr.get("state_district") or addr.get("state")
+            if n:
+                noms.append(n)
+        except Exception:
+            pass
+    contours = []
+    for nom in noms[:4]:   # borne : ne pas spammer Nominatim
+        try:
+            url = ("https://nominatim.openstreetmap.org/search?"
+                   + urllib.parse.urlencode({"q": nom, "format": "jsonv2",
+                                             "polygon_geojson": 1,
+                                             "polygon_threshold": 0.005, "limit": 1}))
+            req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                res = json.load(r)
+            g = (res[0].get("geojson") if res else None) or {}
+            if g.get("type") == "Polygon":
+                contours.append(g["coordinates"][0])
+            elif g.get("type") == "MultiPolygon":
+                for poly in g["coordinates"]:
+                    contours.append(poly[0])
+            time.sleep(1.1)   # Nominatim : 1 req/s
+        except Exception:
+            pass
+    return contours
+
+
+def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args):
+    """<zone>_planche.png : planche d'assemblage (index/key map) des livrables.
+    Emprise (cadre) + contour(s) département réels + cellules numérotées (si
+    découpage). PIL seul (bundle app). Entièrement best-effort : toute erreur
+    est avalée (l'artefact est un bonus, jamais un point de panne du run)."""
+    if not getattr(args, "index_map", True):
+        return
+    try:
+        import math as _m
+        from PIL import Image, ImageDraw, ImageFont
+        lon0, lat0, lon1, lat1 = bbox_wgs84
+        if lon1 <= lon0 or lat1 <= lat0:
+            return
+        contours = _planche_contours_dept(bbox_wgs84, args)
+
+        # Emprise d'affichage = union(zone, contours) + marge, ratio corrigé du
+        # cos(lat) pour des pixels ~carrés au sol.
+        lons = [lon0, lon1]; lats = [lat0, lat1]
+        for ring in contours:
+            lons += [p[0] for p in ring]; lats += [p[1] for p in ring]
+        dlon0, dlon1 = min(lons), max(lons)
+        dlat0, dlat1 = min(lats), max(lats)
+        mlon = (dlon1 - dlon0) * 0.04 or 0.01
+        mlat = (dlat1 - dlat0) * 0.04 or 0.01
+        dlon0 -= mlon; dlon1 += mlon; dlat0 -= mlat; dlat1 += mlat
+        lat_mid = (dlat0 + dlat1) / 2
+        w_g = (dlon1 - dlon0) * _m.cos(_m.radians(lat_mid))
+        h_g = (dlat1 - dlat0)
+        if w_g <= 0 or h_g <= 0:
+            return
+        MAXPX = 1000
+        if w_g >= h_g:
+            W = MAXPX; H = max(1, round(MAXPX * h_g / w_g))
+        else:
+            H = MAXPX; W = max(1, round(MAXPX * w_g / h_g))
+
+        def _px(lon, lat):
+            return ((lon - dlon0) / (dlon1 - dlon0) * W,
+                    (dlat1 - lat) / (dlat1 - dlat0) * H)
+
+        img = Image.new("RGB", (W, H), (247, 249, 252))
+        dr = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.load_default(size=15)
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Département : contour RÉEL (polygone), léger fond + trait gris.
+        for ring in contours:
+            pts = [_px(lon, lat) for lon, lat in ring]
+            if len(pts) >= 3:
+                dr.polygon(pts, fill=(228, 233, 240), outline=(140, 150, 165))
+
+        # Emprise globale des livrables (cadre bleu).
+        ex0, ey0 = _px(lon0, lat1); ex1, ey1 = _px(lon1, lat0)
+        dr.rectangle([ex0, ey0, ex1, ey1], outline=(37, 99, 235), width=3)
+
+        # Cellules du découpage : rectangle + numéro centré.
+        for cle, (clo0, cla0, clo1, cla1) in (cells or []):
+            cx0, cy0 = _px(clo0, cla1); cx1, cy1 = _px(clo1, cla0)
+            dr.rectangle([cx0, cy0, cx1, cy1], outline=(200, 70, 50), width=1)
+            try:
+                dr.text(((cx0 + cx1) / 2, (cy0 + cy1) / 2), cle,
+                        fill=(120, 30, 20), font=font, anchor="mm")
+            except TypeError:   # anchor absent (Pillow < 8) : coin haut-gauche
+                dr.text((cx0 + 3, cy0 + 3), cle, fill=(120, 30, 20), font=font)
+
+        titre = nom_zone + (f"  -  {len(cells)} zones" if cells else "")
+        dr.text((8, 6), titre, fill=(30, 41, 59), font=font)
+
+        out = Path(dossier) / f"{nom_zone}_planche.png"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out)
+        print(f"  {out.name} : index sheet ({W}x{H})", flush=True)
+    except Exception as _e_pl:
+        print(f"  (index sheet skipped: {type(_e_pl).__name__}: {_e_pl})", flush=True)
+
+
 def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
                       overwrite_actif, entete_chunk, traiter_chunk, t_debut):
     """Boucle de découpage a-priori commune aux pipelines LiDAR et WMTS.
@@ -10149,6 +10426,10 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     elapsed = int(time.time() - t_debut)
     print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
     print(f"  Total time: {_hms(elapsed)}")
+
+    # Planche d'assemblage : balaie les livrables produits (mbtiles/sqlitedb/…)
+    # sous racine_pr et dessine emprise + cellules numérotées.
+    _planche_depuis_dossier(racine_pr, args, nom_zone)
 
 
 def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
@@ -11102,6 +11383,8 @@ Examples:
         _convertir_formats(chemin_mbtiles, args, mbtiles_neuf=_mbtiles_requis)
 
     # ── Résumé ────────────────────────────────────────────────────────────────
+    # Planche d'assemblage : balaie les livrables du dossier (best-effort).
+    _planche_depuis_dossier(dossier, args, nom_zone)
     elapsed = int(time.time() - t_debut)
     print(f"\n  Done in {_hms(elapsed)}")
     print(f"  Done! Folder: {dossier}")
@@ -12957,6 +13240,8 @@ def main_wfs():
             print("\n  ⚠ transparent-raster skipped: no feature available.")
 
     # ── Bilan ─────────────────────────────────────────────────────────────────
+    # Planche d'assemblage : balaie les livrables du dossier (best-effort).
+    _planche_depuis_dossier(dossier, args, nom_zone)
     elapsed = int(time.time() - t_debut)
     print(f"\n  Done in {_hms(elapsed)}: {len(sorties)}/{len(couches_resolues)} layers")
     print(f"  Done! Folder: {dossier}")
@@ -15309,7 +15594,16 @@ if __name__ == "__main__":
             for _key, (_fn, _flags) in _DISPATCH.items():
                 _pre.add_argument(*_flags, action="store_true",
                                   dest=f"_mode_{_key}")
+            # Mode standalone : (re)générer la planche d'assemblage d'un dossier
+            # projet existant, sans rejouer le traitement. Balaie les livrables.
+            _pre.add_argument("--planche", "--index-sheet", dest="_planche_dir",
+                              default=None)
             _ns_pre, _ = _pre.parse_known_args()
+            if getattr(_ns_pre, "_planche_dir", None):
+                _planche_depuis_dossier(
+                    _ns_pre._planche_dir,
+                    argparse.Namespace(index_map=True, zone_departement=None))
+                sys.exit(0)
 
             def _dispatch():
                 # Priorité ordonnée : on prend le 1er mode trouvé dans la liste.
