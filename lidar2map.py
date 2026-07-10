@@ -3623,10 +3623,29 @@ def _telecharger_jre_local():
         with tarfile.open(archive, "r:gz") as t:
             # Python 3.12+ : filter='data' requis pour bloquer les exploits
             # (chemins absolus, traversée ../, liens symboliques sortants).
-            # Python 3.11- : pas de support du paramètre → fallback.
+            # Python 3.11- : pas de support du paramètre → validation MANUELLE
+            # équivalente avant extractall (le fallback nu laissait passer
+            # chemins absolus / ../ / liens sortants sur les vieux Python).
+            # Les symlinks INTERNES sont conservés (les JRE mac/linux en ont).
             try:
                 t.extractall(JRE_DIR, filter='data')
             except TypeError:
+                _dest = Path(JRE_DIR).resolve()
+                for _m in t.getmembers():
+                    _nm = _m.name
+                    if _nm.startswith(("/", "\\")) or ".." in Path(_nm).parts \
+                            or (len(_nm) > 1 and _nm[1] == ":"):
+                        raise ValueError(f"Archive JRE suspecte : {_nm!r}")
+                    if _m.issym() or _m.islnk():
+                        _lnk = _m.linkname
+                        if _lnk.startswith(("/", "\\")):
+                            raise ValueError(f"Lien absolu dans le JRE : {_nm!r}")
+                        # symlink : cible relative au dossier du membre ;
+                        # hardlink : cible relative à la racine de l'archive.
+                        _base = (_dest / Path(_nm).parent) if _m.issym() else _dest
+                        _tgt = (_base / _lnk).resolve()
+                        if _tgt != _dest and _dest not in _tgt.parents:
+                            raise ValueError(f"Lien sortant dans le JRE : {_nm!r}")
                 t.extractall(JRE_DIR)
     archive.unlink(missing_ok=True)
 
@@ -7467,7 +7486,13 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
             if tentative < MAX_TENTATIVES:
                 time.sleep(DELAI_RETRY * tentative)
             else:
-                return None   # échec définitif, on ignore
+                # Panne PERSISTANTE (5xx, timeout, 403 clé expirée) ≠ tuile
+                # absente : propager. L'appelant (_dl → generer_mbtiles_wmts)
+                # compte en 'erreurs' + circuit-breaker 30 consécutives. Avant,
+                # `return None` classait ces pannes en 'absentes' : le MBTiles
+                # sortait "complet" avec des trous, et le re-run disait
+                # "already present" — l'artefact bloquait sa propre réparation.
+                raise
     return None
 
 # ============================================================
@@ -7809,6 +7834,18 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         print(f"\n  Interrupted - {ok} tiles written before stop  "
               f"({taille_mo:.0f} MB, partial file removed; cached tiles kept)")
         raise KeyboardInterrupt("MBTiles WMTS interrompu par utilisateur")
+
+    # Erreurs de téléchargement éparses (sous le seuil du circuit-breaker) :
+    # NE PAS publier un MBTiles troué — l'invariant "artefact présent =
+    # complet" tomberait, et le re-run dirait "already present" au lieu de
+    # réparer. Les tuiles réussies sont dans le cache disque : le re-run ne
+    # retélécharge que les manquantes.
+    if erreurs > 0:
+        chemin_part.unlink(missing_ok=True)
+        print(f"\n  ✗ {erreurs} download error(s) - MBTiles not finalized "
+              f"({ok} tiles cached; rerun to complete)")
+        raise RuntimeError(f"WMTS : {erreurs} erreur(s) de téléchargement, "
+                           f"MBTiles non finalisé (relancer pour compléter)")
 
     # Publication atomique : rename après le close (fait dans le finally ;
     # Windows refuse de renommer un fichier encore ouvert).
@@ -11646,7 +11683,14 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     ecrire_gz      = "gz"      in formats
     ecrire_geojson = "geojson" in formats
 
-    layer_short = typename.split(":")[-1].lower()
+    # Nom de sortie : suffixe seul pour BDTOPO_V3 (défaut historique, cache
+    # préservé) ; pour tout AUTRE namespace, le préfixer — deux namespaces
+    # peuvent partager le même suffixe et leurs fichiers s'écrasaient.
+    _ns, _sep, _suf = typename.partition(":")
+    if _sep and _ns.strip().upper() != "BDTOPO_V3":
+        layer_short = re.sub(r"[^a-z0-9]+", "_", f"{_ns}_{_suf}".lower()).strip("_")
+    else:
+        layer_short = (_suf or _ns).lower()
     sortie    = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
     sortie_gz = Path(str(sortie) + ".gz")
 
@@ -11686,6 +11730,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
 
     startindex    = 0
     n_features    = 0   # compteur — pas d'accumulation Python
+    n_pages       = 0
     total_attendu = None
     t0 = time.time()
 
@@ -11772,15 +11817,20 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                         data = None
 
             if data is None:
-                if n_features:
-                    print(f"  Partial result: {n_features} features")
-                    # On finalise avec ce qu'on a (le client a écrit n_features
-                    # valides, on les conserve plutôt que de tout perdre).
-                    break
-                else:
-                    raise OSError(f"WFS {typename} : aucune page récupérée")
+                # Échec d'une page après retries : NE PAS publier un partiel
+                # sous le nom final (l'ancien code finalisait un .gz valide
+                # mais silencieusement incomplet — violait l'invariant
+                # "artefact présent = complet"). tmp supprimé, couche en échec ;
+                # main_wfs continue les autres couches et sortira en code 1.
+                print(f"  ✗ WFS {typename}: page failed after {n_features} "
+                      f"features - output discarded (rerun to retry)")
+                out_fh.close(); out_fh = None
+                sortie_gz_tmp.unlink(missing_ok=True)
+                return None
 
             page = data.get("features", [])
+            if not page:
+                break   # page vide = fin de flux (quel que soit le total annoncé)
 
             # Fallback si hits a échoué : capturer numberMatched à la 1re page
             if total_attendu is None:
@@ -11801,21 +11851,37 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                 n_features += 1
 
             elapsed = int(time.time() - t0)
-            n_page  = startindex // WFS_PAGE + 1
+            n_pages += 1
             if total_attendu:
                 pct = min(n_features * 100 // total_attendu, 99)
                 bar = ("█" * (pct // 5)).ljust(20)
                 print(f"  WFS  [{bar}] {pct:3d}%  "
                       f"{n_features}/{total_attendu}  "
-                      f"page {n_page}  {_hms(elapsed)}", flush=True)
+                      f"page {n_pages}  {_hms(elapsed)}", flush=True)
             else:
-                print(f"  WFS  page {n_page}  {n_features} features  {_hms(elapsed)}",
+                print(f"  WFS  page {n_pages}  {n_features} features  {_hms(elapsed)}",
                       flush=True)
 
-            if len(page) < WFS_PAGE:
+            # Avancement par len(page), PAS par WFS_PAGE : un serveur qui
+            # plafonne sa page en dessous de COUNT sauterait des features.
+            # Arrêt piloté par numberMatched quand connu ; l'heuristique
+            # "page courte = fin" ne reste que sans numberMatched.
+            startindex += len(page)
+            if total_attendu is not None:
+                if n_features >= total_attendu:
+                    break
+            elif len(page) < WFS_PAGE:
                 break
-            startindex += WFS_PAGE
             time.sleep(0.2)
+
+        # Complétude : total annoncé mais moins de features reçues = résultat
+        # tronqué → ne pas publier (même invariant que l'échec de page).
+        if total_attendu is not None and n_features < total_attendu:
+            print(f"  ✗ WFS {typename}: {n_features}/{total_attendu} features "
+                  f"- truncated output discarded (rerun to retry)")
+            out_fh.close(); out_fh = None
+            sortie_gz_tmp.unlink(missing_ok=True)
+            return None
 
         out_fh.write(b"]}")
         out_fh.close()
@@ -12926,11 +12992,18 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
             # Extraire uniquement le .gpkg (peut être dans un sous-dossier)
             z.extract(targets=gpkg_names, path=cache_dir)
 
-        # Trouver le fichier extrait (py7zr peut placer le .gpkg dans un sous-dossier
-        # du cache_dir selon la structure interne de l'archive 7z).
-        # gpkg_path lui-même n'existe pas à ce stade (return early plus haut),
-        # donc tout .gpkg trouvé est forcément le résultat de l'extraction.
-        extracted = next(cache_dir.rglob("*.gpkg"), None)
+        # Trouver le fichier extrait (py7zr peut placer le .gpkg dans un
+        # sous-dossier du cache_dir selon la structure interne du 7z).
+        # IMPÉRATIF : matcher par le NOM DE MEMBRE de l'archive, pas "premier
+        # .gpkg du cache" — le cache est PARTAGÉ entre départements : un
+        # rglob aveugle trouvait le .gpkg d'un AUTRE département (à la racine,
+        # avant le sous-dossier fraîchement extrait) et le RENOMMAIT en
+        # gpkg_path → données du mauvais département servies silencieusement
+        # + cache de l'autre département détruit. Déclenché systématiquement
+        # par un run multi-départements (83,84).
+        _noms_membres = {Path(n).name for n in gpkg_names}
+        extracted = next((p for p in cache_dir.rglob("*.gpkg")
+                          if p.name in _noms_membres), None)
         if extracted is None:
             print("  ERROR: .gpkg not found after extraction")
             return None
@@ -13402,6 +13475,16 @@ def main_wfs():
     for s in sorties:
         print(f"  → {s}")
     _historique_depuis_argv(elapsed, str(dossier))
+    # Échec partiel (couches manquantes) = échec visible : les livrables
+    # produits restent, mais GUI/scripts/CI doivent le voir. RuntimeError et
+    # PAS sys.exit(1) : SystemExit traverserait la boucle multi-départements
+    # (qui ne rattrape que Exception, exprès) et tuerait les départements
+    # suivants ; l'Exception y est rattrapée → dept marqué KO, on continue,
+    # et le code global non-zéro vient du bilan _deps_ko. En mono-département
+    # elle remonte au top-level → code non-zéro aussi.
+    if len(sorties) < len(couches_resolues):
+        raise RuntimeError(f"{len(couches_resolues) - len(sorties)} WFS "
+                           f"layer(s) failed - rerun to retry them")
 
 
 # ============================================================
@@ -15835,6 +15918,9 @@ if __name__ == "__main__":
                 if _deps_ko:
                     print(f"\n  ⚠ Failed departments: {','.join(_deps_ko)} "
                           f"(rerun the command to retry them)")
+                    # Code non-zéro : sans lui, GUI/scripts/CI voyaient un
+                    # succès (exit 0) malgré des départements en échec.
+                    sys.exit(1)
             else:
                 # Mono-département : réécrire l'argv avec le code normalisé
                 # (5 → 05, 2a → 2A), sinon geocoder_departement interroge INSEE
