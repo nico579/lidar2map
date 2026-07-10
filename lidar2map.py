@@ -12627,11 +12627,29 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
     try:
         import fiona
         from fiona.transform import transform_geom as _xform_geom
+        # fiona >= 1.9 : Feature/Geometry sont des objets fiona.model.*, plus
+        # des dicts. json.dump les rejette ("Object of type Geometry is not
+        # JSON serializable"). to_dict() les reconvertit en dict GeoJSON.
+        # Absent en fiona < 1.9 (où geom est déjà un dict) -> fallback identité.
+        try:
+            from fiona.model import to_dict as _fiona_to_dict
+        except ImportError:
+            def _fiona_to_dict(o): return o
     except ImportError:
         print("  ERROR: fiona missing, run pip install fiona")
         return None
 
     tmp_geojson = sortie_gz.parent / (sortie_gz.name.replace(".geojson.gz", "_tmp.geojson"))
+
+    # Sérialisation JSON robuste : fiona >= 1.9 rend les champs date/datetime du
+    # GPKG comme objets Python (pas des chaînes, contrairement au chemin WFS) ->
+    # json.dump les refuserait. On les passe en ISO ; tout objet fiona.model
+    # residuel repasse par to_dict. Garantit le meme rendu que le fallback WFS.
+    def _json_default(o):
+        iso = getattr(o, "isoformat", None)
+        if callable(iso):
+            return iso()
+        return _fiona_to_dict(o)
 
     t0 = time.time()
     try:
@@ -12665,9 +12683,9 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                     first = False
                     json.dump({
                         "type":       "Feature",
-                        "geometry":   geom_4326,
+                        "geometry":   _fiona_to_dict(geom_4326),
                         "properties": props,
-                    }, out, ensure_ascii=False)
+                    }, out, ensure_ascii=False, default=_json_default)
                     n_total += 1
                 out.write("\n]}\n")
     except Exception as e:
