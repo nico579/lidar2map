@@ -6727,6 +6727,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     mbtiles_part = _chemin_part(mbtiles)
     con = sqlite3.connect(str(mbtiles_part))
     con.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
+    con.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec, cf. WMTS
     cur = con.cursor()
     cur.executescript("""
         CREATE TABLE metadata (name TEXT, value TEXT);
@@ -6985,7 +6986,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         import numpy as _np
 
         batch = []
-        BATCH = 500
+        BATCH = BATCH_MBTILES_INSERT   # constante partagée (drift : 500 local)
         rangees_done = 0
         total_rangees_tr = max(1, sum(
             merc_to_tile(xmax_w, ymin_w, z)[1] -
