@@ -12299,6 +12299,7 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
     out_part = _chemin_part(sqlitedb_out)
     con = sqlite3.connect(str(out_part))
     con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA synchronous=OFF;")   # .part jeté sur échec, cf. WMTS
     con.executescript("""
         CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
         CREATE TABLE android_metadata (locale TEXT);
@@ -12348,8 +12349,14 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
                                     int((max(ys) + mg) // SCALE) + 1):
                         _add(tx, ty, itm)
 
-        zt = 0
-        for (tx, ty), items in buckets.items():
+        # Rendu d'une tuile → tuple d'INSERT (ou None si vide). Pur PIL sur
+        # données locales : thread-safe, et Pillow relâche le GIL pendant
+        # resize/save → un pool de threads donne un vrai parallélisme (même
+        # pattern que l'encodage du tileur WMTS). Mesures 2026-07-11 (tuile
+        # dense 512² → 256) : draw 1,2 ms, LANCZOS 7 ms, save optimize=True
+        # 13,3 ms. Le run Var z13-18 (580 k tuiles) prenait 2 h 54 en série.
+        def _rendre_tuile(job, _z=z):
+            (tx, ty), items = job
             ox, oy = tx * SCALE, ty * SCALE
             big = _Image.new("RGBA", (SCALE, SCALE), (0, 0, 0, 0))
             dr = _ImageDraw.Draw(big)
@@ -12383,15 +12390,49 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
                 dr.line([a, b], fill=color, width=wpx)
                 for cx, cy in (a, b):
                     dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
-            small = big.resize((TILE, TILE), _Image.LANCZOS) if SS > 1 else big
+            # Résolution du supersampling : BOX = moyenne 2×2 exacte, c'est LE
+            # resolve SSAA standard — rendu identique à l'œil sur du trait,
+            # ~4× plus rapide que LANCZOS (1,7 ms vs 7 ms).
+            small = big.resize((TILE, TILE), _Image.BOX) if SS > 1 else big
             if small.getbbox() is None:
-                continue
+                return None
             buf = _io.BytesIO()
-            small.save(buf, "PNG", optimize=True)
-            con.execute("INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)",
-                        (tx, ty, z, 0, buf.getvalue()))
+            # PNG standard (compress 6) : optimize=True coûtait 3× l'encodage
+            # pour une taille égale ou PIRE (mesuré 28 169 o vs 27 981 o).
+            small.save(buf, "PNG")
+            return (tx, ty, _z, 0, buf.getvalue())
+
+        zt = 0
+        batch_ins = []
+        _jobs = list(buckets.items())
+        _n_workers = max(2, min(8, os.cpu_count() or 4))
+
+        def _consommer(res):
+            nonlocal zt
+            if res is None:
+                return
+            batch_ins.append(res)
             zt += 1
-            total += 1
+            if len(batch_ins) >= 500:
+                con.executemany(
+                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch_ins)
+                batch_ins.clear()
+
+        if len(_jobs) >= 64:
+            with ThreadPoolExecutor(max_workers=_n_workers) as _pool:
+                for res in _pool.map(_rendre_tuile, _jobs):
+                    if _stop_event.is_set():
+                        raise KeyboardInterrupt("transparent-raster interrompu")
+                    _consommer(res)
+        else:
+            # Petites grilles : le coût du pool dépasse le gain (cf. WMTS).
+            for job in _jobs:
+                _consommer(_rendre_tuile(job))
+        if batch_ins:
+            con.executemany(
+                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch_ins)
+            batch_ins.clear()
+        total += zt
         if zt:
             print(f"    z{z}: {zt} tiles", flush=True)
     con.execute("PRAGMA journal_mode=DELETE;")   # fichier expedie = pas de -wal
