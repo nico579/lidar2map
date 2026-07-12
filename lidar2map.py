@@ -810,10 +810,13 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 # Vérification version Python
-if sys.version_info < (3, 8):
-    print("ERROR: Python 3.8 minimum required (current version: "
+# Python 3.9 minimum RÉEL : argparse.BooleanOptionalAction (utilisé par
+# --download-compress / --index-map) n'existe qu'à partir de 3.9. L'ancien
+# garde annonçait 3.8 alors que le parser plantait à la construction sous 3.8.
+if sys.version_info < (3, 9):
+    print("ERROR: Python 3.9 minimum required (current version: "
           + str(sys.version_info.major) + "." + str(sys.version_info.minor) + ")")
-    print("Download Python 3.8+ from https://www.python.org/downloads/")
+    print("Download Python 3.9+ from https://www.python.org/downloads/")
     sys.exit(1)
 
 # ============================================================
@@ -1907,6 +1910,26 @@ class _TeeLogger:
         except Exception:
             pass
 
+# Flags portant un secret : leur valeur est masquée dans tout ce qu'on écrit
+# (log fichier, historique, log GUI). La clé scan25 (IGN pro) ou us-3dep
+# (OpenTopography) apparaissait sinon en clair dans des fichiers partagés
+# pour débuguer. Défini AVANT _activer_log (appelé au chargement du module).
+_SECRET_FLAGS = ("--api-key", "--apikey")
+
+
+def _rediger_secrets(texte: str) -> str:
+    """Masque la valeur des flags secrets dans une chaîne de commande.
+    Couvre les formes `--api-key VALUE` et `--api-key=VALUE` (+ alias)."""
+    if not texte:
+        return texte
+    out = texte
+    for _flag in _SECRET_FLAGS:
+        _f = re.escape(_flag)
+        out = re.sub(rf"({_f}=)\S+", r"\1***", out)
+        out = re.sub(rf"({_f}\s+)\S+", r"\1***", out)
+    return out
+
+
 def _activer_log():
     import atexit
     # En mode frozen, __file__ est dans le bundle temporaire — on veut les
@@ -1955,7 +1978,7 @@ def _activer_log():
     sys.excepthook = _excepthook
     # ── En-tête avec paramètres de lancement ─────────────────────────────────
     ts  = time.strftime("%Y-%m-%d %H:%M:%S")
-    cmd = " ".join(sys.argv)
+    cmd = _rediger_secrets(" ".join(sys.argv))   # masque --api-key ...
     tee._log.write("=" * 60 + "\n")
     tee._log.write(f"  lidar2map.py — démarrage {ts}\n")
     tee._log.write(f"  Commande : {cmd}\n")
@@ -2054,8 +2077,12 @@ class Manifeste:
         return self._data["morceaux"].get(cle, {}).get("termine", False)
 
     def debut_morceau(self, cle: str, nom: str):
+        # termine=False remis EXPLICITEMENT : une relance avec écrasement qui
+        # démarre un morceau puis échoue avant fin_morceau laissait sinon
+        # l'ancien termine=True actif -> le morceau (re)cassé passait pour fait.
         self._data["morceaux"].setdefault(cle, {}).update(
-            {"debut": time.strftime("%Y-%m-%dT%H:%M:%S"), "nom": nom})
+            {"debut": time.strftime("%Y-%m-%dT%H:%M:%S"), "nom": nom,
+             "termine": False})
         self._sauver()
 
     def fin_morceau(self, cle: str, duree_s: int):
@@ -2342,11 +2369,30 @@ def _load_provider():
     code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
     # Mapping code → module (kebab-case → snake_case)
     module_name = code.replace("-", "_")
+    _pdir = Path(__file__).resolve().parent / "providers"
     try:
         return _importlib.import_module(f"providers.{module_name}")
-    except ImportError:
-        # providers/ absent (distribution minimale) ou provider inconnu :
-        # on retombe sur un provider FR-IGN inline pour ne pas crasher.
+    except ModuleNotFoundError as _e_imp:
+        _missing = getattr(_e_imp, "name", "") or ""
+        _pkg = f"providers.{module_name}"
+        # (a) code inconnu (module absent alors que le package providers/ est
+        #     présent) = faute de frappe -> échouer + lister, au lieu de devenir
+        #     silencieusement FR-IGN (mauvais CRS/source de données).
+        if _missing == _pkg and _pdir.exists():
+            _dispo = sorted(p.stem.replace("_", "-") for p in _pdir.glob("*.py")
+                            if not p.stem.startswith("_"))
+            print(f"  ERROR: unknown provider '{code}'. Available: "
+                  f"{', '.join(_dispo)}", file=sys.stderr)
+            sys.exit(1)
+        # (b) dépendance INTERNE au module provider manquante (ex. laspy pour
+        #     cz-cuzk) : échouer clairement, ne pas masquer en FR-IGN.
+        if _missing not in ("providers", _pkg):
+            print(f"  ERROR: provider '{code}' failed to load: missing "
+                  f"dependency '{_missing}'. Install it or choose another "
+                  f"provider.", file=sys.stderr)
+            sys.exit(1)
+        # (c) package providers/ entièrement absent (distribution minimale) :
+        #     fallback FR-IGN inline pour ne pas crasher.
         import types as _types
         _p = _types.SimpleNamespace(
             CODE               = "fr-ign",
@@ -2383,6 +2429,11 @@ def _load_provider():
         _p.post_fetch       = None   # None = pas de conversion pre-validation
         _p.set_apikey       = lambda key:    None
         return _p
+    except ImportError as _e_imp2:
+        # ImportError autre que ModuleNotFound (rare) : ne pas la masquer.
+        print(f"  ERROR loading provider '{code}': "
+              f"{type(_e_imp2).__name__}: {_e_imp2}", file=sys.stderr)
+        sys.exit(1)
 
 PROVIDER = _load_provider()
 
@@ -3413,8 +3464,15 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
                 try:
                     PROVIDER.post_download(chemin)
                 except Exception as _e_pd:
-                    print(f"  ⚠ post_download {nom} : {type(_e_pd).__name__}: {_e_pd}",
-                          flush=True)
+                    # #7 : le hook reprojette (us-3dep/us-tnm/au-ga). Un échec
+                    # SILENCIEUX laissait une dalle au mauvais CRS entrer dans
+                    # le VRT. On lève -> retry, puis échec visible en 'erreur'.
+                    raise IOError(f"post_download {nom}: "
+                                  f"{type(_e_pd).__name__}: {_e_pd}")
+                # Re-valider APRÈS transformation (une reproject ratée peut
+                # laisser un GeoTIFF cassé).
+                if not _valider_tif_dalle(chemin):
+                    raise IOError(f"GeoTIFF invalide après post_download ({nom})")
             if compresser:
                 _comprimer_dalle_deflate(chemin)
             _creer_fichier(chemin)
@@ -3538,8 +3596,15 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
                 try:
                     PROVIDER.post_download(chemin)
                 except Exception as _e_pd:
-                    print(f"  ⚠ post_download {nom} : {type(_e_pd).__name__}: {_e_pd}",
-                          flush=True)
+                    # #7 : le hook reprojette (us-3dep/us-tnm/au-ga). Un échec
+                    # SILENCIEUX laissait une dalle au mauvais CRS entrer dans
+                    # le VRT. On lève -> retry, puis échec visible en 'erreur'.
+                    raise IOError(f"post_download {nom}: "
+                                  f"{type(_e_pd).__name__}: {_e_pd}")
+                # Re-valider APRÈS transformation (une reproject ratée peut
+                # laisser un GeoTIFF cassé).
+                if not _valider_tif_dalle(chemin):
+                    raise IOError(f"GeoTIFF invalide après post_download ({nom})")
             _creer_fichier(chemin)
             return "ok"
         except KeyboardInterrupt:
@@ -6677,6 +6742,27 @@ def _bbox_depuis_gdalinfo(chemin):
         return None
 
 
+def _warped_3857_valide(chemin):
+    """True si `chemin` est un GeoTIFF EPSG:3857 lisible (dims > 0, 1 bloc lu).
+
+    Garde-fou du cache de warp : un warpé partiel laissé par une interruption
+    (jadis écrit directement dans son chemin final) pouvait dépasser 1 Mo et
+    être plus récent que la source, donc réutilisé à tort comme valide. On
+    l'ouvre pour vérifier CRS + dimensions + une lecture. Ne lève jamais."""
+    try:
+        import rasterio as _rio_v
+        with _rio_v.open(str(chemin)) as _d:
+            if _d.width == 0 or _d.height == 0:
+                return False
+            if _d.crs is None or _d.crs.to_epsg() != 3857:
+                return False
+            _d.read(1, window=_rio_v.windows.Window(
+                0, 0, min(64, _d.width), min(64, _d.height)))
+        return True
+    except Exception:
+        return False
+
+
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
                     jpeg_quality=85, bbox_l93=None,
@@ -6739,7 +6825,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         print(f"  {mbtiles.name} → already present")
         return mbtiles
     if mbtiles.exists():
-        mbtiles.unlink()
+        # Pas d'unlink : mbtiles_part.replace(mbtiles) écrase atomiquement à la
+        # fin. Le supprimer maintenant perdrait l'ancien rendu si ce run échoue.
         print(f"  {mbtiles.name} → overwrite")
 
     def merc_to_tile(mx, my, z):
@@ -6878,10 +6965,13 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         else:
             # Fraîcheur : un cache warpé plus VIEUX que le TIF source signifie
             # que l'ombrage a été régénéré (--shadings-overwrite) → re-warper,
-            # sinon les tuiles resserviraient l'ancien rendu.
+            # sinon les tuiles resserviraient l'ancien rendu. + validation du
+            # cache (CRS 3857 + dims + lecture) : sinon un warpé tronqué mais
+            # récent était réutilisé comme valide (#4).
             warp_deja_fait = (warped.exists() and warped.stat().st_size > 1_000_000
                               and not ecraser_tuiles
-                              and warped.stat().st_mtime >= tif_source.stat().st_mtime)
+                              and warped.stat().st_mtime >= tif_source.stat().st_mtime
+                              and _warped_3857_valide(warped))
             if warp_deja_fait:
                 print(f"  Warped cache: {warped.name}  "
                       f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
@@ -6968,7 +7058,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         "BIGTIFF":    "YES",
                     })
 
-                    with _rio_w.open(str(warped), "w", **dst_profile) as dst:
+                    # Écriture dans <warped>.part validé puis replace (#4) :
+                    # une interruption ne laisse plus un warpé tronqué que le
+                    # run suivant réutiliserait comme cache valide.
+                    warped_part = _chemin_part(warped)
+                    with _rio_w.open(str(warped_part), "w", **dst_profile) as dst:
                         for b in range(1, src.count + 1):
                             _reproject(
                                 source        = _rio_w.band(src, b),
@@ -6979,6 +7073,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
                                 num_threads   = 0)  # 0 = tous les CPUs
+                if not _warped_3857_valide(warped_part):
+                    warped_part.unlink(missing_ok=True)
+                    raise RuntimeError("warpé invalide après écriture "
+                                       "(CRS/dimensions/lecture)")
+                warped_part.replace(warped)
                 _creer_fichier(warped)
                 taille_w = warped.stat().st_size / 1e6
                 elap = time.time() - t0_warp
@@ -7227,24 +7326,29 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     con.close()
     if _pool is not None:
         _pool.shutdown(wait=True)
+
+    # #3 — invariant "artefact présent = complet" (miroir WMTS) : NE PAS publier
+    # un mbtiles troué (rangées rasterio en échec) ni vide depuis une source non
+    # triviale (warp raté ou bbox introuvable laissent 0 tuile ; source
+    # demi-écrite ; reprojection hors-bbox). On jette le .part et on retourne
+    # None -> le caller ne convertit pas, le cache de warp est conservé, un
+    # re-run reprend sans re-warper.
+    src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
+    if nb_echecs_tr > 0 or (total_insere == 0 and src_size_mb > 1):
+        mbtiles_part.unlink(missing_ok=True)
+        _cause = (f"{nb_echecs_tr} row(s) failed" if nb_echecs_tr
+                  else f"0 tiles from {src_size_mb:.0f} MB source")
+        print(f"\n  ✗ MBTiles not finalized: {_cause}. "
+              f"Rerun to complete (warp cache kept).")
+        return None
+
     # Publication atomique après le close (Windows refuse de renommer un
     # fichier encore ouvert).
     mbtiles_part.replace(mbtiles)
     elapsed = int(time.time() - t0)
     taille_mb = mbtiles.stat().st_size / 1e6 if mbtiles.exists() else 0
     print("\n  z" + str(zoom_min) + "-" + str(zoom_max) + " 100%  " + str(total_insere) + " tiles  " + _hms(elapsed))
-    if nb_echecs_tr > 0:
-        print(f"  ⚠ {nb_echecs_tr} rasterio rows failed (missing tiles)")
     print(f"  {mbtiles.name} : {total_insere} tiles  ({taille_mb:.0f} MB)")
-    # Détection d'échec silencieux : 0 tuiles depuis une source non-triviale
-    # indique typiquement un TIF source partiellement écrit (exception dans
-    # un chunk SVF non détectée) ou une reprojection EPSG:3857 hors-bbox.
-    # tif_source = paramètre de la fonction (chemin du TIF source).
-    src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
-    if total_insere == 0 and src_size_mb > 1:
-        print(f"  ⚠ WARNING: 0 tiles generated from {src_size_mb:.0f} MB source.")
-        print("    The source file may be partially written or badly georeferenced.")
-        print(f"    Delete {tif_source.name} and relaunch to force recompute.")
     return mbtiles
 
 
@@ -7414,9 +7518,38 @@ def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
     return None
 
 
+def _bbox_valide_wgs84(lon0, lat0, lon1, lat1):
+    """Retourne (lon_min, lat_min, lon_max, lat_max) validée et ordonnée, ou
+    message d'erreur + sys.exit(1). Rejette NaN/inf, lat hors [-90,90], lon
+    hors [-180,180], bbox dégénérée. Réordonne des coins inversés (avec un
+    avertissement) au lieu de produire un MBTiles vide silencieux (#12)."""
+    for v in (lon0, lat0, lon1, lat1):
+        if not (isinstance(v, (int, float)) and math.isfinite(v)):
+            print(f"  ERROR: non-finite bbox coordinate ({v}).")
+            sys.exit(1)
+    if not (-90 <= lat0 <= 90 and -90 <= lat1 <= 90):
+        print(f"  ERROR: latitude out of range [-90, 90] ({lat0}, {lat1}).")
+        sys.exit(1)
+    if not (-180 <= lon0 <= 180 and -180 <= lon1 <= 180):
+        print(f"  ERROR: longitude out of range [-180, 180] ({lon0}, {lon1}).")
+        sys.exit(1)
+    lo0, lo1 = sorted((lon0, lon1))
+    la0, la1 = sorted((lat0, lat1))
+    if lo0 == lo1 or la0 == la1:
+        print("  ERROR: degenerate bbox (zero width or height).")
+        sys.exit(1)
+    if (lo0, la0) != (lon0, lat0):
+        print("  ⚠ bbox corners were reordered to W,S,E,N.")
+    return lo0, la0, lo1, la1
+
+
 def deg_to_tile(lat_deg, lon_deg, zoom):
     """Coordonnées WGS84 → tuile XYZ (convention Google/OSM, y=0 en haut)."""
     n = 2 ** zoom
+    # Clamp de la latitude à la plage Web Mercator AVANT le log : au-delà de
+    # ±85.0511° tan/cos explosent (math domain error / inf). L'ancien code
+    # clampait x,y APRÈS coup, donc une latitude polaire plantait le log.
+    lat_deg = max(-85.05112878, min(85.05112878, lat_deg))
     x = int((lon_deg + 180.0) / 360.0 * n)
     lat_r = math.radians(lat_deg)
     y = int((1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
@@ -7661,7 +7794,9 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         print(f"  {chemin.name} → already present")
         return chemin
     if chemin.exists() and ecraser_tuiles:
-        chemin.unlink()
+        # Pas d'unlink ici : chemin_part.replace(chemin) écrase atomiquement à
+        # la fin. Le supprimer maintenant perdrait le mbtiles précédent si le
+        # nouveau run échoue (le .part est jeté).
         print(f"  {chemin.name} → overwrite")
 
     chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -7740,6 +7875,25 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
 
     _fmt_out = "jpeg" if _convert_png else fmt_ext   # format réel inséré
 
+    # ── Namespace du cache par COUCHE (fix collision inter-couches) ───────────
+    # Le cache disque cache/ign_raster/ est PARTAGÉ par toutes les couches ;
+    # l'ancienne clé était z/x/y(+qualité) SANS layer/style/endpoint/format
+    # source. Deux couches au même format sur la même zone (ex. planIGN et
+    # cadastre, toutes deux PNG) écrivaient donc le MÊME fichier → tuiles
+    # croisées servies en silence. On insère un segment de namespace stable
+    # dérivé de (endpoint, layer, style, format serveur). Les tuiles déjà en
+    # cache sous l'ancien chemin ne sont pas migrables (on ignore de quelle
+    # couche elles viennent, c'est le bug) : elles deviennent orphelines et
+    # sont re-téléchargées une fois par couche — coût accepté pour ne plus
+    # servir de données fausses. Racine "ign_raster" conservée (legacy).
+    import hashlib as _hl_ns
+    _endpoint = WMTS_URL if apikey_requis else WMTS_URL_PUB
+    _ns_key = f"{_endpoint}|{layer}|{style}|{img_fmt}".encode("utf-8")
+    _ns_hint = re.sub(r"[^a-z0-9]+", "",
+                      ("xyz" if layer.startswith("XYZ:")
+                       else layer.split(":")[-1]).lower())[:16] or "layer"
+    _cache_ns = f"{_ns_hint}_{_hl_ns.md5(_ns_key).hexdigest()[:8]}"
+
     # Quand on re-encode PNG→JPEG avec une qualité explicite, le binaire stocké
     # dépend de jpeg_quality. Sans versionner, un changement de --qualite-image
     # réutiliserait silencieusement les tuiles de l'ancienne qualité.
@@ -7749,7 +7903,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                        if _convert_png and jpeg_quality is not None else "")
 
     def _cache_path(z, x, y):
-        base = dossier_cache / str(z) / str(x)
+        base = dossier_cache / _cache_ns / str(z) / str(x)
         if _cache_qual_seg:
             base = base / _cache_qual_seg
         return base / f"{y}.{_fmt_out}"
@@ -8076,8 +8230,9 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
     if rmap.exists() and not ecraser:
         print(f"  {rmap.name} → already present")
         return rmap
-    if rmap.exists() and ecraser:
-        rmap.unlink()
+    # Pas d'unlink de l'ancien rmap ici : rmap_part.replace(rmap) l'écrase
+    # atomiquement en fin de génération. Le supprimer maintenant ferait perdre
+    # le livrable précédent si la régénération échoue (le .part est jeté).
     if not mbtiles_path.exists():
         print(f"  ERROR: {mbtiles_path.name} not found")
         return None
@@ -8314,9 +8469,10 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
             print(f"  {sqlitedb.name} → already present")
             return sqlitedb
         print(f"  {sqlitedb.name} → stale schema (no tilenumbering), regenerating")
-        sqlitedb.unlink()
-    if sqlitedb.exists() and ecraser:
-        sqlitedb.unlink()
+    # Pas d'unlink de l'ancien sqlitedb ici (schéma périmé OU écrasement) :
+    # sqlitedb_part.replace(sqlitedb) l'écrase atomiquement en fin de
+    # génération. Le supprimer maintenant perdrait le livrable si la
+    # régénération échoue (le .part est jeté).
     if not mbtiles_path.exists():
         print(f"  ERROR: {mbtiles_path.name} not found")
         return None
@@ -9296,6 +9452,14 @@ Examples:
         except (ValueError, IndexError):
             print("  Invalid BBox format. Example: --bbox 880000,6210000,1080000,6360000")
             sys.exit(1)
+        if not all(math.isfinite(v) for v in (bx1, by1, bx2, by2)):
+            print("  ERROR: non-finite bbox coordinate.")
+            sys.exit(1)
+        if bx1 > bx2: bx1, bx2 = bx2, bx1
+        if by1 > by2: by1, by2 = by2, by1
+        if bx1 == bx2 or by1 == by2:
+            print("  ERROR: degenerate bbox (zero width or height).")
+            sys.exit(1)
         if _osm_seul:
             dalles, bbox = [], (bx1, by1, bx2, by2)
         else:
@@ -9316,6 +9480,10 @@ Examples:
             lat, lon = float(parts[0]), float(parts[1])
         except (ValueError, IndexError):
             print("  Invalid GPS format. Example: 43.3156,6.0423")
+            sys.exit(1)
+        if not (math.isfinite(lat) and math.isfinite(lon)
+                and -90 <= lat <= 90 and -180 <= lon <= 180):
+            print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
             sys.exit(1)
         if not args.zone_nom:
             print("  ERROR: --zone-name required with --zone-gps")
@@ -11068,12 +11236,13 @@ def decouper_mbtiles(src_mbtiles, rayon_km=0.0, n_morceaux=1, n_cols=0, n_rows=0
         nom_z    = f"{stem_base}{sfx}"
         chemin_z = out_dir / f"{nom_z}.mbtiles"
 
-        if chemin_z.exists():
-            if not ecraser:
-                print(f"  Existing chunk: {chemin_z.name} - skipped")
-                sorties.append(chemin_z)
-                continue
-            chemin_z.unlink()
+        if chemin_z.exists() and not ecraser:
+            print(f"  Existing chunk: {chemin_z.name} - skipped")
+            sorties.append(chemin_z)
+            continue
+        # Sur écrasement, PAS d'unlink préalable : chemin_z_part.replace()
+        # écrase atomiquement en fin de découpe. Supprimer maintenant perdrait
+        # le morceau précédent si la découpe de celui-ci échoue.
 
         # Écriture via .part + rename : un sous-mbtiles présent est toujours
         # complet (un kill mi-découpe laissait un partiel repris tel quel par
@@ -11171,11 +11340,21 @@ def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
     pu changer. Le coûteux (tuilage mbtiles) reste caché en amont
     (_mbtiles_a_regenerer) ; "Écraser le fichier résultat" ne pilote plus que lui.
     """
-    if args.rmap:     generer_rmap_depuis_mbtiles(sf, ecraser=True)
-    if args.sqlitedb: generer_sqlitedb_depuis_mbtiles(sf, ecraser=True)
+    # Capturer les retours : les convertisseurs renvoient None SUR ÉCHEC.
+    # L'ancien code les ignorait puis supprimait le mbtiles -> sur un échec
+    # de conversion l'utilisateur perdait À LA FOIS la source ET les livrables.
+    ok = True
+    if args.rmap:
+        ok = (generer_rmap_depuis_mbtiles(sf, ecraser=True) is not None) and ok
+    if args.sqlitedb:
+        ok = (generer_sqlitedb_depuis_mbtiles(sf, ecraser=True) is not None) and ok
+    # Ne supprimer la source que si TOUTES les conversions demandées ont réussi.
     if mbtiles_neuf and not args.mbtiles and sf.exists():
-        sf.unlink()
-        print(f"  MBTiles removed: {sf.name}")
+        if ok:
+            sf.unlink()
+            print(f"  MBTiles removed: {sf.name}")
+        else:
+            print(f"  MBTiles kept (conversion failed): {sf.name}")
 
 
 def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
@@ -11327,6 +11506,8 @@ def _resoudre_zone_wgs84(args):
         except (ValueError, IndexError):
             print("  Invalid bbox format. Example: --zone-bbox 5.9,43.1,6.6,43.8")
             sys.exit(1)
+        lon_min, lat_min, lon_max, lat_max = _bbox_valide_wgs84(
+            lon_min, lat_min, lon_max, lat_max)
         if not nom_zone:
             print("  ERROR: --zone-name required with --zone-bbox")
             sys.exit(1)
@@ -11337,6 +11518,10 @@ def _resoudre_zone_wgs84(args):
             lat_c, lon_c = float(parts[0]), float(parts[1])
         except (ValueError, IndexError):
             print("  Invalid GPS format. Example: --zone-gps 43.3156,6.0423")
+            sys.exit(1)
+        if not (math.isfinite(lat_c) and math.isfinite(lon_c)
+                and -90 <= lat_c <= 90 and -180 <= lon_c <= 180):
+            print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
             sys.exit(1)
         if not nom_zone:
             print("  ERROR: --zone-name required with --zone-gps")
@@ -12677,8 +12862,12 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
             with opener() as f:
                 yield from ijson.items(f, "features.item")
         except (OSError, ValueError) as e:
+            # #10 : PROPAGER (ne pas `return`). Une erreur ijson mi-parcours
+            # laissait un GeoJSON tronqué passer pour un flux terminé -> .map
+            # partielle publiée. En levant, le handler de geojson_ign_vers_osm_xml
+            # retourne False -> pas de .map depuis des données partielles.
             print(f"  ERROR streaming GeoJSON ({type(e).__name__}): {e}")
-            return
+            raise
 
     # ── Helpers d'écriture XML brute (bien plus rapide qu'ElementTree) ───────
     def _f(v):
@@ -12968,7 +13157,10 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         shell=_shell, env=_env_map,
     )
 
-    if chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
+    # #10 : exiger rc==0 (comme generer_carte_osm). Un mapwriter en échec
+    # pouvait laisser un .map.tmp non vide qu'on publiait sans vérifier le code
+    # retour d'osmosis.
+    if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
         chemin_map_tmp.replace(chemin_map)
         chemin_osm_xml.unlink(missing_ok=True)  # succès seulement
         taille_b = chemin_map.stat().st_size
@@ -14606,8 +14798,8 @@ def _cfg_depuis_argv() -> dict:
         # IGN Vectoriel
         "wfs_couches_sel": _args_after("--layer", "--couche") if t == "vecteur" else [],
         "workers_v":     _arg_int("--workers", default=4),
-        # Argv complet pour debug
-        "argv":    " ".join(argv),
+        # Argv complet pour debug (clés API masquées)
+        "argv":    _rediger_secrets(" ".join(argv)),
     }
 
 
@@ -14723,6 +14915,14 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
     """
     import datetime
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    # Ne jamais persister de clé API en clair dans historique.json (le cfg GUI
+    # porte des champs apikey/lidar_apikey ; l'argv peut en contenir aussi).
+    cfg = dict(cfg or {})
+    for _sk in ("apikey", "lidar_apikey"):
+        if cfg.get(_sk):
+            cfg[_sk] = "***"
+    if cfg.get("argv"):
+        cfg["argv"] = _rediger_secrets(cfg["argv"])
     entree = {
         "id":        run_id or f"{int(time.time()*1000)}-{os.getpid()}",
         "date":      now_str,
@@ -15600,8 +15800,10 @@ def lancer_gui():
                 except queue.Empty: break
 
             def run():
-                self._log_queue.put({"line": "$ " + " ".join(str(c) for c in cmd) + "\n\n",
-                                     "tag": "dim"})
+                self._log_queue.put(
+                    {"line": "$ " + _rediger_secrets(
+                        " ".join(str(c) for c in cmd)) + "\n\n",
+                     "tag": "dim"})
                 try:
                     env = os.environ.copy()
                     env["PYTHONUNBUFFERED"] = "1"
