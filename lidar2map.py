@@ -872,14 +872,16 @@ def _resoudre_mode_bootstrap():
     if "--no-venv" in sys.argv:
         mode = "pip"
 
-    # Retirer tous ces flags de sys.argv pour qu'argparse ne les voit pas
-    for _flag in ("--no-bootstrap", "--venv", "--no-venv", "--help-bootstrap"):
-        while _flag in sys.argv:
-            sys.argv.remove(_flag)
-    # Retirer aussi --bootstrap=X et --bootstrap X
+    # Retirer --bootstrap=X et --bootstrap X EN PREMIER : les indices ont été
+    # relevés sur le sys.argv intact — toute suppression préalable (flags
+    # legacy ci-dessous) les décalerait et ferait supprimer de mauvais tokens.
     for i in sorted(args_to_remove, reverse=True):
         if i < len(sys.argv):
             del sys.argv[i]
+    # Puis retirer les flags legacy pour qu'argparse ne les voie pas
+    for _flag in ("--no-bootstrap", "--venv", "--no-venv", "--help-bootstrap"):
+        while _flag in sys.argv:
+            sys.argv.remove(_flag)
 
     return mode
 
@@ -1846,23 +1848,33 @@ class _TeeLogger:
             pass
 
         # ── Log ──────────────────────────────────────────────────────────────
-        # Traiter caractère par caractère pour gérer \r et \n proprement
+        # Même machine à états \r/\n qu'avant, mais opérée par RUNS (find +
+        # slice, vitesse C) au lieu de caractère par caractère : write() est
+        # traversé par TOUTE la sortie, y compris les dizaines de milliers de
+        # repaints des barres de progression.
         try:
-            for ch in msg:
-                if ch == "\r":
-                    # \r : écrase le contenu de la ligne courante (barre de progression)
-                    # On garde le dernier état dans _cr_buf ; on ne loggue rien encore
-                    self._cr_buf = self._buf
+            pos = 0
+            n = len(msg)
+            while pos < n:
+                i_r = msg.find("\r", pos)
+                i_n = msg.find("\n", pos)
+                if i_r == -1 and i_n == -1:
+                    self._buf += msg[pos:]
+                    break
+                if i_n == -1 or (i_r != -1 and i_r < i_n):
+                    # \r : écrase le contenu de la ligne courante (barre de
+                    # progression) — dernier état gardé dans _cr_buf
+                    self._cr_buf = self._buf + msg[pos:i_r]
                     self._buf = ""
-                elif ch == "\n":
-                    # \n : fin de ligne — logguer le contenu final
-                    # Si la ligne était précédée de \r, prendre le dernier \r
-                    line = self._buf or self._cr_buf
+                    pos = i_r + 1
+                else:
+                    # \n : fin de ligne — logguer le contenu final (si la ligne
+                    # était précédée de \r, prendre le dernier segment \r)
+                    line = (self._buf + msg[pos:i_n]) or self._cr_buf
                     self._log_line(line)
                     self._buf = ""
                     self._cr_buf = ""
-                else:
-                    self._buf += ch
+                    pos = i_n + 1
         except Exception:
             pass
 
@@ -1935,9 +1947,11 @@ def _activer_log():
     # ── Intercepter les exceptions non gérées → log avant exit ───────────────
     import traceback as _tb
     def _excepthook(exc_type, exc_value, exc_tb):
+        # print → tee → terminal + log. NE PAS rappeler sys.__excepthook__ :
+        # il écrirait sur sys.stderr qui EST le même tee → chaque traceback
+        # apparaissait deux fois (terminal et log).
         print("\nUNHANDLED EXCEPTION:")
         print("".join(_tb.format_exception(exc_type, exc_value, exc_tb)))
-        sys.__excepthook__(exc_type, exc_value, exc_tb)
     sys.excepthook = _excepthook
     # ── En-tête avec paramètres de lancement ─────────────────────────────────
     ts  = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2055,6 +2069,22 @@ class Manifeste:
             lst.append(p)
         self._sauver()
 
+    def enregistrer_fichiers(self, paths, cle: str):
+        """Version en LOT : une seule sauvegarde pour N fichiers. L'unitaire
+        réécrit tout le JSON + fsync PAR fichier — O(n²) octets sur un chunk
+        de milliers de dalles (dizaines de secondes perdues par chunk)."""
+        lst = self._data["fichiers"].setdefault(cle, [])
+        vus = set(lst)
+        ajout = False
+        for path in paths:
+            p = str(Path(path).resolve())
+            if p not in vus:
+                lst.append(p)
+                vus.add(p)
+                ajout = True
+        if ajout:
+            self._sauver()
+
     def fichiers_morceau(self, cle: str) -> list:
         return list(self._data["fichiers"].get(cle, []))
 
@@ -2130,6 +2160,16 @@ def _creer_fichier(path):
         return
     cle = getattr(_manifest_ctx, "cle", "global")
     m.enregistrer_fichier(path, cle)
+
+
+def _creer_fichiers(paths):
+    """Déclare en LOT des fichiers intermédiaires (cf. _creer_fichier) :
+    une seule écriture du manifeste au lieu d'une par fichier."""
+    m = getattr(_manifest_ctx, "manifeste", None)
+    if m is None:
+        return
+    cle = getattr(_manifest_ctx, "cle", "global")
+    m.enregistrer_fichiers(paths, cle)
 
 
 def _supprimer_fichiers(fichiers: list):
@@ -2792,6 +2832,21 @@ def lamb93_to_wgs84_approx(x, y):
     return math.degrees(lam), math.degrees(phi)
 
 
+def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2):
+    """Enveloppe (min/max) des 4 coins d'une bbox passée par transform_fn.
+
+    Un rectangle ne reste PAS axis-aligné après reprojection : la convergence
+    des méridiens vaut ~2° à 6°E en Lambert 93, soit ~4 km de biais sur un
+    département de 110 km — min/max sur 2 coins opposés rogne des bords
+    entiers (dalles manquantes en bordure). Même règle que l'étendue du warp
+    de generer_mbtiles_lidar, factorisée pour tous les sites bbox↔CRS."""
+    pts = [transform_fn(x1, y1), transform_fn(x1, y2),
+           transform_fn(x2, y1), transform_fn(x2, y2)]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 def _lamb93_to_wgs84_safe(x, y):
     """Lambert 93 → WGS84 avec pyproj si dispo, fallback sur l'approximation.
 
@@ -2922,13 +2977,17 @@ def geocoder_departement(num_dep):
         print(f"  Department {num_dep}: {c['nom']} (local cache)", flush=True)
         print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
               f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
+        # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : la
+        # conversion à 2 coins rognait jusqu'à ~4 km en bordure de bbox,
+        # bien au-delà de la marge de 500 m.
         try:
             t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-            bx1, by1 = t.transform(c['lon_min'], c['lat_min'])
-            bx2, by2 = t.transform(c['lon_max'], c['lat_max'])
+            bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+                t.transform, c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
         except ImportError:
-            bx1, by1 = wgs84_to_lamb93_approx(c['lon_min'], c['lat_min'])
-            bx2, by2 = wgs84_to_lamb93_approx(c['lon_max'], c['lat_max'])
+            bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+                wgs84_to_lamb93_approx,
+                c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
         MARGE = 500
         bx1 -= MARGE; by1 -= MARGE; bx2 += MARGE; by2 += MARGE
         surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
@@ -2991,13 +3050,15 @@ def geocoder_departement(num_dep):
     print(f"  Department {num_dep}: {nom}")
     print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
 
+    # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : min/max sur
+    # 2 coins opposés rognait jusqu'à ~4 km en bordure de bbox.
     try:
         t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-        bx1, by1 = t.transform(lon_min, lat_min)
-        bx2, by2 = t.transform(lon_max, lat_max)
+        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+            t.transform, lon_min, lat_min, lon_max, lat_max)
     except ImportError:
-        bx1, by1 = wgs84_to_lamb93_approx(lon_min, lat_min)
-        bx2, by2 = wgs84_to_lamb93_approx(lon_max, lat_max)
+        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+            wgs84_to_lamb93_approx, lon_min, lat_min, lon_max, lat_max)
         print("  (pyproj missing, approximate conversion)")
 
     # Marge de 500 m pour ne pas couper les dalles en bordure
@@ -3138,23 +3199,6 @@ def chemin_dalle(dossier_dalles, nom):
     return chemin_racine  # fallback si nom non reconnu
 
 
-def _lon_lat_to_tile(lon, lat, z):
-    """Convertit lon/lat WGS84 en coordonnées tuile XYZ (x, y) au zoom z.
-
-    Convention Google/OSM : y=0 en haut. Alias historique de deg_to_tile
-    (ordre des arguments : lon, lat).
-    """
-    return deg_to_tile(lat, lon, z)
-
-
-def interroger_tms_dalles(lon_min, lat_min, lon_max, lat_max, bbox_l93=None):
-    """Wrapper vers PROVIDER.discover_dalles — voir providers/fr_ign.py.
-    Retourne {nom_dalle: url_wms} ou None si erreur totale."""
-    cache_path = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
-    return PROVIDER.discover_dalles(
-        (lon_min, lat_min, lon_max, lat_max), bbox_l93, cache_path)
-
-
 def _download_to_tmp(url, chemin_tmp, timeout=60):
     """
     Télécharge url vers chemin_tmp (streaming).
@@ -3264,6 +3308,9 @@ def _valider_tif_dalle(chemin):
     # Vérification approfondie via rasterio si disponible
     try:
         import rasterio as _rio_v
+    except ImportError:
+        return True   # rasterio absent : on se fie au magic seul
+    try:
         with _rio_v.open(str(chemin)) as ds:
             if ds.width == 0 or ds.height == 0:
                 return False
@@ -3271,8 +3318,10 @@ def _valider_tif_dalle(chemin):
             ds.read(1, window=_rio_v.windows.Window(
                 0, 0, min(64, ds.width), min(64, ds.height)))
     except Exception:
-        # rasterio non disponible ou erreur de lecture → on se fie au magic seul
-        pass
+        # Header intact mais métadonnées/données illisibles (troncature
+        # deflate, IFD cassé) : c'est PRÉCISÉMENT le cas que ce niveau 2
+        # doit attraper. L'ancien `pass` validait ces fichiers.
+        return False
 
     return True
 
@@ -3945,15 +3994,19 @@ def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
     sur toute l'étendue du raster (fractions 0.2/0.5/0.8 en x et y).
 
     calc_block : fenêtre float32 (avec halo) → array de valeurs, NaN aux
-    pixels invalides (nodata). Les valeurs finies de toutes les fenêtres
-    sont mises en commun avant le calcul des percentiles.
+    pixels invalides (nodata) — OU tuple d'arrays pour un calcul
+    multi-sorties en un seul passage (ex. kernel fusionné SVF+openness du
+    VAT : sans ça, la passe d'échantillonnage scannait deux fois les mêmes
+    fenêtres). Les valeurs finies de toutes les fenêtres sont mises en
+    commun avant le calcul des percentiles.
 
     Un crop unique rendrait le stretch dépendant de ce que contient ce crop
     (même terrain → rendu différent selon le cadrage) — régression de rendu
     silencieuse déjà rencontrée sur le SVF, d'où la grille. Partagé par
-    SVF / LRM / RRIM.
+    SVF / LRM / RRIM / VAT.
 
-    Retourne (lo, hi, n_valides) ou None si trop peu de pixels valides.
+    Retourne (lo, hi, n_valides) ou None si trop peu de pixels valides ;
+    en multi-sorties, une liste avec une entrée (ou None) par sortie.
     """
     import numpy as np
     import rasterio as _rio
@@ -3961,7 +4014,8 @@ def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
     SAMPLE = 192
     s_half = SAMPLE // 2
     _fracs = (0.2, 0.5, 0.8)
-    pool = []
+    pools = None
+    multi = False
     with _rio.open(str(src_path)) as src:
         H, W = src.height, src.width
         for _fy in _fracs:
@@ -3976,13 +4030,25 @@ def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
                     continue
                 win = src.read(1, window=Window(c0, r0, c1 - c0, r1 - r0)).astype(np.float32)
                 vals = calc_block(win)
-                pool.append(vals[np.isfinite(vals)])
-    valid = np.concatenate(pool) if pool else np.empty(0, dtype=np.float32)
-    if len(valid) < 100:
+                multi = isinstance(vals, tuple)
+                outs = vals if multi else (vals,)
+                if pools is None:
+                    pools = [[] for _ in outs]
+                for k, v in enumerate(outs):
+                    pools[k].append(v[np.isfinite(v)])
+    if pools is None:
         return None
-    return (float(np.percentile(valid, p_lo)),
-            float(np.percentile(valid, p_hi)),
-            len(valid))
+
+    def _stats(pool):
+        valid = np.concatenate(pool) if pool else np.empty(0, dtype=np.float32)
+        if len(valid) < 100:
+            return None
+        return (float(np.percentile(valid, p_lo)),
+                float(np.percentile(valid, p_hi)),
+                len(valid))
+
+    res = [_stats(p) for p in pools]
+    return res if multi else res[0]
 
 
 # ── Hillshade et slope numpy (remplacent gdaldem CLI) ─────────────────────────
@@ -5351,19 +5417,19 @@ def _svf_opos_chunked(src_path, svf_dst, opos_dst, max_dist_px, n_directions=16,
         svf, opos = _kernel(bf, n_directions, max_dist_px, resolution)
         return svf, opos, nd_mask
 
-    # ── Passe 1 : percentiles p2/p98 par sortie (échantillon grille 3×3) ────────
+    # ── Passe 1 : percentiles p2/p98 des DEUX sorties en un seul scan ───────
+    # (calc_block multi-sorties de _percentiles_grille — l'ancien code
+    # appelait la grille une fois par sortie et refaisait donc le scan
+    # d'horizon fusionné deux fois sur les mêmes fenêtres.)
     print("  VAT SVF+opos chunked: Numba compilation + percentiles (grid)...", flush=True)
-    def _samp(idx):
-        def f(win):
-            svf, opos, nd = _blocks(win)
-            return np.where(nd, np.nan, svf if idx == 0 else opos)
-        return f
-    _pc_s = _percentiles_grille(src_path, HALO, _samp(0), 2, 98)
-    _pc_o = _percentiles_grille(src_path, HALO, _samp(1), 2, 98)
-    if _pc_s is None or _pc_o is None:
+    def _samp(win):
+        svf, opos, nd = _blocks(win)
+        return (np.where(nd, np.nan, svf), np.where(nd, np.nan, opos))
+    _pcs = _percentiles_grille(src_path, HALO, _samp, 2, 98)
+    if _pcs is None or _pcs[0] is None or _pcs[1] is None:
         return False
-    p2s, p98s, _ = _pc_s
-    p2o, p98o, _ = _pc_o
+    p2s, p98s, _ = _pcs[0]
+    p2o, p98o, _ = _pcs[1]
     if p98s <= p2s: p2s, p98s = 0.0, 1.0
     if p98o <= p2o: p2o, p98o = 0.0, 1.0
     print(f"  VAT SVF+opos: svf p2={p2s:.3f}/p98={p98s:.3f}, "
@@ -6277,7 +6343,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # directement utilisable par numpy/PIL/rasterio en aval. Plus aucune
         # conversion intermédiaire VRT→GTiff nécessaire.
         src_str = str(source)
-        tmp_gtiff = None
 
         for cle, p_i, sfx_i in numpy_insts:
             # Cancellation propre entre 2 ombrages : si l'utilisateur a fait
@@ -6587,10 +6652,6 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 taille = chemin_out.stat().st_size / 1e6
                 elap_numpy = int(time.time() - t0_numpy)
                 print(f"  {nom_fichier.ljust(56)}  {_hms(elap_numpy)}  {taille:.0f} Mo")
-
-        # Nettoyage du GeoTIFF temporaire créé pour WhiteboxTools
-        if tmp_gtiff and tmp_gtiff.exists():
-            tmp_gtiff.unlink(missing_ok=True)
 
     finally:
         # Suppression du dossier _tmp/ projet (VRT, dalles.txt, numpy_source_tmp)
@@ -6961,16 +7022,15 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         if te_xmin is not None:
             bb_w = (te_xmin, te_ymin, te_xmax, te_ymax)
         elif warp_deja_fait and bb_src is not None:
-            # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src
+            # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src.
+            # Enveloppe des 4 coins, comme le -te du warp frais : à 2 coins,
+            # les rangées de tuiles en bordure étaient rognées de quelques px
+            # uniquement sur le chemin cache (rendu dépendant du cache).
             try:
                 _t2 = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
-                _rx0, _ry0 = _t2.transform(bb_src[0], bb_src[1])
-                _rx1, _ry1 = _t2.transform(bb_src[2], bb_src[3])
+                bb_w = _bbox_enveloppe_transform(_t2.transform, *bb_src)
             except Exception:
-                _rx0, _ry0 = _lamb93_to_merc(bb_src[0], bb_src[1])
-                _rx1, _ry1 = _lamb93_to_merc(bb_src[2], bb_src[3])
-            bb_w = (min(_rx0, _rx1), min(_ry0, _ry1),
-                    max(_rx0, _rx1), max(_ry0, _ry1))
+                bb_w = _bbox_enveloppe_transform(_lamb93_to_merc, *bb_src)
         else:
             bb_w = _bbox_depuis_gdalinfo(warped)
         if bb_w is None:
@@ -7012,6 +7072,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 zoom_factor = 2 ** (zoom_max - z)
 
                 for ty in range(ty0, ty1 + 1):
+                    # Soft-cancel : le 1er Ctrl+C / bouton Arrêter pose
+                    # _stop_event — sans ce check (présent chez le jumeau
+                    # WMTS), l'étape tuilage était ininterruptible et la GUI
+                    # escaladait en kill forcé après 15 s.
+                    if _stop_event.is_set():
+                        raise KeyboardInterrupt("LiDAR tiling interrupted")
                     bx0_t, _, _, by1_t = tile_bounds(tx0, ty, z)
                     _,     _, bx1_t, _ = tile_bounds(tx1, ty, z)
 
@@ -7140,7 +7206,19 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         print(f"  Tiling cache kept: {warped.name}  ({taille_w:.0f} MB)"
               f", delete it manually if not needed")
 
-    _tuiler_source()
+    try:
+        _tuiler_source()
+    except BaseException:
+        # Miroir du finally du jumeau WMTS (ce chemin n'en avait pas) : sur
+        # exception/interruption, fermer la connexion AVANT unlink (Windows
+        # verrouille un fichier ouvert), jeter le .part (un .mbtiles ne doit
+        # exister que complet) et libérer le pool d'encodage.
+        try: con.close()
+        except Exception: pass
+        if _pool is not None:
+            _pool.shutdown(wait=True)
+        mbtiles_part.unlink(missing_ok=True)
+        raise
 
     # Journal DELETE avant fermeture : le header WAL persistant peut bloquer
     # les lecteurs strictement lecture seule (fichier livré = SQLite classique).
@@ -7374,8 +7452,11 @@ def compter_tuiles_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):
 
 
 def estimer_taille(nb_tuiles, format_img="jpeg"):
-    """Estimation grossière : ~15 Ko/tuile JPEG Scan25, ~30 Ko ortho."""
-    ko_par_tuile = 30 if format_img != "jpeg" else 15
+    """Estimation grossière : ~15 Ko/tuile JPEG Scan25, ~30 Ko ortho.
+    Accepte "jpeg" ET "jpg" : l'appelant passe fmt_ext (= "jpg"), et le
+    test strict != "jpeg" ne prenait donc JAMAIS le tarif JPEG (estimation
+    2× trop haute pour toutes les couches JPEG)."""
+    ko_par_tuile = 15 if format_img in ("jpeg", "jpg") else 30
     return nb_tuiles * ko_par_tuile // 1024   # Mo
 
 # ============================================================
@@ -7466,22 +7547,38 @@ def _wmts_close_all_conns():
 def _wmts_fetch(url):
     """GET via la connexion keep-alive thread-local (réutilisée d'une tuile à
     l'autre). Retourne (status, content_type, data). Une reconnexion si la
-    connexion persistante a été fermée par le serveur."""
-    parts = urllib.parse.urlsplit(url)
-    host  = parts.netloc
-    path  = parts.path + (("?" + parts.query) if parts.query else "")
-    last_exc = None
-    for _essai in (1, 2):
-        conn = _wmts_get_conn(parts.scheme, host)
-        try:
-            conn.request("GET", path, headers=WMTS_HEADERS)
-            resp = conn.getresponse()
-            data = resp.read()        # lecture complète = condition de réutilisation
-            return resp.status, resp.headers.get("content-type", ""), data
-        except (http.client.HTTPException, OSError) as e:
-            last_exc = e
-            _wmts_drop_conn(host)     # connexion morte → on en recrée une au prochain tour
-    raise last_exc if last_exc else IOError("WMTS fetch failed")
+    connexion persistante a été fermée par le serveur.
+
+    Suit les redirections (301/302/303/307/308) jusqu'à 3 sauts :
+    http.client ne le fait pas seul (contrairement à urllib), et sans ça
+    une bascule d'infra côté serveur classerait tout le batch en erreurs
+    « HTTP 301 » peu parlantes."""
+    for _hop in range(4):
+        parts = urllib.parse.urlsplit(url)
+        host  = parts.netloc
+        path  = parts.path + (("?" + parts.query) if parts.query else "")
+        last_exc = None
+        reponse  = None
+        for _essai in (1, 2):
+            conn = _wmts_get_conn(parts.scheme, host)
+            try:
+                conn.request("GET", path, headers=WMTS_HEADERS)
+                resp = conn.getresponse()
+                data = resp.read()        # lecture complète = condition de réutilisation
+                reponse = (resp.status, resp.headers.get("content-type", ""),
+                           data, resp.headers.get("location"))
+                break
+            except (http.client.HTTPException, OSError) as e:
+                last_exc = e
+                _wmts_drop_conn(host)     # connexion morte → on en recrée une au prochain tour
+        if reponse is None:
+            raise last_exc if last_exc else IOError("WMTS fetch failed")
+        status, ct, data, loc = reponse
+        if status in (301, 302, 303, 307, 308) and loc:
+            url = urllib.parse.urljoin(url, loc)
+            continue
+        return status, ct, data
+    raise IOError(f"WMTS fetch: too many redirects ({url})")
 
 
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
@@ -7700,7 +7797,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                 except Exception:
                     _cache_tmp.unlink(missing_ok=True)
                     raise
-                _creer_fichier(_cache_file)
+                # NB : pas de _creer_fichier ici. Le cache WMTS est PERMANENT
+                # par design (partagé entre projets) : --cleanup ne doit pas
+                # le vider. L'ancien appel était de toute façon un no-op
+                # silencieux (_manifest_ctx est thread-local et _dl tourne
+                # dans un worker du pool, jamais dans le main thread).
         return z, x, y, data
 
     def _afficher(done, total, ok, absentes, erreurs, z_courant, t0):
@@ -8709,6 +8810,72 @@ def _migrer_dalles_colonnes(dossier_dalles):
     print(f"\r  Migration done: {migres} tiles moved, {erreurs} errors.")
 
 
+def _resoudre_choix_ombrages(args):
+    """Résout --shadings/--shading en (choix, instances) : 'tous' →
+    SHADING_TOUS, 'aucun' → rien du tout (instances comprises), et les types
+    couverts par une instance --shading explicite sont retirés de choix
+    (l'instance porte SES params — sinon ils seraient AUSSI générés aux
+    params par défaut). Partagé par main() et _traiter_bbox_lidar : la
+    résolution était dupliquée dans les deux mains (sites jumeaux)."""
+    ombrages   = args.ombrages or []
+    spec_insts = getattr(args, "shading_instances", None) or []
+    if "aucun" in ombrages:
+        return [], []
+    choix = list(SHADING_TOUS) if "tous" in ombrages else list(ombrages)
+    if spec_insts:
+        _types = {t for t, _ in spec_insts}
+        choix = [c for c in choix if c not in _types]
+    return choix, spec_insts
+
+
+def _lister_tifs_ombrages(dossier_ville, tifs_run):
+    """TIF d'ombrage à tuiler dans un dossier projet. Exclut les caches de
+    tuilage `_tuilage_z<N>.tif` (produits par generer_mbtiles_lidar — sans ce
+    filtre le cache devient sa propre source, boucle infinie en pratique) et,
+    quand l'étape shadings a tourné (tifs_run non vide), restreint aux cibles
+    de CE run (sinon --tiles-overwrite re-tuilait aussi les anciens ombrages
+    du dossier). Un run SANS étape shadings (tifs_run None) convertit tout le
+    dossier — comportement historique. Partagé main() ↔ _traiter_bbox_lidar."""
+    tifs = [t for t in sorted(dossier_ville.glob("*.tif"))
+            if not t.name.startswith("_")
+            and not re.search(r'_tuilage_z\d+\.tif$', t.name)]
+    if tifs_run:
+        noms_run = {p.name for p in tifs_run}
+        tifs = [t for t in tifs if t.name in noms_run]
+    return tifs
+
+
+def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
+                          decoupe_sortie=True, verbose=False):
+    """Tuile chaque TIF d'ombrage (make-like via _mbtiles_a_regenerer :
+    détecte aussi mbtiles corrompu/vide et TIF plus récent) puis applique les
+    conversions RMAP/SQLiteDB. Partagé par main() (decoupe_sortie=True) et
+    _traiter_bbox_lidar (False : le découpage est déjà fait par les chunks).
+    Ce bloc était dupliqué entre les deux mains, avec du drift déjà mordu."""
+    for tif in tifs:
+        if verbose:
+            print("  " + tif.name)
+        stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
+        suffix = stem[len(nom_zone) + 1:] if stem.startswith(nom_zone + "_") else stem
+        nom_base = f"{nom_zone}_{suffix}"
+        mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
+        mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
+        if mbt_neuf:
+            mbt_out = generer_mbtiles_lidar(
+                tif, dossier_ville, nom_base,
+                zoom_min=args.zoom_min, zoom_max=args.zoom_max,
+                format_tuiles=args.formats_image,
+                jpeg_quality=args.qualite_image,
+                bbox_l93=bbox,
+                ecraser_tuiles=args.tuiles_ecraser,
+                tile_workers=args.workers)
+        else:
+            print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
+            mbt_out = mbt_path
+        _convertir_formats(mbt_out, args, decoupe_sortie=decoupe_sortie,
+                           mbtiles_neuf=mbt_neuf)
+
+
 def main():
     import argparse
     t_debut = time.time()
@@ -8979,8 +9146,6 @@ Examples:
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
     args.transparent_raster = "transparent-raster" in _ff
-    if not args.formats_image:
-        args.formats_image = "auto"
 
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     # Si le pipeline crashe, l'entrée reste → diagnostic facile.
@@ -9224,7 +9389,8 @@ Examples:
 
     etapes_total = sum([bool(args.telechargement),
                         bool(args.ombrages),
-                        bool(args.mbtiles),
+                        # rmap/sqlitedb passent aussi par l'étape MBTiles
+                        bool(args.mbtiles or args.rmap or args.sqlitedb),
                         bool(args.osm)])
     etapes_total = max(1, etapes_total)
     etape_cur = [0]
@@ -9383,10 +9549,9 @@ Examples:
         noms_attendus = set()
     else:
         _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        _lon1, _lat1 = _t_wgs.transform(bbox[0], bbox[1])
-        _lon2, _lat2 = _t_wgs.transform(bbox[2], bbox[3])
-        bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
-                    max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
+            _t_wgs.transform, bbox[0], bbox[1], bbox[2], bbox[3])
+        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
         # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
         cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
         # discover_dalles : None = échec réseau/endpoint, {} = pas de couverture.
@@ -9479,8 +9644,6 @@ Examples:
     # -------------------------------------------------------
     # Ombrages
     # -------------------------------------------------------
-    TOUS_OMBRAGES = list(SHADING_TOUS)   # dérivé de _SHADING_TYPES (vat exclu de "tous")
-
     # Dalles disponibles pour les ombrages :
     # 1. Seulement les dalles de la zone courante (filtre par nom)
     # 2. Seulement les fichiers valides (≥ 50 MB)
@@ -9616,22 +9779,9 @@ Examples:
                         print(f"  ERROR compressing {chemin_out.name}: {_e_cmp}")
                         chemin_tmp.replace(chemin_out)
 
-    spec_insts = getattr(args, "shading_instances", None) or []
-    if dalles_ombrages and args.ombrages:
-        if "aucun" in args.ombrages:
-            choix_ombrages = []
-            spec_insts = []
-        elif "tous" in args.ombrages:
-            choix_ombrages = TOUS_OMBRAGES
-        else:
-            choix_ombrages = args.ombrages
-        # Types couverts par une instance --shading explicite : ne pas les
-        # re-générer aux params par défaut (l'instance porte SES params).
-        if spec_insts:
-            _spec_types = {t for t, _ in spec_insts}
-            choix_ombrages = [c for c in choix_ombrages if c not in _spec_types]
-    else:
-        choix_ombrages = []  # sans --shadings → pas d'ombrage
+    choix_ombrages, spec_insts = _resoudre_choix_ombrages(args)
+    if not dalles_ombrages:
+        choix_ombrages = []  # pas de dalle disponible → rien à calculer
 
     tifs_run = None   # cibles du run courant (None = pas d'étape shadings)
     if choix_ombrages or spec_insts:
@@ -9692,51 +9842,14 @@ Examples:
                 _mbt_out = _mbt_path
             _convertir_formats(_mbt_out, args, mbtiles_neuf=_mbt_requis)
         else:
-            # Ombrages présents dans dossier_ville
-            # Exclure les fichiers de cache de tuilage (`<nom>_tuilage_z<N>.tif`)
-            # qui sont produits par generer_mbtiles_lidar comme cache du warp
-            # rasterio. Sans ce filtre, le loop suivant tente de régénérer un
-            # MBTiles à partir du cache, qui devient sa propre source — boucle
-            # infinie en pratique (test_refactor_svf_ombrage_tuilage_z16_tuilage_z16.tif…).
-            ombrages_tifs = [
-                t for t in sorted(dossier_ville.glob("*.tif"))
-                if not t.name.startswith("_")
-                and not re.search(r'_tuilage_z\d+\.tif$', t.name)
-            ]
-            # Ne tuiler que les ombrages demandés par CE run : sans ce filtre,
-            # --tiles-overwrite re-tuilait TOUS les ombrages du dossier projet
-            # (constaté : --shading lrm:sigma=3 re-tuilait aussi s7p5m et multi).
-            # Un run SANS étape shadings (tifs_run=None) garde le comportement
-            # historique : conversion de tout le dossier.
-            if tifs_run:
-                _noms_run = {p.name for p in tifs_run}
-                ombrages_tifs = [t for t in ombrages_tifs if t.name in _noms_run]
+            # Ombrages présents dans dossier_ville — glob/filtre/tuilage
+            # factorisés avec le site jumeau _traiter_bbox_lidar
+            # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages).
+            ombrages_tifs = _lister_tifs_ombrages(dossier_ville, tifs_run)
             if ombrages_tifs:
                 print_etape("MBTiles")
-                for tif in sorted(ombrages_tifs):
-                    print("  " + tif.name)
-                    stem = tif.stem
-                    # Retirer le suffixe de cache _tuilage_z* si présent
-                    stem = re.sub(r'_tuilage_z\d+$', '', stem)
-                    suffix = stem[len(nom_zone) + 1:] if stem.startswith(nom_zone + "_") else stem
-                    nom_base = f"{nom_zone}_{suffix}"
-                    _mbt_path2 = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
-                    _ecraser_l = args.tuiles_ecraser
-                    # _mbtiles_a_regenerer (et non un simple exists()) : détecte
-                    # aussi mbtiles corrompu/vide et TIF plus récent (drift
-                    # réconcilié avec le site jumeau des chunks).
-                    if not _mbtiles_a_regenerer(_mbt_path2, _ecraser_l, source=tif):
-                        print(f"  Existing MBTiles: {_mbt_path2.name}, direct split/conversion")
-                        _convertir_formats(_mbt_path2, args, mbtiles_neuf=False)
-                        continue
-                    _mbt_out = generer_mbtiles_lidar(tif, dossier_ville, nom_base,
-                                               zoom_min=args.zoom_min, zoom_max=args.zoom_max,
-                                               format_tuiles=args.formats_image,
-                                               jpeg_quality=args.qualite_image,
-                                               bbox_l93=bbox,
-                                               ecraser_tuiles=_ecraser_l,
-                                               tile_workers=args.workers)
-                    _convertir_formats(_mbt_out, args, mbtiles_neuf=True)
+                _tuiler_tifs_ombrages(args, ombrages_tifs, dossier_ville,
+                                      nom_zone, bbox, verbose=True)
             else:
                 print("  No shading found for MBTiles (generate --shadings first)")
 
@@ -9868,11 +9981,11 @@ Examples:
                 bbox_wgs = (-180.0, -90.0, 180.0, 90.0)
             else:
                 # Bbox en WGS84 depuis la bbox Lambert 93 de la zone
+                # (enveloppe 4 coins : à 2 coins, le clip osmosis rognait
+                # des features en bordure de zone)
                 try:
-                    lon1, lat1 = lamb93_to_wgs84_approx(bbox[0], bbox[1])
-                    lon2, lat2 = lamb93_to_wgs84_approx(bbox[2], bbox[3])
-                    bbox_wgs = (min(lon1,lon2), min(lat1,lat2),
-                                max(lon1,lon2), max(lat1,lat2))
+                    bbox_wgs = _bbox_enveloppe_transform(
+                        lamb93_to_wgs84_approx, bbox[0], bbox[1], bbox[2], bbox[3])
                 except (ValueError, TypeError, ImportError) as e:
                     print(f"  ERROR bbox WGS84 conversion ({type(e).__name__}): {e}")
                     bbox_wgs = None
@@ -9922,11 +10035,6 @@ Examples:
     print(f"  Total time: {m}m{s:02d}s")
     dossier_res = str(dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville)
     _historique_depuis_argv(total, dossier_res)
-
-
-# ============================================================
-# INTERFACE GRAPHIQUE (tkinter)
-# ============================================================
 
 
 # ============================================================
@@ -10122,11 +10230,11 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
     # pour permettre --nettoyage de les supprimer en fin de chunk. Le
     # téléchargement parallèle ne propage pas _manifest_ctx (threading.local)
-    # → registration explicite depuis le main thread.
-    for _nom in noms_persistance:
-        _cd = chemin_dalle(dossier_dalles, _nom)
-        if _cd.exists():
-            _creer_fichier(_cd)
+    # → registration explicite depuis le main thread, en LOT : l'unitaire
+    # réécrivait tout le JSON + fsync PAR dalle (O(n²) sur un chunk de
+    # milliers de dalles, dizaines de secondes perdues par chunk).
+    _cds = [chemin_dalle(dossier_dalles, _nom) for _nom in noms_persistance]
+    _creer_fichiers([c for c in _cds if c.exists()])
 
 
 def _mbtiles_est_complete(mbt_path):
@@ -10432,8 +10540,22 @@ def _planche_contours_dept(bbox_wgs84, args):
             # aucun indice sur la cause).
             print(f"  (index sheet: reverse geocoding failed: "
                   f"{type(_e_rev).__name__}: {_e_rev})", flush=True)
+    # Cache disque des polygones (même logique que dep_bbox_cache.json) : les
+    # contours administratifs ne changent pas, les re-télécharger à chaque run
+    # coûtait des requêtes Nominatim + les sleep de politesse par planche.
+    _cache_path = DOSSIER_TRAVAIL / "cache" / "dep_contour_cache.json"
+    try:
+        _cache = json.loads(_cache_path.read_text(encoding="utf-8"))
+        if not isinstance(_cache, dict):
+            _cache = {}
+    except Exception:
+        _cache = {}
     contours = []
+    _cache_dirty = False
     for nom in noms[:4]:   # borne : ne pas spammer Nominatim
+        if nom in _cache:
+            contours.extend(_cache[nom])
+            continue
         try:
             url = ("https://nominatim.openstreetmap.org/search?"
                    + urllib.parse.urlencode({"q": nom, "format": "jsonv2",
@@ -10443,15 +10565,25 @@ def _planche_contours_dept(bbox_wgs84, args):
             with urllib.request.urlopen(req, timeout=15) as r:
                 res = json.load(r)
             g = (res[0].get("geojson") if res else None) or {}
+            rings = []
             if g.get("type") == "Polygon":
-                contours.append(g["coordinates"][0])
+                rings.append(g["coordinates"][0])
             elif g.get("type") == "MultiPolygon":
                 for poly in g["coordinates"]:
-                    contours.append(poly[0])
+                    rings.append(poly[0])
+            contours.extend(rings)
+            if rings:   # ne pas cacher un résultat vide (permet de réessayer)
+                _cache[nom] = rings
+                _cache_dirty = True
             time.sleep(1.1)   # Nominatim : 1 req/s
         except Exception as _e_sea:
             print(f"  (index sheet: no outline for '{nom}': "
                   f"{type(_e_sea).__name__}: {_e_sea})", flush=True)
+    if _cache_dirty:
+        try:
+            _ecrire_json_atomique(_cache_path, _cache)
+        except Exception:
+            pass   # cache best-effort, jamais un point de panne
     return contours
 
 
@@ -10724,10 +10856,9 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             # provider-agnostique : il ne suppose ni grille (x_km, y_km) ni
             # protocole d'accès particulier.
             _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-            _lon1, _lat1 = _t.transform(bx1, by1)
-            _lon2, _lat2 = _t.transform(bx2, by2)
-            bbox_wgs = (min(_lon1, _lon2) - 0.05, min(_lat1, _lat2) - 0.05,
-                        max(_lon1, _lon2) + 0.05, max(_lat1, _lat2) + 0.05)
+            _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
+                _t.transform, bx1, by1, bx2, by2)
+            bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
             cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
             # discover_dalles : None = échec réseau/endpoint, {} = pas de
             # couverture (distinguer + protéger l'appel, cf. _traiter_zone).
@@ -10745,18 +10876,11 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             if args.telechargement:
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
 
+            # tifs_run hoisté HORS du `if args.ombrages` : un run tuiles-seules
+            # chunké (mbtiles sans --shadings) levait NameError sur tifs_run.
+            tifs_run = None   # cibles du run (cf. site jumeau dans main)
             if args.ombrages:
-                TOUS = list(SHADING_TOUS)   # dérivé de _SHADING_TYPES (vat exclu de "tous")
-                choix = (TOUS if "tous" in args.ombrages
-                         else [] if "aucun" in args.ombrages
-                         else args.ombrages)
-                _spec_i = getattr(args, "shading_instances", None) or []
-                if "aucun" in args.ombrages:
-                    _spec_i = []
-                if _spec_i:
-                    _spec_types = {t for t, _ in _spec_i}
-                    choix = [c for c in choix if c not in _spec_types]
-                tifs_run = None   # cibles du run (cf. site jumeau dans main)
+                choix, _spec_i = _resoudre_choix_ombrages(args)
                 if choix or _spec_i:
                     dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
                                                           dossier_ville, bbox)
@@ -10772,40 +10896,11 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                      instances=_spec_i or None)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
-                # Filtre identique à la fonction main : exclure les caches de
-                # tuilage `_tuilage_z<N>.tif` qui sont produits par le warp
-                # rasterio dans `generer_mbtiles_lidar`. Sans ce filtre,
-                # un re-run avec --tuiles-ecraser tente de retuiler le cache
-                # qui devient sa propre source.
-                ombrages_tifs = [t for t in sorted(dossier_ville.glob("*.tif"))
-                                 if not t.name.startswith("_")
-                                 and not re.search(r'_tuilage_z\d+\.tif$', t.name)]
-                # Comme dans main : ne tuiler que les cibles de CE run quand
-                # l'étape shadings a tourné (sinon conversion de tout le dossier).
-                if tifs_run:
-                    _noms_run = {p.name for p in tifs_run}
-                    ombrages_tifs = [t for t in ombrages_tifs if t.name in _noms_run]
-                for tif in ombrages_tifs:
-                    stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
-                    suffix = stem[len(nom_z)+1:] if stem.startswith(nom_z+"_") else stem
-                    nom_base = f"{nom_z}_{suffix}"
-                    mbt_path = (dossier_ville
-                                / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles")
-                    _mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser,
-                                                     source=tif)
-                    if _mbt_neuf:
-                        mbt_out = generer_mbtiles_lidar(
-                            tif, dossier_ville, nom_base,
-                            zoom_min=args.zoom_min, zoom_max=args.zoom_max,
-                            format_tuiles=args.formats_image,
-                            jpeg_quality=args.qualite_image,
-                            bbox_l93=bbox,
-                            ecraser_tuiles=args.tuiles_ecraser,
-                            tile_workers=args.workers)
-                    else:
-                        mbt_out = mbt_path
-                    _convertir_formats(mbt_out, args, decoupe_sortie=False,
-                                       mbtiles_neuf=_mbt_neuf)
+                # Glob/filtre/tuilage factorisés avec le site jumeau de main()
+                # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages).
+                _tuiler_tifs_ombrages(
+                    args, _lister_tifs_ombrages(dossier_ville, tifs_run),
+                    dossier_ville, nom_z, bbox, decoupe_sortie=False)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
@@ -11209,8 +11304,9 @@ def _resoudre_zone_wgs84(args):
         if not nom_zone:
             nom_zone = normaliser_nom(slug)
         # geocoder_region retourne du Lambert 93 — reconvertir en WGS84
-        lon_min, lat_min = _lamb93_to_wgs84_safe(bx1, by1)
-        lon_max, lat_max = _lamb93_to_wgs84_safe(bx2, by2)
+        # (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
+        lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
+            _lamb93_to_wgs84_safe, bx1, by1, bx2, by2)
 
     elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
@@ -11219,9 +11315,10 @@ def _resoudre_zone_wgs84(args):
             sys.exit(1)
         if not nom_zone:
             nom_zone = normaliser_nom(nom_dep) + "_" + num_dep.lower()
-        # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84 pour le WFS
-        lon_min, lat_min = _lamb93_to_wgs84_safe(bx1, by1)
-        lon_max, lat_max = _lamb93_to_wgs84_safe(bx2, by2)
+        # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84
+        # pour le WFS (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
+        lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
+            _lamb93_to_wgs84_safe, bx1, by1, bx2, by2)
 
     elif args.zone_bbox:
         try:
@@ -11304,7 +11401,6 @@ def main_decouper():
     args.mbtiles  = "mbtiles"  in _ff
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
-    args.transparent_raster = "transparent-raster" in _ff
 
     src = Path(args.source)
     if not src.exists():
@@ -11447,8 +11543,6 @@ Examples:
     args.rmap     = "rmap"     in _ff
     args.sqlitedb = "sqlitedb" in _ff
     args.transparent_raster = "transparent-raster" in _ff
-    if not args.formats_image:
-        args.formats_image = "auto"
 
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
@@ -11503,6 +11597,32 @@ Examples:
     # dans le MBTiles via re-encodage côté client (cf. _jpeg_q ci-dessous).
     fmt_ext = "jpg" if "jpeg" in img_fmt else "png"
 
+    # ── Plafonnement zoom selon capacités réelles de la couche ───────────────
+    # IGN : GetCapabilities WMTS. XYZ (naip…) : table _XYZ_ZOOM_LIMITS.
+    # AVANT le bloc de découpage a-priori (qui `return`) : le capping vivait
+    # après, donc les runs chunkés demandaient des zooms hors couche →
+    # avalanche de 204 → chunks marqués « hors couverture » et sautés à tort
+    # alors qu'ils avaient de la couverture aux zooms valides. Réécrit dans
+    # args pour que _traiter_bbox_wmts hérite des bornes capées.
+    zoom_min = min(args.zoom_min, args.zoom_max)
+    zoom_max = max(args.zoom_min, args.zoom_max)
+    _limites_reel = _lire_zoom_limites_wmts(
+        layer, apikey_requis, apikey=getattr(args, "apikey", ""))
+    if _limites_reel:
+        _src_caps = "service" if layer.startswith("XYZ:") else "IGN"
+        _zmin_reel, _zmax_reel = _limites_reel
+        if zoom_max > _zmax_reel:
+            print(f"  ⚠ Layer {args.couche}: {_src_caps} max zoom = {_zmax_reel}, "
+                  f"zoom_max lowered from {zoom_max} to {_zmax_reel}.")
+            zoom_max = _zmax_reel
+            zoom_min = min(zoom_min, zoom_max)
+        if zoom_min < _zmin_reel:
+            print(f"  ⚠ Layer {args.couche}: {_src_caps} min zoom = {_zmin_reel}, "
+                  f"zoom_min raised from {zoom_min} to {_zmin_reel}.")
+            zoom_min = _zmin_reel
+            zoom_max = max(zoom_max, zoom_min)
+    args.zoom_min, args.zoom_max = zoom_min, zoom_max
+
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
 
@@ -11535,26 +11655,9 @@ Examples:
         print("  A-priori splitting: zone too small -> single pass")
 
     # ── Calcul de la grille ───────────────────────────────────────────────────
-    zoom_min = min(args.zoom_min, args.zoom_max)
-    zoom_max = max(args.zoom_min, args.zoom_max)
-
-    # ── Plafonnement selon capacités réelles de la couche ────────────────────
-    # IGN : GetCapabilities WMTS. XYZ (naip…) : table _XYZ_ZOOM_LIMITS.
-    _limites_reel = _lire_zoom_limites_wmts(
-        layer, apikey_requis, apikey=getattr(args, "apikey", ""))
-    if _limites_reel:
-        _src_caps = "service" if layer.startswith("XYZ:") else "IGN"
-        _zmin_reel, _zmax_reel = _limites_reel
-        if zoom_max > _zmax_reel:
-            print(f"  ⚠ Layer {args.couche}: {_src_caps} max zoom = {_zmax_reel}, "
-                  f"zoom_max lowered from {zoom_max} to {_zmax_reel}.")
-            zoom_max = _zmax_reel
-            zoom_min = min(zoom_min, zoom_max)
-        if zoom_min < _zmin_reel:
-            print(f"  ⚠ Layer {args.couche}: {_src_caps} min zoom = {_zmin_reel}, "
-                  f"zoom_min raised from {zoom_min} to {_zmin_reel}.")
-            zoom_min = _zmin_reel
-            zoom_max = max(zoom_max, zoom_min)
+    # (zooms déjà normalisés ET capés plus haut, avant le bloc split)
+    zoom_min = args.zoom_min
+    zoom_max = args.zoom_max
 
     tuiles = calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max,
                                  zoom_min, zoom_max)
@@ -11650,11 +11753,6 @@ Examples:
     print(f"\n  Done in {_hms(elapsed)}")
     print(f"  Done! Folder: {dossier}")
     _historique_depuis_argv(elapsed, str(dossier))
-
-
-# ============================================================
-# INTERFACE GRAPHIQUE (tkinter)
-# ============================================================
 
 
 # ============================================================
@@ -16118,5 +16216,10 @@ if __name__ == "__main__":
         raise
     finally:
         if isinstance(sys.stdout, _TeeLogger):
-            sys.stdout.close()
-            sys.stdout = sys.stdout._terminal if hasattr(sys.stdout, "_terminal") else sys.__stdout__
+            _tee = sys.stdout
+            _tee.close()
+            sys.stdout = getattr(_tee, "_terminal", None) or sys.__stdout__
+            # stderr pointe sur le MÊME tee (cf. _activer_log) : le laisser
+            # sur un log fermé avalerait les messages de shutdown de Python.
+            if sys.stderr is _tee:
+                sys.stderr = sys.__stderr__
