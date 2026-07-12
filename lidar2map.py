@@ -1811,6 +1811,10 @@ class _TeeLogger:
         self._log = open(log_path, "w", encoding="utf-8", buffering=1)
         self._buf = ""          # buffer jusqu'au prochain \n
         self._cr_buf = ""       # dernier contenu de ligne \r (écrase les précédents)
+        # Verrou : write() est appelé par PLUSIEURS threads (pools d'encodage
+        # de tuiles, workers). Sans lui, la machine à états _buf/_cr_buf
+        # s'entrelace entre threads → lignes de log corrompues.
+        self._lock = threading.Lock()
 
     def _log_line(self, line):
         """Écrit une ligne dans le fichier log avec horodatage."""
@@ -1856,28 +1860,29 @@ class _TeeLogger:
         # traversé par TOUTE la sortie, y compris les dizaines de milliers de
         # repaints des barres de progression.
         try:
-            pos = 0
-            n = len(msg)
-            while pos < n:
-                i_r = msg.find("\r", pos)
-                i_n = msg.find("\n", pos)
-                if i_r == -1 and i_n == -1:
-                    self._buf += msg[pos:]
-                    break
-                if i_n == -1 or (i_r != -1 and i_r < i_n):
-                    # \r : écrase le contenu de la ligne courante (barre de
-                    # progression) — dernier état gardé dans _cr_buf
-                    self._cr_buf = self._buf + msg[pos:i_r]
-                    self._buf = ""
-                    pos = i_r + 1
-                else:
-                    # \n : fin de ligne — logguer le contenu final (si la ligne
-                    # était précédée de \r, prendre le dernier segment \r)
-                    line = (self._buf + msg[pos:i_n]) or self._cr_buf
-                    self._log_line(line)
-                    self._buf = ""
-                    self._cr_buf = ""
-                    pos = i_n + 1
+            with self._lock:
+                pos = 0
+                n = len(msg)
+                while pos < n:
+                    i_r = msg.find("\r", pos)
+                    i_n = msg.find("\n", pos)
+                    if i_r == -1 and i_n == -1:
+                        self._buf += msg[pos:]
+                        break
+                    if i_n == -1 or (i_r != -1 and i_r < i_n):
+                        # \r : écrase le contenu de la ligne courante (barre de
+                        # progression) — dernier état gardé dans _cr_buf
+                        self._cr_buf = self._buf + msg[pos:i_r]
+                        self._buf = ""
+                        pos = i_r + 1
+                    else:
+                        # \n : fin de ligne — logguer le contenu final (si la ligne
+                        # était précédée de \r, prendre le dernier segment \r)
+                        line = (self._buf + msg[pos:i_n]) or self._cr_buf
+                        self._log_line(line)
+                        self._buf = ""
+                        self._cr_buf = ""
+                        pos = i_n + 1
         except Exception:
             pass
 
@@ -1951,7 +1956,9 @@ def _activer_log():
         # logs/ inaccessible → log console uniquement, pas de fichier système
         print("  WARNING: logs/ folder inaccessible, console log only.")
         return
-    nom = "lidar_" + time.strftime("%Y%m%d_%H%M%S") + ".log"
+    # PID dans le nom : deux process lancés la MÊME seconde ouvraient sinon le
+    # même fichier en "w" → le second tronquait le log du premier.
+    nom = "lidar_" + time.strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}.log"
     log_path = log_dir / nom
     tee = _TeeLogger(log_path)
     sys.stdout = tee
@@ -6647,6 +6654,23 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         # Repli pleine mémoire (numba absent ou échantillon
                         # trop petit) — limité aux zones modestes.
                         import numpy as np
+                        # Garde OOM : le fallback charge le DEM entier + plusieurs
+                        # tableaux pleine taille par direction (ThreadPool). Au-delà
+                        # d'un seuil on refuse plutôt que de risquer l'OOM sur une
+                        # grande zone sans numba.
+                        _MAX_SVF_FULLMEM_PX = 6000 * 6000   # ~36 Mpx (~3 km à 0,5 m)
+                        try:
+                            import rasterio as _rio_sz
+                            with _rio_sz.open(src_str) as _dsz:
+                                _npx = _dsz.width * _dsz.height
+                        except Exception:
+                            _npx = 0
+                        if _npx > _MAX_SVF_FULLMEM_PX:
+                            print(f"  SVF: numba unavailable and zone too large "
+                                  f"({_npx / 1e6:.0f} Mpx) for the full-memory "
+                                  f"fallback. Install numba, or split the zone "
+                                  f"with --split-cols/--split-rows.", flush=True)
+                            continue
                         print("  SVF chunked KO → fallback to full memory", flush=True)
                         dem_arr, _nd = _lire_dem_rasterio(src_str)
                         arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
@@ -7371,6 +7395,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
         batch = []
         BATCH = BATCH_MBTILES_INSERT   # constante partagée (drift : 500 local)
+        # Largeur de traitement bornée : l'ancien tuileur allouait une bande
+        # couvrant TOUTES les colonnes d'une rangée (mémoire ∝ largeur de la
+        # zone). On traite par fenêtres de _COL_WIN tuiles ; le warp étant déjà
+        # en Mercator, une fenêtre de colonnes est une simple tranche
+        # horizontale (offset entier depuis le début de rangée → pas de couture).
+        _COL_WIN = 48
         rangees_done = 0
         total_rangees_tr = max(1, sum(
             merc_to_tile(xmax_w, ymin_w, z)[1] -
@@ -7386,14 +7416,21 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _w_height = _ds.height
             _w_count  = _ds.count         # nb bandes
 
+            def _progress_rangee():
+                pct  = int(rangees_done / total_rangees_tr * 100)
+                bars = int(pct / 100 * 30)
+                elapsed = int(time.time() - t_tile)
+                print(f"\r  z{zoom_min}-{zoom_max} ["
+                      + "█" * bars + "░" * (30 - bars)
+                      + f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
+                      end="", flush=True)
+
             for z in range(zoom_min, zoom_max + 1):
                 tx0, ty0 = merc_to_tile(xmin_w, ymax_w, z)
                 tx1, ty1 = merc_to_tile(xmax_w, ymin_w, z)
-                nb_cols  = tx1 - tx0 + 1
-                band_w   = nb_cols * TILE_SIZE
-
                 # Résolution de cette tuile par rapport au warped (qui est à zoom_max)
                 zoom_factor = 2 ** (zoom_max - z)
+                _tile_px = TILE_SIZE * zoom_factor   # largeur d'1 tuile en px warped
 
                 for ty in range(ty0, ty1 + 1):
                     # Soft-cancel : le 1er Ctrl+C / bouton Arrêter pose
@@ -7402,122 +7439,90 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     # escaladait en kill forcé après 15 s.
                     if _stop_event.is_set():
                         raise KeyboardInterrupt("LiDAR tiling interrupted")
-                    bx0_t, _, _, by1_t = tile_bounds(tx0, ty, z)
-                    _,     _, bx1_t, _ = tile_bounds(tx1, ty, z)
 
-                    # Coordonnées pixel dans le warped TIF
-                    px_off = int((bx0_t - _w_orig_x) / _w_res)
-                    py_off = int((_w_orig_y - by1_t) / _w_res)
-                    px_sz  = int(band_w * zoom_factor)
-                    py_sz  = int(TILE_SIZE * zoom_factor)
-
-                    # Clip aux limites du TIF
-                    px_clip = max(0, px_off)
+                    # Vertical (identique pour toutes les colonnes de la rangée)
+                    _, _, _, by1_t = tile_bounds(tx0, ty, z)
+                    py_off  = int((_w_orig_y - by1_t) / _w_res)
                     py_clip = max(0, py_off)
-                    px_end  = min(_w_width,  px_off + px_sz)
-                    py_end  = min(_w_height, py_off + py_sz)
-
-                    if px_end <= px_clip or py_end <= py_clip:
-                        # Rangée entièrement hors du TIF : compte quand même
-                        # pour la progression (le total inclut ces rangées)
+                    py_end  = min(_w_height, py_off + int(_tile_px))
+                    if py_end <= py_clip:
+                        # Rangée entièrement hors du TIF (verticalement)
                         rangees_done += 1
-                        pct = int(rangees_done / total_rangees_tr * 100)
-                        elapsed = int(time.time() - t_tile)
-                        print(f"\r  z{zoom_min}-{zoom_max} [" +
-                              "█" * int(pct/100*30) +
-                              "░" * (30 - int(pct/100*30)) +
-                              f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
-                              end="", flush=True)
+                        _progress_rangee()
                         continue
+                    out_h = max(1, int((py_end - py_clip) / zoom_factor))
+                    dst_y = max(0, int((py_clip - py_off) / zoom_factor))
 
-                    try:
-                        # Lire la fenêtre directement à la résolution tuile
-                        # (rasterio redimensionne via out_shape — évite les grandes allocations)
-                        win_w = px_end - px_clip
-                        win_h = py_end - py_clip
-                        out_w = max(1, int(win_w / zoom_factor))
-                        out_h = max(1, int(win_h / zoom_factor))
-                        win = _Win(px_clip, py_clip, win_w, win_h)
-                        arr = _ds.read(window=win,
-                                       out_shape=(_w_count, out_h, out_w),
-                                       resampling=_rio.enums.Resampling.bilinear)
+                    # Offset px du début de rangée (colonne tx0), puis fenêtres
+                    # de colonnes contiguës par pas entier de tuiles.
+                    px_off_row = int((tile_bounds(tx0, ty, z)[0] - _w_orig_x) / _w_res)
 
-                        # Canvas à la taille de la bande de tuiles
-                        dst_x = max(0, int((px_clip - px_off) / zoom_factor))
-                        dst_y = max(0, int((py_clip - py_off) / zoom_factor))
-                        canvas = _np.zeros(
-                            (_w_count, TILE_SIZE, band_w), dtype=_np.uint8)
-                        canvas[:, dst_y:dst_y+arr.shape[1],
-                                  dst_x:dst_x+arr.shape[2]] = arr
+                    for cwx0 in range(tx0, tx1 + 1, _COL_WIN):
+                        cwx1 = min(cwx0 + _COL_WIN - 1, tx1)
+                        cw_ncols  = cwx1 - cwx0 + 1
+                        cw_band_w = cw_ncols * TILE_SIZE
+                        px_off = px_off_row + int((cwx0 - tx0) * _tile_px)
+                        px_clip = max(0, px_off)
+                        px_end  = min(_w_width, px_off + int(cw_band_w * zoom_factor))
+                        if px_end <= px_clip:
+                            continue   # fenêtre de colonnes hors du TIF (bord)
 
-                        # Convertir en image PIL — monobande conservée en
-                        # mode "L" (pas de triplication RGB : _encode_tile
-                        # en tire des PNG grayscale 2-3× plus petits ; les
-                        # JPEG sont convertis RGB à l'encodage).
-                        if _w_count >= 3:
-                            img_arr = _np.moveaxis(canvas[:3], 0, 2)
-                        else:
-                            img_arr = canvas[0]
-
-                        band_img = Image.fromarray(img_arr.astype(_np.uint8))
-                        # Pas de resize — rasterio a déjà lu à la bonne résolution
-
-                    except Exception as _e_read:
-                        nb_echecs_tr += 1
-                        if nb_echecs_tr <= 3:
-                            print(f"\n  ⚠ rasterio read failure z{z} ty={ty}: "
-                                  f"{_e_read}", flush=True)
-                        rangees_done += 1
-                        pct = int(rangees_done / total_rangees_tr * 100)
-                        elapsed = int(time.time() - t_tile)
-                        print(f"\r  z{zoom_min}-{zoom_max} [" +
-                              "█" * int(pct/100*30) +
-                              "░" * (30 - int(pct/100*30)) +
-                              f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
-                              end="", flush=True)
-                        continue
-
-                    # Découper en tuiles individuelles puis encoder en parallèle
-                    # (Pillow libère le GIL pendant JPEG/PNG save → ThreadPool donne
-                    # un vrai parallélisme. Sur petites bandes le pool overhead l'emporte ;
-                    # on bascule sur séquentiel sous _MIN_PAR_TILES tuiles.)
-                    _tiles_args = []
-                    for i, tx in enumerate(range(tx0, tx1 + 1)):
-                        left = i * TILE_SIZE
-                        tile = band_img.crop((left, 0, left + TILE_SIZE, TILE_SIZE))
-                        if tile.getbbox() is None:
+                        try:
+                            # Lecture directe à la résolution tuile (out_shape).
+                            win_w = px_end - px_clip
+                            out_w = max(1, int(win_w / zoom_factor))
+                            win = _Win(px_clip, py_clip, win_w, py_end - py_clip)
+                            arr = _ds.read(window=win,
+                                           out_shape=(_w_count, out_h, out_w),
+                                           resampling=_rio.enums.Resampling.bilinear)
+                            dst_x = max(0, int((px_clip - px_off) / zoom_factor))
+                            canvas = _np.zeros(
+                                (_w_count, TILE_SIZE, cw_band_w), dtype=_np.uint8)
+                            canvas[:, dst_y:dst_y+arr.shape[1],
+                                      dst_x:dst_x+arr.shape[2]] = arr
+                            # Monobande conservée en "L" (PNG grayscale 2-3× plus
+                            # petit) ; JPEG converti RGB à l'encodage.
+                            if _w_count >= 3:
+                                img_arr = _np.moveaxis(canvas[:3], 0, 2)
+                            else:
+                                img_arr = canvas[0]
+                            band_img = Image.fromarray(img_arr.astype(_np.uint8))
+                        except Exception as _e_read:
+                            nb_echecs_tr += 1
+                            if nb_echecs_tr <= 3:
+                                print(f"\n  ⚠ rasterio read failure z{z} ty={ty}"
+                                      f" cols {cwx0}-{cwx1}: {_e_read}", flush=True)
                             continue
-                        _tiles_args.append((tile, z, tx, ty))
 
-                    if _pool is not None and len(_tiles_args) >= _MIN_PAR_TILES:
-                        for _res in _pool.map(_encode_tile, _tiles_args):
-                            batch.append(_res)
-                            total_insere += 1
-                    else:
-                        for _args in _tiles_args:
-                            batch.append(_encode_tile(_args))
-                            total_insere += 1
+                        # Découpe + encodage (Pillow libère le GIL → ThreadPool ;
+                        # séquentiel sous _MIN_PAR_TILES tuiles).
+                        _tiles_args = []
+                        for i, tx in enumerate(range(cwx0, cwx1 + 1)):
+                            left = i * TILE_SIZE
+                            tile = band_img.crop((left, 0, left + TILE_SIZE, TILE_SIZE))
+                            if tile.getbbox() is None:
+                                continue
+                            _tiles_args.append((tile, z, tx, ty))
 
-                    band_img.close()
+                        if _pool is not None and len(_tiles_args) >= _MIN_PAR_TILES:
+                            for _res in _pool.map(_encode_tile, _tiles_args):
+                                batch.append(_res)
+                                total_insere += 1
+                        else:
+                            for _args in _tiles_args:
+                                batch.append(_encode_tile(_args))
+                                total_insere += 1
+                        band_img.close()
 
-                    # Fin de RANGÉE (boucle ty) : progression + flush du batch.
-                    # Historiquement désindenté au niveau de la boucle z par
-                    # erreur, ce qui accumulait tout un niveau de zoom en RAM
-                    # avant flush et figeait la barre de progression vers 0 %.
+                        if len(batch) >= BATCH:
+                            cur.executemany(
+                                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
+                            con.commit()
+                            batch.clear()
+
+                    # Fin de RANGÉE : progression par rangée (comme avant).
                     rangees_done += 1
-                    pct  = int(rangees_done / total_rangees_tr * 100)
-                    bars = int(pct / 100 * 30)
-                    elapsed = int(time.time() - t_tile)
-                    print(f"\r  z{zoom_min}-{zoom_max} [" +
-                          "█"*bars + "░"*(30-bars) +
-                          f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
-                          end="", flush=True)
-
-                    if len(batch) >= BATCH:
-                        cur.executemany(
-                            "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-                        con.commit()
-                        batch.clear()
+                    _progress_rangee()
 
         if batch:
             cur.executemany(
@@ -10506,17 +10511,8 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
     noms_attendus : iterable de noms de dalles attendus pour la zone
                     (typiquement les keys du dict retourné par discover_dalles).
     """
-    # Un SEUL scan disque + un SEUL stat() par fichier, mémorisés dans
-    # {nom: (path, size)}. Sur un cache départemental (milliers de .tif) ×
-    # des centaines de chunks à priori, le coût énumération+stat dominait
-    # (avant : _rglob_tif_robuste ×2, stat() jusqu'à 3×/dalle).
-    _index = {}
-    for d in _rglob_tif_robuste(dossier_dalles):
-        try:
-            _index[d.name] = (d, d.stat().st_size)
-        except OSError:
-            continue
-
+    # Déterminer les noms de la zone : dalles_zone.txt si la bbox correspond,
+    # sinon le set noms_attendus (discover_dalles).
     noms_zone = set()
     dalles_zone_txt = dossier_ville / "dalles_zone.txt"
     if dalles_zone_txt.exists():
@@ -10525,14 +10521,21 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
         if _lignes and _lignes[0].strip() == _bbox_courante:
             noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
     if not noms_zone:
-        noms_attendus_set = set(noms_attendus)
-        noms_zone = {nom for nom, (_d, _sz) in _index.items()
-                     if nom in noms_attendus_set and _sz > SEUIL_DALLE_VALIDE}
+        noms_zone = set(noms_attendus)
 
-    dalles_ombrages = sorted(
-        _d for nom, (_d, _sz) in _index.items()
-        if nom in noms_zone and _sz > SEUIL_DALLE_VALIDE)
-    return dalles_ombrages
+    # Résoudre CHAQUE nom directement (chemin_dalle gère le sous-dossier par
+    # colonne X) au lieu de rglober TOUT le cache PARTAGÉ. Sur un cache
+    # départemental (dizaines de milliers de .tif) × des centaines de chunks,
+    # l'ancien scan était en O(chunks × fichiers) ; désormais O(noms de la zone).
+    dalles_ombrages = []
+    for nom in noms_zone:
+        p = chemin_dalle(dossier_dalles, nom)
+        try:
+            if p.exists() and p.stat().st_size > SEUIL_DALLE_VALIDE:
+                dalles_ombrages.append(p)
+        except OSError:
+            continue
+    return sorted(dalles_ombrages)
 
 
 def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args):
