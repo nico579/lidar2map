@@ -297,9 +297,10 @@ check("SHADING_TYPES_ORDRE == clés de _SHADING_TYPES (ordre préservé)",
       l2m.SHADING_TYPES_ORDRE == list(l2m._SHADING_TYPES))
 check("tout type de _SHADING_TYPES est une valeur --shadings acceptée",
       all(t in l2m.SHADING_TYPES_ORDRE for t in l2m._SHADING_TYPES))
-check("SHADING_TOUS = tous sauf vat (composite exclu de l'expansion 'tous')",
-      l2m.SHADING_TOUS == [t for t in l2m._SHADING_TYPES if t != "vat"]
-      and "vat" not in l2m.SHADING_TOUS)
+check("SHADING_TOUS = tous sauf vat/e4mstp (composites lourds exclus de 'tous')",
+      l2m.SHADING_TOUS == [t for t in l2m._SHADING_TYPES if t not in ("vat", "e4mstp")]
+      and "vat" not in l2m.SHADING_TOUS
+      and "e4mstp" not in l2m.SHADING_TOUS)
 
 print("== 10b. Composite VAT (_vat_compose) ==")
 assert l2m.parser_shading_spec("vat") == ("vat", {})
@@ -329,6 +330,39 @@ check("VAT : nodata SVF → noir", int(_out[1, 1]) == 0, int(_out[1, 1]))
 check("VAT : la pente assombrit (droite < gauche)",
       int(_out[20, 24]) < int(_out[20, 4]),
       f"droite={_out[20, 24]} gauche={_out[20, 4]}")
+
+print("== 10b2. Composite e4MSTP (_mstp_chunked + _e4mstp_compose) ==")
+assert l2m.parser_shading_spec("e4mstp") == ("e4mstp", {})
+assert l2m.parser_shading_spec("e4mstp:dist=100,gamma=0.7") == \
+    ("e4mstp", {"dist": 100.0, "gamma": 0.7})
+check("e4mstp dans _SHADING_TYPES (dist, gamma)",
+      l2m._SHADING_TYPES.get("e4mstp") == {"dist", "gamma"})
+_ed = tmp / "e4"; _ed.mkdir()
+# MSTP chunké sur un DEM synthétique (scipy seul, pas de numba).
+_dem_e = (10.0 * np.sin(xx2[:256, :256] / 12.0)
+          + 3.0 * np.cos(yy2[:256, :256] / 5.0)).astype(np.float32)
+write_tif(_ed / "dem.tif", _dem_e, nodata=ND)
+check("_mstp_chunked -> RGB uint8", l2m._mstp_chunked(_ed / "dem.tif", _ed / "mstp.tif", res=0.5))
+with rasterio.open(_ed / "mstp.tif") as _r:
+    check("MSTP : 3 bandes uint8", _r.count == 3 and _r.dtypes[0] == "uint8")
+# _e4mstp_compose sur composantes uint8 synthétiques (numpy pur).
+def _mk3(path, val):
+    with rasterio.open(path, "w", driver="GTiff", height=32, width=32, count=3,
+                       dtype="uint8", crs="EPSG:27700",
+                       transform=from_origin(0, 32, 1, 1)) as d:
+        d.write(np.full((3, 32, 32), val, np.uint8))
+_mk3(_ed / "m.tif", 150)
+_opos_e = np.full((32, 32), 160, np.uint8); _opos_e[0:4, 0:4] = 0   # nodata (opos=0)
+for _n, _v in [("svf", 180), ("op", None), ("on", 140), ("slp", 0), ("slf", 128), ("sp", 128)]:
+    _mk_u8(_ed / f"{_n}.tif", _opos_e if _n == "op" else np.full((32, 32), _v, np.uint8))
+check("_e4mstp_compose -> True",
+      l2m._e4mstp_compose(_ed / "m.tif", _ed / "svf.tif", _ed / "op.tif",
+                          _ed / "on.tif", _ed / "slp.tif", _ed / "slf.tif",
+                          _ed / "sp.tif", _ed / "e4.tif", gamma=0.8))
+with rasterio.open(_ed / "e4.tif") as _r:
+    _e4o = _r.read(); _e4b = _r.count
+check("e4MSTP : sortie 3 bandes uint8", _e4b == 3 and _e4o.dtype == np.uint8)
+check("e4MSTP : nodata (opos=0) → noir", int(_e4o[:, 1, 1].sum()) == 0, str(_e4o[:, 1, 1]))
 
 print("== 10c. Presets de stack par resolution ==")
 _pn, _pi, _pe = l2m._resoudre_preset_shading("auto", 0.5)

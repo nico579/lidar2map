@@ -1456,6 +1456,8 @@ const OMB_DEFS = {
   lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
   vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                            gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
+  e4mstp:{label:'e4MSTP (composite couleur)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+                                           gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
                                   dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                   gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1},

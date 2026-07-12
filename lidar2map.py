@@ -6040,6 +6040,171 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
     return True
 
 
+def _mstp_chunked(src_path, dst_path, scales_m=None, res=0.5,
+                  lightness=0.85, k=2.2):
+    """Multi-Scale Topographic Position (Kokalj/RVT) chunké → GeoTIFF RGB uint8.
+
+    DEV(σ) = (z − moyenne_σ) / écart-type_σ : déviation d'altitude standardisée
+    (≈ slope-invariant), calculée sur 3 bandes d'échelle (local/méso/large).
+    Chaque bande = moyenne du DEV sur ses sous-échelles ; les 3 vont dans
+    R/G/B, donc la COULEUR encode l'échelle dominante d'une structure. Clip
+    symétrique ±k (unités d'écart-type) → [0,1], gamma `lightness`.
+
+    Échelles en MÈTRES (indépendantes de la résolution du MNT), converties en
+    px via `res`. RAM bornée : blocs 2048² + halo = 4·σ_max (comme le LRM).
+    Nodata → noir. Retourne True/False (import manquant)."""
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+        from scipy.ndimage import gaussian_filter as _gf
+    except ImportError as _ie:
+        print(f"  MSTP chunked: missing import ({_ie})", flush=True)
+        return False
+    if scales_m is None:
+        # local (micro-relief), méso (talus/parcellaire), large (versant)
+        scales_m = [(1.5, 5.0), (12.0, 27.0), (55.0, 100.0)]
+    scales_px = [tuple(max(1.0, s / res) for s in band) for band in scales_m]
+    sig_max = max(s for band in scales_px for s in band)
+    CHUNK  = 2048
+    MARGIN = int(max(4 * sig_max, 64))
+
+    def _dev(z, s):
+        mu = _gf(z, s)
+        sd = np.sqrt(np.maximum(_gf(z * z, s) - mu * mu, 0.0))
+        return (z - mu) / (sd + 1e-3)
+
+    with _rio.open(str(src_path)) as src:
+        H, W    = src.height, src.width
+        profile = src.profile.copy()
+        nodata  = src.nodata
+    out_profile = profile.copy()
+    for _dk in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        out_profile.pop(_dk, None)
+    out_profile.update(driver="GTiff", dtype="uint8", count=3,
+                       compress="deflate", predictor=2, tiled=True,
+                       blockxsize=512, blockysize=512, bigtiff="YES", nodata=None)
+
+    total = ((H + CHUNK - 1) // CHUNK) * ((W + CHUNK - 1) // CHUNK)
+    n = 0
+    with _rio.open(str(src_path)) as src, \
+         _rio.open(str(dst_path), "w", **out_profile) as dst:
+        for row_off in range(0, H, CHUNK):
+            for col_off in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("MSTP chunked interrompu")
+                row_end = min(row_off + CHUNK, H)
+                col_end = min(col_off + CHUNK, W)
+                r0 = max(0, row_off - MARGIN); c0 = max(0, col_off - MARGIN)
+                r1 = min(H, row_end + MARGIN); c1 = min(W, col_end + MARGIN)
+                block = src.read(1, window=Window(c0, r0, c1 - c0, r1 - r0)).astype(np.float32)
+                nd = _nodata_mask(block, nodata)
+                if nd.any():
+                    _mv = float(block[~nd].mean()) if (~nd).any() else 0.0
+                    block = np.where(nd, _mv, block)
+                bands = []
+                for band in scales_px:
+                    d = np.mean([_dev(block, s) for s in band], axis=0)
+                    bands.append(np.clip((d + k) / (2 * k), 0.0, 1.0))
+                rgb = (np.stack(bands, axis=0).astype(np.float32)) ** lightness
+                dr0 = row_off - r0; dc0 = col_off - c0
+                dr1 = dr0 + (row_end - row_off); dc1 = dc0 + (col_end - col_off)
+                nd_c = nd[dr0:dr1, dc0:dc1]
+                out = (np.clip(rgb[:, dr0:dr1, dc0:dc1], 0, 1) * 255.0).astype(np.uint8)
+                out[:, nd_c] = 0
+                dst.write(out, window=Window(col_off, row_off,
+                                             col_end - col_off, row_end - row_off))
+                n += 1
+                print(f"\r  MSTP chunked: {n * 100 // total:3d}% "
+                      f"({n}/{total} blocks)   ", end="", flush=True)
+    print(f"\r  MSTP chunked: done ({total} blocks)                    ")
+    return True
+
+
+def _e4mstp_compose(mstp_path, svf_path, opos_path, oneg_path, slope_path,
+                    slrm_fine_path, slrm_path_path, dst_path, gamma=1.0):
+    """Composite e4MSTP (Kokalj/RVT, patent-safe) → GeoTIFF RGB uint8.
+
+    Combine la couleur multi-échelle du MSTP et la netteté type-VAT du SVF :
+      base   = relief coloré (openness positive = crêtes claires, négative =
+               creux sombres) teinté chaud par la pente (≈ CRIM) ;
+      × SVF   (multiply)  → assombrit les concavités, crispness ;
+      + MSTP  (overlay)   → couleur d'échelle ;
+      + SLRM fin (screen) → micro-relief ;
+      + SLRM échelle-chemin (soft-light) → isole les linéaires (façon LRM).
+    Toutes les couches sont déjà calculées et pixel-alignées. Blend par blocs
+    2048² (RAM bornée). Retourne True/False."""
+    import numpy as np
+    try:
+        import rasterio as _rio
+        from rasterio.windows import Window
+    except ImportError as _ie:
+        print(f"  e4MSTP compose: missing import ({_ie})", flush=True)
+        return False
+    CHUNK = 2048
+    with _rio.open(str(mstp_path)) as m0:
+        H, W = m0.height, m0.width
+        profile = m0.profile.copy()
+    for _o in (svf_path, opos_path, oneg_path, slope_path,
+               slrm_fine_path, slrm_path_path):
+        with _rio.open(str(_o)) as _so:
+            if (_so.width, _so.height) != (W, H):
+                print(f"  e4MSTP: {Path(_o).name} {_so.width}×{_so.height}"
+                      f" != MSTP {W}×{H}, composite aborted", flush=True)
+                return False
+    for _pk in ("BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        profile.pop(_pk, None)
+    profile.update(driver="GTiff", dtype="uint8", count=3, compress="deflate",
+                   predictor=2, tiled=True, blockxsize=512, blockysize=512,
+                   nodata=None, bigtiff="IF_SAFER")
+
+    def _overlay(a, b): return np.where(a < 0.5, 2 * a * b, 1 - 2 * (1 - a) * (1 - b))
+    def _screen(a, b):  return 1 - (1 - a) * (1 - b)
+
+    def _soft(a, b):
+        d = np.where(a <= 0.25, ((16 * a - 12) * a + 4) * a, np.sqrt(np.clip(a, 0, 1)))
+        return np.where(b <= 0.5, a - (1 - 2 * b) * a * (1 - a), a + (2 * b - 1) * (d - a))
+
+    with _rio.open(str(mstp_path)) as m, _rio.open(str(svf_path)) as sv, \
+         _rio.open(str(opos_path)) as op, _rio.open(str(oneg_path)) as on, \
+         _rio.open(str(slope_path)) as sl, _rio.open(str(slrm_fine_path)) as lf, \
+         _rio.open(str(slrm_path_path)) as lp, \
+         _rio.open(str(dst_path), "w", **profile) as dst:
+        for r in range(0, H, CHUNK):
+            for c in range(0, W, CHUNK):
+                if _stop_event.is_set():
+                    raise KeyboardInterrupt("e4MSTP compose interrompu")
+                win = Window(c, r, min(CHUNK, W - c), min(CHUNK, H - r))
+                mstp   = np.moveaxis(m.read(window=win), 0, -1).astype(np.float32) / 255.0
+                svf    = sv.read(1, window=win).astype(np.float32) / 255.0
+                opos_u = op.read(1, window=win)
+                opos   = opos_u.astype(np.float32) / 255.0
+                oneg   = on.read(1, window=win).astype(np.float32) / 255.0
+                sl_u8  = sl.read(1, window=win)
+                slope_deg = np.clip(sl_u8.astype(np.float32) - 1, 0, None) * (90.0 / 254.0)
+                s = np.clip(slope_deg / 45.0, 0, 1)
+                slf = lf.read(1, window=win).astype(np.float32) / 255.0
+                slp = lp.read(1, window=win).astype(np.float32) / 255.0
+                # Relief openness pos/neg : crêtes claires (opos), creux/fossés
+                # assombris (oneg bas dans les creux → facteur < 1).
+                L = opos * (0.40 + 0.60 * oneg)
+                crim = np.stack([np.clip(L + 0.32 * s, 0, 1),
+                                 np.clip(L * (1 - 0.32 * s), 0, 1),
+                                 np.clip(L * (1 - 0.65 * s), 0, 1)], axis=-1)
+                svf3 = svf[..., None]
+                e = crim * 0.62 + (crim * svf3) * 0.38        # SVF multiply
+                e = e * 0.28 + _overlay(e, mstp) * 0.72       # MSTP overlay
+                slf3 = slf[..., None]; slp3 = slp[..., None]
+                e = e * 0.80 + _screen(e, slf3) * 0.20        # micro-relief fin
+                e = e * 0.65 + _soft(e, slp3) * 0.35          # isolation chemin
+                if gamma and gamma != 1.0:
+                    e = np.clip(e, 0, 1) ** gamma
+                out = (np.clip(e, 0, 1) * 255.0).astype(np.uint8)
+                out[opos_u == 0] = 0                          # nodata → noir
+                dst.write(np.moveaxis(out, -1, 0), window=win)
+    return True
+
+
 # Ordre = utilité pratique. LRM d'abord : le plus rapide (flou gaussien, pas de
 # ray-cast) et le plus lisible pour un néophyte (structures continues), donc le
 # défaut. Puis VAT (détecteur multi-échelle complet), SVF, la paire openness,
@@ -6047,8 +6212,9 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
 # surtout couche du VAT). Pilote le dropdown GUI, le menu interactif, les
 # choices argparse et l'ordre de `--shadings tous`.
 _SHADING_TYPES = {
-    "lrm":   {"sigma"},
-    "vat":   {"dist", "gamma"},
+    "lrm":    {"sigma"},
+    "vat":    {"dist", "gamma"},
+    "e4mstp": {"dist", "gamma"},
     "svf":   {"conv", "dist", "gamma", "sweep"},
     "opos":  {"dist", "gamma"},
     "oneg":  {"dist", "gamma"},
@@ -6065,11 +6231,12 @@ _SHADING_TYPES = {
 # interactif, expansion "tous"). Dérivées de _SHADING_TYPES → ajouter un type au
 # dict suffit, plus de liste recopiée à la main qui se désynchronise.
 #   SHADING_TYPES_ORDRE : tous les types, dans l'ordre d'affichage (vat inclus).
-#   SHADING_TOUS        : ce que produit `--shadings tous`. 'vat' EXCLU : c'est un
-#       composite qui recalcule svf+opos+slope, donc redondant quand "tous" génère
-#       déjà ces couches. Reste atteignable via --shadings vat / --shading vat / menu.
+#   SHADING_TOUS        : ce que produit `--shadings tous`. 'vat' et 'e4mstp'
+#       EXCLUS : composites lourds qui recalculent svf/opos/slope (redondant
+#       quand "tous" génère déjà ces couches). Restent atteignables via
+#       --shadings vat|e4mstp / --shading vat|e4mstp / menu.
 SHADING_TYPES_ORDRE = list(_SHADING_TYPES)
-SHADING_TOUS        = [t for t in SHADING_TYPES_ORDRE if t != "vat"]
+SHADING_TOUS        = [t for t in SHADING_TYPES_ORDRE if t not in ("vat", "e4mstp")]
 
 
 # Presets de stack par résolution : params en METRES (intention indépendante de la
@@ -6245,6 +6412,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             # dans le blend → pas de double gamma).
             p.setdefault("dist", float(svf_dist))
             p.setdefault("gamma", float(svf_gamma))
+        if typ == "e4mstp":
+            # gamma FINAL du composite couleur : défaut 0.8 (éclaircit),
+            # PAS svf_gamma (2.0 par défaut écraserait un composite déjà blendé,
+            # rendu très sombre). Le blend interne porte déjà le contraste.
+            p.setdefault("dist", float(svf_dist))
+            p.setdefault("gamma", 0.8)
         if typ in ("lrm", "rrim"):
             p.setdefault("sigma", float(sigma_defaut_m))
         return p
@@ -6262,11 +6435,11 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             gtag = f"{p['gamma']:.1f}".replace(".", "p")
             base = (f"svf_{p['conv']}" if typ == "svf" else typ)
             return f"{base}_{int(round(p['dist']))}m_g{gtag}_ombrage"
-        if typ == "vat":
+        if typ in ("vat", "e4mstp"):
             if prm:   # params explicites → encoder dist/gamma, sinon nom canonique
                 gtag = f"{p['gamma']:.1f}".replace(".", "p")
-                return f"vat_{int(round(p['dist']))}m_g{gtag}_ombrage"
-            return "vat_ombrage"
+                return f"{typ}_{int(round(p['dist']))}m_g{gtag}_ombrage"
+            return f"{typ}_ombrage"
         # lrm / rrim : encode sigma dès qu'il est explicite (comme svf/opos/vat),
         # pour que le nom porte toujours l'échelle. Bare `--shading lrm` (sans
         # sigma) reste canonique `lrm_ombrage`.
@@ -6709,6 +6882,58 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     continue
                 finally:
                     for _t in (_svf_t, _opos_t, _slope_t):
+                        if _t.exists():
+                            _t.unlink(missing_ok=True)
+
+            elif cle == "e4mstp":
+                # ── e4MSTP — composite MSTP + relief coloré + SVF (Kokalj/RVT,
+                # variante sans brevet). Même patron que VAT : composantes en
+                # temp, blend, nettoie. Combine la couleur multi-échelle du MSTP
+                # et la netteté du SVF. Lourd (openness pos+neg + SVF + slope +
+                # 2 LRM + MSTP) ; réservé aux zones/chunks, pas le défaut.
+                _e4_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
+                _e4_gamma   = float(p_i["gamma"])
+                _slrm_fine_px = max(1, int(round(1.5 / RESOLUTION_M)))  # micro-relief
+                _slrm_path_px = max(1, int(round(8.0 / RESOLUTION_M)))  # échelle chemin
+                print(f"  e4MSTP: composite MSTP + coloured relief + SVF"
+                      f" (radius {_e4_dist_px * RESOLUTION_M:.0f} m)"
+                      f", may take 15-30 min...", flush=True)
+                _svf_t   = dossier_ville / nom_fichier.replace(".tif", "_svf_tmp.tif")
+                _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
+                _oneg_t  = dossier_ville / nom_fichier.replace(".tif", "_oneg_tmp.tif")
+                _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
+                _mstp_t  = dossier_ville / nom_fichier.replace(".tif", "_mstp_tmp.tif")
+                _slf_t   = dossier_ville / nom_fichier.replace(".tif", "_slf_tmp.tif")
+                _slp_t   = dossier_ville / nom_fichier.replace(".tif", "_slp_tmp.tif")
+                _e4_tmps = (_svf_t, _opos_t, _oneg_t, _slope_t, _mstp_t, _slf_t, _slp_t)
+                try:
+                    _ok = (
+                        _svf_opos_chunked(Path(src_str), _svf_t, _opos_t,
+                                          _e4_dist_px, 16, RESOLUTION_M, 1.0)
+                        and _svf_chunked(Path(src_str), _oneg_t, _e4_dist_px, 16,
+                                         RESOLUTION_M, 1.0, False, 3)
+                        and _hillshade_chunked(Path(src_str), _slope_t, "slope",
+                                               {}, dx=RESOLUTION_M, dy=RESOLUTION_M)
+                        and _mstp_chunked(Path(src_str), _mstp_t, res=RESOLUTION_M)
+                        and _lrm_chunked(Path(src_str), _slf_t, _slrm_fine_px)
+                        and _lrm_chunked(Path(src_str), _slp_t, _slrm_path_px))
+                    if not _ok:
+                        print("  e4MSTP: components unavailable (numba/scipy"
+                              " required), shading skipped.", flush=True)
+                        continue
+                    if not _e4mstp_compose(_mstp_t, _svf_t, _opos_t, _oneg_t,
+                                           _slope_t, _slf_t, _slp_t, chemin_out,
+                                           gamma=_e4_gamma):
+                        if chemin_out.exists():
+                            chemin_out.unlink()
+                        continue
+                except Exception as e_e4:
+                    print(f"  ERROR composite e4MSTP: {e_e4}")
+                    if chemin_out.exists():
+                        chemin_out.unlink()
+                    continue
+                finally:
+                    for _t in _e4_tmps:
                         if _t.exists():
                             _t.unlink(missing_ok=True)
 
