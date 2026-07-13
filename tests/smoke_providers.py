@@ -56,8 +56,15 @@ TEST_POINTS = {
     "ca-nrcan": (-73.567, 45.501), "nz-linz": (174.776, -41.286),
     "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),
     "au-ga": (138.600, -34.920), "us-tnm": (-122.332, 47.606),
-    "us-3dep": (-122.332, 47.606), "se-lantmateriet": (18.069, 59.329),
+    "us-3dep": (-122.332, 47.606),
+    # se-lantmateriet retiré : provider désactivé (_se_lantmateriet.py, à
+    # réécrire vers STAC COG 1 m) — remettre le point (18.069, 59.329) alors.
     "jp-gsi": (139.767, 35.681),
+    # Ajouts 2026-07-13 — points DÉJÀ validés par download réel à l'intégration :
+    "de-hessen": (8.681, 50.111),           # Francfort (WCS he_dgm1)
+    "de-bw": (9.183, 48.775),               # Stuttgart (WCS DGM1 LGL)
+    "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
+    "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
 }
 APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
               "dk-datafordeler": "DATAFORDELER_TOKEN",
