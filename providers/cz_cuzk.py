@@ -233,12 +233,14 @@ def post_fetch(chemin):
     import zipfile
     dossier = chemin.parent
     laz_path = None
+    from providers import common as _common
     with zipfile.ZipFile(chemin) as z:
         members = [m for m in z.namelist() if m.lower().endswith(".laz")]
         if not members:
             raise ValueError(f"Aucun .laz dans {chemin.name}")
-        z.extract(members[0], dossier)
-        laz_path = dossier / members[0]
+        # Extraction anti zip-slip (le nom de membre vient d'une archive
+        # distante) — cf. providers/common.py.
+        laz_path = _common.extraire_membre(z, members[0], dossier)
     chemin.unlink(missing_ok=True)
 
     tif_path = chemin.with_suffix(".tif")

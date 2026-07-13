@@ -2339,6 +2339,10 @@ def _discover_providers():
             continue
         try:
             mod = _importlib.import_module(f"providers.{f.stem}")
+            # Un module SANS CODE n'est pas un provider mais un utilitaire
+            # partagé (ex. providers/common.py) — ne pas le lister.
+            if not hasattr(mod, "CODE"):
+                continue
             result.append({
                 "code":           getattr(mod, "CODE",           f.stem),
                 "name":           getattr(mod, "NAME",           f.stem),

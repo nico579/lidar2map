@@ -227,14 +227,16 @@ def post_fetch(chemin):
     dossier = chemin.parent
     target = chemin.with_suffix(".tif") if chemin.suffix.lower() != ".tif" else chemin
 
+    from providers import common as _common
     extracted = None
     with zipfile.ZipFile(chemin) as z:
         # Chercher le premier GeoTIFF dans le ZIP
         members_tif = [m for m in z.namelist() if m.lower().endswith(".tif")]
         if not members_tif:
             raise ValueError(f"Aucun .tif dans {chemin.name}")
-        z.extract(members_tif[0], dossier)
-        extracted = dossier / members_tif[0]
+        # Extraction anti zip-slip (membre venu d'une archive distante) —
+        # cf. providers/common.py.
+        extracted = _common.extraire_membre(z, members_tif[0], dossier)
 
     # Supprimer le ZIP (maintenant que le contenu est extrait)
     if chemin != extracted:
