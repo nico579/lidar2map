@@ -270,3 +270,6 @@ jobs:
 
       - name: Tests robustesse reseau/pagination/cache (sans reseau, mocks)
         run: python tests/_test_robustesse.py
+
+      - name: Tests interactions cache/flag/manifeste (sans reseau, mocks)
+        run: python tests/_test_interactions.py

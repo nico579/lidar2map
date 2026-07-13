@@ -155,8 +155,13 @@ def dalle_filename(x_km, y_km):
 
 
 def subdir_from_name(nom):
-    """Regroupe les dalles par carré OS 100 km (2 lettres en tête du nom)."""
-    m = re.match(r"([A-Za-z]{2})", nom)
+    """Regroupe les dalles par carré OS 100 km (2 lettres en tête du nom).
+
+    Motif resserré : une réf OS = 2 lettres SUIVIES de chiffres (NR5807, HY20,
+    NS16NE). L'ancien `[A-Za-z]{2}` seul matchait n'importe quel nom commençant
+    par 2 lettres, dont les dalles gb-england (`dtm_england_...`) du même cache
+    lidar/gb : la purge hors-zone scopée par provider aurait pu les supprimer."""
+    m = re.match(r"([A-Za-z]{2})\d{2}", nom)
     return m.group(1).upper() if m else None
 
 
