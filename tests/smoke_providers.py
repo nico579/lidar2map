@@ -158,7 +158,10 @@ def _discover_providers():
         if code:
             ok[code] = m
         else:
-            errors.append((p.stem, "pas d'attribut CODE"))
+            # Module sans CODE = helper partage (providers/common.py), pas un
+            # provider — meme regle que _discover_providers de lidar2map.py
+            # (jumeaux : ce scan avait derive, FAIL smoke du 2026-07-13).
+            print(f"  (skip {p.stem}: module sans CODE = helper, pas un provider)")
     return ok, errors
 
 
