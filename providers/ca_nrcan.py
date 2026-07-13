@@ -13,10 +13,10 @@
 #
 # Self-contained : stdlib uniquement.
 
+import hashlib
 import json
 import re
 import urllib.request
-import urllib.parse
 from pathlib import Path
 
 
@@ -49,17 +49,26 @@ COVERAGE_EXTENT = (-3000000, -1600000, 4000000, 3000000)
 
 
 # ── Nommage ──────────────────────────────────────────────────────────────────
-def dalle_filename(x_km, y_km):
-    return f"ca_hrdem1m_{x_km:+07d}_{y_km:+07d}.tif"
+# Un item STAC = une survey entière (COG mosaïque de plusieurs centaines de km²),
+# lue en fenêtre via /vsicurl. On nomme donc par identifiant de survey, pas par
+# une cellule géographique : l'ancien nommage par centre de survey collapsait
+# toutes les surveys d'une région sur ~1 cellule (perte de données massive).
+def _safe_id(stac_id):
+    """Identifiant STAC → composant de nom de fichier sûr."""
+    return re.sub(r"[^A-Za-z0-9]+", "-", str(stac_id)).strip("-")[:70] or "survey"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km:+07d}"
+def dalle_filename(stac_id):
+    return f"ca_hrdem1m_{_safe_id(stac_id)}.tif"
+
+
+def dalle_subdir(stac_id):
+    return _safe_id(stac_id)[:2].lower() or "xx"
 
 
 def subdir_from_name(nom):
-    m = re.match(r"ca_hrdem1m_([+-]?\d+)_", nom)
-    return f"{int(m.group(1)):+07d}" if m else None
+    m = re.match(r"ca_hrdem1m_(.+)\.tif$", nom)
+    return m.group(1)[:2].lower() if m else None
 
 
 def dalle_url(x_km, y_km):
@@ -72,25 +81,34 @@ def dalles_pour_bbox(x1, y1, x2, y2):
 
 # ── Découverte STAC ──────────────────────────────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
-    """Requête STAC NRCan pour les COG 1m HRDEM dans bbox_wgs84."""
+    """Requête STAC NRCan → COG DTM 1 m (HRDEM) intersectant bbox_wgs84.
+
+    Chaque item STAC est une survey entière (COG mosaïque lu en fenêtre). On
+    retourne l'asset 'dtm' de chaque survey 1 m intersectant la zone ; le cœur en
+    lit la fenêtre bbox via /vsicurl et compose les surveys qui se recouvrent.
+    """
     if bbox_wgs84 is None:
         return {}
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Cache
+    # Cache PAR bbox : la recherche STAC dépend de la bbox, donc son cache aussi.
+    # Un fichier de cache unique partagé entre zones renvoyait les items de la
+    # 1re bbox pour toutes les suivantes (relief d'une autre région, bug muet).
+    bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
+    bbox_key = hashlib.md5(f"{COLLECTION}|{bbox_str}".encode()).hexdigest()[:12]
+    cache_bbox = cache_path.with_name(f"{cache_path.stem}_{bbox_key}.json")
+
     items_all = []
-    if cache_path.exists():
+    if cache_bbox.exists():
         try:
-            items_all = json.loads(cache_path.read_text(encoding="utf-8")).get("items", [])
+            items_all = json.loads(cache_bbox.read_text(encoding="utf-8")).get("items", [])
         except Exception:
             pass
 
     if not items_all:
-        bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
-        url = (f"{STAC_SEARCH}?collections={COLLECTION}"
-               f"&bbox={bbox_str}&limit=100")
+        url = f"{STAC_SEARCH}?collections={COLLECTION}&bbox={bbox_str}&limit=100"
         print(f"  NRCan STAC: query {bbox_str}...", flush=True)
         n_pages = 0
         while url:
@@ -109,49 +127,34 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                     url = link.get("href")
                     break
         try:
-            cache_path.write_text(json.dumps({"items": items_all}), encoding="utf-8")
+            cache_bbox.write_text(json.dumps({"bbox": bbox_str, "items": items_all}),
+                                  encoding="utf-8")
         except Exception:
             pass
         print(f"  NRCan : {n_pages} page(s) → {len(items_all)} items")
 
-    # Filtrer assets DTM 1m + dédup par position
-    def _bbox_lcc(item_bbox_wgs84):
-        """Conversion approx WGS84 → EPSG:3979 LCC Canada pour filtrage."""
-        # Formule approche : pas de pyproj en stdlib
-        # LCC Canada : lon_0=-96, lat_0=60, SP1=49, SP2=77
-        # Approximation linéaire valide sur le Canada
-        lon, lat = (item_bbox_wgs84[0]+item_bbox_wgs84[2])/2, (item_bbox_wgs84[1]+item_bbox_wgs84[3])/2
-        x = (lon + 96) * 75000
-        y = (lat - 60) * 111000
-        return int(x // 1000), int(y // 1000)
-
-    candidats = {}
-    _yr_re = re.compile(r"(\d{4})")
+    # Sélection : asset 'dtm' (COG GeoTIFF) des surveys 1 m. Le DSM (surface) et
+    # les résolutions 2 m sont écartés (provider déclaré 1 m, RESOLUTION_M=1.0 ;
+    # une zone couverte seulement en 2 m relève d'un futur provider dédié, cf. #8).
+    dalles = {}
+    n_2m = 0
     for it in items_all:
-        for k, asset in (it.get("assets") or {}).items():
-            href = asset.get("href", "")
-            t = asset.get("type", "")
-            if not href or ("tiff" not in t and not href.endswith(".tif")):
-                continue
-            # Préférer DTM sur DSM (asset key 'dtm' ou URL contenant '-dtm')
-            is_dtm = ("dtm" in k.lower() or "-dtm" in href.lower() or
-                      "dem" in k.lower() or "-dem" in href.lower())
-            is_dsm_only = "dsm" in k.lower() and "-dsm" in href.lower() and not is_dtm
-            if is_dsm_only:
-                continue  # sauter les assets DSM purs
-            if "1m" not in href.lower() and not is_dtm:
-                continue
-            bbox_item = it.get("bbox")
-            if not bbox_item:
-                continue
-            x_km, y_km = _bbox_lcc(bbox_item)
-            yr_m = _yr_re.search(href)
-            year = int(yr_m.group(1)) if yr_m else 0
-            key = (x_km, y_km)
-            prev = candidats.get(key)
-            if prev is None or year > prev[0]:
-                candidats[key] = (year, dalle_filename(x_km, y_km), href)
+        dtm = (it.get("assets") or {}).get("dtm")
+        if not dtm:
+            continue
+        href = dtm.get("href", "")
+        t = dtm.get("type", "")
+        if not href or "tiff" not in t:
+            continue
+        low = href.lower()
+        if "-1m" not in low:
+            if "-2m" in low:
+                n_2m += 1
+            continue
+        stac_id = it.get("id") or _safe_id(href)
+        dalles[dalle_filename(stac_id)] = href
 
-    dalles = {nom: href for (_, nom, href) in candidats.values()}
-    print(f"  NRCan: {len(dalles)} 1m tile(s) selected")
+    if n_2m and not dalles:
+        print(f"  NRCan: {n_2m} survey(s) 2 m seulement (provider 1 m) → aucune couverture")
+    print(f"  NRCan: {len(dalles)} 1m DTM survey(s) selected")
     return dalles

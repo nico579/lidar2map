@@ -3547,6 +3547,13 @@ def _cog_cache_couvre(chemin, bbox_natif):
         return False
 
 
+# #9 : au-delà de cette taille, la fenêtre COG est copiée par bandes de lignes
+# (RAM bornée) au lieu d'un read unique. Le split a-priori borne déjà la bbox par
+# chunk en pratique ; ce garde-fou protège le cas d'une bbox non splittée (petit
+# provider COG, run mono-chunk) × plusieurs workers. 4096² px ≈ 67 Mo/bande f32.
+_MAX_COG_WINDOW_PX = 4096 * 4096
+
+
 def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     """Lecture FENÊTRÉE d'un COG distant (mosaïque régionale) via /vsicurl/.
 
@@ -3561,7 +3568,7 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     Retourne "ok" / "skip" / "absent" (pas d'intersection) / "erreur".
     """
     import rasterio
-    from rasterio.windows import from_bounds as _win_from_bounds
+    from rasterio.windows import from_bounds as _win_from_bounds, Window
 
     chemin = chemin_dalle(dossier_dalles, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -3616,18 +3623,43 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
                     if l >= r or bot >= t:
                         return "absent"          # le COG ne couvre pas la zone
                     win = _win_from_bounds(l, bot, r, t, src.transform)
-                    data = src.read(window=win)
-                    if data.size == 0:
+                    win_i = win.round_offsets(op="floor").round_lengths(op="ceil")
+                    win_h, win_w = int(win_i.height), int(win_i.width)
+                    if win_h <= 0 or win_w <= 0:
                         return "absent"
-                    profil = src.profile.copy()
-                    profil.update(
-                        driver="GTiff",
-                        height=data.shape[1], width=data.shape[2],
-                        transform=src.window_transform(win),
-                        compress="deflate", predictor=2, tiled=True,
-                        blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
-                    with rasterio.open(chemin_tmp, "w", **profil) as dst:
-                        dst.write(data)
+                    if win_h * win_w > _MAX_COG_WINDOW_PX:
+                        # #9 : fenêtre géante (bbox mono-chunk non splittée) →
+                        # copie par bandes de lignes pour borner la RAM. Géoréf =
+                        # window_transform de la fenêtre ENTIÈRE arrondie.
+                        profil = src.profile.copy()
+                        profil.update(
+                            driver="GTiff",
+                            height=win_h, width=win_w,
+                            transform=src.window_transform(win_i),
+                            compress="deflate", predictor=2, tiled=True,
+                            blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
+                        with rasterio.open(chemin_tmp, "w", **profil) as dst:
+                            r0 = 0
+                            while r0 < win_h:
+                                h = min(1024, win_h - r0)
+                                sub = Window(win_i.col_off, win_i.row_off + r0,
+                                             win_w, h)
+                                dst.write(src.read(window=sub),
+                                          window=Window(0, r0, win_w, h))
+                                r0 += h
+                    else:
+                        data = src.read(window=win)
+                        if data.size == 0:
+                            return "absent"
+                        profil = src.profile.copy()
+                        profil.update(
+                            driver="GTiff",
+                            height=data.shape[1], width=data.shape[2],
+                            transform=src.window_transform(win),
+                            compress="deflate", predictor=2, tiled=True,
+                            blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
+                        with rasterio.open(chemin_tmp, "w", **profil) as dst:
+                            dst.write(data)
             if not _valider_tif_dalle(chemin_tmp):
                 chemin_tmp.unlink(missing_ok=True)
                 raise IOError("COG fenêtré invalide après écriture")
@@ -9953,7 +9985,22 @@ Examples:
             print("  Relaunch with --download to rebuild the list.")
             sys.exit(1)
         toutes = _rglob_tif_robuste(dossier_dalles)
-        hors_zone = [f for f in toutes if f.name not in noms_zone_purge]
+        # #2 : le cache est indexé par PAYS (lidar/<pays>), donc plusieurs
+        # providers peuvent cohabiter dans dossier_dalles (us-tnm + us-3dep, les
+        # DGM1 allemands...). On ne purge QUE les dalles que le provider courant
+        # reconnaît comme siennes (son subdir_from_name matche le nommage) : sinon
+        # purger la zone A d'un provider effacerait les dalles d'un AUTRE provider
+        # du même pays (perte de données silencieuse). Les nommages sont disjoints
+        # (préfixes us3dep_/usgs_1m_/he_dgm1_/LHD_FXX_...), la discrimination est
+        # fiable. Providers à subdir_from_name=None (dalles à la racine) : purge
+        # neutralisée pour eux, dégradation acceptable vs. suppression croisée.
+        def _est_du_provider(nom):
+            try:
+                return PROVIDER.subdir_from_name(nom) is not None
+            except Exception:
+                return False
+        hors_zone = [f for f in toutes
+                     if f.name not in noms_zone_purge and _est_du_provider(f.name)]
         if hors_zone:
             taille_go = sum(f.stat().st_size for f in hors_zone) / 1e9
             print(f"\n  Out-of-zone purge: {len(hors_zone)} tile(s) - {taille_go:.1f} GB")

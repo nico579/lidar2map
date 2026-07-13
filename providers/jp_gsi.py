@@ -37,21 +37,28 @@ DOC_URL    = "https://maps.gsi.go.jp/development/ichiran.html#dem"
 
 
 # ── Géométrie ────────────────────────────────────────────────────────────────
-CRS_NATIF          = "EPSG:3857"          # Web Mercator (schéma de tuiles XYZ)
-RESOLUTION_M       = 5                     # DEM5A ≈ 5 m (z=15)
-DALLE_KM           = 1
-PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)   # 200 (nominal)
-SEUIL_DALLE_VALIDE = 20_000
+CRS_NATIF  = "EPSG:3857"                   # Web Mercator (schéma de tuiles XYZ)
 
 ZOOM       = 15                            # niveau XYZ de DEM5A
 LAYER      = "dem5a"
-TUILE_PX   = 256
+TUILE_PX   = 256                           # côté d'une tuile XYZ (px)
 URL_TMPL   = "https://cyberjapandata.gsi.go.jp/xyz/{layer}/{z}/{x}/{y}.txt"
 HTTP_UA    = "lidar2map/1.0 (GSI dem5a)"
 
 # Constantes web-mercator
 _R    = 20037508.342789244                 # demi-circonférence (m)
-_STEP = 2 * _R / (2 ** ZOOM)               # côté d'une tuile z=15 (m)
+_STEP = 2 * _R / (2 ** ZOOM)               # côté d'une tuile z=15 (~1223 m projeté)
+
+# À z=15, une tuile de 256 px couvre ~1223 m PROJETÉS, soit ~4,78 m/px (et non
+# 1000 m / 200 px). On expose la résolution PROJETÉE réelle : elle pilote la
+# conversion mètre→pixel des ombrages ET la taille de pixel du VRT (target_res),
+# qui doit coller à la géoréférence écrite par post_fetch (from_bounds sur 256
+# px). Avec RESOLUTION_M=5, chaque tuile 256 px était re-échelonnée en ~245 px
+# dans le VRT (léger écrasement + désalignement cumulé).
+RESOLUTION_M       = _STEP / TUILE_PX      # ≈ 4,777 m/px projeté (z=15)
+PX_PAR_DALLE       = TUILE_PX              # 256
+DALLE_KM           = 1                     # nominal (schéma XYZ, pas une grille km)
+SEUIL_DALLE_VALIDE = 20_000
 
 # Étendue Japon en EPSG:3857 (clippe la grille de tuiles).
 COVERAGE_EXTENT = (13_580_000, 2_750_000, 17_150_000, 5_790_000)
