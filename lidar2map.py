@@ -3516,6 +3516,33 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
     return "erreur"
 
 
+def _cog_cache_couvre(chemin, bbox_natif):
+    """True si le GeoTIFF fenêtré déjà en cache `chemin` couvre ENTIÈREMENT
+    `bbox_natif` (bbox demandée, en CRS_NATIF du provider).
+
+    Les providers COG (ca-nrcan, us-tnm, nz-linz, gb-scotland) nomment le
+    fichier local par ASSET distant, stable, alors que le CONTENU écrit est la
+    fenêtre (intersection bbox∩COG). Sans ce contrôle, une 2e zone dans le même
+    COG réutilisait le fragment de la 1re → relief faux servi en silence (#1).
+    Conservateur : illisible ou bbox non couverte → False (re-télécharge)."""
+    try:
+        import rasterio as _rio
+        with _rio.open(str(chemin)) as ds:
+            b = ds.bounds
+            fcrs = ds.crs.to_epsg() if ds.crs else None
+        x1, y1, x2, y2 = bbox_natif
+        ncrs = (int(PROVIDER.CRS_NATIF.split(":")[1])
+                if ":" in getattr(PROVIDER, "CRS_NATIF", "") else None)
+        if fcrs and ncrs and fcrs != ncrs:
+            _tf = _get_transformer(PROVIDER.CRS_NATIF, f"EPSG:{fcrs}")
+            x1, y1, x2, y2 = _bbox_enveloppe_transform(_tf.transform, x1, y1, x2, y2)
+        tol = 1.0   # tolérance arrondi (1 unité CRS)
+        return (b.left - tol <= min(x1, x2) and b.right + tol >= max(x1, x2)
+                and b.bottom - tol <= min(y1, y2) and b.top + tol >= max(y1, y2))
+    except Exception:
+        return False
+
+
 def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     """Lecture FENÊTRÉE d'un COG distant (mosaïque régionale) via /vsicurl/.
 
@@ -3535,9 +3562,14 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     chemin = chemin_dalle(dossier_dalles, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        if not ecraser:
+        if ecraser:
+            chemin.unlink(missing_ok=True)
+        elif _cog_cache_couvre(chemin, bbox):
             return "skip"
-        chemin.unlink(missing_ok=True)
+        else:
+            # Fragment caché d'une AUTRE zone du même COG (#1) : re-télécharger
+            # pour ne pas servir le relief de la 1re zone.
+            chemin.unlink(missing_ok=True)
 
     bx1, by1, bx2, by2 = bbox
     vsi = "/vsicurl/" + url
@@ -11257,17 +11289,23 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
             cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
             # discover_dalles : None = échec réseau/endpoint, {} = pas de
-            # couverture (distinguer + protéger l'appel, cf. _traiter_zone).
+            # couverture. On DISTINGUE (#5) : None -> lever, sinon le chunk
+            # finirait sans erreur et le manifeste le marquerait FAIT (données
+            # perdues sur une panne réseau, malgré le message « retry »). La
+            # boucle de split rattrape l'exception (fail-fast + reprise) et un
+            # re-run rejoue le chunk. {} = hors-couverture légitime -> le chunk
+            # se termine vide et fait, comme une cellule mer.
             try:
                 _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
-                if _d is None:
-                    print("  ⚠ Tile discovery unavailable (network/endpoint),"
-                          " zone skipped, retry.", flush=True)
             except Exception as _e_disc:
-                print(f"  ⚠ Tile discovery failed ({type(_e_disc).__name__}:"
-                      f" {_e_disc}), zone skipped, retry.", flush=True)
-                _d = None
-            dalles_dict = _d or {}
+                raise RuntimeError(
+                    f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
+                    " - rerun to resume this chunk") from _e_disc
+            if _d is None:
+                raise RuntimeError(
+                    "tile discovery unavailable (network/endpoint)"
+                    " - rerun to resume this chunk")
+            dalles_dict = _d
 
             if args.telechargement:
                 _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
