@@ -27,7 +27,15 @@ import urllib.parse
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "USA — USGS 3DEP (via OpenTopography)"
+# Dataset OpenTopography (pilote la résolution) : USGS10m (10 m, DÉFAUT, libre,
+# couverture nationale) | USGS1m (1 m LiDAR, accès ACADÉMIQUE) | USGS30m. Pour
+# du 1 m PUBLIC sans compte académique, préférer us-tnm. Le NAME reflète le
+# dataset choisi pour éviter de laisser croire à du 1 m par défaut.
+DATASET            = os.environ.get("OPENTOPOGRAPHY_DATASET", "USGS10m")
+_RES_PAR_DATASET   = {"USGS1m": 1, "USGS10m": 10, "USGS30m": 30}
+RESOLUTION_M       = _RES_PAR_DATASET.get(DATASET, 10)
+
+NAME       = f"USA — USGS 3DEP {DATASET} ({RESOLUTION_M:g} m, via OpenTopography)"
 CODE       = "us-3dep"
 COUNTRY    = "us"
 LICENSE    = "Public domain (USGS) + OT terms"
@@ -43,9 +51,8 @@ APIKEY_REQUISE = True
 # le pipeline calcule SVF/hillshade. Les tiles OT (NAD83 géo) sont reprojetées
 # au download via post_download() ci-dessous.
 CRS_NATIF          = "EPSG:3857"
-DATASET            = os.environ.get("OPENTOPOGRAPHY_DATASET", "USGS10m")
-_RES_PAR_DATASET   = {"USGS1m": 1, "USGS10m": 10, "USGS30m": 30}
-RESOLUTION_M       = _RES_PAR_DATASET.get(DATASET, 10)
+# DATASET / RESOLUTION_M définis plus haut (section Identification) car le NAME
+# les reflète désormais.
 DALLE_KM           = 1                  # tuiles 1×1 km en Mercator
 PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)
 SEUIL_DALLE_VALIDE = 5_000              # 100×100 pixel float32 compressé : variable

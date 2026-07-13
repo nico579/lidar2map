@@ -299,6 +299,14 @@ def _laz_to_tif_laspy(laz_path, tif_path, crs_epsg=5514):
     las = laspy.read(str(laz_path))
     mask = las.classification == 2          # points sol (DTM)
     if mask.sum() < 100:
+        # DMR5G/NH = produit SOL (bare-earth). Si la classification n'est pas
+        # peuplée (< 100 pts classe 2), on retombe sur TOUS les points : correct
+        # pour un nuage réellement ground-only, mais si le nuage contenait du
+        # sursol cela produirait un DSM. On le SIGNALE au lieu de le faire en
+        # silence (le reviewer a pointé ce DTM→DSM muet).
+        print(f"  WARN cz-cuzk {Path(laz_path).name}: <100 ground points "
+              f"(class 2), fallback to ALL points (DTM≈DSM si le nuage n'est "
+              f"pas purement sol)", flush=True)
         mask = np.ones(len(las.x), dtype=bool)
     xs = np.asarray(las.x[mask], dtype=np.float64)
     ys = np.asarray(las.y[mask], dtype=np.float64)

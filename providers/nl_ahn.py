@@ -26,7 +26,7 @@ from pathlib import Path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Pays-Bas — AHN4 (Actueel Hoogtebestand Nederland)"
+NAME       = "Pays-Bas — AHN 0.5 m (Actueel Hoogtebestand Nederland)"
 CODE       = "nl-ahn"
 COUNTRY    = "nl"          # ISO 3166-1 alpha-2 — utilisé pour cache/lidar/<country>/
 LICENSE    = "CC-0 (domaine public)"
@@ -35,7 +35,7 @@ DOC_URL    = "https://www.ahn.nl/"
 
 # ── Géométrie ────────────────────────────────────────────────────────────────
 CRS_NATIF          = "EPSG:28992"      # Rijksdriehoek (RD New)
-RESOLUTION_M       = 0.5               # AHN5 DTM/DSM 0.5 m
+RESOLUTION_M       = 0.5               # DTM/DSM 0.5 m (PDOK "actueel" = dernier AHN par région : AHN4/AHN5)
 # Kaartblad AHN 2/3/4/5 : tuiles 6.25 km (N-S) × 5 km (E-O). AHN6 prévoira
 # des tuiles 1×1 km. On expose les deux dimensions séparément.
 TUILE_NS_KM        = 6.25
@@ -53,7 +53,8 @@ WMS_URL     = "https://service.pdok.nl/rws/ahn/wms/v1_0"
 WCS_URL     = "https://service.pdok.nl/rws/ahn/wcs/v1_0"
 ATOM_URL    = f"{BASE_URL}/atom/index.xml"
 DOWNLOAD_BASE = f"{BASE_URL}/atom/downloads"
-# Layers WMS pour visualisation : actuellement AHN4 (DTM/DSM ingéré 2020-2022)
+# Layers WMS : le service PDOK "actueel" sert le dernier AHN disponible par
+# région (AHN4 sur les zones ingérées 2020-2022, AHN5 là où c'est mis à jour)
 WMS_LAYER   = "ahn_05m_dtm"
 # Produit pour téléchargement direct (chemin URL) :
 PRODUIT     = "dtm_05m"   # alternatives : dsm_05m, dtm_5m, dsm_5m
