@@ -64,6 +64,71 @@ REGIONS = [
 ]
 
 
+# Source UNIQUE du compte + de la liste de pays affichés dans les READMEs.
+# Ordre = ordre d'affichage ; noms (EN, FR). Un COUNTRY de provider absent d'ici
+# fait échouer la génération (anti-drift, comme le garde-fou REGIONS). Ajouter un
+# pays = 1 ligne ici, puis relancer ce script : les 2 READMEs se mettent à jour.
+COUNTRY_NAMES = [
+    ("fr", "France", "France"),
+    ("gb", "UK", "Royaume-Uni"),
+    ("de", "Germany", "Allemagne"),
+    ("at", "Austria", "Autriche"),
+    ("nl", "Netherlands", "Pays-Bas"),
+    ("ch", "Switzerland", "Suisse"),
+    ("no", "Norway", "Norvège"),
+    ("be", "Belgium", "Belgique"),
+    ("lu", "Luxembourg", "Luxembourg"),
+    ("fi", "Finland", "Finlande"),
+    ("dk", "Denmark", "Danemark"),
+    ("ie", "Ireland", "Irlande"),
+    ("cz", "Czechia", "Tchéquie"),
+    ("si", "Slovenia", "Slovénie"),
+    ("ee", "Estonia", "Estonie"),
+    ("es", "Spain", "Espagne"),
+    ("it", "Italy", "Italie"),
+    ("pl", "Poland", "Pologne"),
+    ("us", "USA", "USA"),
+    ("ca", "Canada", "Canada"),
+    ("nz", "New Zealand", "Nouvelle-Zélande"),
+    ("au", "Australia", "Australie"),
+    ("jp", "Japan", "Japon"),
+]
+
+# READMEs et langue : les marqueurs <!--N-->…<!--/N--> (compte) et
+# <!--LIST-->…<!--/LIST--> (liste) sont remplacés en place.
+_README_LANG = [("README_Github.md", "en"), ("README_Github.fr.md", "fr")]
+
+
+def update_readme_countries(prov):
+    """Injecte le compte + la liste de pays entre les marqueurs des 2 READMEs.
+    Source = COUNTRY_NAMES (ordre + noms) filtré par les pays réellement couverts
+    par un provider. Retourne False (et n'écrit rien) si un pays de provider n'a
+    pas de nom déclaré — garde-fou anti-drift."""
+    prov_countries = {p["country"] for p in prov.values() if p["country"]}
+    known = {c for c, _, _ in COUNTRY_NAMES}
+    missing = sorted(prov_countries - known)
+    if missing:
+        print(f"  ERREUR : COUNTRY de provider sans nom dans COUNTRY_NAMES : {missing}")
+        return False
+    rows = [(c, en, fr) for c, en, fr in COUNTRY_NAMES if c in prov_countries]
+    n = len(rows)
+    liste = {"en": ", ".join(en for _, en, _ in rows),
+             "fr": ", ".join(fr for _, _, fr in rows)}
+    for fname, lang in _README_LANG:
+        path = os.path.join(HERE, fname)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            txt = f.read()
+        txt = re.sub(r"<!--N-->.*?<!--/N-->", f"<!--N-->{n}<!--/N-->", txt, flags=re.S)
+        txt = re.sub(r"<!--LIST-->.*?<!--/LIST-->",
+                     f"<!--LIST-->{liste[lang]}<!--/LIST-->", txt, flags=re.S)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(txt)
+    print(f"  READMEs : {n} pays injectés (compte + liste)")
+    return True
+
+
 def load_providers():
     """{CODE: NAME} pour tous les providers/*.py — même source que la GUI."""
     prov = {}
@@ -214,6 +279,9 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
 
 def main():
     prov = load_providers()
+    # Compte + liste de pays des READMEs (indépendant de Nominatim/la carte).
+    if not update_readme_countries(prov):
+        return 1
     # Garde-fou : tout code de REGIONS doit exister comme provider (anti-drift).
     codes = {c for r in REGIONS for c in r[1]}
     missing = sorted(c for c in codes if c not in prov)

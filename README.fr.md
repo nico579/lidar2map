@@ -6,7 +6,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **23 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->23<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -16,7 +16,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ---
 
-**Ton pays est-il couvert ?** 23 pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** <!--N-->23<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.fr.png)
 
@@ -26,7 +26,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **23 pays** (France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->23<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) : les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -76,7 +76,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  Sources LiDAR : **23 pays** via le flag `--provider <code>` (ou le dropdown
+  Sources LiDAR : **<!--N-->23<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (6 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
   Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie (Émilie-Romagne), Pologne, USA, Canada, Nouvelle-Zélande,

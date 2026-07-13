@@ -6,7 +6,7 @@
 
 **Offline archaeological LiDAR maps, multi-country + IGN raster/vector + OSM, for Locus Map / OsmAnd / TwoNav**
 
-A self-contained tool (standalone executables for Windows / macOS / Linux, no Python required; also runs as a single Python script) that downloads public LiDAR data from national portals across **23 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy, Poland, USA, Canada, New Zealand, Australia, Japan), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
+A self-contained tool (standalone executables for Windows / macOS / Linux, no Python required; also runs as a single Python script) that downloads public LiDAR data from national portals across **<!--N-->23<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
 
 ![Same place: satellite, OpenStreetMap, then LiDAR relief (SVF)](screenshots/hero.png)
 
@@ -18,7 +18,7 @@ A self-contained tool (standalone executables for Windows / macOS / Linux, no Py
 
 ---
 
-**Is your country covered?** 23 countries with bare-earth LiDAR (incl. USA, Canada & Japan, project-based). Check your area before diving in:
+**Is your country covered?** <!--N-->23<!--/N--> countries with bare-earth LiDAR (incl. USA, Canada & Japan, project-based). Check your area before diving in:
 
 ![lidar2map LiDAR coverage map](coverage.png)
 
@@ -28,7 +28,7 @@ A self-contained tool (standalone executables for Windows / macOS / Linux, no Py
 
 ## Who is it for?
 
-- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **23 countries** (France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy, Poland, USA, Canada, New Zealand, Australia, Japan) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM, VAT) are identical from one country to the next.
+- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **<!--N-->23<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM, VAT) are identical from one country to the next.
 - **French hikers** who want offline IGN topo maps on their phone (Locus Map Pro, OsmAnd+): the IGN raster/vector tabs remain France-only.
 - **Landscape surveyors** who combine historical orthophotos (1950-1995, France) with a DEM to spot human remains before agricultural land abandonment erases them.
 - **Cavers / explorers** who need accurate base maps in areas not covered by mainstream apps.
@@ -78,7 +78,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   instance has its own little parameter form.
   `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
-  LiDAR sources: **23 countries** via the `--provider <code>` flag (or the GUI
+  LiDAR sources: **<!--N-->23<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
   (6 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
   Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy (Emilia-Romagna), Poland, USA, Canada, New Zealand,
