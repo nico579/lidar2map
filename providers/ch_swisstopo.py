@@ -16,6 +16,7 @@
 # Status POC : provider validé live contre swisstopo STAC. discover_dalles
 # fonctionne, retourne les URLs COG signées. Téléchargement direct OK.
 
+import hashlib
 import json
 import urllib.parse
 import urllib.request
@@ -97,36 +98,47 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Pagination STAC : on suit les liens "next" jusqu'à épuisement
+    # Cache PAR bbox : la requête STAC dépend de la bbox, donc son cache aussi.
+    # Ce cache était ÉCRIT mais jamais RELU (cache mort) → on le rend vivant, clé
+    # = hash(collection|bbox). Un fichier unique partagé entre zones renverrait
+    # les items de la 1re bbox pour toutes (bug #4 vu et corrigé sur ca-nrcan).
     bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
-    url = f"{ITEMS_URL}?bbox={bbox_str}&limit=100"
+    bbox_key = hashlib.md5(f"{COLLECTION}|{bbox_str}".encode()).hexdigest()[:12]
+    cache_bbox = cache_path.with_name(f"{cache_path.stem}_{bbox_key}.json")
 
     items = []
-    print(f"  swisstopo STAC: querying {COLLECTION} bbox {bbox_str[:60]}...",
-          flush=True)
     n_pages = 0
-    while url:
-        req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
+    if cache_bbox.exists():
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.load(r)
-        except Exception as e:
-            print(f"  ERROR STAC ({type(e).__name__}): {e}")
-            return None
-        items.extend(data.get("features", []))
-        n_pages += 1
-        # Lien "next" pour pagination (si existe)
-        url = None
-        for link in data.get("links", []):
-            if link.get("rel") == "next" and link.get("href"):
-                url = link["href"]
-                break
+            items = json.loads(cache_bbox.read_text(encoding="utf-8")).get("items", [])
+        except Exception:
+            items = []
 
-    # Cache les items bruts (utile pour debug, ré-utilisable)
-    try:
-        cache_path.write_text(json.dumps({"items": items}), encoding="utf-8")
-    except Exception:
-        pass
+    if not items:
+        url = f"{ITEMS_URL}?bbox={bbox_str}&limit=100"
+        print(f"  swisstopo STAC: querying {COLLECTION} bbox {bbox_str[:60]}...",
+              flush=True)
+        while url:
+            req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    data = json.load(r)
+            except Exception as e:
+                print(f"  ERROR STAC ({type(e).__name__}): {e}")
+                return None
+            items.extend(data.get("features", []))
+            n_pages += 1
+            # Lien "next" pour pagination (si existe)
+            url = None
+            for link in data.get("links", []):
+                if link.get("rel") == "next" and link.get("href"):
+                    url = link["href"]
+                    break
+        try:
+            cache_bbox.write_text(json.dumps({"bbox": bbox_str, "items": items}),
+                                  encoding="utf-8")
+        except Exception:
+            pass
 
     # Filtre 1 : retient le COG 0.5m EPSG:2056 (asset nommé *_0.5_2056_*.tif)
     # Filtre 2 : intersection STRICTE avec bbox_natif (LV95). La caller passe
