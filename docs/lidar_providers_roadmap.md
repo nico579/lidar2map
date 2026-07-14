@@ -93,6 +93,26 @@ By access paradigm:
 | Africa | no open national bare-earth LiDAR anywhere; only global 30 m DEMs (SRTM, Copernicus GLO-30), which are satellite radar, out of scope. | [HARD] |
 | OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |
 
+## Finding new sources (catalog discovery)
+
+`tools/discover_providers.py` queries a CSW metadata catalog (INSPIRE) for
+elevation **services** and auto-probes each WCS (GetCapabilities →
+DescribeCoverage → resolution / CRS / extent), printing a shortlist of wireable
+coverages. INSPIRE mandates that every EU state/region publish elevation as a
+standardized service, so a national catalog enumerates them at once.
+
+```bash
+python tools/discover_providers.py de        # Germany (GDI-DE) — found de-mv, de-st
+python tools/discover_providers.py es         # Spain (IDEE)
+python tools/discover_providers.py <csw_url> "<keyword>" [dc|iso]
+```
+
+Reality check: this harvests cleanly for federal states with a proper
+service-catalog (Germany), less so where the fine data is portal-gated (Spain
+tops out at the 5 m already served nationally) or the catalog does not expose
+service URLs (Italy fragments by region). Always validate a shortlisted
+candidate with a real tile download before writing the provider.
+
 ## Adding a provider
 
 Copy the provider closest in paradigm and adapt URLs / CRS / naming:
