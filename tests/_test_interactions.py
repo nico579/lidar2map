@@ -27,6 +27,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -349,6 +350,36 @@ jp = provs.get("jp-gsi")
 check("largeur tuile / RESOLUTION_M = 256 px exactement",
       jp is not None and abs(jp._STEP / jp.RESOLUTION_M - 256.0) < 1e-9
       and jp.PX_PAR_DALLE == 256)
+
+
+# ══ 8. GUI × pipeline : jumeaux des types d'ombrage ═══════════════════════════
+print("== 8. Ombrages : <select> HTML = OMB_DEFS (app.js) = _SHADING_TYPES ==")
+# Trois listes jumelles qui ont DÉJÀ dérivé (e4mstp présent dans OMB_DEFS et le
+# pipeline mais absent du <select id='omb-dispo'> → inajoutable depuis le GUI,
+# 2026-07-14). On les compare par regex, sans parseur JS/HTML (suffisant : les
+# structures sont plates et régulières).
+_html = (_ROOT / "gui" / "index.html").read_text(encoding="utf-8")
+_mdis = re.search(r'<select id="omb-dispo".*?</select>', _html, re.S)
+opts_html = set(re.findall(r'<option value="([^"]+)"', _mdis.group(0))) if _mdis else set()
+
+_appjs = (_ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+_mdefs = re.search(r"const OMB_DEFS = \{(.*?)\n\};", _appjs, re.S)
+types_js = set(re.findall(r"^\s*'?([a-z0-9]+)'?\s*:\s*\{label:", _mdefs.group(1), re.M)) \
+           if _mdefs else set()
+
+types_pipe = set(l2m._SHADING_TYPES)
+check("les 3 listes existent",
+      bool(opts_html) and bool(types_js) and bool(types_pipe),
+      detail=f"html={len(opts_html)} js={len(types_js)} pipe={len(types_pipe)}")
+check("HTML == OMB_DEFS", opts_html == types_js,
+      detail=f"diff={sorted(opts_html ^ types_js)}")
+check("OMB_DEFS == _SHADING_TYPES", types_js == types_pipe,
+      detail=f"diff={sorted(types_js ^ types_pipe)}")
+# Défaut gamma e4mstp : le GUI SÈME ses defs dans les params émis → doit valoir
+# 0.8 (défaut pipeline du composite), pas 2.0 (svf_gamma) qui assombrit tout.
+_me4 = re.search(r"e4mstp:\{label:.*?gamma:\{[^}]*def:([\d.]+)", _appjs, re.S)
+check("def gamma e4mstp du GUI = 0.8 (aligné pipeline)",
+      _me4 is not None and float(_me4.group(1)) == 0.8)
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")
