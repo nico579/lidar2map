@@ -6,7 +6,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->23<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->24<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -16,7 +16,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ---
 
-**Ton pays est-il couvert ?** <!--N-->23<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** <!--N-->24<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.fr.png)
 
@@ -26,7 +26,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->23<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->24<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) : les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -76,7 +76,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  Sources LiDAR : **<!--N-->23<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
+  Sources LiDAR : **<!--N-->24<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (6 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
   Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie (Émilie-Romagne), Pologne, USA, Canada, Nouvelle-Zélande,
@@ -317,6 +317,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `ee-maaamet` | Estonie | DTM 1 m (ALS 2021-2024) | 1 m | EPSG:3301 (L-EST97) | URLs directes par feuille 1:10000 (numérotation = formule pure, pas d'index), couverture nationale, open data |
 | `es-cnig` | Espagne | MDT | 5 m | EPSG:25830 (UTM30N) | WCS 2.0.1 INSPIRE, 5 m = échelle paysage (le LiDAR 2 m sol-nu exige le portail à session CNIG) |
 | `es-icgc` | Espagne (Catalogne) | MET LiDAR | 0,5 m | EPSG:25831 (UTM31N) | COG régional unique (~433 Go) lu en **fenêtré** via HTTP range `/vsicurl`, 50 cm, bien plus fin que es-cnig 5 m ; CC BY 4.0 (ICGC) |
+| `pt-dgt` | Portugal | MDT LiDAR (2024) | 0,5 m | EPSG:3763 (PT-TM06) | OGC-API + POST /search (CQL2), couverture nationale ; **compte DGT gratuit** (env `DGT_USER`/`DGT_PASS`) pour le download authentifié |
 | `it-emilia-romagna` | Italie (Émilie-Romagne) | DTM (RER) | 5 m | EPSG:7791 (RDN2008/UTM32N) | WCS 2.0.1 GetCoverage, couverture régionale, CC BY 4.0 (le 0,5 m LiDAR 2023/24 sera servi quand sa couverture sera complète) |
 | `pl-gugik` | Pologne | NMT (projet ISOK) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1, données ouvertes, couverture nationale |
 | `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + COG mosaïque (lecture fenêtrée), ~95 % de la population |
@@ -367,7 +368,6 @@ en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
 | Zone | Statut | Pourquoi pas (encore) |
 |---|---|---|
-| Portugal | 🔄 en attente | MDT 0,5 m national ouvert, mais téléchargement par panier interactif seulement, pas d'API par emprise (la DGT en annonce une « à venir »). |
 | Wallonie (BE) | 🔄 en attente | MNT 0,5/1 m ouvert, mais livraison par panier e-mail (48 h), pas de service par tuile / WCS. |
 | Saxe · Bade-Wurtemberg (DE) | 🔄 en attente | DGM1 1 m ouvert, mais derrière un portail de sélection JS sans URL de tuile stable documentée. |
 | Lettonie | 🔄 en attente | DTM 0,4 m, téléchargement non public (WMS sur demande e-mail). |

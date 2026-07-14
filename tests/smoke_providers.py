@@ -65,10 +65,13 @@ TEST_POINTS = {
     "de-bw": (9.183, 48.775),               # Stuttgart (WCS DGM1 LGL)
     "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
+    "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)
 }
 APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
               "dk-datafordeler": "DATAFORDELER_TOKEN",
               "fi-maanmittauslaitos": "FI_NLS_API_KEY"}
+# Providers à compte (user/pass en env, pas une clé unique) : SKIP si absents.
+CRED_ENV = {"pt-dgt": ("DGT_USER", "DGT_PASS")}
 _DEP = ("laspy", "lazrs", "pdal", "laszip")
 
 
@@ -103,6 +106,11 @@ def smoke_one(code, mod, lon, lat):
             return "SKIP", "cle API absente"
         if hasattr(mod, "set_apikey"):
             mod.set_apikey(key)
+    # Providers à compte (login user/pass) : SKIP si les env vars manquent
+    # (CI sans secret) plutôt qu'un FAIL 'discover -> None'.
+    if code in CRED_ENV:
+        if not all(os.environ.get(e, "").strip() for e in CRED_ENV[code]):
+            return "SKIP", f"identifiants absents ({'/'.join(CRED_ENV[code])})"
 
     try:
         with tempfile.TemporaryDirectory() as dd:
