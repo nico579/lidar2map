@@ -57,8 +57,7 @@ TEST_POINTS = {
     "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),
     "au-ga": (138.600, -34.920), "us-tnm": (-122.332, 47.606),
     "us-3dep": (-122.332, 47.606),
-    # se-lantmateriet retiré : provider désactivé (_se_lantmateriet.py, à
-    # réécrire vers STAC COG 1 m) — remettre le point (18.069, 59.329) alors.
+    "se-lantmateriet": (17.639, 59.859),    # Uppsala (COG 1 m, auth Basic)
     "jp-gsi": (139.767, 35.681),
     # Ajouts 2026-07-13 — points DÉJÀ validés par download réel à l'intégration :
     "de-hessen": (8.681, 50.111),           # Francfort (WCS he_dgm1)
@@ -71,7 +70,8 @@ APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
               "dk-datafordeler": "DATAFORDELER_TOKEN",
               "fi-maanmittauslaitos": "FI_NLS_API_KEY"}
 # Providers à compte (user/pass en env, pas une clé unique) : SKIP si absents.
-CRED_ENV = {"pt-dgt": ("DGT_USER", "DGT_PASS")}
+CRED_ENV = {"pt-dgt": ("DGT_USER", "DGT_PASS"),
+            "se-lantmateriet": ("LANTMATERIET_USER", "LANTMATERIET_PASS")}
 _DEP = ("laspy", "lazrs", "pdal", "laszip")
 
 

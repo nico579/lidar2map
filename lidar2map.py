@@ -3592,9 +3592,15 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     _publie_par_moi = False
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
+            # Options GDAL propres au provider (ex. se-lantmateriet :
+            # GDAL_HTTP_USERPWD pour l'auth Basic du COG dl1). SCOPÉES à cet Env
+            # → les identifiants ne fuient pas vers les hosts d'autres providers.
+            _prov_gdal = getattr(PROVIDER, "gdal_env_options", None)
+            _gdal_extra = _prov_gdal() if callable(_prov_gdal) else {}
             with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
                               CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif,.tiff",
-                              VSI_CACHE=True, GDAL_HTTP_TIMEOUT="60"):
+                              VSI_CACHE=True, GDAL_HTTP_TIMEOUT="60",
+                              **_gdal_extra):
                 with rasterio.open(vsi) as src:
                     # La bbox arrive dans PROVIDER.CRS_NATIF ; le COG peut être
                     # dans un AUTRE CRS (ex. 3DEP : tuiles en UTM local alors que

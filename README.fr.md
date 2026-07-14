@@ -6,7 +6,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->24<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->25<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Suède, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -16,7 +16,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ---
 
-**Ton pays est-il couvert ?** <!--N-->24<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
+**Ton pays est-il couvert ?** <!--N-->25<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
 
 ![Carte de couverture LiDAR lidar2map](coverage.fr.png)
 
@@ -26,7 +26,7 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->24<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->25<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Suède, Irlande, Tchéquie, Slovénie, Estonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) : les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -76,7 +76,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  Sources LiDAR : **<!--N-->24<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
+  Sources LiDAR : **<!--N-->25<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (6 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
   Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie (Émilie-Romagne), Pologne, USA, Canada, Nouvelle-Zélande,
@@ -300,6 +300,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |
+| `se-lantmateriet` | Suède | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + COG mosaïque 10 km (lecture fenêtrée), couverture nationale ; **compte GeoTorget gratuit** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) pour le download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` | Allemagne (3 Länder) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data |
 | `de-thueringen` | Allemagne (Thuringe) | DGM | 1-2 m | EPSG:25832 (UTM32N) | index ATOM INSPIRE → XYZ zippé (post_fetch → GeoTIFF), 1 m récent / 2 m ancien, open data dl-de/by-2-0 |
 | `de-hessen` · `de-bw` | Allemagne (Hesse + Bade-Wurtemberg) | DGM1 | 1 m | EPSG:25832 (UTM32N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 |
@@ -326,8 +327,6 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `nz-linz` | Nouvelle-Zélande | DEM national seamless | 1 m | EPSG:2193 (NZTM2000) | STAC LINZ S3 + COG (lecture fenêtrée) |
 | `au-qld` · `au-nsw` | Australie (QLD 0.5 m · NSW 5 m) | DEM LiDAR | 0.5-5 m | EPSG:3857 | ArcGIS ImageServer (ELVIS), couverture **par État** |
 | `au-ga` | Australie (national, dispersé) | DEM dérivé LiDAR | 5 m | EPSG:3857 (servi en 4283) | WCS 1.0.0 GetCoverage (Geoscience Australia) → reprojeté au téléchargement, ~245 000 km² sur tous les États (littoral + Murray-Darling), ouvre SA/VIC/TAS/WA au-delà de QLD·NSW |
-
-*En cours* : Suède (`se-lantmateriet`, compte Lantmäteriet requis).
 
 Sélection : flag `--provider <code>` (CLI), variable d'env `LIDAR2MAP_PROVIDER`, ou dropdown en haut de la GUI. **Ce tableau est l'unique liste de référence des providers**, la section fonctionnalités y renvoie au lieu de la dupliquer.
 
@@ -368,7 +367,7 @@ en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
 | Zone | Statut | Pourquoi pas (encore) |
 |---|---|---|
-| Wallonie (BE) | 🔄 en attente | MNT 0,5/1 m ouvert, mais livraison par panier e-mail (48 h), pas de service par tuile / WCS. |
+| Wallonie (BE) | 🔄 en attente | MNT 0,5/1 m ouvert, mais livraison par panier e-mail (48 h). Le serveur ArcGIS `RELIEF` (`geoservices.wallonie.be`) n'expose que des MapServer rendus (hillshade / relief colorié), pas d'ImageServer float32 ni de WCS, donc aucun endpoint d'élévation par tuile. |
 | Saxe · Bade-Wurtemberg (DE) | 🔄 en attente | DGM1 1 m ouvert, mais derrière un portail de sélection JS sans URL de tuile stable documentée. |
 | Lettonie | 🔄 en attente | DTM 0,4 m, téléchargement non public (WMS sur demande e-mail). |
 | Hong Kong | 🔄 en attente | seul un DTM 5 m **hybride** (non sol-nu) est ouvert ; le LiDAR fin est sur commande. |
