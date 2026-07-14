@@ -1,0 +1,114 @@
+# LiDAR provider roadmap
+
+The public mirror of the internal notes on which national bare-earth LiDAR
+sources are wired into lidar2map, which were evaluated and set aside, and why.
+Kept by hand so we do not re-dig the same dead ends every few months. Last
+reviewed 2026-07-14.
+
+For the integrated providers and their exact access mechanism, see the
+[provider table](../README.md#lidar-providers--adding-a-country) in the README.
+This document is the fuller registry: the sources that did *not* make it, with a
+precise reason each time.
+
+## The eligibility test
+
+A country plugs in when there is a **programmable endpoint** (WCS, WFS, ATOM
+INSPIRE, STAC, ArcGIS REST Image/FeatureServer, a derivable direct URL, or an S3
+listing) that returns either **bare-earth elevation raster** (GeoTIFF / COG /
+ASC) or **ground-classified LAZ**. If yes, it is wireable.
+
+Things the pipeline already handles, so they are **not** blockers:
+
+- **Classified LAZ to DTM** (`post_fetch`: PDAL `filters.range Classification[2:2]`,
+  laspy+scipy fallback), see `cz-cuzk`.
+- **One giant COG read windowed** over the bbox via `/vsicurl/`, no full-tile
+  download, see `ca-nrcan`, `at-bev`, `se-lantmateriet`, `lu-act`.
+- **S3 / object listing as a spatial index** (the key encodes the position),
+  see `gb-scotland`.
+- **HTTP auth on the COG**: a provider can supply GDAL options (scoped) through
+  `gdal_env_options()`, see `se-lantmateriet` (Basic auth on the download host).
+- **Account / API key**: `us-3dep`, `dk-datafordeler`, `fi-maanmittauslaitos`,
+  `pt-dgt`, `se-lantmateriet` all need a free account; a missing credential just
+  skips the provider, it is not a disqualifier.
+
+Real blocking reasons (always record the code + the endpoint probed):
+
+- **B1** no programmable endpoint: interactive basket, deferred e-mail delivery.
+- **B2** elevation served as **rendered tiles** (WMS/WMTS/TPK images), not values.
+- **B3** inadequate coverage: coastal strip only, or resolution >= 10 m.
+- **B4** not open / restricted licence / e-signature required.
+
+Re-evaluation tags: `[WATCH ~date]` evolving portal, re-check around then;
+`[STABLE]` unlikely to change, re-probe only on an external signal; `[HARD]`
+close to permanent (data does not exist or is classified).
+
+## Integrated (25 countries)
+
+France, Netherlands, Switzerland, Norway, **Sweden**, Germany (6 Länder:
+Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg), **Austria**
+(national BEV + Tyrol), United Kingdom (England, Wales, Scotland), Belgium
+(Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia,
+Spain (5 m; Catalonia 0.5 m), **Portugal**, **Italy** (Emilia-Romagna), Poland,
+USA, Canada, New Zealand, Australia (Queensland, NSW, national GA scattered),
+Japan.
+
+By access paradigm:
+
+- **WCS 2.0.1 / 1.0.0**: es-cnig, de-hessen, de-bw, it-emilia-romagna, gb-england,
+  gb-wales, be-flanders, fi, dk, pl, au-ga.
+- **STAC + windowed COG**: ch-swisstopo, de-niedersachsen, ca-nrcan, nz-linz,
+  se-lantmateriet, at-bev (STAC-like ATOM index).
+- **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
+  au-qld, au-nsw, si-arso.
+- **ATOM INSPIRE index**: cz-cuzk (LAZ), de-thueringen (XYZ).
+- **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
+  jp-gsi (XYZ text tiles), lu-act / es-icgc (single national COG), gb-scotland
+  (S3 listing).
+
+## Evaluated, not integrated
+
+### Watch (could unblock)
+
+| Zone | Reason | Tag |
+|---|---|---|
+| Saxony (DE) | DGM1 1 m open, filename derivable (`dgm1_33<E><N>.xyz`, EPSG:25833), but no WCS/ATOM: the authoritative record lists only a WMS (B2), the INSPIRE ATOM does not cover elevation, and the raw data is only a per-Gemeinde JS batch download (undocumented `geocloud.landesvermessung.sachsen.de` links). Turnkey the day one concrete geocloud URL is captured (then: `de-thueringen` pattern adapted). WCS/ATOM re-probed 2026-07 → still 403 / stub. | [WATCH ~2027] |
+| Latvia (LĢIA) | DTM national is 20 m (too coarse, B3); the 1 m only exists as LAZ point cloud, download not public (WMS on e-mail request, B1/B4). Unblocks if a per-tile LAZ/raster endpoint appears. | [WATCH ~2027] |
+| Hong Kong | Open DTM is a 5 m ASC (whole-HK ZIP, EPSG:2326), trivially wireable **but** non bare-earth (bridges/elevated roads kept, canopy height) and 5 m is under the bare-earth threshold (B3). The fine CEDD LiDAR is order-only (B1). Re-proposable if you want HK coverage despite the 5 m hybrid quality. | [WATCH ~2027] |
+| Wallonia (BE) | 0.5/1 m MNT raster + classified LAZ exist (EPSG:3812) but download is a 48 h e-mail basket (B1); the ArcGIS `RELIEF` server (`geoservices.wallonie.be`) exposes only rendered MapServers (hillshade / colored relief), no float32 ImageServer or WCS (B2). Confirmed 2026-07. Unblocks if SPW publishes a WCS or INSPIRE ATOM. | [WATCH ~2027] |
+
+### Structural / hard blocks
+
+| Zone | Reason | Tag |
+|---|---|---|
+| Slovakia (ÚGKK/ZBGIS) | 1 m DMR 5.0 open, but no per-bbox access: OGC services are ZBGIS REST MapServers with empty `supportedExtensions` (rendered, B2); the 1 m TIFF is only regional ZIP blocks (tens of GB) or a MAPKA basket (B1). A range-readable COG would be fine, a regional ZIP is not windowable. | [STABLE] |
+| Northern Ireland (DAERA) | the hub "DTM" is a MapServer/WMTS (rendered, B2); the real data is coastal-strip LAZ 2021 only (B3); the national OSNI model is 10/50 m. Nothing usable inland. | [STABLE] |
+| Lithuania | registration + electronic signature required (B4). | [STABLE] |
+| Taiwan | 1 m DTM is a classified official secret (gov-only, seal + request, B4); only the 20 m is open (too coarse). | [HARD] |
+| Iceland (ÍslandsDEM) | not LiDAR: derived from ArcticDEM (satellite stereo, PGC), surface model, not bare-earth. Open service is a 10 m rendered MapServer (B2); the 2 m native is 18x100 km strips via a JS viewer (B1). Criterion: require LiDAR-grade bare-earth, not satellite-stereo DEM. | [HARD] |
+| W. Australia (Landgate) | 1 m LiDAR/DEM on quote + fee (B4); only the coverage index is open, not the data. | [STABLE] |
+| Liechtenstein | elevation = swissALTI3D over LI (2 m) but redistributed for a fee by the Amt für Tiefbau (CAD formats, not open, B4). Not covered by ch-swisstopo (STAC is CH only). | [STABLE] |
+| Germany, BKG national + other Länder | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). Each remaining Land is a dedicated build; no free aggregator. | [STABLE] |
+| Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna integrated; South Tyrol 0.5 m built-up only). | [WATCH ~2027] |
+| Croatia, Hungary | no open national LiDAR (only global 30 m DEMs). | [HARD] |
+| Africa | no open national bare-earth LiDAR anywhere; only global 30 m DEMs (SRTM, Copernicus GLO-30), which are satellite radar, out of scope. | [HARD] |
+| OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |
+
+## Adding a provider
+
+Copy the provider closest in paradigm and adapt URLs / CRS / naming:
+
+- **WCS** → `es_cnig.py` (or `de_hessen.py`): synthetic 1 km grid clipped to the
+  coverage extent, `GetCoverage` per bbox. First one ~half a day, next ones 1-2 h.
+- **STAC + windowed COG** → `ca_nrcan.py`: per-bbox cache, select the DTM asset,
+  the core reads the bbox window via `/vsicurl/`. Add `gdal_env_options()` if the
+  download host needs HTTP auth (see `se_lantmateriet.py`).
+- **ATOM index** → `de_thueringen.py` (grid) or `cz_cuzk.py` (two-level, LAZ).
+- **ArcGIS ImageServer** → `no_kartverket.py` (`exportImage`, reproject on
+  download if the server only speaks its native CRS, see `au_ga.py`).
+
+Each provider is `providers/<code>.py`, ~50-200 lines, exposing `CODE`, `NAME`,
+`COUNTRY`, `CRS_NATIF`, `RESOLUTION_M`, `DALLE_KM`, `PX_PAR_DALLE`,
+`SEUIL_DALLE_VALIDE` and `discover_dalles(bbox_wgs84, bbox_natif, cache_path)`.
+The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is
+provider-agnostic. Always validate a new provider with a **real tile download**
+before shipping, and add a smoke-test point in `Tests/smoke_providers.py`.

@@ -332,7 +332,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 
 Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI. **This table is the single reference list of providers**, the features section links here instead of duplicating it.
 
-To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS ImageServer, direct COG, FeatureServer catalogue…) and adapt URLs/CRS/naming format. The first provider for a new paradigm takes ~½ day; subsequent ones with the same pattern take ~1-2 h. A [provider roadmap](docs/lidar_providers_roadmap.md) documents ~40 evaluated sources across 25+ countries.
+To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS ImageServer, direct COG, FeatureServer catalogue…) and adapt URLs/CRS/naming format. The first provider for a new paradigm takes ~½ day; subsequent ones with the same pattern take ~1-2 h. The [provider roadmap](docs/lidar_providers_roadmap.md) documents every evaluated source, integrated and set-aside, with the precise reason and a paradigm-by-paradigm cheat sheet.
 
 ## Main features
 
@@ -367,24 +367,7 @@ hook: unzip + point-cloud→GeoTIFF via `laspy`+`lazrs`, see `cz-cuzk`, `ie-gsi`
 Still a poor fit: sources via **form/email order**, **WMS only** (rendered, no raw
 elevation) or **ASC without a CRS**.
 
-**Not covered yet, and why**, the public mirror of our internal notes (last reviewed 2026-06, maintained by hand to avoid re-digging dead ends):
-
-| Zone | Status | Why not (yet) |
-|---|---|---|
-| Portugal | 🔄 pending | 0.5 m national open, but download via interactive basket only, no per-bbox API (DGT announced one "coming"). |
-| Wallonia (BE) | 🔄 pending | 0.5/1 m MNT open, but delivery by 48 h e-mail basket. The ArcGIS `RELIEF` server (`geoservices.wallonie.be`) only exposes rendered MapServers (hillshade / colored relief images), no float32 ImageServer or WCS, so no per-tile elevation endpoint. |
-| Saxony · Baden-Württemberg (DE) | 🔄 pending | DGM1 1 m open, but behind a JS selection portal with no documented stable tile URL. |
-| Latvia | 🔄 pending | DTM 0.4 m, download not public (WMS on e-mail request). |
-| Hong Kong | 🔄 pending | only a 5 m **hybrid** (non-bare-earth) DTM is open; the fine LiDAR is order-only. |
-| Slovakia | ⛔ structural | 1 m open, but delivered as large regional ZIP blocks, no per-bbox cut. |
-| Northern Ireland | ⛔ structural | LiDAR only on a coastal strip; national DTM is 10 m (too coarse). |
-| Lithuania | ⛔ structural | registration + e-signature required. |
-| Taiwan | ⛔ structural | 1 m DTM classified (gov-only); only the 20 m is open. |
-| Iceland | ⛔ structural | elevation = satellite stereo (ArcticDEM), not bare-earth LiDAR. |
-| W. Australia · Liechtenstein | ⛔ structural | data on quote / paid. |
-| Italy (national) | ⛔ structural | order form; a few regions open (South Tyrol 0.5 m built-up only). |
-| Germany, BKG national · other Länder | ⛔ structural | national DGM1 paid (≥ €8,000); some Länder WMS-only / portal-only. |
-| Austria, BEV · Vorarlberg | ⛔ structural | 50 km portal tiles / WMS only. |
+**Not covered yet, and why**: the full registry of evaluated-but-not-integrated sources (Wallonia, Saxony, Slovakia, Northern Ireland, Latvia, Hong Kong, Taiwan, Iceland, national Italy, national Germany, and more), each with the precise blocking reason and a re-check date, lives in the [provider roadmap](docs/lidar_providers_roadmap.md). Kept as a single file to avoid re-digging dead ends.
 | Africa · rest of Asia | ⛔ structural | no open national bare-earth LiDAR (global 30 m DEMs only). |
 | OpenTopography (global) | ⛔ structural | fine LiDAR = point cloud / async jobs; its simple raster API is 30 m satellite. |
 

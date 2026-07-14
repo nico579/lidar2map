@@ -103,6 +103,7 @@ FOLDERS = {
     "providers":   "providers",   # implémentations LiDAR par pays (fr-ign, nl-ahn, ch-swisstopo, etc.)
     "Tests":       "tests",       # tests de régression (calculs scientifiques, tuilage)
     "gui":         "gui",         # front-end extrait de lancer_gui (index.html + style.css + app.js)
+    "docs":        "docs",        # doc de référence (roadmap providers), lié depuis le README
 }
 
 # Anciens chemins sur GitHub à supprimer (renommages + scripts PS1 obsolètes)

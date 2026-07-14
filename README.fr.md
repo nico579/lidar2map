@@ -330,7 +330,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 
 Sélection : flag `--provider <code>` (CLI), variable d'env `LIDAR2MAP_PROVIDER`, ou dropdown en haut de la GUI. **Ce tableau est l'unique liste de référence des providers**, la section fonctionnalités y renvoie au lieu de la dupliquer.
 
-Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier le provider le plus proche en paradigme et adapter URLs/CRS/format de nommage. Le 1er provider abouti prend ~½ journée, les suivants ~1-2h chacun. Les providers LAZ (ČÚZK, etc.) ajoutent une étape `post_fetch` (dézip + conversion nuage→GeoTIFF via `laspy`+`lazrs`).
+Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier le provider le plus proche en paradigme et adapter URLs/CRS/format de nommage. Le 1er provider abouti prend ~½ journée, les suivants ~1-2h chacun. Les providers LAZ (ČÚZK, etc.) ajoutent une étape `post_fetch` (dézip + conversion nuage→GeoTIFF via `laspy`+`lazrs`). Le [roadmap providers](docs/lidar_providers_roadmap.md) recense chaque source évaluée, intégrée ou écartée, avec le motif précis et un aide-mémoire par paradigme.
 
 ## Fonctionnalités principales
 
@@ -363,26 +363,7 @@ Un provider s'intègre proprement si la source expose des **tuiles déterministe
 `cz-cuzk`, `ie-gsi`). Restent mal adaptées : les sources par **formulaire/email**,
 en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
-**Pas encore couvert, et pourquoi**, le miroir public de mes notes internes (dernière revue 2026-06, tenu à la main pour ne pas re-creuser les impasses) :
-
-| Zone | Statut | Pourquoi pas (encore) |
-|---|---|---|
-| Wallonie (BE) | 🔄 en attente | MNT 0,5/1 m ouvert, mais livraison par panier e-mail (48 h). Le serveur ArcGIS `RELIEF` (`geoservices.wallonie.be`) n'expose que des MapServer rendus (hillshade / relief colorié), pas d'ImageServer float32 ni de WCS, donc aucun endpoint d'élévation par tuile. |
-| Saxe · Bade-Wurtemberg (DE) | 🔄 en attente | DGM1 1 m ouvert, mais derrière un portail de sélection JS sans URL de tuile stable documentée. |
-| Lettonie | 🔄 en attente | DTM 0,4 m, téléchargement non public (WMS sur demande e-mail). |
-| Hong Kong | 🔄 en attente | seul un DTM 5 m **hybride** (non sol-nu) est ouvert ; le LiDAR fin est sur commande. |
-| Slovaquie | ⛔ structurel | 1 m ouvert, mais livré en gros blocs régionaux ZIP, pas de découpe par emprise. |
-| Irlande du Nord | ⛔ structurel | LiDAR seulement sur une bande côtière ; DTM national = 10 m (trop grossier). |
-| Lituanie | ⛔ structurel | inscription + signature électronique obligatoires. |
-| Taïwan | ⛔ structurel | DTM 1 m classé (réservé administrations) ; seul le 20 m est ouvert. |
-| Islande | ⛔ structurel | élévation = stéréo satellite (ArcticDEM), pas du LiDAR sol-nu. |
-| Australie-Occ. · Liechtenstein | ⛔ structurel | données sur devis / payantes. |
-| Italie (national) | 🟡 partiel | national = formulaire de commande, mais l'Émilie-Romagne est INTÉGRÉE (`it-emilia-romagna`, DTM 5 m) ; d'autres régions ouvertes à venir. |
-| Allemagne, BKG national · autres Länder | ⛔ structurel | DGM1 national payant (≥ 8 000 €) ; certains Länder en WMS/portail seulement. |
-| Afrique · reste de l'Asie | ⛔ structurel | pas de LiDAR sol-nu national ouvert (seulement des MNT mondiaux à 30 m). |
-| OpenTopography (mondial) | ⛔ structurel | LiDAR fin = nuage de points / jobs async ; son API raster simple est du 30 m satellite. |
-
-🔄 **en attente** = données ouvertes mais pas *encore* d'accès programmable par emprise, re-vérifié périodiquement (prochaine revue ~déc. 2026). ⛔ **structurel** = bloqué pour l'instant (donnée inexistante, payante, classée, trop grossière, ou pas du LiDAR sol-nu).
+**Pas encore couvert, et pourquoi** : le registre complet des sources évaluées mais non intégrées (Wallonie, Saxe, Slovaquie, Irlande du Nord, Lettonie, Hong Kong, Taïwan, Islande, Italie nationale, Allemagne nationale, et d'autres), chacune avec le motif de blocage précis et une date de re-vérification, vit dans le [roadmap providers](docs/lidar_providers_roadmap.md). Tenu en un seul fichier pour ne pas re-creuser les impasses.
 
 **Tu habites l'un de ces endroits ? Tu connais peut-être une porte d'entrée.** La plupart des cas 🔄 ne demandent qu'un endpoint documenté accessible *par emprise*, un **WCS** `GetCoverage`, un flux **ATOM INSPIRE**, du **STAC**, des **URL par tuile** dérivables, ou un bucket **S3** public. Si tu en connais un pour ton pays/région, ouvre une issue ou une PR, ajouter un provider = ~100-150 lignes (copier le `providers/*.py` le plus proche). L'Allemagne est intégrée au mieux du faisable (4 Länder : Bavière, RNW, Basse-Saxe, Thuringe).
 
