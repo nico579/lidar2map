@@ -77,7 +77,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
   Sources LiDAR : **<!--N-->25<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
-  de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (6 Länder),
+  de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (8 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
   Irlande, Tchéquie, Slovénie, Estonie, Espagne, Italie (Émilie-Romagne), Pologne, USA, Canada, Nouvelle-Zélande,
   Australie (QLD/NSW). Le détail par provider (donnée, résolution, CRS, mécanisme
@@ -303,7 +303,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 | `se-lantmateriet` | Suède | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + COG mosaïque 10 km (lecture fenêtrée), couverture nationale ; **compte GeoTorget gratuit** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) pour le download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` | Allemagne (3 Länder) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data |
 | `de-thueringen` | Allemagne (Thuringe) | DGM | 1-2 m | EPSG:25832 (UTM32N) | index ATOM INSPIRE → XYZ zippé (post_fetch → GeoTIFF), 1 m récent / 2 m ancien, open data dl-de/by-2-0 |
-| `de-hessen` · `de-bw` | Allemagne (Hesse + Bade-Wurtemberg) | DGM1 | 1 m | EPSG:25832 (UTM32N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 |
+| `de-hessen` · `de-bw` · `de-mv` · `de-st` | Allemagne (Hesse, Bade-Wurtemberg, Mecklembourg-Poméranie, Saxe-Anhalt) | DGM1 | 1 m | EPSG:25832/25833 (UTM32N/33N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 (de-mv/de-st trouvés via l'auto-découverte du catalogue GDI-DE) |
 | `at-bev` | Autriche (national) | ALS-DGM | 1 m | EPSG:3035 (LAEA Europe) | index ATOM + COG mosaïque 50 km (lecture fenêtrée via `/vsicurl`), millésime le plus récent par tuile, CC BY 4.0 (BEV) |
 | `at-tirol` · `at-osttirol` | Autriche (Tyrol + Osttirol) | DGM | 0.5 m | EPSG:31254/31255 (MGI M28/M31) | WCS 1.0.0 GetCoverage (tiris), plus fin que `at-bev` sur le Tyrol |
 | `gb-england` · `gb-wales` | Royaume-Uni | LIDAR Composite DTM | 1 m | EPSG:27700 (OSGB36) | WCS 2.0.1 / WFS catalogue (EA / NRW) |

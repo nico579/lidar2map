@@ -80,7 +80,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
   LiDAR sources: **<!--N-->25<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
-  (6 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
+  (8 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
   Denmark, Ireland, Czechia, Slovenia, Estonia, Spain, Italy (Emilia-Romagna), Poland, USA, Canada, New Zealand,
   Australia (QLD/NSW). Per-provider details (dataset, resolution, CRS, access
   mechanism, coverage, API keys) live in **the single reference table** of the
@@ -305,7 +305,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `se-lantmateriet` | Sweden | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + 10 km mosaic COG (windowed read), national coverage; **free GeoTorget account** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) for the download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` | Germany (3 Länder) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data |
 | `de-thueringen` | Germany (Thuringia) | DGM | 1-2 m | EPSG:25832 (UTM32N) | ATOM INSPIRE index → zipped XYZ (post_fetch → GeoTIFF), 1 m recent / 2 m older, open data dl-de/by-2-0 |
-| `de-hessen` · `de-bw` | Germany (Hesse + Baden-Württemberg) | DGM1 | 1 m | EPSG:25832 (UTM32N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 |
+| `de-hessen` · `de-bw` · `de-mv` · `de-st` | Germany (Hesse, Baden-Württemberg, Mecklenburg-Vorpommern, Saxony-Anhalt) | DGM1 | 1 m | EPSG:25832/25833 (UTM32N/33N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 (de-mv/de-st found via the GDI-DE catalog auto-discovery) |
 | `at-bev` | Austria (national) | ALS-DGM | 1 m | EPSG:3035 (LAEA Europe) | ATOM index + 50 km mosaic COG (windowed read via `/vsicurl`), latest survey per tile, CC BY 4.0 (BEV) |
 | `at-tirol` · `at-osttirol` | Austria (Tyrol + East Tyrol) | DGM | 0.5 m | EPSG:31254/31255 (MGI M28/M31) | WCS 1.0.0 GetCoverage (tiris), finer than `at-bev` over Tyrol |
 | `gb-england` · `gb-wales` | United Kingdom | LIDAR Composite DTM | 1 m | EPSG:27700 (OSGB36) | WCS 2.0.1 / WFS catalogue (EA / NRW) |

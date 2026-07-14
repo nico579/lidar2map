@@ -62,6 +62,8 @@ TEST_POINTS = {
     # Ajouts 2026-07-13 — points DÉJÀ validés par download réel à l'intégration :
     "de-hessen": (8.681, 50.111),           # Francfort (WCS he_dgm1)
     "de-bw": (9.183, 48.775),               # Stuttgart (WCS DGM1 LGL)
+    "de-mv": (11.415, 53.630),              # Schwerin (WCS mv_dgm)
+    "de-st": (11.629, 52.120),              # Magdebourg (WCS Coverage1)
     "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
     "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)

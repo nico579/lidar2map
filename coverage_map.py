@@ -42,6 +42,8 @@ REGIONS = [
     ("Thüringen",              ["de-thueringen"],    "#f59e0b", None, None),
     ("Hessen, Deutschland",    ["de-hessen"],        "#f59e0b", None, None),
     ("Baden-Württemberg",      ["de-bw"],            "#f59e0b", None, None),
+    ("Mecklenburg-Vorpommern", ["de-mv"],            "#f59e0b", None, None),
+    ("Sachsen-Anhalt",         ["de-st"],            "#f59e0b", None, None),
     ("Österreich",             ["at-bev", "at-tirol", "at-osttirol"], "#eab308", None,
      "Autriche — BEV 1 m (national) + Tyrol 0,5 m"),
     ("England",                ["gb-england"],       "#78350f", None, None),
