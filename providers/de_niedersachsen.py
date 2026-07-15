@@ -48,6 +48,8 @@ HTTP_UA     = "lidar2map/1.0 (LGLN Niedersachsen STAC)"
 
 # ── Nommage : non synthétisable (année dans le nom) → STAC requis ────────────
 _ID_RE = re.compile(r"dgm1_32_(\d+)_(\d+)_1_ni_(\d+)")
+# Exemple réel pour le test de disjonction intra-pays (nommage non-formule).
+SAMPLE_DALLE = "dgm1_32_550_5900_1_ni_2020.tif"
 
 
 def dalle_filename(x_km, y_km):
@@ -60,8 +62,13 @@ def dalle_subdir(x_km):
 
 
 def subdir_from_name(nom):
-    """Sous-dossier (colonne Est) déduit du nom, ou None."""
-    m = re.match(r"dgm1_32_(\d+)_", nom)
+    """Sous-dossier (colonne Est) déduit du nom, ou None.
+
+    Exige le jeton de Land ``_ni_`` : le préfixe fédéral ``dgm1_32_`` est PARTAGÉ
+    avec de-nrw (``..._nw_...``). Sans ce jeton, la purge hors-zone scopée du
+    cache ``lidar/de`` partagé effacerait le cache de l'autre Land (collision
+    confirmée 2026-07). ``_ID_RE`` (découverte STAC) reste inchangé."""
+    m = re.match(r"dgm1_32_(\d+)_\d+_\d+_ni_", nom)
     return m.group(1) if m else None
 
 

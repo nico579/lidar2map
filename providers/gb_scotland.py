@@ -150,6 +150,11 @@ def _prefixe_listing(e, n, grille):
 
 
 # ── API provider (surface commune ; non utilisées par le mode discover) ───────
+# Exemple réel pour le test de disjonction intra-pays (dalle_filename renvoie
+# None hors de la grille nationale OS, ex. coords de test arbitraires).
+SAMPLE_DALLE = "NS16NE.tif"
+
+
 def dalle_filename(x_km, y_km):
     return _ref_pour_grille(int(x_km) * 1000, int(y_km) * 1000, "1km") + ".tif"
 

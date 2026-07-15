@@ -50,7 +50,10 @@ HTTP_UA   = "lidar2map/1.0 (OpenGeodata.NRW DGM1)"
 
 # ── Nommage des dalles ───────────────────────────────────────────────────────
 # Le nom contient l'année de levé (variable) → non synthétisable depuis (x,y).
+# Ex. réel : dgm1_32_280_5652_1_nw_2022.tif  (dgm1_32_<E>_<N>_<éd>_nw_<année>).
 _NAME_RE = re.compile(r"dgm1_32_(\d+)_(\d+)_")
+# Exemple réel pour le test de disjonction intra-pays (nommage non-formule).
+SAMPLE_DALLE = "dgm1_32_280_5652_1_nw_2022.tif"
 
 
 def dalle_filename(x_km, y_km):
@@ -65,8 +68,14 @@ def dalle_subdir(x_km):
 
 
 def subdir_from_name(nom):
-    """Sous-dossier (colonne Est) déduit du nom, ou None."""
-    m = _NAME_RE.match(nom)
+    """Sous-dossier (colonne Est) déduit du nom, ou None.
+
+    Exige le jeton de Land ``_nw_`` : le préfixe fédéral ``dgm1_32_`` est PARTAGÉ
+    avec de-niedersachsen (``..._ni_...``). Sans ce jeton, subdir_from_name
+    reconnaîtrait aussi les dalles voisines et la purge hors-zone scopée du cache
+    ``lidar/de`` partagé effacerait le cache de l'autre Land (collision confirmée
+    2026-07). ``_NAME_RE`` (découverte) reste inchangé."""
+    m = re.match(r"dgm1_32_(\d+)_\d+_\d+_nw_", nom)
     return m.group(1) if m else None
 
 

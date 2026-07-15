@@ -63,6 +63,8 @@ DATASET = "Digital Elevation Model (DEM) 1 meter"
 # TNM titles : "USGS 1 Meter 10 x54y528 WA_KingCounty_2021_B21"
 import re as _re
 _TITLE_PATTERN = _re.compile(r"USGS\s+1\s+Meter\s+(\d+)\s+x(\d+)y(\d+)")
+# Exemple réel pour le test de disjonction intra-pays (nommage non-formule).
+SAMPLE_DALLE = "usgs_1m_10_x54y528.tif"
 
 
 def _filename_from_title(title):

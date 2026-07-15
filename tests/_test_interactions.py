@@ -302,14 +302,21 @@ for f in sorted(_glob.glob(str(_ROOT / "providers" / "*.py"))):
         provs[mod.CODE] = mod
 
 def _sample_name(mod):
+    # Providers à nommage-formule : on synthétise via dalle_filename.
     for a in [(500, 4500), (15, 29105, 12902), ("sample-survey-1m",)]:
         try:
-            return mod.dalle_filename(*a)
+            nom = mod.dalle_filename(*a)
+            if nom:
+                return nom
         except NotImplementedError:
-            return None            # nommage non-formule (index distant) : pas de sample
+            break                  # nommage non-formule (index/COG distant)
         except Exception:
             continue
-    return None
+    # Providers à nommage-index (dalle_filename lève / renvoie None) : ils étaient
+    # AUTREFOIS silencieusement sautés, ce qui masquait la collision de-nrw ×
+    # de-niedersachsen (même préfixe fédéral dgm1_32_). Ils exposent désormais un
+    # SAMPLE_DALLE (vrai nom exemple) pour que la disjonction soit vraiment testée.
+    return getattr(mod, "SAMPLE_DALLE", None)
 
 by_country = {}
 for code, mod in provs.items():

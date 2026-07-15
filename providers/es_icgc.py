@@ -69,6 +69,10 @@ def subdir_from_name(nom):
     return f"{int(m.group(1)) // 10000}" if m else None
 
 
+# Exemple réel pour le test de disjonction intra-pays (nommage non-formule).
+SAMPLE_DALLE = "icgc_met50cm_400000_4600000_401000_4601000.tif"
+
+
 def dalle_filename(x_km, y_km):
     raise NotImplementedError("ES-ICGC : COG unique fenêtré → discover_dalles()")
 
