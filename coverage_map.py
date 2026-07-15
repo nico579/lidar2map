@@ -62,6 +62,8 @@ REGIONS = [
      "Portugal — MDT LiDAR 50 cm (DGT)"),
     ("Emilia-Romagna, Italia", ["it-emilia-romagna"], "#7c3aed", None,
      "Italie — Émilie-Romagne (DTM 5 m)"),
+    ("Sardegna, Italia",       ["it-sardegna"],      "#7c3aed", (8.1, 38.85, 9.85, 41.3),
+     "Italie — Sardaigne (DTM 1 m, mosaïque à trous)"),
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
     ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
     ("Queensland",             ["au-qld"],           "#e11d48", (137.0, -29.5, 154.5, -9.0), None),

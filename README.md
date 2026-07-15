@@ -322,6 +322,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `es-icgc` | Spain (Catalonia) | MET LiDAR | 0.5 m | EPSG:25831 (UTM31N) | Single regional COG (~433 GB) read **windowed** via `/vsicurl` HTTP range, 50 cm, far finer than es-cnig 5 m; CC BY 4.0 (ICGC) |
 | `pt-dgt` | Portugal | MDT LiDAR (2024) | 0.5 m | EPSG:3763 (PT-TM06) | OGC-API + POST /search (CQL2), national coverage; **free DGT account** (env `DGT_USER`/`DGT_PASS`) for the authenticated download |
 | `it-emilia-romagna` | Italy (Emilia-Romagna) | DTM (RER) | 5 m | EPSG:7791 (RDN2008/UTM32N) | WCS 2.0.1 GetCoverage, regional coverage, CC BY 4.0 (the 0.5 m LiDAR 2023/24 is served once its coverage completes) |
+| `it-sardegna` | Italy (Sardinia) | DTM (RAS) | 1 m | EPSG:7791 (RDN2008/UTM32N) | WCS 2.0.1 GetCoverage (GeoServer), island-wide LiDAR mosaic with gaps (coast, towns, Gallura, river bands), clean nodata off-coverage, CC BY 4.0 |
 | `pl-gugik` | Poland | NMT (ISOK project) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1, open data, national coverage |
 | `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + mosaic COG (windowed read), ~95% of population |
 | `us-tnm` · `us-3dep` | USA | 3DEP | 1 m | EPSG:3857 | TNMAccess direct S3 (no account) / OpenTopography (free key) |

@@ -66,6 +66,7 @@ TEST_POINTS = {
     "de-st": (11.629, 52.120),              # Magdebourg (WCS Coverage1)
     "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
+    "it-sardegna": (9.115, 39.223),         # Cagliari (WCS DTM 1 m, 36-97 m)
     "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)
 }
 APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
