@@ -329,6 +329,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `pl-gugik` | Poland | NMT (ISOK project) | 1 m | EPSG:2180 (PUWG 1992) | WCS 2.0.1, open data, national coverage |
 | `ca-nrcan` | Canada | HRDEM Mosaic | 1 m | EPSG:3979 (LCC Canada) | STAC + mosaic COG (windowed read), ~95% of population |
 | `us-tnm` · `us-3dep` | USA | 3DEP | 1 m | EPSG:3857 | TNMAccess direct S3 (no account) / OpenTopography (free key) |
+| `us-cnmi` | Northern Mariana Islands (US territory) | Topobathy DEM | 1 m | EPSG:8693 (NAD83(MA11)/UTM55N) | Single NOAA mosaic **VRT** read windowed via `/vsicurl` (bucket `noaa-nos-coastal-lidar-pds`), ground-class bare earth on land + bathymetry offshore, public domain (pattern for a generic NOAA provider) |
 | `jp-gsi` | Japan (partial) | DEM5A (GSI 標高タイル) | 5 m | EPSG:3857 | Open elevation XYZ **text tiles**, no account (post_fetch → GeoTIFF), partial 5 m coverage (rivers/plains/populated) |
 | `nz-linz` | New Zealand | National seamless DEM | 1 m | EPSG:2193 (NZTM2000) | LINZ S3 STAC + COG (windowed read) |
 | `au-qld` · `au-nsw` | Australia (QLD 0.5 m · NSW 5 m) | LiDAR DEM | 0.5-5 m | EPSG:3857 | ArcGIS ImageServer (ELVIS), **per-state** coverage |

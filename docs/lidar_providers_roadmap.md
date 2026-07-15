@@ -85,9 +85,11 @@ By access paradigm:
 - **Metalink (.meta4) index**: de-bayern (deterministic URL), de-rlp (URL carries
   the survey year, so the index holds the per-tile URL; post_fetch strips the
   compound vertical CRS).
+- **Single windowed COG / VRT** (`/vsicurl`, no full download): lu-act, es-icgc
+  (one national COG), us-cnmi (a NOAA mosaic VRT; `gdal_env_options()` whitelists
+  the `.vrt` extension; pattern for a generic NOAA-territories provider).
 - **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
-  jp-gsi (XYZ text tiles), lu-act / es-icgc (single national COG), gb-scotland
-  (S3 listing).
+  jp-gsi (XYZ text tiles), gb-scotland (S3 listing).
 
 ## Evaluated, not integrated
 

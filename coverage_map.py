@@ -75,6 +75,8 @@ REGIONS = [
     ("Sardegna, Italia",       ["it-sardegna"],      "#7c3aed", (8.1, 38.85, 9.85, 41.3),
      "Italie — Sardaigne (DTM 1 m, mosaïque à trous)"),
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
+    ("Northern Mariana Islands", ["us-cnmi"],        "#0891b2", (144.8, 13.2, 146.2, 15.4),
+     "Mariannes du Nord (CNMI, US) — Topobathy DEM 1 m (NOAA)"),
     ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
     ("Queensland",             ["au-qld"],           "#e11d48", (137.0, -29.5, 154.5, -9.0), None),
     ("New South Wales",        ["au-nsw"],           "#0284c7", (140.0, -38.0, 154.5, -27.5), None),
