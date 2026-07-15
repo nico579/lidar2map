@@ -1,10 +1,87 @@
 """Utilitaires partagés entre providers.
 
-Point de mutualisation (cf. audit providers 2026-07). Pour l'instant :
-extraction ZIP sûre (anti zip-slip #10). Vocation à accueillir aussi le HTTP /
-pagination / retry / conversion PDAL communs (architecture cible).
+Point de mutualisation (cf. audit providers 2026-07) : extraction ZIP sûre
+(anti zip-slip #10) et conversion LAS/LAZ → GeoTIFF DTM (mutualisée 2026-07-15
+quand un 3e provider LAZ est arrivé : cz + lv + uy ; avant, DIFFÉRÉE à raison).
+Vocation à accueillir aussi le HTTP / pagination / retry communs.
 """
 from pathlib import Path
+
+
+def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,
+               classes=(2,), nodata=-9999.0, fill_holes=True, max_fill_m=100):
+    """LAS/LAZ (fichier LOCAL déjà décompressé du transport) → GeoTIFF DTM.
+
+    Méthode = BINNING min-z de la classe sol (équivalent de PDAL
+    ``writers.gdal output_type=min``, mais en laspy+numpy, sans PDAL). Adapté aux
+    nuages SOL denses (Lettonie ~1,5 pt/m² au sol, Montevideo) : chaque point sol
+    tombe dans sa cellule `resolution` m, on garde le min (terrain). Cellules sans
+    point sol = nodata. O(n), pas d'interpolation Delaunay (qui explose au-delà de
+    ~10⁶ points) — c'est le bon levier pour du dense classifié, là où le fallback
+    interpolé de cz_cuzk vise les nuages ÉPARS.
+
+    `classes` : classifications LAS gardées (2 = sol ; ASPRS). Si < 100 points de
+    ces classes, on retombe sur TOUS les points (nuage peut-être déjà ground-only)
+    en le signalant. laspy lit le .las ; pour un .laz il faut un backend (lazrs).
+    """
+    import laspy
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_bounds
+
+    las = laspy.read(str(src_las))
+    cls = np.asarray(las.classification)
+    mask = np.isin(cls, classes)
+    if int(mask.sum()) < 100:
+        print(f"  WARN {Path(src_las).name}: < 100 ground points (class {classes}),"
+              f" falling back to ALL points (DTM≈DSM if the cloud is not ground-only)",
+              flush=True)
+        mask = np.ones(len(las.x), dtype=bool)
+
+    xs = np.asarray(las.x, dtype=np.float64)[mask]
+    ys = np.asarray(las.y, dtype=np.float64)[mask]
+    zs = np.asarray(las.z, dtype=np.float64)[mask]
+    if xs.size == 0:
+        raise ValueError(f"{Path(src_las).name}: aucun point exploitable")
+
+    res = float(resolution)
+    x0, x1 = float(xs.min()), float(xs.max())
+    y0, y1 = float(ys.min()), float(ys.max())
+    nx = int(np.floor((x1 - x0) / res)) + 1
+    ny = int(np.floor((y1 - y0) / res)) + 1
+    # indices cellule (origine haut-gauche : y1 en haut)
+    col = np.clip(((xs - x0) / res).astype(np.int64), 0, nx - 1)
+    row = np.clip(((y1 - ys) / res).astype(np.int64), 0, ny - 1)
+    flat = row * nx + col
+    grid = np.full(ny * nx, np.inf, dtype=np.float64)
+    np.minimum.at(grid, flat, zs)          # min-z par cellule
+    valid = np.isfinite(grid)
+    grid[~valid] = nodata
+    grid = grid.reshape(ny, nx).astype(np.float32)
+
+    # Combler les trous (cellules sans point sol : sous canopée, bâti sur DTM
+    # urbain…) par IDW borné : `max_fill_m` mètres de distance de recherche max,
+    # pour raccorder un DTM continu SANS inventer de terrain à travers un grand
+    # vide (lac, tuile de bord) qui doit rester nodata (transparent).
+    if fill_holes and (~valid).any() and valid.any():
+        try:
+            from rasterio.fill import fillnodata
+            m = valid.reshape(ny, nx).astype("uint8")   # 1 = valide
+            grid = fillnodata(grid, mask=m,
+                              max_search_distance=float(max_fill_m / res),
+                              smoothing_iterations=0)
+        except Exception as _e:
+            print(f"  WARN fillnodata KO ({type(_e).__name__}): DTM à trous conservé",
+                  flush=True)
+
+    transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)
+    with rasterio.open(str(tif_path), "w",
+                       driver="GTiff", height=ny, width=nx,
+                       count=1, dtype="float32",
+                       crs=rasterio.CRS.from_epsg(crs_epsg),
+                       transform=transform, nodata=nodata,
+                       compress="deflate", predictor=2, tiled=True) as dst:
+        dst.write(grid, 1)
 
 
 def _membre_sous(nom, cible_resolue):

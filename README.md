@@ -6,7 +6,7 @@
 
 **Offline archaeological LiDAR maps, multi-country + IGN raster/vector + OSM, for Locus Map / OsmAnd / TwoNav**
 
-A self-contained tool (standalone executables for Windows / macOS / Linux, no Python required; also runs as a single Python script) that downloads public LiDAR data from national portals across **<!--N-->25<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Sweden, Ireland, Czechia, Slovenia, Estonia, Spain, Portugal, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
+A self-contained tool (standalone executables for Windows / macOS / Linux, no Python required; also runs as a single Python script) that downloads public LiDAR data from national portals across **<!--N-->26<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Sweden, Ireland, Czechia, Slovenia, Estonia, Latvia, Spain, Portugal, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->), computes relief visualizations tuned for archaeological prospection, and generates maps usable offline on a smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge formats). The IGN raster/vector maps remain France-only.
 
 ![Same place: satellite, OpenStreetMap, then LiDAR relief (SVF)](screenshots/hero.png)
 
@@ -18,7 +18,7 @@ A self-contained tool (standalone executables for Windows / macOS / Linux, no Py
 
 ---
 
-**Is your country covered?** <!--N-->25<!--/N--> countries with bare-earth LiDAR (incl. USA, Canada & Japan, project-based). Check your area before diving in:
+**Is your country covered?** <!--N-->26<!--/N--> countries with bare-earth LiDAR (incl. USA, Canada & Japan, project-based). Check your area before diving in:
 
 ![lidar2map LiDAR coverage map](coverage.png)
 
@@ -28,7 +28,7 @@ A self-contained tool (standalone executables for Windows / macOS / Linux, no Py
 
 ## Who is it for?
 
-- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **<!--N-->25<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Sweden, Ireland, Czechia, Slovenia, Estonia, Spain, Portugal, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM, VAT) are identical from one country to the next.
+- **Amateur archaeologists** interested in LiDAR prospection: the tool works across **<!--N-->26<!--/N--> countries** (<!--LIST-->France, UK, Germany, Austria, Netherlands, Switzerland, Norway, Belgium, Luxembourg, Finland, Denmark, Sweden, Ireland, Czechia, Slovenia, Estonia, Latvia, Spain, Portugal, Italy, Poland, USA, Canada, New Zealand, Australia, Japan<!--/LIST-->) with more in progress. The relief computations (multi, SVF, openness, LRM, RRIM, VAT) are identical from one country to the next.
 - **French hikers** who want offline IGN topo maps on their phone (Locus Map Pro, OsmAnd+): the IGN raster/vector tabs remain France-only.
 - **Landscape surveyors** who combine historical orthophotos (1950-1995, France) with a DEM to spot human remains before agricultural land abandonment erases them.
 - **Cavers / explorers** who need accurate base maps in areas not covered by mainstream apps.
@@ -78,10 +78,10 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   instance has its own little parameter form.
   `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
-  LiDAR sources: **<!--N-->25<!--/N--> countries** via the `--provider <code>` flag (or the GUI
+  LiDAR sources: **<!--N-->26<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
   (11 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
-  Denmark, Ireland, Czechia, Slovenia, Estonia, Spain (+ Basque Country, Navarre, Catalonia), Italy (Emilia-Romagna, Sardinia), Poland, USA, Canada, New Zealand,
+  Denmark, Ireland, Czechia, Slovenia, Estonia, Latvia, Spain (+ Basque Country, Navarre, Catalonia), Italy (Emilia-Romagna, Sardinia), Poland, USA, Canada, New Zealand,
   Australia (QLD/NSW). Per-provider details (dataset, resolution, CRS, access
   mechanism, coverage, API keys) live in **the single reference table** of the
   [LiDAR providers](#lidar-providers--adding-a-country) section.
@@ -318,6 +318,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `cz-cuzk` | Czechia | DMR 5G | 1 m | EPSG:5514 (S-JTSK/Krovak) | Atom INSPIRE 2-level → LAZ (post_fetch, requires `lazrs`), national coverage |
 | `si-arso` | Slovenia | DMR1 (2011-2015 LiDAR) | 1 m | EPSG:3794 (D96/TM) | ArcGIS REST fishnet index + x;y;z text tiles → GeoTIFF (post_fetch), national coverage |
 | `ee-maaamet` | Estonia | DTM 1 m (2021-2024 ALS) | 1 m | EPSG:3301 (L-EST97) | Direct per-sheet URLs, 1:10000 grid (sheet numbering = pure formula, no index), national coverage, open data |
+| `lv-lgia` | Latvia | DTM 1 m (LiDAR ALS) | 1 m | EPSG:3059 (LKS-92/TM) | S3 index of ~66k classified LAS tiles → download → class-2 binning to GeoTIFF with hole-fill (requires `laspy`), national coverage, CC BY 4.0 (tile extents measured from LAS headers, TKS-93 sheet grid) |
 | `es-cnig` | Spain | MDT | 5 m | EPSG:25830 (UTM30N) | WCS 2.0.1 INSPIRE, 5 m = landscape scale (the 2 m bare-earth LiDAR requires the session-based CNIG portal) |
 | `es-icgc` | Spain (Catalonia) | MET LiDAR | 0.5 m | EPSG:25831 (UTM31N) | Single regional COG (~433 GB) read **windowed** via `/vsicurl` HTTP range, 50 cm, far finer than es-cnig 5 m; CC BY 4.0 (ICGC) |
 | `es-euskadi` | Spain (Basque Country) | MDT LiDAR | 1 m | EPSG:25830 (UTM30N) | WCS 1.0.0 (ArcGIS MapServer WCSServer, geoEuskadi), 1 m bare-earth, far finer than es-cnig 5 m; CC BY 4.0 |

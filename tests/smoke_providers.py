@@ -52,6 +52,7 @@ TEST_POINTS = {
     "dk-datafordeler": (12.568, 55.676), "ie-gsi": (-6.260, 53.349),
     "cz-cuzk": (14.418, 50.073), "si-arso": (14.506, 46.056),
     "ee-maaamet": (24.753, 59.437), "es-cnig": (-3.703, 40.417),
+    "lv-lgia": (24.105, 56.949),             # Riga (LAS national -> binning classe 2)
     "es-icgc": (2.173, 41.385), "pl-gugik": (21.012, 52.230),
     "ca-nrcan": (-73.567, 45.501), "nz-linz": (174.776, -41.286),
     "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),

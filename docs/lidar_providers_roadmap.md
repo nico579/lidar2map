@@ -53,7 +53,7 @@ as precedent):
   exclusion. It is really the 1 m academic path (`USGS1m`); for public 1 m use
   `us-tnm`. The 10 m default is a fallback, not the intended resolution.
 
-## Integrated (25 countries)
+## Integrated (26 countries)
 
 France, Netherlands, Switzerland, Norway, **Sweden**, Germany (11 Länder:
 Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg,
@@ -61,7 +61,7 @@ Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate
 **Austria**
 (national BEV + Tyrol + East Tyrol), United Kingdom (England, Wales, Scotland),
 Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
-Estonia, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
+Estonia, **Latvia**, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
 **Portugal**, **Italy** (Emilia-Romagna 5 m, Sardinia 1 m), Poland,
 USA, Canada, New Zealand, Australia (Queensland, NSW, national GA scattered),
 Japan.
@@ -78,6 +78,10 @@ By access paradigm:
 - **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
   au-qld, au-nsw, si-arso.
 - **ATOM INSPIRE index**: cz-cuzk (LAZ), de-thueringen (XYZ), de-berlin (zipped XYZ).
+- **Static point-cloud index → PDAL/laspy class-2 binning** (`common.las_to_dtm`):
+  cz-cuzk (Atom → LAZ), lv-lgia (S3 list of ~66k LAS; tile extents measured from
+  LAS headers because the TKS-93 sheet origin is not cleanly derivable from the
+  sheet number; min-z ground binning + bounded hole-fill).
 - **Metalink (.meta4) index**: de-bayern (deterministic URL), de-rlp (URL carries
   the survey year, so the index holds the per-tile URL; post_fetch strips the
   compound vertical CRS).
@@ -92,7 +96,7 @@ By access paradigm:
 | Zone | Reason | Tag |
 |---|---|---|
 | Saxony (DE) | Raster exists and is fine (the review downloaded a Dresden DGM1 GeoTIFF: EPSG:25833, 2000×2000, Float32, 1 m, NoData -9999), but the ONLY access is a Nextcloud GeoCloud share whose public WebDAV is disabled (401 on every standard token auth, even with a live session + `requesttoken`). Not reproducibly wireable without a brittle browser-session scraper. Full analysis in "Candidates" below. B1/B2. | [WATCH ~2027] |
-| Latvia (LĢIA) | DTM national is 20 m (too coarse, B3); the 1 m only exists as LAZ point cloud, download not public (WMS on e-mail request, B1/B4). Unblocks if a per-tile LAZ/raster endpoint appears. | [WATCH ~2027] |
+| ~~Latvia (LĢIA)~~ | **INTEGRATED 2026-07-15** as `lv-lgia` (external review was right, the old "download not public" was stale). LĢIA publishes ~66k classified LAS tiles on a public S3 with a static list; class-2 ground binning → 1 m DTM. Kept here only as a correction pointer. | done |
 | Hong Kong | Open DTM is a 5 m ASC (whole-HK ZIP, EPSG:2326), trivially wireable **but** non bare-earth (bridges/elevated roads kept, canopy height) and 5 m is under the bare-earth threshold (B3). The fine CEDD LiDAR is order-only (B1). Re-proposable if you want HK coverage despite the 5 m hybrid quality. | [WATCH ~2027] |
 | Wallonia (BE) | 0.5/1 m MNT raster + classified LAZ exist (EPSG:3812) but download is a 48 h e-mail basket (B1); the ArcGIS `RELIEF` server (`geoservices.wallonie.be`) exposes only rendered MapServers (hillshade / colored relief), no float32 ImageServer or WCS (B2). Confirmed 2026-07. Unblocks if SPW publishes a WCS or INSPIRE ATOM. | [WATCH ~2027] |
 
