@@ -55,10 +55,10 @@ as precedent):
 
 ## Integrated (27 countries + US/NL territories)
 
-France, Netherlands, Switzerland, Norway, **Sweden**, Germany (11 Länder:
+France, Netherlands, Switzerland, Norway, **Sweden**, Germany (12 Länder:
 Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg,
-Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate),
-**Austria**
+Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate,
+**Schleswig-Holstein**), **Austria**
 (national BEV + Tyrol + East Tyrol), United Kingdom (England, Wales, Scotland),
 Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
 Estonia, **Latvia**, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
@@ -85,7 +85,10 @@ By access paradigm:
   se-lantmateriet, at-bev (STAC-like ATOM index).
 - **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
   au-qld, au-nsw, si-arso.
-- **ATOM INSPIRE index**: cz-cuzk (LAZ), de-thueringen (XYZ), de-berlin (zipped XYZ).
+- **Spatial index → XYZ text tiles → GeoTIFF**: de-thueringen (ATOM, zipped XYZ),
+  de-berlin (ATOM, zipped XYZ), de-sh (GeoJSON index of 18 685 tiles, each feature
+  carries the direct `link_data` URL; raw XYZ text, newest survey year per tile).
+- **ATOM INSPIRE index (LAZ)**: cz-cuzk.
 - **Static point-cloud index → PDAL/laspy class-2 binning** (`common.las_to_dtm`):
   cz-cuzk (Atom → LAZ), lv-lgia (S3 list of ~66k LAS; tile extents measured from
   LAS headers because the TKS-93 sheet origin is not cleanly derivable from the
@@ -123,7 +126,7 @@ By access paradigm:
 | Iceland (ÍslandsDEM) | not LiDAR: derived from ArcticDEM (satellite stereo, PGC), surface model, not bare-earth. Open service is a 10 m rendered MapServer (B2); the 2 m native is 18x100 km strips via a JS viewer (B1). Criterion: require LiDAR-grade bare-earth, not satellite-stereo DEM. | [HARD] |
 | W. Australia (Landgate) | 1 m LiDAR/DEM on quote + fee (B4); only the coverage index is open, not the data. | [STABLE] |
 | Liechtenstein | elevation = swissALTI3D over LI (2 m) but redistributed for a fee by the Amt für Tiefbau (CAD formats, not open, B4). Not covered by ch-swisstopo (STAC is CH only). | [STABLE] |
-| Germany, BKG national | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). No free national aggregator; each Land is a dedicated build (9 done, see the candidates below for the rest). | [STABLE] |
+| Germany, BKG national | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). No free national aggregator; each Land is a dedicated build (12 done). Remaining Länder blocked on delivery, not licence (all open CC BY / dl-de): **Saarland** (DGM1 via WebDAV but per-district archives 211 MB to >1 GB), **Bremen** and **Hamburg** (open DGM1 but monolithic ~0.6-1.3 GB archives) → all need the deferred download-once monolith cache; **Saxony** (Nextcloud share, WebDAV disabled, see below). | [WATCH ~2027] |
 | Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna 5 m and Sardinia 1 m integrated; South Tyrol 0.5 m built-up only; other regions each a bespoke GeoServer WCS hunt). | [WATCH ~2027] |
 | Croatia, Hungary | no open national LiDAR (only global 30 m DEMs). | [HARD] |
 | Africa | almost no open national bare-earth LiDAR; mostly global 30 m DEMs (SRTM, Copernicus GLO-30, satellite radar, out of scope). **Exception (2026-07 review): Mauritius + Rodrigues** publish a national 1 m LiDAR DTM, but as a single ~5.3 GB compressed-TIFF ZIP monolith (needs the deferred "download-once monolith cache"), and licence / CRS / NoData are unconfirmed. So the absolute "nowhere in Africa" is no longer true; still not wired (monolith + licence). | [WATCH ~2027] |

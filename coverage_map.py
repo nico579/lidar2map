@@ -45,6 +45,7 @@ REGIONS = [
     ("Mecklenburg-Vorpommern", ["de-mv"],            "#f59e0b", None, None),
     ("Sachsen-Anhalt",         ["de-st"],            "#f59e0b", None, None),
     ("Brandenburg",            ["de-brandenburg"],   "#f59e0b", None, None),
+    ("Schleswig-Holstein",     ["de-sh"],            "#f59e0b", None, None),
     ("Berlin",                 ["de-berlin"],        "#f59e0b", (13.05, 52.32, 13.77, 52.68),
      "Berlin — DGM1 1 m (ATOM/XYZ)"),
     ("Rheinland-Pfalz",        ["de-rlp"],           "#f59e0b", None, None),

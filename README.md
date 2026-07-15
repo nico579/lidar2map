@@ -80,7 +80,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
   LiDAR sources: **<!--N-->27<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
-  (11 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
+  (12 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
   Denmark, Ireland, Czechia, Slovenia, Estonia, Latvia, Spain (+ Basque Country, Navarre, Catalonia), Italy (Emilia-Romagna, Sardinia), Poland, USA, Canada, New Zealand,
   Australia (QLD/NSW), Philippines (Taal area). Per-provider details (dataset, resolution, CRS, access
   mechanism, coverage, API keys) live in **the single reference table** of the
@@ -304,7 +304,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, national coverage |
 | `se-lantmateriet` | Sweden | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + 10 km mosaic COG (windowed read), national coverage; **free GeoTorget account** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) for the download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` · `de-rlp` | Germany (4 Länder: Bavaria, NRW, Lower Saxony, Rhineland-Palatinate) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data (de-rlp: Metalink index of ~21k GeoTIFF tiles, post_fetch strips the compound vertical CRS to 25832) |
-| `de-thueringen` · `de-berlin` | Germany (Thuringia, Berlin) | DGM / DGM1 | 1-2 m / 1 m | EPSG:25832 / 25833 (UTM32N/33N) | ATOM INSPIRE index → zipped XYZ (post_fetch → GeoTIFF), open data (Thuringia dl-de/by-2-0, Berlin dl-de/zero-2-0) |
+| `de-thueringen` · `de-berlin` · `de-sh` | Germany (Thuringia, Berlin, Schleswig-Holstein) | DGM / DGM1 | 1-2 m / 1 m | EPSG:25832 / 25833 (UTM32N/33N) | Spatial index (ATOM or GeoJSON) → XYZ text tiles (post_fetch → GeoTIFF), open data (Thuringia/SH CC BY / dl-de/by-2-0, Berlin dl-de/zero-2-0) |
 | `de-hessen` · `de-bw` · `de-mv` · `de-st` · `de-brandenburg` | Germany (Hesse, Baden-Württemberg, Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg) | DGM1 | 1 m | EPSG:25832/25833 (UTM32N/33N) | WCS 2.0.1 INSPIRE GetCoverage, open data dl-de/by-2-0 (de-mv/de-st found via the GDI-DE catalog auto-discovery) |
 | `at-bev` | Austria (national) | ALS-DGM | 1 m | EPSG:3035 (LAEA Europe) | ATOM index + 50 km mosaic COG (windowed read via `/vsicurl`), latest survey per tile, CC BY 4.0 (BEV) |
 | `at-tirol` · `at-osttirol` | Austria (Tyrol + East Tyrol) | DGM | 0.5 m | EPSG:31254/31255 (MGI M28/M31) | WCS 1.0.0 GetCoverage (tiris), finer than `at-bev` over Tyrol |
