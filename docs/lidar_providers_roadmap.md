@@ -55,9 +55,10 @@ as precedent):
 
 ## Integrated (25 countries)
 
-France, Netherlands, Switzerland, Norway, **Sweden**, Germany (9 Länder:
+France, Netherlands, Switzerland, Norway, **Sweden**, Germany (11 Länder:
 Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg,
-Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg), **Austria**
+Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate),
+**Austria**
 (national BEV + Tyrol + East Tyrol), United Kingdom (England, Wales, Scotland),
 Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
 Estonia, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
@@ -76,7 +77,10 @@ By access paradigm:
   se-lantmateriet, at-bev (STAC-like ATOM index).
 - **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
   au-qld, au-nsw, si-arso.
-- **ATOM INSPIRE index**: cz-cuzk (LAZ), de-thueringen (XYZ).
+- **ATOM INSPIRE index**: cz-cuzk (LAZ), de-thueringen (XYZ), de-berlin (zipped XYZ).
+- **Metalink (.meta4) index**: de-bayern (deterministic URL), de-rlp (URL carries
+  the survey year, so the index holds the per-tile URL; post_fetch strips the
+  compound vertical CRS).
 - **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
   jp-gsi (XYZ text tiles), lu-act / es-icgc (single national COG), gb-scotland
   (S3 listing).
@@ -87,7 +91,7 @@ By access paradigm:
 
 | Zone | Reason | Tag |
 |---|---|---|
-| Saxony (DE) | **Raster now validated** (external review 2026-07): a concrete GeoCloud share (`geocloud.landesvermessung.sachsen.de/index.php/s/…`) exposes a programmable index via WebDAV `PROPFIND` (4981 ZIP tiles), and a full Dresden DGM1 GeoTIFF was downloaded and inspected (EPSG:25833, 2000×2000, Float32, 1 m, NoData -9999, real elevations). The remaining blocker is NOT missing data but a **CSRF/session** dance (public GeoCloud session + token); the still-authoritative record lists only a WMS (B2) and the INSPIRE ATOM omits elevation. Integration path: extract the session token, then the global-opener pattern of `providers/pt_dgt.py`. Now a P1 candidate, not a Watch. | [CANDIDATE P1] |
+| Saxony (DE) | Raster exists and is fine (the review downloaded a Dresden DGM1 GeoTIFF: EPSG:25833, 2000×2000, Float32, 1 m, NoData -9999), but the ONLY access is a Nextcloud GeoCloud share whose public WebDAV is disabled (401 on every standard token auth, even with a live session + `requesttoken`). Not reproducibly wireable without a brittle browser-session scraper. Full analysis in "Candidates" below. B1/B2. | [WATCH ~2027] |
 | Latvia (LĢIA) | DTM national is 20 m (too coarse, B3); the 1 m only exists as LAZ point cloud, download not public (WMS on e-mail request, B1/B4). Unblocks if a per-tile LAZ/raster endpoint appears. | [WATCH ~2027] |
 | Hong Kong | Open DTM is a 5 m ASC (whole-HK ZIP, EPSG:2326), trivially wireable **but** non bare-earth (bridges/elevated roads kept, canopy height) and 5 m is under the bare-earth threshold (B3). The fine CEDD LiDAR is order-only (B1). Re-proposable if you want HK coverage despite the 5 m hybrid quality. | [WATCH ~2027] |
 | Wallonia (BE) | 0.5/1 m MNT raster + classified LAZ exist (EPSG:3812) but download is a 48 h e-mail basket (B1); the ArcGIS `RELIEF` server (`geoservices.wallonie.be`) exposes only rendered MapServers (hillshade / colored relief), no float32 ImageServer or WCS (B2). Confirmed 2026-07. Unblocks if SPW publishes a WCS or INSPIRE ATOM. | [WATCH ~2027] |
@@ -109,16 +113,27 @@ By access paradigm:
 | Africa | no open national bare-earth LiDAR anywhere; only global 30 m DEMs (SRTM, Copernicus GLO-30), which are satellite radar, out of scope. | [HARD] |
 | OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |
 
-### Candidates found, integration pending
+### Candidates: two integrated, one blocked (2026-07-15)
 
-Surfaced by direct per-region probing (external review 2026-07), raster-tested
-but not yet wired:
-
-| Zone | State | Reason pending |
-|---|---|---|
-| Berlin (DE) | P1 | ATOM feed of 2×2 km DGM1 tiles as ZIP of CSV/XYZ (`gdi.berlin.de/data/dgm1/atom/`, EPSG:25833). Wireable on the `de-thueringen` model plus a `post_fetch` CSV → GeoTIFF; needs the CSV-to-raster step written and a full tile checked for orientation / NoData. |
-| Rhineland-Palatinate (DE) | P2 | Metadata says DGM1 1 m, EPSG:25832, 1×1 km, GeoTIFF/XYZ ZIP + ATOM feed (`metaportal.rlp.de`, `open.rlp.de`). Promising but no individual ZIP opened yet; validate a real tile before writing. |
-| Saxony (DE) | P1 | See the reclassified row above: raster validated, blocker is the CSRF/session dance. |
+- **Berlin (DE): INTEGRATED** as `de-berlin`. ATOM feed (`gdi.berlin.de/data/dgm1/atom`
+  → dataset feed `0.atom`, 297 tiles), 2×2 km zipped XYZ, EPSG:25833,
+  dl-de/zero-2-0. Same model as `de-thueringen` (post_fetch XYZ → GeoTIFF).
+- **Rhineland-Palatinate (DE): INTEGRATED** as `de-rlp`. Metalink
+  `geobasis-rlp.de/data/dgm1/current/meta4/dgm1_tif_07.meta4` (~21k GeoTIFF tiles,
+  URL carries the survey year), EPSG:25832 with a compound vertical CRS that
+  post_fetch strips to 25832, dl-de/zero-2-0.
+- **Saxony (DE): still blocked, harder than the review implied.** The GeoCloud
+  share (`geocloud.landesvermessung.sachsen.de/index.php/s/JCcXyifaNdLDnxZ`) is a
+  Nextcloud instance with **public WebDAV disabled**: `PROPFIND` on
+  `public.php/webdav/` (and `remote.php/dav/public-files/`) returns 401 for every
+  standard token auth form (`token:`, `token:token`, `token:null`), even with a
+  live share session cookie + `requesttoken` header; the share HTML embeds no file
+  list and guessed `/download?files=` names 404. The review's PROPFIND-207 did not
+  reproduce. Getting in would require reverse-engineering the exact browser
+  session handshake against one specific share link Saxony can rotate: a bespoke,
+  brittle scraper that fails the "programmable endpoint" criterion (mouton à
+  5 pattes). Left out on purpose. Unblocks the day Saxony publishes a WCS/ATOM or
+  an open metalink like RLP. `[WATCH ~2027]`
 
 ## Finding new sources (catalog discovery)
 

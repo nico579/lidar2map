@@ -68,6 +68,8 @@ TEST_POINTS = {
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
     "it-sardegna": (9.115, 39.223),         # Cagliari (WCS DTM 1 m, 36-97 m)
     "de-brandenburg": (13.06, 52.40),       # Potsdam (WCS DGM1 1 m, 29-46 m)
+    "de-berlin": (13.404, 52.520),          # Alexanderplatz (ATOM/XYZ 1 m, 21-41 m)
+    "de-rlp": (8.27, 50.0),                 # Mayence (Metalink 1 m, 98-129 m)
     "es-euskadi": (-2.93, 43.26),           # Bilbao (WCS 1.0.0 MDT 1 m, 27-164 m)
     "es-navarra": (-1.64, 42.81),           # Pampelune (WCS MDT 2 m, 401-481 m)
     "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)
