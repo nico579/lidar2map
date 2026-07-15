@@ -61,6 +61,7 @@ TEST_POINTS = {
     "us-cnmi": (145.75, 15.19),              # Saipan (NOAA VRT fenêtré, topobathy 1 m)
     "se-lantmateriet": (17.639, 59.859),    # Uppsala (COG 1 m, auth Basic)
     "jp-gsi": (139.767, 35.681),
+    "ph-taal": (120.993, 14.002),            # volcan Taal (grille GeoJSON -> GeoTIFF S3)
     # Ajouts 2026-07-13 — points DÉJÀ validés par download réel à l'intégration :
     "de-hessen": (8.681, 50.111),           # Francfort (WCS he_dgm1)
     "de-bw": (9.183, 48.775),               # Stuttgart (WCS DGM1 LGL)

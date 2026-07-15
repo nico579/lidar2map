@@ -77,6 +77,8 @@ REGIONS = [
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
     ("Northern Mariana Islands", ["us-cnmi"],        "#0891b2", (144.8, 13.2, 146.2, 15.4),
      "Mariannes du Nord (CNMI, US) — Topobathy DEM 1 m (NOAA)"),
+    ("Taal Lake",              ["ph-taal"],          "#f43f5e", (120.85, 13.85, 121.15, 14.18),
+     "Philippines (volcan Taal) — DTM 1 m (UP TCAGP), zone ~20 km"),
     ("New Zealand",            ["nz-linz"],          "#10b981", (165.0, -48.0, 179.5, -34.0), None),
     ("Queensland",             ["au-qld"],           "#e11d48", (137.0, -29.5, 154.5, -9.0), None),
     ("New South Wales",        ["au-nsw"],           "#0284c7", (140.0, -38.0, 154.5, -27.5), None),
@@ -113,6 +115,7 @@ COUNTRY_NAMES = [
     ("ca", "Canada", "Canada"),
     ("nz", "New Zealand", "Nouvelle-Zélande"),
     ("au", "Australia", "Australie"),
+    ("ph", "Philippines", "Philippines"),
     ("jp", "Japan", "Japon"),
 ]
 

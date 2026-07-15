@@ -53,7 +53,7 @@ as precedent):
   exclusion. It is really the 1 m academic path (`USGS1m`); for public 1 m use
   `us-tnm`. The 10 m default is a fallback, not the intended resolution.
 
-## Integrated (26 countries)
+## Integrated (27 countries + US/NL territories)
 
 France, Netherlands, Switzerland, Norway, **Sweden**, Germany (11 Länder:
 Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg,
@@ -63,8 +63,16 @@ Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate
 Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
 Estonia, **Latvia**, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
 **Portugal**, **Italy** (Emilia-Romagna 5 m, Sardinia 1 m), Poland,
-USA, Canada, New Zealand, Australia (Queensland, NSW, national GA scattered),
-Japan.
+USA (+ CNMI territory), Canada, New Zealand, Australia (Queensland, NSW, national
+GA scattered), **Philippines** (Taal volcano area only), Japan.
+
+Coverage is national unless noted. **Territorial / insular** (real but local, not
+national, per the review's distinction): us-cnmi (Northern Mariana Is.),
+ph-taal (Taal volcano ~20 km). Deferred insular that ARE wireable but low value:
+Anegada (BVI, USGS 1 m) is a 38 km² coral island maxing at ~9 m elevation, almost
+no micro-relief signal for archaeology, plus an ESRI:102045 CRS to relabel: not
+worth it. Montevideo (Uruguay) LiDAR exists but only behind the "imnube" cloud
+portal (no stable programmable endpoint, like Saxony) — deferred, not wired.
 
 By access paradigm:
 
@@ -90,6 +98,8 @@ By access paradigm:
   the `.vrt` extension; pattern for a generic NOAA-territories provider).
 - **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
   jp-gsi (XYZ text tiles), gb-scotland (S3 listing).
+- **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
+  ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 
 ## Evaluated, not integrated
 
