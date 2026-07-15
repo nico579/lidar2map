@@ -296,7 +296,8 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 
 | Code | Pays | Donnée | Rés. | CRS natif | Accès & particularités |
 |---|---|---|---|---|---|
-| `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale |
+| `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
+| `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |

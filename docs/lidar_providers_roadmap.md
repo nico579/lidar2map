@@ -68,7 +68,10 @@ GA scattered), **Philippines** (Taal volcano area only), Japan.
 
 Coverage is national unless noted. **Territorial / insular** (real but local, not
 national, per the review's distinction): us-cnmi (Northern Mariana Is.),
-ph-taal (Taal volcano ~20 km). Deferred insular that ARE wireable but low value:
+ph-taal (Taal volcano ~20 km), **France DROM** fr-reunion + fr-guadeloupe (IGN
+LiDAR HD 0.5 m; `fr-ign` is mainland-only. Martinique + Mayotte are announced in
+the national programme but their IGN WFS returns zero tiles for now, so not yet
+providers). Deferred insular that ARE wireable but low value:
 Anegada (BVI, USGS 1 m) is a 38 km² coral island maxing at ~9 m elevation, almost
 no micro-relief signal for archaeology, plus an ESRI:102045 CRS to relabel: not
 worth it. Montevideo (Uruguay) LiDAR exists but only behind the "imnube" cloud
@@ -101,6 +104,10 @@ By access paradigm:
   the `.vrt` extension; pattern for a generic NOAA-territories provider).
 - **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
   jp-gsi (XYZ text tiles), gb-scotland (S3 listing).
+- **WFS index → per-tile direct URL** (`common.ign_lidar_hd_dalles`): fr-reunion,
+  fr-guadeloupe (IGN `IGNF_MNT-LIDAR-HD:dalle`; each dalle feature carries its own
+  download `url`, WMS GetMap for Réunion / a direct link+public apikey for
+  Guadeloupe; 0.5 m).
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 

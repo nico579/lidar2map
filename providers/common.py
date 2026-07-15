@@ -5,7 +5,59 @@ Point de mutualisation (cf. audit providers 2026-07) : extraction ZIP sûre
 quand un 3e provider LAZ est arrivé : cz + lv + uy ; avant, DIFFÉRÉE à raison).
 Vocation à accueillir aussi le HTTP / pagination / retry communs.
 """
+import json
+import re
+import ssl
+import urllib.request
 from pathlib import Path
+
+try:
+    import certifi
+    _CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    _CTX = ssl.create_default_context()
+
+_IGN_WFS = "https://data.geopf.fr/wfs/ows"
+_IGN_TN = "IGNF_MNT-LIDAR-HD:dalle"
+_IGN_NAME_RE = re.compile(r"LHD_[A-Z0-9]+_(\d+)_(\d+)_")
+
+
+def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0"):
+    """Interroge le WFS IGN `IGNF_MNT-LIDAR-HD:dalle` (0,5 m LiDAR HD, tuiles
+    1 km) pour la bbox EN EPSG:`epsg`, et retourne {filename_fn(e_km,n_km): url}.
+
+    Chaque feature de dalle porte un attribut `url` = le download DIRECT du
+    GeoTIFF (WMS GetMap pour la Réunion, lien de téléchargement + apikey public
+    pour la Guadeloupe ; les deux sont de simples GET → GeoTIFF 0,5 m). On garde
+    l'url telle quelle (toujours fraîche depuis le WFS). Le filtre `projection`
+    évite de mélanger des territoires si la bbox chevauche plusieurs CRS.
+    Retourne None sur échec réseau, {} si aucune dalle. Utilisé par fr-reunion /
+    fr-guadeloupe (mutualisation : mêmes jumeaux, seuls CRS + préfixe changent)."""
+    if bbox_natif is None:
+        return {}
+    x1, y1, x2, y2 = bbox_natif
+    q = (f"{_IGN_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
+         f"&TYPENAMES={_IGN_TN}&SRSNAME=EPSG:{epsg}"
+         f"&BBOX={x1},{y1},{x2},{y2},EPSG:{epsg}"
+         f"&COUNT=2000&OUTPUTFORMAT=application/json")
+    try:
+        req = urllib.request.Request(q, headers={"User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+            gj = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        print(f"  ERROR IGN LiDAR-HD WFS: {type(e).__name__}: {e}")
+        return None
+    dalles = {}
+    for feat in gj.get("features", []):
+        p = feat.get("properties", {})
+        url = p.get("url")
+        if not url or str(p.get("projection", "")).upper() != f"EPSG:{epsg}":
+            continue
+        m = _IGN_NAME_RE.match(p.get("name_download", "") or p.get("name", "") or "")
+        if not m:
+            continue
+        dalles[filename_fn(int(m.group(1)), int(m.group(2)))] = url
+    return dalles
 
 
 def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,

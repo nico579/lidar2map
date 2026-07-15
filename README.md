@@ -298,7 +298,8 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 
 | Code | Country | Dataset | Res. | Native CRS | Access & specifics |
 |---|---|---|---|---|---|
-| `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage |
+| `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage (mainland) |
+| `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | WFS `IGNF_MNT-LIDAR-HD:dalle` index (each tile feature carries its direct download `url`), 0.5 m GeoTIFF, Licence Ouverte 2.0 (Martinique/Mayotte announced but WFS empty for now) |
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
 | `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, national coverage |

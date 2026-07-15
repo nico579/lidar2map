@@ -32,6 +32,10 @@ UA = "lidar2map-coverage/1.0 (https://github.com/nico579/lidar2map)"
 # Svalbard/Bouvet NO).
 REGIONS = [
     ("France métropolitaine",  ["fr-ign"],           "#3b82f6", None, None),
+    ("La Réunion",             ["fr-reunion"],       "#3b82f6", (55.2, -21.4, 55.85, -20.85),
+     "La Réunion (DROM) — MNT LiDAR HD 0,5 m (IGN)"),
+    ("Guadeloupe",             ["fr-guadeloupe"],    "#3b82f6", (-61.85, 15.8, -61.0, 16.55),
+     "Guadeloupe (DROM) — MNT LiDAR HD 0,5 m (IGN)"),
     ("Nederland",              ["nl-ahn"],           "#22c55e", (3.0, 50.5, 7.5, 53.8), None),
     ("Schweiz",                ["ch-swisstopo"],     "#ef4444", None, None),
     ("Norge",                  ["no-kartverket"],    "#8b5cf6", (4.0, 57.5, 31.5, 71.5), None),
