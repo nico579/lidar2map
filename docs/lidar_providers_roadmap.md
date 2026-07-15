@@ -3,7 +3,7 @@
 The public mirror of the internal notes on which national bare-earth LiDAR
 sources are wired into lidar2map, which were evaluated and set aside, and why.
 Kept by hand so we do not re-dig the same dead ends every few months. Last
-reviewed 2026-07-14.
+reviewed 2026-07-15.
 
 For the integrated providers and their exact access mechanism, see the
 [provider table](../README.md#lidar-providers--adding-a-country) in the README.
@@ -116,9 +116,9 @@ By access paradigm:
 
 | Zone | Reason | Tag |
 |---|---|---|
-| Slovakia (ÚGKK/ZBGIS) | 1 m DMR 5.0 open, but no per-bbox access: OGC services are ZBGIS REST MapServers with empty `supportedExtensions` (rendered, B2); the 1 m TIFF is only regional ZIP blocks (tens of GB) or a MAPKA basket (B1). A range-readable COG would be fine, a regional ZIP is not windowable. | [STABLE] |
+| Slovakia (ÚGKK/ZBGIS) | 1 m DMR 5.0 (and a partial 0.5 m DMR 6.0) open, and an availability-by-extent API exists, but no per-bbox DATA access: OGC services are ZBGIS REST MapServers with empty `supportedExtensions` (rendered, B2); the raster is only regional ZIP blocks (~198 GB for DMR5) or a MAPKA e-mail basket (B1). A range-readable COG would be fine, a regional ZIP is not windowable. Moved STABLE→WATCH per the 2026-07 review: the DMR6 + the API mean this could unblock if ÚGKK exposes a direct/COG endpoint. | [WATCH ~2027] |
 | Northern Ireland (DAERA) | the hub "DTM" is a MapServer/WMTS (rendered, B2); the real data is coastal-strip LAZ 2021 only (B3); the national OSNI model is 10/50 m. Nothing usable inland. | [STABLE] |
-| Lithuania | registration + electronic signature required (B4). | [STABLE] |
+| Lithuania | the classified LAZ 2025 (15 pts/m², class 2) exists and is good, but no **stable anonymous per-tile endpoint** could be validated; access goes through the Geoportal.lt with registration (the old "electronic signature required" was too categorical, per the 2026-07 review, but there is still no programmable anonymous download). B1/B4. | [WATCH ~2027] |
 | Taiwan | 1 m DTM is a classified official secret (gov-only, seal + request, B4); only the 20 m is open (too coarse). | [HARD] |
 | Iceland (ÍslandsDEM) | not LiDAR: derived from ArcticDEM (satellite stereo, PGC), surface model, not bare-earth. Open service is a 10 m rendered MapServer (B2); the 2 m native is 18x100 km strips via a JS viewer (B1). Criterion: require LiDAR-grade bare-earth, not satellite-stereo DEM. | [HARD] |
 | W. Australia (Landgate) | 1 m LiDAR/DEM on quote + fee (B4); only the coverage index is open, not the data. | [STABLE] |
@@ -126,7 +126,7 @@ By access paradigm:
 | Germany, BKG national | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). No free national aggregator; each Land is a dedicated build (9 done, see the candidates below for the rest). | [STABLE] |
 | Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna 5 m and Sardinia 1 m integrated; South Tyrol 0.5 m built-up only; other regions each a bespoke GeoServer WCS hunt). | [WATCH ~2027] |
 | Croatia, Hungary | no open national LiDAR (only global 30 m DEMs). | [HARD] |
-| Africa | no open national bare-earth LiDAR anywhere; only global 30 m DEMs (SRTM, Copernicus GLO-30), which are satellite radar, out of scope. | [HARD] |
+| Africa | almost no open national bare-earth LiDAR; mostly global 30 m DEMs (SRTM, Copernicus GLO-30, satellite radar, out of scope). **Exception (2026-07 review): Mauritius + Rodrigues** publish a national 1 m LiDAR DTM, but as a single ~5.3 GB compressed-TIFF ZIP monolith (needs the deferred "download-once monolith cache"), and licence / CRS / NoData are unconfirmed. So the absolute "nowhere in Africa" is no longer true; still not wired (monolith + licence). | [WATCH ~2027] |
 | OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |
 
 ### Candidates: two integrated, one blocked (2026-07-15)
@@ -150,6 +150,60 @@ By access paradigm:
   brittle scraper that fails the "programmable endpoint" criterion (mouton à
   5 pattes). Left out on purpose. Unblocks the day Saxony publishes a WCS/ATOM or
   an open metalink like RLP. `[WATCH ~2027]`
+
+### World scan (2026-07-15): evaluated, not integrated
+
+A worldwide external review proposed ~11 more. Three held up and were wired
+(`lv-lgia`, `us-cnmi`, `ph-taal`). The rest failed real validation, grouped by
+why. Lesson: the review over-labelled "wireable" (browser-session / JS-portal
+access that does not reproduce programmatically) and "usable" (data unfit for
+micro-relief). Each below was probed to a real endpoint.
+
+**Rejected, data unfit for archaeological micro-relief:**
+
+- **Malta** (`malta.coverage.wetransform.eu/dtm_1m_2018/ows`): the WCS returns
+  **uint8** samples, i.e. elevation quantised to **whole metres** (0.15 m
+  horizontal, but 1 m vertical steps). SVF / LRM / openness would produce
+  staircase artefacts and lose the sub-metre features that are the whole point.
+  Confirmed by a real GetCoverage. B3-like (vertical resolution).
+- **Qatar**: an ImageServer serves a fine Float32 raster, but there is no proof
+  it is a bare-earth **LiDAR DTM** (vs a DSM / photogrammetric surface) and no
+  clear licence. The review itself said not to integrate it. [HARD until proven]
+- **Anegada (BVI)**: see the integrated-section note — 38 km² flat coral island,
+  ~9 m max, no relief signal; wireable (one USGS ZIP) but pointless.
+
+**Deferred, portal-gated, no reproducible programmable endpoint (Saxony motif):**
+
+- **Mexico (INEGI)**: the `elevacionesmex` viewer is an OpenLayers JS app with no
+  download API exposed in its HTML/JS; the national LiDAR is also 5 m
+  (landscape-scale, not micro-relief). Portal-gated + coarse.
+- **Friuli-Venezia Giulia (IT)**: the tile grid IS clean
+  (`serviziogc.regione.fvg.it/geoserver` `GRIGLIEGEO:QU_DTM_LIDAR_FVG`, 14 917
+  1 m DTM tiles as WFS features) but the features carry **no download URL**; the
+  actual download is the Eagle.fvg cloud portal, and there is no DTM WCS coverage
+  (direct-URL guesses 404/500). Unblocks if FVG exposes a WCS or puts the tile URL
+  in the grid attributes.
+- **Caribbean Netherlands (Bonaire / Saba / St-Eustatius)**: real 0.5 m Dutch
+  LiDAR DTM (CC BY 4.0), **good data**, but access is a proprietary
+  `beeldmateriaal.nl` "rasterByExtent" API, not a standard WCS/ImageServer I could
+  locate. The one case worth a focused follow-up if Caribbean coverage is wanted.
+- **Montevideo (UY)**: see the integrated-section note ("imnube" portal).
+- **Dominica**: documented DTM/LAS, but portal / API / WCS all return HTTP 502.
+
+**Deferred, needs a capability the pipeline does not have yet** (deferred
+2026-07-15):
+
+- **São Paulo (GeoSampa)**: a public classified EPT (31.7 billion points).
+  Wireable in principle with `readers.ept` + a class-2 filter, but the pipeline
+  has no **windowed remote-EPT** reader. Would unlock the whole EPT class.
+- **Trentino (IT)**: a real create-job → poll → download-ZIP(ASC) workflow; needs
+  an **async-job** provider hook, and the API is reverse-engineered from the
+  front-end (fragile).
+- **Belo Horizonte (BR)**: public LiDAR XYZ, but the index is a Google Drive and
+  the points are irregular (need interpolation, not binning).
+- **St-Vincent (USGS)** and **Mauritius/Rodrigues**: bare-earth 1 m DTMs, but each
+  a single multi-GB monolith (1.38 GB / 5.3 GB) → needs the deferred
+  "download-once monolith cache" (or a range-readable COG, which they are not).
 
 ## Finding new sources (catalog discovery)
 
