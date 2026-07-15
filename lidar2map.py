@@ -3376,6 +3376,18 @@ def _valider_tif_dalle(chemin):
         with _rio_v.open(str(chemin)) as ds:
             if ds.width == 0 or ds.height == 0:
                 return False
+            # Bande d'élévation présente + géotransform non dégénérée (audit
+            # providers #2 : l'ancien contrôle ne vérifiait ni le nombre de
+            # bandes ni la résolution). Volontairement PAS de contrôle CRS ici :
+            # ce validateur tourne AUSSI avant post_download (cf. at-bev, COG
+            # LOCAL_CS réétiqueté ENSUITE) ; exiger un CRS rejetterait ces dalles
+            # à tort. L'exigence CRS/résolution est portée par le smoke test,
+            # par provider.
+            if ds.count < 1:
+                return False
+            rx, ry = ds.res
+            if not (0 < rx < 1e9) or not (0 < ry < 1e9):
+                return False
             # Lire 1 bloc pour détecter une troncature des données
             ds.read(1, window=_rio_v.windows.Window(
                 0, 0, min(64, ds.width), min(64, ds.height)))

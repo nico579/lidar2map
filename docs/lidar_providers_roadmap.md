@@ -42,20 +42,36 @@ Re-evaluation tags: `[WATCH ~date]` evolving portal, re-check around then;
 `[STABLE]` unlikely to change, re-probe only on an external signal; `[HARD]`
 close to permanent (data does not exist or is classified).
 
+Two integrated providers sit at the edge of this criterion and are kept as
+"best available for that area", not as exemplars (flagged so we do not cite them
+as precedent):
+
+- **au-nsw** is a 5 m **stereo-photogrammetric** DEM, not LiDAR (`providers/au_nsw.py`
+  says so). This is in tension with rejecting Iceland's ArcticDEM for being
+  satellite-stereo; the pragmatic line is that NSW ships nothing better openly.
+- **us-3dep** defaults to `USGS10m` (10 m), which sits exactly on the B3 "≥ 10 m"
+  exclusion. It is really the 1 m academic path (`USGS1m`); for public 1 m use
+  `us-tnm`. The 10 m default is a fallback, not the intended resolution.
+
 ## Integrated (25 countries)
 
-France, Netherlands, Switzerland, Norway, **Sweden**, Germany (6 Länder:
-Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg), **Austria**
-(national BEV + Tyrol), United Kingdom (England, Wales, Scotland), Belgium
-(Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia, Estonia,
-Spain (5 m; Catalonia 0.5 m), **Portugal**, **Italy** (Emilia-Romagna), Poland,
+France, Netherlands, Switzerland, Norway, **Sweden**, Germany (9 Länder:
+Bavaria, NRW, Lower Saxony, Thuringia, Hesse, Baden-Württemberg,
+Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg), **Austria**
+(national BEV + Tyrol + East Tyrol), United Kingdom (England, Wales, Scotland),
+Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
+Estonia, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
+**Portugal**, **Italy** (Emilia-Romagna 5 m, Sardinia 1 m), Poland,
 USA, Canada, New Zealand, Australia (Queensland, NSW, national GA scattered),
 Japan.
 
 By access paradigm:
 
-- **WCS 2.0.1 / 1.0.0**: es-cnig, de-hessen, de-bw, it-emilia-romagna, gb-england,
-  gb-wales, be-flanders, fi, dk, pl, au-ga.
+- **WCS 2.0.1**: es-cnig, de-hessen, de-bw, de-mv, de-st, de-brandenburg,
+  it-emilia-romagna, it-sardegna, es-navarra, gb-england, gb-wales, be-flanders,
+  fi, dk, pl, au-ga.
+- **WCS 1.0.0** (older protocol, BBOX + WIDTH/HEIGHT, ArcGIS MapServer WCSServer):
+  es-euskadi.
 - **STAC + windowed COG**: ch-swisstopo, de-niedersachsen, ca-nrcan, nz-linz,
   se-lantmateriet, at-bev (STAC-like ATOM index).
 - **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
@@ -71,7 +87,7 @@ By access paradigm:
 
 | Zone | Reason | Tag |
 |---|---|---|
-| Saxony (DE) | DGM1 1 m open, filename derivable (`dgm1_33<E><N>.xyz`, EPSG:25833), but no WCS/ATOM: the authoritative record lists only a WMS (B2), the INSPIRE ATOM does not cover elevation, and the raw data is only a per-Gemeinde JS batch download (undocumented `geocloud.landesvermessung.sachsen.de` links). Turnkey the day one concrete geocloud URL is captured (then: `de-thueringen` pattern adapted). WCS/ATOM re-probed 2026-07 → still 403 / stub. | [WATCH ~2027] |
+| Saxony (DE) | **Raster now validated** (external review 2026-07): a concrete GeoCloud share (`geocloud.landesvermessung.sachsen.de/index.php/s/…`) exposes a programmable index via WebDAV `PROPFIND` (4981 ZIP tiles), and a full Dresden DGM1 GeoTIFF was downloaded and inspected (EPSG:25833, 2000×2000, Float32, 1 m, NoData -9999, real elevations). The remaining blocker is NOT missing data but a **CSRF/session** dance (public GeoCloud session + token); the still-authoritative record lists only a WMS (B2) and the INSPIRE ATOM omits elevation. Integration path: extract the session token, then the global-opener pattern of `providers/pt_dgt.py`. Now a P1 candidate, not a Watch. | [CANDIDATE P1] |
 | Latvia (LĢIA) | DTM national is 20 m (too coarse, B3); the 1 m only exists as LAZ point cloud, download not public (WMS on e-mail request, B1/B4). Unblocks if a per-tile LAZ/raster endpoint appears. | [WATCH ~2027] |
 | Hong Kong | Open DTM is a 5 m ASC (whole-HK ZIP, EPSG:2326), trivially wireable **but** non bare-earth (bridges/elevated roads kept, canopy height) and 5 m is under the bare-earth threshold (B3). The fine CEDD LiDAR is order-only (B1). Re-proposable if you want HK coverage despite the 5 m hybrid quality. | [WATCH ~2027] |
 | Wallonia (BE) | 0.5/1 m MNT raster + classified LAZ exist (EPSG:3812) but download is a 48 h e-mail basket (B1); the ArcGIS `RELIEF` server (`geoservices.wallonie.be`) exposes only rendered MapServers (hillshade / colored relief), no float32 ImageServer or WCS (B2). Confirmed 2026-07. Unblocks if SPW publishes a WCS or INSPIRE ATOM. | [WATCH ~2027] |
@@ -87,11 +103,22 @@ By access paradigm:
 | Iceland (ÍslandsDEM) | not LiDAR: derived from ArcticDEM (satellite stereo, PGC), surface model, not bare-earth. Open service is a 10 m rendered MapServer (B2); the 2 m native is 18x100 km strips via a JS viewer (B1). Criterion: require LiDAR-grade bare-earth, not satellite-stereo DEM. | [HARD] |
 | W. Australia (Landgate) | 1 m LiDAR/DEM on quote + fee (B4); only the coverage index is open, not the data. | [STABLE] |
 | Liechtenstein | elevation = swissALTI3D over LI (2 m) but redistributed for a fee by the Amt für Tiefbau (CAD formats, not open, B4). Not covered by ch-swisstopo (STAC is CH only). | [STABLE] |
-| Germany, BKG national + other Länder | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). Each remaining Land is a dedicated build; no free aggregator. | [STABLE] |
-| Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna integrated; South Tyrol 0.5 m built-up only). | [WATCH ~2027] |
+| Germany, BKG national | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). No free national aggregator; each Land is a dedicated build (9 done, see the candidates below for the rest). | [STABLE] |
+| Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna 5 m and Sardinia 1 m integrated; South Tyrol 0.5 m built-up only; other regions each a bespoke GeoServer WCS hunt). | [WATCH ~2027] |
 | Croatia, Hungary | no open national LiDAR (only global 30 m DEMs). | [HARD] |
 | Africa | no open national bare-earth LiDAR anywhere; only global 30 m DEMs (SRTM, Copernicus GLO-30), which are satellite radar, out of scope. | [HARD] |
 | OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |
+
+### Candidates found, integration pending
+
+Surfaced by direct per-region probing (external review 2026-07), raster-tested
+but not yet wired:
+
+| Zone | State | Reason pending |
+|---|---|---|
+| Berlin (DE) | P1 | ATOM feed of 2×2 km DGM1 tiles as ZIP of CSV/XYZ (`gdi.berlin.de/data/dgm1/atom/`, EPSG:25833). Wireable on the `de-thueringen` model plus a `post_fetch` CSV → GeoTIFF; needs the CSV-to-raster step written and a full tile checked for orientation / NoData. |
+| Rhineland-Palatinate (DE) | P2 | Metadata says DGM1 1 m, EPSG:25832, 1×1 km, GeoTIFF/XYZ ZIP + ATOM feed (`metaportal.rlp.de`, `open.rlp.de`). Promising but no individual ZIP opened yet; validate a real tile before writing. |
+| Saxony (DE) | P1 | See the reclassified row above: raster validated, blocker is the CSRF/session dance. |
 
 ## Finding new sources (catalog discovery)
 
@@ -100,6 +127,17 @@ elevation **services** and auto-probes each WCS (GetCapabilities →
 DescribeCoverage → resolution / CRS / extent), printing a shortlist of wireable
 coverages. INSPIRE mandates that every EU state/region publish elevation as a
 standardized service, so a national catalog enumerates them at once.
+
+**Its blind spot, learned the hard way (2026-07):** the CSW harvest only sees
+services a catalog actually indexes under the queried keyword. Brandenburg
+(clean `el_dgm1_wcs`), Basque Country and Navarre (fine 1-2 m LiDAR WCS) were all
+**missed** by the GDI-DE / IDEE harvest yet found immediately by probing each
+region's own geoportal directly. Catalog discovery is a first pass, not a
+substitute for the boring, reliable method: go country/region by region and hit
+the national mapping agency's own service endpoint. The tool de-duplicates by
+host and declares a WCS "wireable" from DescribeCoverage alone, without a
+GetCoverage and without distinguishing DTM from DSM (surface), so its output is
+strictly a shortlist.
 
 ```bash
 python tools/discover_providers.py de        # Germany (GDI-DE) — found de-mv, de-st

@@ -67,6 +67,9 @@ TEST_POINTS = {
     "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
     "it-sardegna": (9.115, 39.223),         # Cagliari (WCS DTM 1 m, 36-97 m)
+    "de-brandenburg": (13.06, 52.40),       # Potsdam (WCS DGM1 1 m, 29-46 m)
+    "es-euskadi": (-2.93, 43.26),           # Bilbao (WCS 1.0.0 MDT 1 m, 27-164 m)
+    "es-navarra": (-1.64, 42.81),           # Pampelune (WCS MDT 2 m, 401-481 m)
     "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)
 }
 APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
@@ -135,9 +138,27 @@ def smoke_one(code, mod, lon, lat):
                 v = a[a != ndv] if ndv is not None else a
                 v = v[np.isfinite(v)]
                 rm = src.res[0]
+                crs = src.crs
+                nb = src.count
             if v.size == 0:
                 return "FAIL", "tuile recuperee mais 0 pixel valide"
-            return "PASS", f"z=[{float(v.min()):.1f},{float(v.max()):.1f}] m, {v.size}px, res={rm:g}"
+            # #5 (audit) : IMPOSER, pas seulement afficher.
+            # (a) CRS présent : une dalle sans CRS ne peut pas être warpée en 3857.
+            if crs is None:
+                return "FAIL", f"pas de CRS sur la dalle ({nom})"
+            # (b) résolution = celle déclarée, MAIS uniquement quand la dalle est
+            #     dans son CRS natif PROJETÉ métrique. On exclut EPSG:3857 (web
+            #     mercator, dont le pas diverge de la résolution-sol avec la
+            #     latitude : au-*, jp-gsi) et EPSG:4326 (degrés) → sinon faux FAIL.
+            try:
+                exp = int(mod.CRS_NATIF.split(":")[1])
+            except Exception:
+                exp = None
+            if (crs.to_epsg() == exp and exp not in (3857, 4326)
+                    and abs(rm - mod.RESOLUTION_M) > 0.10 * mod.RESOLUTION_M):
+                return "FAIL", f"res={rm:g} != {mod.RESOLUTION_M:g} m declaree ({nom})"
+            return "PASS", (f"z=[{float(v.min()):.1f},{float(v.max()):.1f}] m, "
+                            f"{v.size}px, {nb}b, EPSG:{crs.to_epsg()}, res={rm:g}")
     except ImportError as e:
         return "SKIP", f"dependance absente: {e}"
     except Exception as e:
