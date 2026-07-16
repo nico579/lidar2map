@@ -34,6 +34,9 @@ const I18N = {
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
+    "f.dfm":"Mode DFM — structures debout (expérimental, LAZ ~205 Mo/km²)",
+    "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
+    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) en réinjectant les retours bas non-sol : révèle les ruines/murs debout que le MNT efface. Maquis = mouchetis, murs = lignes continues. Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
     "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
@@ -133,6 +136,9 @@ const I18N = {
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
+    "f.dfm":"DFM mode — standing structures (experimental, LAZ ~205 MB/km²)",
+    "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
+    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²) by re-injecting low non-ground returns: reveals standing ruins/walls that the DTM erases. Scrub = speckle, walls = continuous lines. Keep the area small.",
     "sec.zone":"Geographic area",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
     "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
@@ -623,6 +629,10 @@ function buildProviders(providers, activeCode) {
     const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
     return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${label}</option>`;
   }).join('');
+  // Capacité "mode DFM" par provider (jumeau *_dfm côté Python). Les DÉFAUTS
+  // des réglages viennent du module Python (source de vérité unique).
+  _dfmByCode = {};
+  providers.forEach(p => { if (p.dfm) _dfmByCode[p.code] = p.dfm; });
   sel.value = activeCode;
   const opt = sel.options[sel.selectedIndex];
   const country = (opt && opt.dataset.country) || 'fr';
@@ -630,6 +640,7 @@ function buildProviders(providers, activeCode) {
   if (opt && opt.dataset.res) _resolutionM = parseFloat(opt.dataset.res);   // défaut σ selon provider
   applyProviderCountry(country);
   applyProviderApiKey(opt);
+  applyProviderDfm(sel.value);
   sel.addEventListener('change', () => {
     const o = sel.options[sel.selectedIndex];
     const c = (o && o.dataset.country) || 'fr';
@@ -637,8 +648,38 @@ function buildProviders(providers, activeCode) {
     if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);   // MAJ défaut σ LRM/RRIM
     applyProviderCountry(c);
     applyProviderApiKey(o);
+    applyProviderDfm(sel.value);
     ombShowParams();   // rafraîchit le champ σ ouvert avec le nouveau défaut
   });
+}
+
+// Capacité DFM du provider actif : affiche la ligne "mode DFM" et préremplit
+// les réglages avec les défauts du jumeau Python (hmin/hmax/classes).
+let _dfmByCode = {};
+function applyProviderDfm(code) {
+  const row = document.getElementById('dfm-row');
+  if (!row) return;
+  const cap = _dfmByCode[code];
+  row.style.display = cap ? 'flex' : 'none';
+  if (!cap) {
+    const cb = document.getElementById('f-dfm');
+    if (cb) cb.checked = false;
+    updateDfmUI();
+    return;
+  }
+  const hmin = document.getElementById('f-dfm-hmin');
+  const hmax = document.getElementById('f-dfm-hmax');
+  const cls  = document.getElementById('f-dfm-classes');
+  if (hmin) { hmin.value = cap.hmin; hmin.dataset.def = cap.hmin; }
+  if (hmax) { hmax.value = cap.hmax; hmax.dataset.def = cap.hmax; }
+  if (cls)  { cls.value  = cap.classes; cls.dataset.def = cap.classes; }
+  updateDfmUI();
+}
+
+function updateDfmUI() {
+  const cb = document.getElementById('f-dfm');
+  const params = document.getElementById('dfm-params');
+  if (params) params.style.display = (cb && cb.checked) ? 'inline-flex' : 'none';
 }
 
 function applyProviderApiKey(opt) {
@@ -1129,6 +1170,12 @@ function getConfig() {
     type, mode,
     provider: g('f-provider')?.value || 'fr-ign',
     lidar_apikey: g('f-lidar-apikey')?.value.trim(),
+    // Mode DFM (structures debout) : la case + réglages ≠ défauts uniquement
+    // (les défauts vivent côté Python, dataset.def posé par applyProviderDfm).
+    dfm: g('f-dfm')?.checked || false,
+    dfm_hmin:    (g('f-dfm-hmin')?.value    && g('f-dfm-hmin').value    !== g('f-dfm-hmin').dataset.def)    ? g('f-dfm-hmin').value    : '',
+    dfm_hmax:    (g('f-dfm-hmax')?.value    && g('f-dfm-hmax').value    !== g('f-dfm-hmax').dataset.def)    ? g('f-dfm-hmax').value    : '',
+    dfm_classes: (g('f-dfm-classes')?.value && g('f-dfm-classes').value !== g('f-dfm-classes').dataset.def) ? g('f-dfm-classes').value.trim() : '',
     nom:    g('f-nom')?.value.trim(),
     dossier:g('f-dossier')?.value.trim(),
     ville:  g('f-ville')?.value.trim(),
@@ -1437,6 +1484,16 @@ function loadConfig(cfg) {
       psel.value = cfg.provider;
       psel.dispatchEvent(new Event('change'));   // applyProviderCountry + filtre couches
     }
+  }
+  // Mode DFM : restauré APRÈS le provider (le change ci-dessus repose les
+  // défauts via applyProviderDfm ; on ré-applique ensuite les valeurs sauvées).
+  if (cfg.dfm !== undefined) {
+    const cb = document.getElementById('f-dfm');
+    if (cb) cb.checked = !!cfg.dfm;
+    if (cfg.dfm_hmin)    s('f-dfm-hmin',    cfg.dfm_hmin);
+    if (cfg.dfm_hmax)    s('f-dfm-hmax',    cfg.dfm_hmax);
+    if (cfg.dfm_classes) s('f-dfm-classes', cfg.dfm_classes);
+    if (typeof updateDfmUI === 'function') updateDfmUI();
   }
   s('f-couche',     cfg.couche);
   s('f-zoom-min-s', cfg.zoom_min_s);

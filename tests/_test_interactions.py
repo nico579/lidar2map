@@ -388,6 +388,112 @@ _me4 = re.search(r"e4mstp:\{label:.*?gamma:\{[^}]*def:([\d.]+)", _appjs, re.S)
 check("def gamma e4mstp du GUI = 0.8 (aligné pipeline)",
       _me4 is not None and float(_me4.group(1)) == 0.8)
 
+# ══ 9. DFM (mode structures debout) : mécanique + jumeaux GUI ═════════════════
+# En prod, le répertoire de lidar2map.py est dans sys.path (script principal) ;
+# ici le test charge tout par chemin de fichier → l'ajouter pour que
+# `import providers.common` et _discover_providers fonctionnent comme en prod.
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+print("== 9a. las_to_dfm : mur synthétique (classes 1+4) dans un trou de sol ==")
+# Le cas des ruines du Var : le mur n'a AUCUN point sol (classe 2) sous lui ;
+# ses points sont classés « végétation » (3/4, mesuré ~70% sur le site test)
+# et/ou « non classé » (1 — la spec IGN le prévoit pour les murs « plus hauts
+# que larges », observé dans QGIS). On mélange 1 et 4 ici pour couvrir les
+# deux réalités. Le DTM (classe 2 seule) doit interpoler À PLAT ; le DFM doit
+# faire APPARAÎTRE le mur. NB : ~30% des points de la tranche murs sont en
+# classe 5 sur le site test → hors défaut (1,3,4), réglable via --dfm-classes.
+try:
+    import laspy as _laspy
+    import numpy as _np
+    import rasterio as _rio
+
+    def _laz_synthetique(path):
+        # sol plat z=100 sur 40×40 m (pas 0,5 m), TROU sous le mur ;
+        # mur : bande x∈[18,20[, y∈[10,30[, points classe 4 à z=101,5.
+        xs, ys, zs, cl = [], [], [], []
+        for i in range(80):
+            for j in range(80):
+                x, y = i * 0.5, j * 0.5
+                if 18 <= x < 20 and 10 <= y < 30:
+                    continue                      # pas de sol sous le mur
+                xs.append(x); ys.append(y); zs.append(100.0); cl.append(2)
+        for i in range(18 * 2, 20 * 2):
+            for j in range(10 * 2, 30 * 2):
+                xs.append(i * 0.5); ys.append(j * 0.5)
+                zs.append(101.5)
+                cl.append(1 if (i + j) % 2 else 4)   # mur : mélange « non classé »
+                                                     # + « végétation » (cas réels)
+        h = _laspy.LasHeader(point_format=0, version="1.2")
+        h.offsets = [0, 0, 0]; h.scales = [0.01, 0.01, 0.01]
+        las = _laspy.LasData(h)
+        las.x = _np.array(xs); las.y = _np.array(ys); las.z = _np.array(zs)
+        las.classification = _np.array(cl, dtype=_np.uint8)
+        las.write(str(path))
+
+    from providers import common as _common
+    with tempfile.TemporaryDirectory() as _dd:
+        _dd = Path(_dd)
+        _laz_synthetique(_dd / "syn.las")
+        _common.las_to_dfm(_dd / "syn.las", _dd / "dfm.tif",
+                           crs_epsg=2154, resolution=0.5)
+        _common.las_to_dtm(_dd / "syn.las", _dd / "dtm.tif",
+                           crs_epsg=2154, resolution=0.5, classes=(2,))
+        def _z_au_mur(p):
+            with _rio.open(p) as ds:
+                r, c = ds.index(19.0, 20.0)      # centre du mur
+                return float(ds.read(1)[r, c])
+        z_dfm, z_dtm = _z_au_mur(_dd / "dfm.tif"), _z_au_mur(_dd / "dtm.tif")
+        check("DFM : le mur apparaît (z ≈ 101,5)", abs(z_dfm - 101.5) < 0.2,
+              detail=f"z_dfm={z_dfm:.2f}")
+        check("DTM : le mur est gommé (z ≈ 100, interpolé)", abs(z_dtm - 100.0) < 0.2,
+              detail=f"z_dtm={z_dtm:.2f}")
+except ImportError as _e_dfm:
+    print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
+
+print("== 9b. fr-ign-dfm : réglages encodés dans le nom (pattern ombrages) ==")
+_dfm = provs.get("fr-ign-dfm")
+if _dfm is None:
+    # le scan de la section 7 saute *_dfm ? Non : il liste tout module à CODE.
+    import importlib as _il
+    _dfm = _il.import_module("providers.fr_ign_dfm")
+check("défauts → nom SANS suffixe", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+_dfm.set_dfm_params(hmin=0.3, hmax=3.0)
+_nom = _dfm.dalle_filename(932, 6257)
+check("réglages ≠ défauts → suffixe h03-30", _nom == "fr_dfm05_h03-30_932_6257.tif",
+      detail=_nom)
+check("subdir_from_name reconnaît le nom suffixé", _dfm.subdir_from_name(_nom) == "932")
+check("le LAZ persistant reste SANS suffixe (partagé entre essais)",
+      _dfm._laz_filename(932, 6257) == "fr_dfm05_932_6257.laz")
+_err = False
+try:
+    _dfm.set_dfm_params(hmin=3.0, hmax=1.0)
+except ValueError:
+    _err = True
+check("hmin >= hmax → ValueError", _err)
+_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 3, 4))   # reset défauts
+check("reset défauts → nom nu", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+
+print("== 9c. DFM : jumeaux GUI × pipeline ==")
+# La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
+# traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
+# porte les défauts du module (source de vérité unique).
+check("HTML : case f-dfm + 3 réglages",
+      all(k in _html for k in ('id="f-dfm"', 'id="f-dfm-hmin"',
+                               'id="f-dfm-hmax"', 'id="f-dfm-classes"')))
+check("app.js : applyProviderDfm + payload dfm_hmin",
+      "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs)
+_src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
+check("_build_cmd traduit --dfm/--dfm-hmin",
+      '"--dfm"' in _src and '"--dfm-hmin"' in _src)
+_provs_gui = l2m._discover_providers()
+_fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
+check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
+      _fr is not None and _fr.get("dfm", {}).get("hmin") == _dfm.DFM_HMIN
+      and _fr.get("dfm", {}).get("hmax") == _dfm.DFM_HMAX)
+check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
+      all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")
 sys.exit(0 if ok_all else 1)

@@ -66,10 +66,19 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
 
 def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                hmin=0.4, hmax=2.5, classes_low=(1, 3, 4), nodata=-9999.0):
-    """LAS/LAZ classé → GeoTIFF **DFM** (Digital Feature Model, Štular 2021) :
+    """LAS/LAZ classé → GeoTIFF façon **DFM** (Digital Feature Model) :
     le terrain PLUS les structures encore debout que le bare-earth efface.
 
-    Méthode (validée sur ruines du Var 2026-07, cf. tools/dfm_ruines.py) :
+    ÉTIQUETAGE HONNÊTE : le CONCEPT vient de la littérature (Štular et al. 2021 :
+    DEM interpolé depuis sol + bâtiments + structures archéo ; la tranche de
+    hauteur normalisée comme premier tri est une pratique nDSM standard). Mais
+    la SÉLECTION automatique ci-dessous (réinjection des classes basses dans les
+    lacunes de la classe sol, seuils 0,4-2,5 m) est une HEURISTIQUE maison
+    calibrée sur 2 sites du Var — la littérature fait cette étape par
+    reclassification (semi-)manuelle du nuage (cas canonique : ruine de château
+    sous forêt). Première passe de prospection, pas la méthode publiée.
+
+    Méthode (heuristique, cf. tools/dfm_ruines.py) :
       1. binning min-z de la classe 2 (sol) — les murs y font des TROUS ;
       2. hauteur des points au-dessus du sol comblé ;
       3. les trous de sol sont comblés par le min-z des points bas NON-sol

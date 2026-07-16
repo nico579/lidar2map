@@ -84,15 +84,22 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   > sol) quand une ruine de maison de 1,5 m disparaît proprement. Aucun ombrage
   > calculé depuis le MNT ne peut les faire revenir. Pour la prospection ciblée
   > de structures debout en France, utiliser
-  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py) : il reconstruit un DFM (Digital
-  > Feature Model, Štular et al. 2021) depuis le nuage classé LiDAR HD IGN
-  > (COPC LAZ, ~205 Mo/km²) en réinjectant les retours bas non-sol (0,4-2,5 m),
-  > et produit des GeoTIFF géoréférencés LRM-MNT / LRM-DFM / delta à draper sur
+  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py) : il reconstruit un modèle
+  > façon DFM (le concept de *Digital Feature Model* vient de Štular et al.
+  > 2021 ; la sélection automatique des points utilisée ici est une heuristique
+  > de première passe, la littérature fait cette étape par reclassification
+  > (semi-)manuelle) depuis le nuage classé LiDAR HD IGN (COPC LAZ,
+  > ~205 Mo/km²) en réinjectant les retours bas non-sol (0,4-2,5 m) dans les
+  > lacunes de la classe sol, et produit des GeoTIFF géoréférencés LRM-MNT /
+  > LRM-DFM / delta à draper sur
   > l'orthophoto dans QGIS. Les murs ressortent en lignes fines continues, le
-  > maquis en mouchetis : l'œil fait la discrimination finale. Le même DFM
-  > existe aussi en provider complet (`--provider fr-ign-dfm`) : tous les
-  > ombrages (LRM, VAT…) tournent alors sur le DFM au lieu du MNT, au prix du
-  > download du nuage de points : garder la zone petite.
+  > maquis en mouchetis : l'œil fait la discrimination finale. Le même DFM est
+  > aussi intégré au pipeline : cocher la case **« mode DFM »** à côté du
+  > provider (ou CLI `--dfm`) et tous les ombrages (LRM, VAT…) tournent sur le
+  > DFM au lieu du MNT, au prix du download du nuage : garder la zone petite.
+  > Tranche de hauteur et classes LAS ajustables par site (champs GUI /
+  > `--dfm-hmin`, `--dfm-hmax`, `--dfm-classes`) ; le LAZ reste en cache, donc
+  > re-régler reconvertit en ~20 s sans retélécharger.
 
   Sources LiDAR : **<!--N-->27<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (12 Länder),
@@ -316,7 +323,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign-dfm` | France (**mode ruines debout**) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit un DFM (sol + retours bas non-sol 0,4-2,5 m) : révèle les murs debout que le MNT efface (cf. encadré « Limite connue » plus haut). Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode DFM** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--dfm`, avec `--dfm-hmin/--dfm-hmax/--dfm-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit un DFM (sol + retours bas non-sol, défaut 0,4-2,5 m classes 1/3/4). Révèle les murs debout que le MNT efface (cf. encadré « Limite connue »). Le LAZ reste dans le cache de dalles : changer les réglages reconvertit en ~20 s sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |

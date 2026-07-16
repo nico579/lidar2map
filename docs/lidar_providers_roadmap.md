@@ -109,15 +109,22 @@ By access paradigm:
   fr-guadeloupe (IGN `IGNF_MNT-LIDAR-HD:dalle`; each dalle feature carries its own
   download `url`, WMS GetMap for Réunion / a direct link+public apikey for
   Guadeloupe; 0.5 m).
-- **Classified point cloud → DFM** (`common.las_to_dfm`): fr-ign-dfm (IGN COPC LAZ
-  via the same WFS, `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`). A *Digital Feature
-  Model* (Štular 2021): ground + low non-ground returns (0.4-2.5 m, classes
-  1/3/4) re-injected into the ground-class holes — reveals standing ruins that
-  every national bare-earth DTM erases by design (the taller the wall, the
-  cleaner it vanishes; IGN spec documents it). ~205 MB/km², targeted prospection
-  only. Companion analysis tool: `tools/dfm_ruines.py`. The same DFM approach
-  could extend to any provider whose source is a classified cloud (cz-cuzk,
-  lv-lgia) if field-validated.
+- **Classified point cloud → DFM-style model** (`common.las_to_dfm`): fr-ign-dfm
+  (IGN COPC LAZ via the same WFS, `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`). The
+  *Digital Feature Model* concept is from Štular et al. 2021 (ground + standing
+  archaeological structures in one model); the automatic selection implemented
+  here (low non-ground returns 0.4-2.5 m, classes 1/3/4, re-injected only into
+  ground-class holes) is a first-pass heuristic calibrated on 2 Var sites — the
+  literature does that step by (semi-)manual reclassification. Reveals standing
+  ruins that every national bare-earth DTM erases by design (the taller the
+  wall, the cleaner it vanishes; IGN spec documents it). ~205 MB/km², targeted
+  prospection only. Exposed as a **mode**, not a source: GUI checkbox "DFM mode"
+  on the parent provider / CLI `--dfm` (+ `--dfm-hmin/hmax/classes` per-site
+  tuning; the twin module `<code>_dfm.py` is hidden from the provider dropdown).
+  The LAZ stays in the tile cache: retuning re-converts in ~20 s without
+  re-downloading (core `pre_download` hook). Companion analysis tool:
+  `tools/dfm_ruines.py`. Could extend to any provider whose source is a
+  classified cloud (cz-cuzk, lv-lgia) if field-validated.
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 

@@ -8,12 +8,15 @@ travers → les ruines n'existent pas dans le MNT, donc invisibles en LRM/VAT.
 Paradoxe documenté par la spec IGN (DC_LiDAR_HD_1-0.pdf) : plus un mur est
 haut, plus il disparaît proprement ; un muret de 40 cm reste « sol » et se voit.
 
-SOLUTION (littérature archéo : DFM, Digital Feature Model — Štular et al. 2021,
-doi:10.3390/rs13091855) : repartir du NUAGE CLASSÉ (COPC LAZ) et réintroduire
-dans le modèle les points bas non-sol (0,4-2,5 m au-dessus du sol), qui
-contiennent les murs. Le maquis y revient aussi (mouchetis) : la discrimination
-finale est VISUELLE, en comparant les couches — c'est le workflow archéo
-standard (Kokalj & Hesse : jamais une seule visualisation).
+SOLUTION : repartir du NUAGE CLASSÉ (COPC LAZ) et réintroduire dans le modèle
+les points bas non-sol (0,4-2,5 m au-dessus du sol), qui contiennent les murs.
+Le CONCEPT (modèle terrain + structures archéo = « DFM », Digital Feature
+Model) vient de Štular et al. 2021 (doi:10.3390/rs13091855) ; la SÉLECTION
+automatique implémentée ici (tranche de hauteur dans les lacunes de la classe
+sol) est une heuristique calibrée sur 2 sites du Var — la littérature fait
+cette étape par reclassification (semi-)manuelle. Le maquis revient aussi
+(mouchetis) : la discrimination finale est VISUELLE, en comparant les couches —
+workflow archéo standard (Kokalj & Hesse : jamais une seule visualisation).
 
 SORTIES (GeoTIFF EPSG:2154, à draper dans QGIS sur l'orthophoto) :
   <prefix>_lrm_mnt.tif   LRM du MNT sol pur (l'existant : terrassements, enclos bas)

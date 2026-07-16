@@ -2337,19 +2337,39 @@ def _discover_providers():
     for f in sorted(providers_dir.glob("*.py")):
         if f.stem.startswith("_"):
             continue
+        # Les modules *_dfm sont des MODES (jumeaux DFM d'une source), pas des
+        # sources : ils ne vont pas dans le dropdown. La GUI les atteint via la
+        # case « mode DFM » du provider parent (champ "dfm" ci-dessous).
+        if f.stem.endswith("_dfm"):
+            continue
         try:
             mod = _importlib.import_module(f"providers.{f.stem}")
             # Un module SANS CODE n'est pas un provider mais un utilitaire
             # partagé (ex. providers/common.py) — ne pas le lister.
             if not hasattr(mod, "CODE"):
                 continue
-            result.append({
+            entry = {
                 "code":           getattr(mod, "CODE",           f.stem),
                 "name":           getattr(mod, "NAME",           f.stem),
                 "country":        getattr(mod, "COUNTRY",        ""),
                 "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
                 "resolution_m":   float(getattr(mod, "RESOLUTION_M", 0.5)),
-            })
+            }
+            # Capacité DFM : jumeau providers/<stem>_dfm.py présent → la GUI
+            # affiche la case « mode DFM » + réglages (défauts lus du jumeau =
+            # source de vérité unique, anti-drift GUI×pipeline).
+            if (providers_dir / f"{f.stem}_dfm.py").exists():
+                try:
+                    twin = _importlib.import_module(f"providers.{f.stem}_dfm")
+                    entry["dfm"] = {
+                        "hmin":    float(getattr(twin, "DFM_HMIN", 0.4)),
+                        "hmax":    float(getattr(twin, "DFM_HMAX", 2.5)),
+                        "classes": ",".join(str(c) for c in
+                                            getattr(twin, "DFM_CLASSES", (1, 3, 4))),
+                    }
+                except Exception:
+                    pass
+            result.append(entry)
         except Exception as e:
             print(f"  [provider scan] {f.name} skipped: {type(e).__name__}: {e}",
                   file=sys.stderr)
@@ -2363,6 +2383,15 @@ def _load_provider():
     # pour qu'aucun des parsers par-mode (raster, vecteur, fusion, découpe…) n'ait
     # à le déclarer. Sinon `--raster --provider us-tnm` → "unrecognized arguments".
     # Accepte les deux formes : `--provider code` et `--provider=code`.
+    #
+    # Pré-flags DFM (mode « structures debout », cf. providers/fr_ign_dfm.py) :
+    #   --dfm            bascule vers le provider jumeau <code>-dfm (module
+    #                    providers/<code>_dfm.py — convention de nommage)
+    #   --dfm-hmin/--dfm-hmax  tranche de hauteur réintroduite (m)
+    #   --dfm-classes    classes LAS réintroduites (ex. 1,3,4)
+    # Réglages appliqués au module via set_dfm_params() après import.
+    _dfm = False
+    _dfm_params = {}
     _argv = sys.argv
     _i = 0
     while _i < len(_argv):
@@ -2376,16 +2405,62 @@ def _load_provider():
             code = _a.split("=", 1)[1]
             del _argv[_i]
             continue
+        if _a == "--dfm":
+            _dfm = True
+            del _argv[_i]
+            continue
+        _m = None
+        for _k in ("hmin", "hmax", "classes"):
+            if _a == f"--dfm-{_k}":
+                if _i + 1 < len(_argv):
+                    _dfm_params[_k] = _argv[_i + 1]
+                del _argv[_i:_i + 2]
+                _m = True
+                break
+            if _a.startswith(f"--dfm-{_k}="):
+                _dfm_params[_k] = _a.split("=", 1)[1]
+                del _argv[_i]
+                _m = True
+                break
+        if _m:
+            continue
         _i += 1
     code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
+    if (_dfm or _dfm_params) and not code.endswith("-dfm"):
+        code = code + "-dfm"
     # Mapping code → module (kebab-case → snake_case)
     module_name = code.replace("-", "_")
     _pdir = Path(__file__).resolve().parent / "providers"
     try:
-        return _importlib.import_module(f"providers.{module_name}")
+        _mod = _importlib.import_module(f"providers.{module_name}")
+        # Réglages DFM (--dfm-hmin/hmax/classes) → posés sur le module jumeau.
+        if _dfm_params:
+            _setp = getattr(_mod, "set_dfm_params", None)
+            if _setp is None:
+                print(f"  ERROR: provider '{code}' has no DFM settings "
+                      f"(set_dfm_params).", file=sys.stderr)
+                sys.exit(1)
+            try:
+                _setp(hmin=float(_dfm_params["hmin"]) if "hmin" in _dfm_params else None,
+                      hmax=float(_dfm_params["hmax"]) if "hmax" in _dfm_params else None,
+                      classes=tuple(int(c) for c in _dfm_params["classes"].split(","))
+                              if "classes" in _dfm_params else None)
+            except ValueError as _e_v:
+                print(f"  ERROR: invalid --dfm-* value: {_e_v}", file=sys.stderr)
+                sys.exit(1)
+        return _mod
     except ModuleNotFoundError as _e_imp:
         _missing = getattr(_e_imp, "name", "") or ""
         _pkg = f"providers.{module_name}"
+        # (a') --dfm sur un provider sans jumeau DFM : message dédié (la liste
+        #      brute mélangerait sources et modes).
+        if _missing == _pkg and _pdir.exists() and code.endswith("-dfm") and _dfm:
+            print(f"  ERROR: provider '{code[:-4]}' has no DFM mode (no module "
+                  f"providers/{module_name}.py). DFM is available for: "
+                  + ", ".join(sorted(p.stem[:-4].replace("_", "-")
+                                     for p in _pdir.glob("*_dfm.py"))),
+                  file=sys.stderr)
+            sys.exit(1)
         # (a) code inconnu (module absent alors que le package providers/ est
         #     présent) = faute de frappe -> échouer + lister, au lieu de devenir
         #     silencieusement FR-IGN (mauvais CRS/source de données).
@@ -3458,26 +3533,42 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
     _publie_par_moi = False   # True dès que CE process a fait replace(chemin)
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
-            taille = _download_to_tmp(url_wms, chemin_tmp, timeout=(10, 45))
-            if taille == 0:
-                chemin_tmp.unlink(missing_ok=True)
-                return "absent"
-            if taille < SEUIL_DALLE_VALIDE:
-                with open(chemin_tmp, "rb") as _fh:
-                    _head = _fh.read(200)
-                chemin_tmp.unlink(missing_ok=True)
-                # Erreur serveur déguisée en HTTP 200 : les ImageServer ArcGIS
-                # (au-qld, no-kartverket, us-tnm) renvoient par intermittence
-                # un JSON {"error": 400 "General function failure"} avec
-                # content-type image/tiff. Sans cette détection, un échec
-                # TRANSITOIRE passait pour une dalle "absent", jamais
-                # retentée. IOError → retry (MAX_TENTATIVES).
-                if _head.lstrip().startswith(b"{") and b'"error"' in _head:
-                    raise IOError(f"server error payload: {_head[:120]!r}")
-                return "absent"
-            chemin_tmp.replace(chemin)
-            _publie_par_moi = True
-            _post_fetch_si_besoin(chemin)
+            # Hook pre_download (optionnel) : le provider peut matérialiser la
+            # dalle SANS réseau — ex. fr-ign-dfm reconvertit depuis le nuage LAZ
+            # gardé en cache quand seuls les réglages DFM changent (évite de
+            # retélécharger ~205 Mo). Tentative 1 uniquement : si la dalle
+            # produite échoue la validation, le retry passe par le download.
+            _pre = getattr(PROVIDER, "pre_download", None) if tentative == 1 else None
+            _materialise = False
+            if _pre is not None:
+                try:
+                    _materialise = bool(_pre(chemin)) and chemin.exists()
+                except Exception as _e_pre:
+                    print(f"  WARN pre_download {nom}: "
+                          f"{type(_e_pre).__name__}: {_e_pre}", flush=True)
+            if _materialise:
+                _publie_par_moi = True   # produit par CE process (purgé si invalide)
+            else:
+                taille = _download_to_tmp(url_wms, chemin_tmp, timeout=(10, 45))
+                if taille == 0:
+                    chemin_tmp.unlink(missing_ok=True)
+                    return "absent"
+                if taille < SEUIL_DALLE_VALIDE:
+                    with open(chemin_tmp, "rb") as _fh:
+                        _head = _fh.read(200)
+                    chemin_tmp.unlink(missing_ok=True)
+                    # Erreur serveur déguisée en HTTP 200 : les ImageServer ArcGIS
+                    # (au-qld, no-kartverket, us-tnm) renvoient par intermittence
+                    # un JSON {"error": 400 "General function failure"} avec
+                    # content-type image/tiff. Sans cette détection, un échec
+                    # TRANSITOIRE passait pour une dalle "absent", jamais
+                    # retentée. IOError → retry (MAX_TENTATIVES).
+                    if _head.lstrip().startswith(b"{") and b'"error"' in _head:
+                        raise IOError(f"server error payload: {_head[:120]!r}")
+                    return "absent"
+                chemin_tmp.replace(chemin)
+                _publie_par_moi = True
+                _post_fetch_si_besoin(chemin)
             if not _valider_tif_dalle(chemin):
                 chemin.unlink(missing_ok=True)
                 raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
@@ -15857,6 +15948,16 @@ def lancer_gui():
             # Provider (multi-pays) — propagé au subprocess
             if cfg.get("provider") and cfg["provider"] != PROVIDER.CODE:
                 cmd += ["--provider", cfg["provider"]]
+            # Mode DFM (structures debout) : case + réglages ≠ défauts
+            # (la GUI n'envoie dfm_* que si modifiés, cf. app.js).
+            if cfg.get("dfm"):
+                cmd += ["--dfm"]
+                if cfg.get("dfm_hmin"):
+                    cmd += ["--dfm-hmin", str(cfg["dfm_hmin"])]
+                if cfg.get("dfm_hmax"):
+                    cmd += ["--dfm-hmax", str(cfg["dfm_hmax"])]
+                if cfg.get("dfm_classes"):
+                    cmd += ["--dfm-classes", str(cfg["dfm_classes"])]
             # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
             # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
             if cfg.get("lidar_apikey"):

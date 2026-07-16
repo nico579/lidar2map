@@ -85,15 +85,21 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   > enclosure wall survives (absorbed into the ground class) while a 1.5 m house
   > ruin vanishes. No shading computed from the DTM can bring them back. For
   > targeted prospection of standing structures in France, use
-  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py): it rebuilds a DFM (Digital
-  > Feature Model, Štular et al. 2021) from the classified IGN LiDAR HD point
-  > cloud (COPC LAZ, ~205 MB/km²) by re-injecting low non-ground returns
-  > (0.4-2.5 m), and outputs georeferenced LRM-DTM / LRM-DFM / delta GeoTIFFs to
+  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py): it rebuilds a DFM-style model
+  > (the *Digital Feature Model* concept is from Štular et al. 2021; the
+  > automatic point selection used here is a first-pass heuristic — the
+  > literature does this step by (semi-)manual reclassification) from the
+  > classified IGN LiDAR HD point cloud (COPC LAZ, ~205 MB/km²) by re-injecting
+  > low non-ground returns (0.4-2.5 m) into the ground-class gaps, and outputs
+  > georeferenced LRM-DTM / LRM-DFM / delta GeoTIFFs to
   > drape over the orthophoto in QGIS. Walls show up as thin continuous lines;
   > scrub shows as speckle — the eye does the final discrimination. The same DFM
-  > is also available as a full provider (`--provider fr-ign-dfm`): all shadings
-  > (LRM, VAT…) then run on the DFM instead of the DTM, at the point-cloud
-  > download cost — keep the area small.
+  > is also built into the pipeline: tick the **"DFM mode"** checkbox next to the
+  > provider (or CLI `--dfm`) and all shadings (LRM, VAT…) run on the DFM instead
+  > of the DTM, at the point-cloud download cost — keep the area small. Height
+  > band and LAS classes are tunable per site (GUI fields / `--dfm-hmin`,
+  > `--dfm-hmax`, `--dfm-classes`); the LAZ stays cached so retuning
+  > re-converts in ~20 s without re-downloading.
 
   LiDAR sources: **<!--N-->27<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
@@ -317,7 +323,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 |---|---|---|---|---|---|
 | `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage (mainland) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | WFS `IGNF_MNT-LIDAR-HD:dalle` index (each tile feature carries its direct download `url`), 0.5 m GeoTIFF, Licence Ouverte 2.0 (Martinique/Mayotte announced but WFS empty for now) |
-| `fr-ign-dfm` | France (**standing-ruins mode**) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | Downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds a DFM (ground + low non-ground returns 0.4-2.5 m): reveals standing walls that the DTM erases (see "Known limit" box above). Targeted prospection of a few km², not large maps |
+| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--dfm`, with `--dfm-hmin/--dfm-hmax/--dfm-classes` to tune per site): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds a DFM (ground + low non-ground returns, default 0.4-2.5 m classes 1/3/4). Reveals standing walls that the DTM erases (see "Known limit" box above). The LAZ is kept in the tile cache: changing the settings re-converts in ~20 s without re-downloading. Targeted prospection of a few km², not large maps |
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
 | `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, national coverage |

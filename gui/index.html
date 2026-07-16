@@ -79,6 +79,23 @@
               placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
       </span>
      </div>
+     <!-- Mode DFM (structures debout) : visible si le provider a un jumeau *_dfm.
+          Réglages préremplis avec les défauts du module Python (applyProviderDfm). -->
+     <div class="row" id="dfm-row" style="display:none">
+      <label style="min-width:auto;cursor:pointer"
+             data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) en réinjectant les retours bas non-sol : révèle les ruines/murs debout que le MNT efface. Maquis = mouchetis, murs = lignes continues. Zone petite conseillée.">
+       <input type="checkbox" id="f-dfm" onchange="updateDfmUI()" style="vertical-align:middle">
+       <span data-i18n="f.dfm">Mode DFM — structures debout (expérimental, LAZ ~205 Mo/km²)</span>
+      </label>
+      <span id="dfm-params" style="display:none;align-items:center;gap:4px;margin-left:12px">
+       <span style="color:var(--dim)" data-i18n="f.dfmh">hauteur (m)</span>
+       <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
+       <span style="color:var(--dim)">–</span>
+       <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
+       <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
+      </span>
+     </div>
    </div>
   </div>
 
