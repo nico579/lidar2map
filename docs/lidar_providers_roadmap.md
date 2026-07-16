@@ -62,7 +62,7 @@ Mecklenburg-Vorpommern, Saxony-Anhalt, Brandenburg, Berlin, Rhineland-Palatinate
 (national BEV + Tyrol + East Tyrol), United Kingdom (England, Wales, Scotland),
 Belgium (Flanders), Luxembourg, Finland, Denmark, Ireland, Czechia, Slovenia,
 Estonia, **Latvia**, Spain (5 m national; Catalonia 0.5 m, Basque Country 1 m, Navarre 2 m),
-**Portugal**, **Italy** (Emilia-Romagna 5 m, Sardinia 1 m), Poland,
+**Portugal**, **Italy** (Emilia-Romagna 5 m, Sardinia 1 m, Piedmont 5 m), Poland,
 USA (+ CNMI territory), Canada, New Zealand, Australia (Queensland, NSW, national
 GA scattered), **Philippines** (Taal volcano area only), Japan.
 
@@ -82,8 +82,9 @@ By access paradigm:
 - **WCS 2.0.1**: es-cnig, de-hessen, de-bw, de-mv, de-st, de-brandenburg,
   it-emilia-romagna, it-sardegna, es-navarra, gb-england, gb-wales, be-flanders,
   fi, dk, pl, au-ga.
-- **WCS 1.0.0** (older protocol, BBOX + WIDTH/HEIGHT, ArcGIS MapServer WCSServer):
-  es-euskadi.
+- **WCS 1.0.0** (older protocol, BBOX + WIDTH/HEIGHT): es-euskadi (ArcGIS
+  MapServer WCSServer), it-piemonte (MapServer; `format=image/tiff` for Float32,
+  `GTiff` would give quantised UInt8).
 - **STAC + windowed COG**: ch-swisstopo, de-niedersachsen, ca-nrcan, nz-linz,
   se-lantmateriet, at-bev (STAC-like ATOM index).
 - **ArcGIS Image/FeatureServer**: no-kartverket, ie-gsi, us-tnm, us-3dep,
@@ -134,7 +135,7 @@ By access paradigm:
 | W. Australia (Landgate) | 1 m LiDAR/DEM on quote + fee (B4); only the coverage index is open, not the data. | [STABLE] |
 | Liechtenstein | elevation = swissALTI3D over LI (2 m) but redistributed for a fee by the Amt für Tiefbau (CAD formats, not open, B4). Not covered by ch-swisstopo (STAC is CH only). | [STABLE] |
 | Germany, BKG national | national DGM1 is paid (>= EUR 8,000); `basemap.de` is rendered WMTS (B2, no values via WCS). No free national aggregator; each Land is a dedicated build (12 done). Remaining Länder blocked on delivery, not licence (all open CC BY / dl-de): **Saarland** (DGM1 via WebDAV but per-district archives 211 MB to >1 GB), **Bremen** and **Hamburg** (open DGM1 but monolithic ~0.6-1.3 GB archives) → all need the deferred download-once monolith cache; **Saxony** (Nextcloud share, WebDAV disabled, see below). | [WATCH ~2027] |
-| Italy (national) | national coverage is order-form only; regions open piecemeal (Emilia-Romagna 5 m and Sardinia 1 m integrated; South Tyrol 0.5 m built-up only; other regions each a bespoke GeoServer WCS hunt). | [WATCH ~2027] |
+| Italy (national) | national coverage is order-form only; regions open piecemeal. Integrated: Emilia-Romagna 5 m, Sardinia 1 m, Piedmont 5 m. **Valle d'Aosta**: data is clean and open (per-tile ZIP of ASC/PRJ, a regional 2 m + a 0.5 m Dora-Baltea corridor, verified `DTM2022_DORA_0005_0011.zip` = 500 m tile at 0.5 m, EPSG:32632, real z), but the tile spatial index is behind the JS download portal (`geoportale.regione.vda.it/download/dtm/`, no GeoJSON grid found) — like FVG; buildable once the index is located. South Tyrol 0.5 m built-up only; Tuscany = WMS-only rendered (B2); Trentino = async-job portal; other regions each a bespoke hunt. | [WATCH ~2027] |
 | Croatia, Hungary | no open national LiDAR (only global 30 m DEMs). | [HARD] |
 | Africa | almost no open national bare-earth LiDAR; mostly global 30 m DEMs (SRTM, Copernicus GLO-30, satellite radar, out of scope). **Exception (2026-07 review): Mauritius + Rodrigues** publish a national 1 m LiDAR DTM, but as a single ~5.3 GB compressed-TIFF ZIP monolith (needs the deferred "download-once monolith cache"), and licence / CRS / NoData are unconfirmed. So the absolute "nowhere in Africa" is no longer true; still not wired (monolith + licence). | [WATCH ~2027] |
 | OpenTopography (global) | fine LiDAR is point clouds (LAZ) with no per-bbox raster API; DTMs are async processing jobs, not a GET; the only simple raster API is 30-90 m global satellite DEMs. The one useful slice (USGS 3DEP raster) is already `us-3dep`. Not a "multiplier". | [STABLE] |

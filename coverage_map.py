@@ -79,6 +79,8 @@ REGIONS = [
      "Italie — Émilie-Romagne (DTM 5 m)"),
     ("Sardegna, Italia",       ["it-sardegna"],      "#7c3aed", (8.1, 38.85, 9.85, 41.3),
      "Italie — Sardaigne (DTM 1 m, mosaïque à trous)"),
+    ("Piemonte",               ["it-piemonte"],      "#7c3aed", (6.6, 44.0, 9.2, 46.5),
+     "Italie — Piémont (DTM 5 m, LiDAR ICE)"),
     ("Polska",                 ["pl-gugik"],         "#4f46e5", None, None),
     ("Northern Mariana Islands", ["us-cnmi"],        "#0891b2", (144.8, 13.2, 146.2, 15.4),
      "Mariannes du Nord (CNMI, US) — Topobathy DEM 1 m (NOAA)"),

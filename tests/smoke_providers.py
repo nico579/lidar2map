@@ -71,6 +71,7 @@ TEST_POINTS = {
     "at-bev": (13.050, 47.800),             # Salzbourg (COG fenêtré, 412-632 m)
     "it-emilia-romagna": (11.300, 44.450),  # collines de Bologne (60-395 m)
     "it-sardegna": (9.115, 39.223),         # Cagliari (WCS DTM 1 m, 36-97 m)
+    "it-piemonte": (7.68, 45.07),           # Turin (WCS 1.0.0 DTM 5 m, float32 image/tiff)
     "de-brandenburg": (13.06, 52.40),       # Potsdam (WCS DGM1 1 m, 29-46 m)
     "de-berlin": (13.404, 52.520),          # Alexanderplatz (ATOM/XYZ 1 m, 21-41 m)
     "de-rlp": (8.27, 50.0),                 # Mayence (Metalink 1 m, 98-129 m)
