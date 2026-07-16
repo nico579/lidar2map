@@ -80,8 +80,9 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   > *par construction* les murs encore debout au-delà d'environ 1 m : le
   > classificateur les range en végétation ou « non classé » (la spec IGN le
   > documente pour les bâtiments ruinés sans toiture), puis le MNT interpole au
-  > travers. Paradoxe : un muret d'enclos de 40 cm survit (absorbé dans la classe
-  > sol) quand une ruine de maison de 1,5 m disparaît proprement. Aucun ombrage
+  > travers. Typiquement (observé, pas une règle garantie) : un muret d'enclos
+  > de 40 cm survit (absorbé dans la classe sol) quand une ruine de maison de
+  > 1,5 m disparaît proprement. Aucun ombrage
   > calculé depuis le MNT ne peut les faire revenir. Pour la prospection ciblée
   > de structures debout en France, utiliser
   > [`tools/dfm_ruines.py`](tools/dfm_ruines.py) : il reconstruit un modèle
@@ -323,7 +324,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign` + **mode DFM** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--dfm`, avec `--dfm-hmin/--dfm-hmax/--dfm-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit un DFM (sol + retours bas non-sol, défaut 0,4-2,5 m classes 1/3/4). Révèle les murs debout que le MNT efface (cf. encadré « Limite connue »). Le LAZ reste dans le cache de dalles : changer les réglages reconvertit en ~20 s sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode DFM** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--dfm`, avec `--dfm-hmin/--dfm-hmax/--dfm-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis UN ensemble de classes (défaut `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres sont réinjectées dans les trous du sol, tranche 0,4-2,5 m). **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Retirer la classe 2 de l'ensemble = **coupe** (objets de la tranche seuls sur fond transparent, hauteurs toujours mesurées au-dessus du sol). Le nom de zone est auto-suffixé (`_dfm…`) : les sorties MNT et DFM ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit en ~20 s sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |

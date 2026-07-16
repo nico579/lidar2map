@@ -46,17 +46,32 @@ DALLE_KM           = 1
 PX_PAR_DALLE       = int(DALLE_KM * 1000 / RESOLUTION_M)   # 2000
 SEUIL_DALLE_VALIDE = 500_000              # GeoTIFF 2000² DEFLATE après conversion
 
-# Tranche de hauteur réintroduite (au-dessus du sol local) et classes LAS
-# concernées. Défauts éprouvés sur ruines du Var (murs ~1,5 m) : 0,4-2,5 m,
-# classes 1 (non classé — la spec IGN le prévoit pour les murs « plus hauts que
-# larges ») et 3/4 (végétation basse/moyenne — mesuré ~70% des points de mur sur
-# le site test). NB : ~30% des points de la tranche murs y étaient en classe 5
-# (végétation haute) → hors défaut ; tester --dfm-classes 1,3,4,5 si les murs
-# sortent incomplets. Ajustables au cas par cas : CLI --dfm-hmin/--dfm-hmax/
-# --dfm-classes, ou réglages GUI (case DFM), les deux via set_dfm_params().
-_DFM_DEFAUTS       = (0.4, 2.5, (1, 3, 4))
+# Réglages du DFM. UN SEUL ensemble de classes LAS participantes (choix Nico
+# 2026-07-16 : transparent — la classe 2 y figure explicitement) :
+#   - {2, 9, 66} ∩ sélection = SOCLE terrain (sol + eau + points virtuels =
+#     les classes du MNT IGN officiel ; la classe 2 est OBLIGATOIRE, sans elle
+#     pas de terrain) ;
+#   - le reste = points RÉINJECTÉS dans les trous du socle, filtrés par la
+#     tranche de hauteur hmin-hmax (défaut 0,4-2,5 m, murs ~1,5 m du Var).
+# Défaut 1,2,3,4,9,66 : non-classé (1 — la spec IGN le prévoit pour les murs
+# « plus hauts que larges ») + végétation basse/moyenne (3/4 — mesuré ~70% des
+# points de mur sur le site test). NB : ~30% des points de la tranche murs y
+# étaient en classe 5 (végétation haute) → --dfm-classes 1,2,3,4,5,9,66 si les
+# murs sortent incomplets. CLI --dfm-* ou réglages GUI, via set_dfm_params().
+_SOCLE_POSSIBLE    = (2, 9, 66)
+_DFM_DEFAUTS       = (0.4, 2.5, (1, 2, 3, 4, 9, 66))
 DFM_HMIN, DFM_HMAX = _DFM_DEFAUTS[0], _DFM_DEFAUTS[1]
 DFM_CLASSES        = _DFM_DEFAUTS[2]
+
+
+def _socle():
+    """Classes du SOCLE terrain (parmi la sélection)."""
+    return tuple(c for c in DFM_CLASSES if c in _SOCLE_POSSIBLE)
+
+
+def _reinjectees():
+    """Classes RÉINJECTÉES dans les trous du socle (tranche hmin-hmax)."""
+    return tuple(c for c in DFM_CLASSES if c not in _SOCLE_POSSIBLE)
 
 
 def set_dfm_params(hmin=None, hmax=None, classes=None):
@@ -66,29 +81,59 @@ def set_dfm_params(hmin=None, hmax=None, classes=None):
     essais, et le LAZ gardé en cache permet de reconvertir sans retélécharger
     (cf. pre_download)."""
     global DFM_HMIN, DFM_HMAX, DFM_CLASSES
+    # Arrondi au décimètre (pas de la GUI) → l'encodage h·10 du nom de dalle
+    # est INJECTIF (0,31 et 0,34 ne peuvent pas partager un cache).
     if hmin is not None:
-        DFM_HMIN = float(hmin)
+        DFM_HMIN = round(float(hmin), 1)
     if hmax is not None:
-        DFM_HMAX = float(hmax)
+        DFM_HMAX = round(float(hmax), 1)
     if classes is not None:
         DFM_CLASSES = tuple(sorted(int(c) for c in classes))
     if DFM_HMIN >= DFM_HMAX:
         raise ValueError(f"dfm-hmin ({DFM_HMIN}) doit être < dfm-hmax ({DFM_HMAX})")
+    # Compositions légitimes, signalées plutôt qu'interdites :
+    #   - sans classe 2 dans la sélection → COUPE : les objets de la tranche
+    #     seuls, fond nodata/transparent (la classe 2 sert TOUJOURS de
+    #     référence de hauteur en interne, cf. las_to_dfm ref_ground) ;
+    #   - sans classe réinjectée → modèle ≈ MNT reconstruit (peu utile).
+    if 2 not in DFM_CLASSES:
+        print("  DFM: class 2 not selected -> slice mode (band objects only, "
+              "transparent background; heights still measured above class-2 "
+              "ground)", flush=True)
+    if not _reinjectees():
+        print("  DFM: no re-injected class selected -> output ≈ rebuilt DTM",
+              flush=True)
 
 
 def _suffix():
     """Encodage des réglages ≠ défauts dans le nom de dalle. '' si défauts.
-    Ex. hmin=0.3,hmax=3.0 → 'h03-30_' ; classes=(1,3,4,6) → 'c1346_'."""
+    Ex. hmin=0.3,hmax=3.0 → 'h03-30_' ; classes=(1,3,4,6) → 'c1-3-4-6_'.
+    Injectif : set_dfm_params ARRONDIT hmin/hmax au décimètre (le pas de la
+    GUI), donc h·10 sans perte ; classes séparées par '-' (c1-34 ≠ c1-3-4)."""
     s = ""
     if (DFM_HMIN, DFM_HMAX) != _DFM_DEFAUTS[:2]:
         s += f"h{round(DFM_HMIN * 10):02d}-{round(DFM_HMAX * 10):02d}_"
     if DFM_CLASSES != _DFM_DEFAUTS[2]:
-        s += "c" + "".join(str(c) for c in DFM_CLASSES) + "_"
+        s += "c" + "-".join(str(c) for c in DFM_CLASSES) + "_"
     return s
 
 
+def variant_tag():
+    """Tag de variante injecté par le cœur dans le NOM DE ZONE (mode lidar) :
+    le projet DFM (dossier, ombrages, MBTiles, dalles_zone.txt, manifeste) est
+    ainsi DISTINCT du projet MNT de la même zone, et deux essais de réglages ne
+    se recouvrent pas (revue DFM 2026-07-16 : sans ça, un LRM MNT existant
+    était silencieusement réutilisé après avoir coché la case)."""
+    s = _suffix().strip("_")
+    return "dfm" + (("_" + s) if s else "")
+
+
 # ── Nommage ──────────────────────────────────────────────────────────────────
-_NOM_RE = re.compile(r"fr_dfm05_(?:h[\d-]+_)?(?:c\d+_)?(\d+)_(\d+)\.tif$")
+# CONVENTION : le préfixe « fr_dfm05 » vaut pour la MÉTHODE de conversion
+# actuelle. Si l'algorithme de las_to_dfm change de façon incompatible (autre
+# comblement, autre sélection), BUMPER le préfixe (fr_dfm06…) pour que les
+# dalles converties par l'ancienne méthode ne soient pas réutilisées en silence.
+_NOM_RE = re.compile(r"fr_dfm05_(?:h[\d-]+_)?(?:c[\d-]+_)?(\d+)_(\d+)\.tif$")
 
 
 def dalle_filename(x_km, y_km):
@@ -98,6 +143,14 @@ def dalle_filename(x_km, y_km):
 def _laz_filename(x_km, y_km):
     """Nom du nuage LAZ gardé en cache — SANS réglages (partagé entre essais)."""
     return f"fr_dfm05_{int(x_km)}_{int(y_km)}.laz"
+
+
+def _bounds_nominaux(x_km, y_km):
+    """Bornes L93 exactes de la dalle. Convention IGN : le nom porte X_km et
+    Y_MAX_km (LHD_FXX_0932_6257 couvre Y[6256000,6257000]). Passées à
+    las_to_dfm pour une grille alignée au km entre dalles (pas de couture VRT)."""
+    x, y = int(x_km), int(y_km)
+    return (x * 1000, (y - 1) * 1000, (x + 1) * 1000, y * 1000)
 
 
 def dalle_subdir(x_km):
@@ -153,7 +206,8 @@ def pre_download(chemin):
     common.las_to_dfm(laz, chemin, crs_epsg=2154,
                       resolution=RESOLUTION_M,
                       hmin=DFM_HMIN, hmax=DFM_HMAX,
-                      classes_low=DFM_CLASSES)
+                      classes_low=_reinjectees(), classes_ground=_socle(),
+                      bounds=_bounds_nominaux(m.group(1), m.group(2)))
     return True
 
 
@@ -183,4 +237,6 @@ def post_fetch(chemin):
     common.las_to_dfm(laz, chemin, crs_epsg=2154,
                       resolution=RESOLUTION_M,
                       hmin=DFM_HMIN, hmax=DFM_HMAX,
-                      classes_low=DFM_CLASSES)
+                      classes_low=_reinjectees(), classes_ground=_socle(),
+                      bounds=(_bounds_nominaux(m.group(1), m.group(2))
+                              if m else None))

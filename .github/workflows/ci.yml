@@ -260,7 +260,9 @@ jobs:
       - name: Installer les dependances calcul
         # numba pour les kernels + la liste obligatoire de lidar2map
         # (l'import sous bootstrap=none vérifie ijson/fiona/certifi aussi).
-        run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi
+        # laspy/lazrs : le test DFM (interactions section 9a, mur synthétique)
+        # doit TOURNER en CI, pas être sauté en ImportError (revue 2026-07-16).
+        run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi laspy lazrs
 
       - name: Tests calculs scientifiques
         run: python tests/_test_corrections.py

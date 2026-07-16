@@ -217,8 +217,14 @@ def post_fetch(chemin):
     from providers import common
     las_tmp = chemin.with_suffix(".las")
     chemin.replace(las_tmp)
+    # Bornes nominales de la tuile 1 km (le nom porte le coin SW en km) →
+    # grille alignée au km entre tuiles voisines (pas de couture au VRT).
+    m = re.match(r"lv_dtm1_(\d+)_(\d+)\.tif$", chemin.name)
+    bounds = ((int(m.group(1)) * 1000, int(m.group(2)) * 1000,
+               (int(m.group(1)) + 1) * 1000, (int(m.group(2)) + 1) * 1000)
+              if m else None)
     try:
         common.las_to_dtm(las_tmp, chemin, crs_epsg=3059,
-                          resolution=RESOLUTION_M, classes=(2,))
+                          resolution=RESOLUTION_M, classes=(2,), bounds=bounds)
     finally:
         las_tmp.unlink(missing_ok=True)

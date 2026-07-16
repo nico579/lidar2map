@@ -121,10 +121,19 @@ By access paradigm:
   prospection only. Exposed as a **mode**, not a source: GUI checkbox "DFM mode"
   on the parent provider / CLI `--dfm` (+ `--dfm-hmin/hmax/classes` per-site
   tuning; the twin module `<code>_dfm.py` is hidden from the provider dropdown).
-  The LAZ stays in the tile cache: retuning re-converts in ~20 s without
-  re-downloading (core `pre_download` hook). Companion analysis tool:
-  `tools/dfm_ruines.py`. Could extend to any provider whose source is a
-  classified cloud (cz-cuzk, lv-lgia) if field-validated.
+  Classes are ONE user-visible set (default `1,2,3,4,9,66`: 2/9/66 = terrain
+  base as in the official DTM, the rest re-injected into ground gaps within the
+  height band); removing class 2 yields a **slice** (band objects on transparent
+  background, heights still referenced to ground). The zone name is auto-suffixed
+  (`_dfm…`) so DTM and DFM outputs never mix; tiles are gridded on the nominal
+  km bounds (no VRT seams); conversions are serialized (RAM) and written
+  atomically. The LAZ stays in the tile cache: retuning re-converts in ~20 s
+  without re-downloading (core `pre_download` hook). Companion analysis tool:
+  `tools/dfm_ruines.py`. Deferred (by choice, after field validation): built-in
+  control products (DTM witness / delta / re-injected mask / confidence map —
+  the standalone tool provides them), block-wise COPC reading, cross-process LAZ
+  lock, min-z vs high-percentile fill. Could extend to any provider whose source
+  is a classified cloud (cz-cuzk, lv-lgia) if field-validated.
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 

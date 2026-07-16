@@ -120,6 +120,18 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                 (active par défaut : ~2× moins de disque)
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
+    --dfm                       Mode DFM « structures debout » (pré-flag global,
+                                  comme --provider) : bascule vers le jumeau
+                                  <provider>-dfm (France : nuage LAZ ~205 Mo/km²,
+                                  révèle les murs que le MNT efface — zone petite).
+                                  Le nom de projet est suffixé (_dfm[...]) : les
+                                  sorties MNT et DFM ne se mélangent jamais.
+    --dfm-hmin M / --dfm-hmax M Tranche de hauteur réintroduite (déf. 0,4–2,5 m)
+    --dfm-classes 1,2,3,4,9,66  Classes LAS participantes (déf. 1,2,3,4,9,66).
+                                  2/9/66 = socle terrain (2 obligatoire) ; les
+                                  autres sont réinjectées dans les trous du sol
+                                  (tranche hmin-hmax). Essayer 1,2,3,4,5,9,66
+                                  si les murs sortent incomplets.
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
                                   lrm vat svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
@@ -9928,6 +9940,18 @@ Examples:
               "(--zone-city / --zone-gps / --zone-bbox / --zone-department / --zone-region)")
         sys.exit(1)
 
+    # Variante de provider (mode DFM…) : suffixer le nom de zone → le PROJET
+    # entier (dossier, ombrages, MBTiles, dalles_zone.txt, manifeste) est
+    # DISTINCT du run MNT de la même zone. Sans ça, un LRM MNT existant serait
+    # silencieusement réutilisé après avoir coché DFM ou changé un réglage
+    # (les noms d'ombrage n'encodent pas le provider — revue DFM 2026-07-16).
+    _vtag_fn = getattr(PROVIDER, "variant_tag", None)
+    if _vtag_fn:
+        _vtag = normaliser_nom(_vtag_fn())
+        if _vtag and not nom_zone.endswith(_vtag):
+            nom_zone = f"{nom_zone}_{_vtag}"
+            print(f"  Variant mode ({_vtag}): project name -> {nom_zone}")
+
     # Rayon + grille (modes ville / gps — pas bbox, dept, région, france).
     # Rayon par defaut 10 km si --zone-radius absent (aucun prompt).
     if not args.zone_bbox and not args.zone_departement and not getattr(args, "zone_region", None):
@@ -10247,12 +10271,12 @@ Examples:
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
         noms_zone = set()  # initialisé ici — peut rester vide en mode OSM seul
         if dalles_zone_txt.exists():
-            # Vérifier que la bbox en entête correspond à la zone courante
+            # Vérifier que l'en-tête (bbox + provider) correspond au run courant
             _lignes = dalles_zone_txt.read_text(encoding="utf-8").splitlines()
             _bbox_courante = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
             _bbox_fichier  = _lignes[0].strip() if _lignes else ""
-            if _bbox_fichier != _bbox_courante:
-                print(f"  Zone changed - rebuilding {dalles_zone_txt.name} from cache...")
+            if not _dalles_zone_hdr_ok(_lignes, bbox):
+                print(f"  Zone/provider changed - rebuilding {dalles_zone_txt.name} from cache...")
                 print(f"    Ancienne bbox : {_bbox_fichier}")
                 print(f"    Nouvelle bbox : {_bbox_courante}")
                 # Reconstruire depuis le cache disque sans retélécharger.
@@ -10262,7 +10286,8 @@ Examples:
                              if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
                     dalles_zone_txt.write_text(
-                        _bbox_courante + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
+                        _dalles_zone_entete(bbox) + "\n"
+                        + "\n".join(sorted(noms_zone)), encoding="utf-8")
                     _creer_fichier(dalles_zone_txt)
                     print(f"  {dalles_zone_txt.name} rebuilt: {len(noms_zone)} tile(s) in cache")
                 else:
@@ -10285,9 +10310,9 @@ Examples:
                 noms_zone = {d.name for d in toutes_dalles_dispo
                              if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
-                    _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
                     dalles_zone_txt.write_text(
-                        _bbox_hdr + "\n" + "\n".join(sorted(noms_zone)), encoding="utf-8")
+                        _dalles_zone_entete(bbox) + "\n"
+                        + "\n".join(sorted(noms_zone)), encoding="utf-8")
                     _creer_fichier(dalles_zone_txt)
                     print(f"  dalles_zone.txt rebuilt: {len(noms_zone)} tile(s) found on disk")
                 else:
@@ -10707,15 +10732,14 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
     noms_attendus : iterable de noms de dalles attendus pour la zone
                     (typiquement les keys du dict retourné par discover_dalles).
     """
-    # Déterminer les noms de la zone : dalles_zone.txt si la bbox correspond,
-    # sinon le set noms_attendus (discover_dalles).
+    # Déterminer les noms de la zone : dalles_zone.txt si l'en-tête correspond
+    # (bbox + provider), sinon le set noms_attendus (discover_dalles).
     noms_zone = set()
     dalles_zone_txt = dossier_ville / "dalles_zone.txt"
     if dalles_zone_txt.exists():
         _lignes = dalles_zone_txt.read_text(encoding="utf-8").splitlines()
-        _bbox_courante = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
-        if _lignes and _lignes[0].strip() == _bbox_courante:
-            noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
+        if _dalles_zone_hdr_ok(_lignes, bbox):
+            noms_zone = {n.strip() for n in _lignes if n.strip() and not n.startswith("#")}
     if not noms_zone:
         noms_zone = set(noms_attendus)
 
@@ -10732,6 +10756,27 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
         except OSError:
             continue
     return sorted(dalles_ombrages)
+
+
+def _dalles_zone_entete(bbox):
+    """En-tête (2 lignes) de dalles_zone.txt : bbox + provider. La ligne
+    provider évite qu'un run MNT et un run DFM pointés sur le MÊME dossier de
+    sortie (--output-dir forcé) se volent la liste de dalles — par défaut, le
+    tag de variante dans le nom de zone sépare déjà les projets."""
+    return (f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}\n"
+            f"# provider:{PROVIDER.CODE}")
+
+
+def _dalles_zone_hdr_ok(lignes, bbox):
+    """Valide l'en-tête de dalles_zone.txt : bbox (ligne 0) et, si présente,
+    la ligne provider (les anciens fichiers sans elle restent acceptés)."""
+    if not lignes or lignes[0].strip() != \
+            f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}":
+        return False
+    for _l in lignes[1:3]:
+        if _l.startswith("# provider:"):
+            return _l.strip() == f"# provider:{PROVIDER.CODE}"
+    return True
 
 
 def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args):
@@ -10813,10 +10858,10 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
                         if chemin_dalle(dossier_dalles, nom).exists()
                         and chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE]
     if noms_persistance:
-        _bbox_hdr = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
         dalles_zone_txt.write_text(
-            _bbox_hdr + "\n" + "\n".join(sorted(set(noms_persistance))), encoding="utf-8")
+            _dalles_zone_entete(bbox) + "\n"
+            + "\n".join(sorted(set(noms_persistance))), encoding="utf-8")
         _creer_fichier(dalles_zone_txt)
 
     # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
@@ -16287,6 +16332,16 @@ def lancer_gui():
 
                     def _emit_ligne(texte):
                         # Ligne complète → log GUI + buffers de diagnostic.
+                        # Le run peut MODIFIER le nom de projet (le mode DFM
+                        # suffixe le nom de zone) : le chemin réel imprimé par
+                        # le pipeline (« Done! Folder: … ») est la source de
+                        # vérité et écrase le _result_dir précalculé — sinon
+                        # open_folder ouvre l'ancien dossier (bug vécu
+                        # 2026-07-16, même classe que le précédent bug country).
+                        if "Done! Folder:" in texte:
+                            _rd = texte.split("Done! Folder:", 1)[1].strip()
+                            if _rd:
+                                self._result_dir = _rd
                         is_err = _classify_err(texte)
                         with self._lock:
                             if is_err and len(self._err_lines) < 20:

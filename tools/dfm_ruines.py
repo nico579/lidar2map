@@ -100,20 +100,18 @@ def download(url, dest):
     return dest
 
 
-def fill_nan(G, iters=80):
-    """Comblement itératif par moyenne des 8 voisins (petites lacunes)."""
-    G = G.copy()
-    for _ in range(iters):
-        bad = ~np.isfinite(G)
-        if not bad.any():
-            break
-        Gp = np.pad(G, 1, constant_values=np.nan)
-        Gp[~np.isfinite(Gp)] = np.nan
-        with np.errstate(all="ignore"):
-            nb = np.nanmean(np.stack(
-                [Gp[:-2, 1:-1], Gp[2:, 1:-1], Gp[1:-1, :-2], Gp[1:-1, 2:],
-                 Gp[:-2, :-2], Gp[:-2, 2:], Gp[2:, :-2], Gp[2:, 2:]]), axis=0)
-        G[bad] = nb[bad]
+def fill_nan(G, res=0.5, max_m=200.0):
+    """Comblement IDW borné (rasterio fillnodata — MÊME primitive que le mode
+    intégré common.las_to_dfm, pour que l'outil et le pipeline produisent le
+    même modèle). Les cellules hors portée restent NaN, converties en nodata
+    par l'appelant AVANT tout filtre (un NaN traverserait le gaussien du LRM)."""
+    from rasterio.fill import fillnodata
+    m = np.isfinite(G)
+    if (~m).any() and m.any():
+        G = fillnodata(np.where(m, G, np.nan).astype(np.float32),
+                       mask=m.astype("uint8"),
+                       max_search_distance=max_m / res,
+                       smoothing_iterations=0)
     return G
 
 
@@ -184,18 +182,18 @@ def main():
         np.minimum.at(g, ri[mask] * nx + ci[mask], zs[mask])
         return g.reshape(ny, nx)
 
-    print("MNT sol (classe 2) ...")
-    sol_raw = binmin(cs == 2)
-    mnt = fill_nan(sol_raw)
+    print("MNT sol (classes 2/9/66) ...")
+    sol_raw = binmin(np.isin(cs, (2, 9, 66)))   # mêmes classes que le MNT IGN
+    mnt = fill_nan(sol_raw, res)
 
     print(f"DFM (classes {classes}, {a.hmin}-{a.hmax} m) ...")
-    h = zs - mnt[ri, ci]
+    h = zs - np.where(np.isfinite(mnt), mnt, np.inf)[ri, ci]
     low = np.isin(cs, classes) & (h >= a.hmin) & (h <= a.hmax)
     lowmin = binmin(low)
     dfm = sol_raw.copy()
     holes = ~np.isfinite(dfm)
     dfm[holes] = lowmin[holes]
-    dfm = fill_nan(dfm)
+    dfm = fill_nan(dfm, res)
 
     from scipy.ndimage import gaussian_filter
     import rasterio
@@ -204,16 +202,28 @@ def main():
     sig = a.sigma / res
 
     def save(path, arr):
+        # Valeurs FINIES ou nodata : un NaN résiduel traverserait le gaussien
+        # du LRM (tache) et un faux 0 ferait une falaise artificielle.
+        arr = np.where(np.isfinite(arr), arr, -9999).astype(np.float32)
         with rasterio.open(path, "w", driver="GTiff", height=ny, width=nx,
                            count=1, dtype="float32",
                            crs=rasterio.CRS.from_epsg(2154), transform=transform,
                            nodata=-9999, compress="deflate", predictor=3,
                            tiled=True) as dst:
-            dst.write(arr.astype(np.float32), 1)
+            dst.write(arr, 1)
         print(f"  -> {path}")
 
-    save(f"{a.out}_lrm_mnt.tif", mnt - gaussian_filter(mnt, sig))
-    save(f"{a.out}_lrm_dfm.tif", dfm - gaussian_filter(dfm, sig))
+    # LRM sur des surfaces rendues finies (les lacunes hors portée du fill
+    # prennent la médiane locale pour ne pas polluer le gaussien, puis
+    # redeviennent nodata au save via le masque d'origine).
+    def lrm(surface):
+        fini = np.isfinite(surface)
+        base = np.where(fini, surface, np.nanmedian(surface))
+        r = base - gaussian_filter(base, sig)
+        return np.where(fini, r, np.nan)
+
+    save(f"{a.out}_lrm_mnt.tif", lrm(mnt))
+    save(f"{a.out}_lrm_dfm.tif", lrm(dfm))
     save(f"{a.out}_delta.tif", dfm - mnt)
     print("\nDans QGIS : draper *_lrm_dfm.tif (gris, -0,5..+0,5) sur l'ortho ;")
     print("*_delta.tif seuillé à 0,4-1 m = candidats murs (mouchetis = maquis,")

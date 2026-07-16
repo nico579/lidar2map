@@ -439,15 +439,38 @@ try:
                            crs_epsg=2154, resolution=0.5)
         _common.las_to_dtm(_dd / "syn.las", _dd / "dtm.tif",
                            crs_epsg=2154, resolution=0.5, classes=(2,))
-        def _z_au_mur(p):
+        # COUPE (socle vide, choix Nico : « une coupe horizontale à 1m50 du
+        # sol ») : objets de la tranche seuls, fond nodata, hauteurs toujours
+        # référencées à la classe 2.
+        _common.las_to_dfm(_dd / "syn.las", _dd / "coupe.tif",
+                           crs_epsg=2154, resolution=0.5, classes_ground=())
+        def _z_a(p, x, y):
             with _rio.open(p) as ds:
-                r, c = ds.index(19.0, 20.0)      # centre du mur
+                r, c = ds.index(x, y)
                 return float(ds.read(1)[r, c])
-        z_dfm, z_dtm = _z_au_mur(_dd / "dfm.tif"), _z_au_mur(_dd / "dtm.tif")
+        z_dfm = _z_a(_dd / "dfm.tif", 19.0, 20.0)     # centre du mur
+        z_dtm = _z_a(_dd / "dtm.tif", 19.0, 20.0)
         check("DFM : le mur apparaît (z ≈ 101,5)", abs(z_dfm - 101.5) < 0.2,
               detail=f"z_dfm={z_dfm:.2f}")
         check("DTM : le mur est gommé (z ≈ 100, interpolé)", abs(z_dtm - 100.0) < 0.2,
               detail=f"z_dtm={z_dtm:.2f}")
+        z_cm = _z_a(_dd / "coupe.tif", 19.0, 20.0)    # mur : présent
+        z_cf = _z_a(_dd / "coupe.tif", 5.0, 5.0)      # sol nu : nodata
+        check("COUPE : mur présent, fond nodata",
+              abs(z_cm - 101.5) < 0.2 and z_cf == -9999.0,
+              detail=f"mur={z_cm:.2f} fond={z_cf:.0f}")
+        # Grille alignée sur bornes NOMINALES (anti-couture VRT) : 40 m à
+        # 0,5 m = exactement 80×80 px, origine (0,40).
+        _common.las_to_dfm(_dd / "syn.las", _dd / "dfmb.tif",
+                           crs_epsg=2154, resolution=0.5, bounds=(0, 0, 40, 40))
+        with _rio.open(_dd / "dfmb.tif") as ds:
+            check("bounds nominaux → grille exacte 80×80 alignée",
+                  ds.width == 80 and ds.height == 80
+                  and ds.bounds.left == 0 and ds.bounds.top == 40)
+            a = ds.read(1)
+            check("valeurs finies ou nodata (jamais 0 résiduel ni inf)",
+                  bool(_np.isfinite(a).all())
+                  and not bool((a == 0).any()))
 except ImportError as _e_dfm:
     print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
 
@@ -471,8 +494,19 @@ try:
 except ValueError:
     _err = True
 check("hmin >= hmax → ValueError", _err)
-_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 3, 4))   # reset défauts
+# Classes = UN ensemble complet (défaut 1,2,3,4,9,66) ; encodage injectif avec
+# séparateurs ; retirer la classe 2 = mode coupe (permis, plus de ValueError).
+_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 5, 9, 66))
+check("classes ≠ défaut → suffixe séparé injectif",
+      "c1-2-3-4-5-9-66_" in _dfm.dalle_filename(932, 6257),
+      detail=_dfm.dalle_filename(932, 6257))
+_dfm.set_dfm_params(classes=(1, 3, 4))     # sans classe 2 : coupe, ne lève pas
+check("socle sans classe 2 → mode coupe (réinjectées seules)",
+      _dfm._socle() == () and _dfm._reinjectees() == (1, 3, 4))
+_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
 check("reset défauts → nom nu", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+check("socle/réinjectées dérivés du même ensemble",
+      _dfm._socle() == (2, 9, 66) and _dfm._reinjectees() == (1, 3, 4))
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les

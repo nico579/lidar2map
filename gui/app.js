@@ -36,7 +36,7 @@ const I18N = {
     "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
     "f.dfm":"Mode DFM — structures debout (expérimental, LAZ ~205 Mo/km²)",
     "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
-    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) en réinjectant les retours bas non-sol : révèle les ruines/murs debout que le MNT efface. Maquis = mouchetis, murs = lignes continues. Zone petite conseillée.",
+    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Classes : 2/9/66 = socle terrain (2 obligatoire), les autres sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
     "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
@@ -138,7 +138,7 @@ const I18N = {
     "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
     "f.dfm":"DFM mode — standing structures (experimental, LAZ ~205 MB/km²)",
     "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
-    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²) by re-injecting low non-ground returns: reveals standing ruins/walls that the DTM erases. Scrub = speckle, walls = continuous lines. Keep the area small.",
+    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). Classes: 2/9/66 = terrain base (2 mandatory), the others are re-injected into ground gaps, filtered by the height band. Keep the area small.",
     "sec.zone":"Geographic area",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
     "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
