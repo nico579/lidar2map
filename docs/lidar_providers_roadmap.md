@@ -216,6 +216,33 @@ micro-relief). Each below was probed to a real endpoint.
   a single multi-GB monolith (1.38 GB / 5.3 GB) → needs the deferred
   "download-once monolith cache" (or a range-readable COG, which they are not).
 
+### Review 4 (2026-07-16): Americas, evaluated not integrated
+
+This review (which compared against this roadmap and tested downloads) yielded 4
+integrations (de-sh, fr-reunion, fr-guadeloupe, it-piemonte). The Americas
+candidates did not make it:
+
+- **Colombia (IGAC)**: ~10 ArcGIS ImageServers of 1 m LiDAR MDT (Pereira,
+  Dosquebradas, Casanare, Arauca…), Float32, `exportImage` works (au-qld pattern),
+  bare-earth (tags LIDAR/Terreno/TIN). **Blocked on licence**: the ArcGIS items
+  carry NO `licenseInfo` / `accessInformation`. This project ships only clearly
+  open data → deferred until IGAC states an open licence. Otherwise a strong P0.
+- **Niterói (BR)**: MDT via an ArcGIS mosaic index (`services8.arcgis.com/…/
+  Grouplayer_articulacao_mosaico`, 129 tiles 2019, tx_MDT LAS URLs, EPSG:31983,
+  class-2 ground). But the "1 m MDT" is a **sparse ground point set**
+  (0.001-0.074 pt/m², ~4 m effective spacing, not a real 1 m DTM), and it is one
+  coastal city → low value. Deferred.
+- **Rio de Janeiro (BR)**: MDT 5 m served as **LERC**-encoded tiles; no LERC
+  decoder in the pipeline → deferred (new hook).
+- **Pernambuco PE3D (BR)**: statewide LiDAR + 1 m DTM, but the ArcGIS folders
+  return `499 Token Required` (free account) → deferred (needs token handling).
+- **Romania (LAKI III / ANCPI)**: good tile index and architecture, but the ANCPI
+  domain is down during a migration → re-check later. [WATCH]
+- **Indaiatuba (BR)**: the "MDT" ZIP is a shapefile (MDT21), not a raster or LAS
+  → not consumable.
+- Pacific follow-up (not yet probed here): Guam, American Samoa via NOAA
+  bare-earth 1 m DEMs (same `noaa-nos-coastal-lidar-pds` bucket as us-cnmi).
+
 ## Finding new sources (catalog discovery)
 
 `tools/discover_providers.py` queries a CSW metadata catalog (INSPIRE) for
