@@ -19,12 +19,16 @@ except Exception:
 
 _IGN_WFS = "https://data.geopf.fr/wfs/ows"
 _IGN_TN = "IGNF_MNT-LIDAR-HD:dalle"
+_IGN_TN_LAZ = "IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle"
 _IGN_NAME_RE = re.compile(r"LHD_[A-Z0-9]+_(\d+)_(\d+)_")
 
 
-def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0"):
+def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
+                        typename=_IGN_TN):
     """Interroge le WFS IGN `IGNF_MNT-LIDAR-HD:dalle` (0,5 m LiDAR HD, tuiles
     1 km) pour la bbox EN EPSG:`epsg`, et retourne {filename_fn(e_km,n_km): url}.
+    `typename` permet de viser un autre produit LiDAR HD du même WFS : le nuage
+    classé COPC LAZ (`IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`, cf. fr-ign-dfm).
 
     Chaque feature de dalle porte un attribut `url` = le download DIRECT du
     GeoTIFF (WMS GetMap pour la Réunion, lien de téléchargement + apikey public
@@ -37,7 +41,7 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0"):
         return {}
     x1, y1, x2, y2 = bbox_natif
     q = (f"{_IGN_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
-         f"&TYPENAMES={_IGN_TN}&SRSNAME=EPSG:{epsg}"
+         f"&TYPENAMES={typename}&SRSNAME=EPSG:{epsg}"
          f"&BBOX={x1},{y1},{x2},{y2},EPSG:{epsg}"
          f"&COUNT=2000&OUTPUTFORMAT=application/json")
     try:
@@ -58,6 +62,79 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0"):
             continue
         dalles[filename_fn(int(m.group(1)), int(m.group(2)))] = url
     return dalles
+
+
+def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
+               hmin=0.4, hmax=2.5, classes_low=(1, 3, 4), nodata=-9999.0):
+    """LAS/LAZ classé → GeoTIFF **DFM** (Digital Feature Model, Štular 2021) :
+    le terrain PLUS les structures encore debout que le bare-earth efface.
+
+    Méthode (validée sur ruines du Var 2026-07, cf. tools/dfm_ruines.py) :
+      1. binning min-z de la classe 2 (sol) — les murs y font des TROUS ;
+      2. hauteur des points au-dessus du sol comblé ;
+      3. les trous de sol sont comblés par le min-z des points bas NON-sol
+         (`classes_low`, hauteur hmin-hmax) : sur un mur c'est le mur (le
+         classificateur l'a mis en « végétation »/« non classé ») ; sur un
+         buisson pénétré, la cellule a du sol → le sol est gardé ;
+      4. comblement final IDW borné (rasterio fillnodata).
+    Le maquis dense revient AUSSI (mouchetis) : la discrimination finale est
+    visuelle (murs = lignes continues). RAM : ~1 Go pour une dalle IGN 34 M pts.
+    """
+    import laspy
+    import numpy as np
+    import rasterio
+    from rasterio.fill import fillnodata
+    from rasterio.transform import from_bounds
+
+    las = laspy.read(str(src_las))
+    xs = np.asarray(las.x); ys = np.asarray(las.y)
+    zs = np.asarray(las.z); cls = np.asarray(las.classification)
+    if xs.size == 0:
+        raise ValueError(f"{Path(src_las).name}: nuage vide")
+
+    res = float(resolution)
+    x0, x1 = float(xs.min()), float(xs.max())
+    y0, y1 = float(ys.min()), float(ys.max())
+    nx = int(np.floor((x1 - x0) / res)) + 1
+    ny = int(np.floor((y1 - y0) / res)) + 1
+    col = np.clip(((xs - x0) / res).astype(np.int64), 0, nx - 1)
+    row = np.clip(((y1 - ys) / res).astype(np.int64), 0, ny - 1)
+    flat = row * nx + col
+
+    def _binmin(mask):
+        g = np.full(ny * nx, np.inf)
+        np.minimum.at(g, flat[mask], zs[mask])
+        return g
+
+    def _fill(g):
+        G = g.reshape(ny, nx).astype(np.float32)
+        m = np.isfinite(G)
+        if (~m).any() and m.any():
+            G = fillnodata(np.where(m, G, 0).astype(np.float32),
+                           mask=m.astype("uint8"),
+                           max_search_distance=200.0 / res,
+                           smoothing_iterations=0)
+        return G
+
+    sol_raw = _binmin(cls == 2)
+    sol_ref = _fill(sol_raw)                       # référence de hauteur
+    h = zs - sol_ref[row, col]
+    low = np.isin(cls, classes_low) & (h >= hmin) & (h <= hmax)
+    low_min = _binmin(low)
+
+    dfm = sol_raw.copy()
+    holes = ~np.isfinite(dfm)
+    dfm[holes] = low_min[holes]                    # murs réintroduits
+    grid = _fill(dfm)
+
+    transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)
+    with rasterio.open(str(tif_path), "w",
+                       driver="GTiff", height=ny, width=nx,
+                       count=1, dtype="float32",
+                       crs=rasterio.CRS.from_epsg(crs_epsg),
+                       transform=transform, nodata=nodata,
+                       compress="deflate", predictor=3, tiled=True) as dst:
+        dst.write(grid, 1)
 
 
 def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,

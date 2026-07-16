@@ -89,7 +89,10 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   > (COPC LAZ, ~205 Mo/km²) en réinjectant les retours bas non-sol (0,4-2,5 m),
   > et produit des GeoTIFF géoréférencés LRM-MNT / LRM-DFM / delta à draper sur
   > l'orthophoto dans QGIS. Les murs ressortent en lignes fines continues, le
-  > maquis en mouchetis : l'œil fait la discrimination finale.
+  > maquis en mouchetis : l'œil fait la discrimination finale. Le même DFM
+  > existe aussi en provider complet (`--provider fr-ign-dfm`) : tous les
+  > ombrages (LRM, VAT…) tournent alors sur le DFM au lieu du MNT, au prix du
+  > download du nuage de points : garder la zone petite.
 
   Sources LiDAR : **<!--N-->27<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (12 Länder),
@@ -313,6 +316,7 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
+| `fr-ign-dfm` | France (**mode ruines debout**) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit un DFM (sol + retours bas non-sol 0,4-2,5 m) : révèle les murs debout que le MNT efface (cf. encadré « Limite connue » plus haut). Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |

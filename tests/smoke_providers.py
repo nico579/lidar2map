@@ -43,6 +43,7 @@ import lidar2map as L   # noqa: E402  (charge un PROVIDER par defaut ; on le bas
 TEST_POINTS = {
     "fr-ign": (1.444, 43.604), "nl-ahn": (4.895, 52.370),
     "fr-reunion": (55.45, -20.88), "fr-guadeloupe": (-61.53, 16.24),   # DROM IGN LiDAR HD 0,5 m
+    "fr-ign-dfm": (5.86628, 43.37579),       # Ruine1 Var (COPC 205 Mo ! --skip en CI)
     "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
     "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),

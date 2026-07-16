@@ -31,7 +31,8 @@ UA = "lidar2map-coverage/1.0 (https://github.com/nico579/lidar2map)"
 # cette emprise — drop des territoires lointains non couverts (Caraïbes NL,
 # Svalbard/Bouvet NO).
 REGIONS = [
-    ("France métropolitaine",  ["fr-ign"],           "#3b82f6", None, None),
+    ("France métropolitaine",  ["fr-ign", "fr-ign-dfm"], "#3b82f6", None,
+     "France — IGN LiDAR HD 0,5 m (MNT + mode DFM ruines/structures)"),
     ("La Réunion",             ["fr-reunion"],       "#3b82f6", (55.2, -21.4, 55.85, -20.85),
      "La Réunion (DROM) — MNT LiDAR HD 0,5 m (IGN)"),
     ("Guadeloupe",             ["fr-guadeloupe"],    "#3b82f6", (-61.85, 15.8, -61.0, 16.55),
