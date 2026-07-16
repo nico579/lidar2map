@@ -78,6 +78,20 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   instance has its own little parameter form.
   `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
+  > **Known limit — standing ruins.** National bare-earth DTMs *remove by design*
+  > walls still standing above ~1 m: the classifier files them as vegetation or
+  > "unclassified" (the IGN spec documents this for roofless ruined buildings),
+  > and the DTM interpolates straight through them. Paradoxically, a 40 cm
+  > enclosure wall survives (absorbed into the ground class) while a 1.5 m house
+  > ruin vanishes. No shading computed from the DTM can bring them back. For
+  > targeted prospection of standing structures in France, use
+  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py): it rebuilds a DFM (Digital
+  > Feature Model, Štular et al. 2021) from the classified IGN LiDAR HD point
+  > cloud (COPC LAZ, ~205 MB/km²) by re-injecting low non-ground returns
+  > (0.4-2.5 m), and outputs georeferenced LRM-DTM / LRM-DFM / delta GeoTIFFs to
+  > drape over the orthophoto in QGIS. Walls show up as thin continuous lines;
+  > scrub shows as speckle — the eye does the final discrimination.
+
   LiDAR sources: **<!--N-->27<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
   (12 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,

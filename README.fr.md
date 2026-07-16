@@ -76,6 +76,21 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   instance ajoutée a son propre mini-formulaire de paramètres.
   `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
+  > **Limite connue : les ruines debout.** Les MNT sol-nu nationaux suppriment
+  > *par construction* les murs encore debout au-delà d'environ 1 m : le
+  > classificateur les range en végétation ou « non classé » (la spec IGN le
+  > documente pour les bâtiments ruinés sans toiture), puis le MNT interpole au
+  > travers. Paradoxe : un muret d'enclos de 40 cm survit (absorbé dans la classe
+  > sol) quand une ruine de maison de 1,5 m disparaît proprement. Aucun ombrage
+  > calculé depuis le MNT ne peut les faire revenir. Pour la prospection ciblée
+  > de structures debout en France, utiliser
+  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py) : il reconstruit un DFM (Digital
+  > Feature Model, Štular et al. 2021) depuis le nuage classé LiDAR HD IGN
+  > (COPC LAZ, ~205 Mo/km²) en réinjectant les retours bas non-sol (0,4-2,5 m),
+  > et produit des GeoTIFF géoréférencés LRM-MNT / LRM-DFM / delta à draper sur
+  > l'orthophoto dans QGIS. Les murs ressortent en lignes fines continues, le
+  > maquis en mouchetis : l'œil fait la discrimination finale.
+
   Sources LiDAR : **<!--N-->27<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (12 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
