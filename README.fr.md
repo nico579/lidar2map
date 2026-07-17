@@ -111,6 +111,19 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   > `--dfm-csf-resolution`, `--dfm-csf-rigidness` 1 pentu / 2 / 3 plat ;
   > mêmes champs dans la GUI).
 
+  Une ruine de maison sans toiture (murs ~1,5 m, dép. 83), sous le maquis.
+  L'orthophoto laisse à peine deviner les murs ; le LRM classique (depuis le
+  MNT) montre les restanques mais pas la ruine ; le DFM fait réapparaître
+  l'emprise du bâtiment, et le socle CSF nettoie le fond.
+
+  | Orthophoto | LRM classique (depuis le MNT) |
+  |---|---|
+  | ![Orthophoto, murs cachés sous le maquis](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM depuis le MNT bare-earth, ruine invisible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
+  | Murs noyés dans la végétation | Les restanques ressortent, pas la ruine |
+  | **DFM-LRM (réinjection par classes)** | **DFM-LRM (socle tissu CSF)** |
+  | ![DFM par réinjection de classes, murs visibles avec mouchetis](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM avec socle tissu CSF, fond plus propre](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
+  | Le rectangle du bâtiment réapparaît (moucheté) | Mêmes murs, fond plus propre |
+
   Sources LiDAR : **<!--N-->27<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
   de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (12 Länder),
   Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,

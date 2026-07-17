@@ -110,6 +110,19 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   > standard CSF surface (`--dfm-csf-threshold`, `--dfm-csf-resolution`,
   > `--dfm-csf-rigidness` 1 steep / 2 / 3 flat; same fields in the GUI).
 
+  A roofless house ruin (walls ~1.5 m, dép. 83, France), under scrub. The
+  aerial photo barely hints at the walls; the classic LRM (from the DTM) shows
+  the terraces but not the ruin; the DFM brings the building footprint back,
+  and the CSF ground base cleans up the background.
+
+  | Aerial ortho | Classic LRM (from the DTM) |
+  |---|---|
+  | ![Aerial ortho, walls hidden under scrub](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM from the bare-earth DTM, ruin not visible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
+  | Walls lost under vegetation | Terraces show, the ruin does not |
+  | **DFM-LRM (class re-injection)** | **DFM-LRM (CSF cloth base)** |
+  | ![DFM by class re-injection, walls reappear with speckle](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM with CSF cloth ground base, cleaner background](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
+  | Rectangular building reappears (speckly) | Same walls, cleaner background |
+
   LiDAR sources: **<!--N-->27<!--/N--> countries** via the `--provider <code>` flag (or the GUI
   dropdown), France (default), Netherlands, Switzerland, Norway, Germany
   (12 Länder), Austria (national + Tyrol), United Kingdom, Belgium (Flanders), Finland,
