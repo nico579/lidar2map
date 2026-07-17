@@ -685,9 +685,10 @@ check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
 check("dropdown : fr-ign porte le cap de download LAZ (source unique)",
       _fr.get("dfm", {}).get("download_workers_max") == _dfm.DOWNLOAD_WORKERS_MAX
       and _dfm.DOWNLOAD_WORKERS_MAX > 0)
-check("GUI reflète le cap : note HTML + lecture app.js (pas de 3 en dur)",
+check("GUI reflète le cap : borne le champ Workers + note (pas de 3 en dur)",
       'id="dfm-workers-note"' in _html
-      and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs)
+      and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs
+      and "preLaz" in _appjs and "f-workers-l" in _appjs)
 # 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
 # et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
 _ch = next((p for p in _provs_gui if p["code"] == "ch-swisstopo"), None)

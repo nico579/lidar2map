@@ -749,13 +749,32 @@ function updateDfmUI() {
     src.style.background = laz ? '#dcfce7' : '#e2e8f0';
     src.style.color = laz ? '#166534' : '#475569';
   }
-  // Note près du champ Workers : le download LAZ est plafonné (gros nuages,
-  // sinon throttle serveur). Valeur lue du provider (source unique, pas de 3
-  // en dur) ; le tuilage/ombrage garde la valeur Workers.
+  // Champ Workers : en mode LAZ le download est plafonné (gros nuages, sinon
+  // throttle serveur). On BORNE le champ (max + valeur) à la valeur du provider
+  // (source unique, pas de 3 en dur) et on la restaure à la sortie. Le tuilage/
+  // ombrage d'une zone LAZ est négligeable (petites zones), donc borner le champ
+  // ne coûte rien. Le cap backend (_telecharger_dalles_zone) reste en défense
+  // pour les runs CLI. Une note dit le pourquoi.
+  const code = document.getElementById('f-provider')?.value;
+  const capN = laz && _dfmByCode[code] ? _dfmByCode[code].download_workers_max : 0;
+  const wl = document.getElementById('f-workers-l');
+  if (wl) {
+    if (capN) {
+      if (wl.dataset.preLaz === undefined) {      // entrée mode LAZ : mémoriser
+        wl.dataset.preLaz = wl.value;
+        wl.dataset.preLazMax = wl.max || '32';
+      }
+      wl.max = capN;
+      if ((parseInt(wl.value) || 0) > capN) wl.value = capN;
+    } else if (wl.dataset.preLaz !== undefined) { // sortie : restaurer
+      wl.max = wl.dataset.preLazMax || '32';
+      wl.value = wl.dataset.preLaz;
+      delete wl.dataset.preLaz;
+      delete wl.dataset.preLazMax;
+    }
+  }
   const note = document.getElementById('dfm-workers-note');
   if (note) {
-    const code = document.getElementById('f-provider')?.value;
-    const capN = laz && _dfmByCode[code] ? _dfmByCode[code].download_workers_max : 0;
     if (capN) {
       note.textContent = t('f.dlcap').replace('%d', capN);
       note.style.display = 'inline';
