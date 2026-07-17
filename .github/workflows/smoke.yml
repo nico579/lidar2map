@@ -47,7 +47,8 @@ jobs:
         run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi laspy lazrs
 
       - name: Smoke test providers
-        # fr-ign-dfm exclu : son smoke téléchargerait un COPC LAZ de 205 Mo à
-        # chaque run hebdo (le provider partage son WFS avec fr-reunion/
-        # fr-guadeloupe, testés eux ; la conversion DFM est testée en local).
-        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-dfm
+        # fr-ign-dfm / ch-swisstopo-dfm exclus : leur smoke téléchargerait un
+        # nuage de points (205 / 125 Mo) à chaque run hebdo (ils partagent leur
+        # WFS/STAC avec fr-reunion / ch-swisstopo, testés eux ; la conversion
+        # DFM est testée en local via _test_interactions section 9).
+        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-dfm,ch-swisstopo-dfm

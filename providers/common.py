@@ -390,7 +390,7 @@ def swisstopo_stac_dalles(collection, product_prefix, asset_ok,
     asset_ok(nom, asset) -> bool : sélectionne l'asset voulu (COG 0.5m 2056 /
                      .las.zip). Chaque appelant construit ENSUITE sa propre
                      table {clé: href} (le raster garde le nom d'asset comme
-                     clé ; le DFM dérive son nom fr_dfm05-style).
+                     clé ; le DFM dérive son nom fr_laz05-style).
     Retourne None sur échec réseau. Cache PAR bbox (la requête STAC dépend de la
     bbox → son cache aussi ; un cache unique renverrait les items de la 1re bbox
     pour toutes, bug #4 vu sur ca-nrcan)."""
@@ -505,8 +505,9 @@ def extraire_membre(zf, member, dest_dir):
 class DfmProvider:
     """État + logique du mode DFM d'un provider nuage-de-points.
 
-    prefix       : préfixe de nom de dalle, encode la MÉTHODE (fr_dfm05…). Bumper
-                   si l'algo de las_to_dfm change de façon incompatible.
+    prefix       : préfixe de nom de dalle ('laz' = source nuage), encode la
+                   version de MÉTHODE (fr_laz05…). Bumper si l'algo de las_to_dfm
+                   change de façon incompatible.
     crs_epsg     : EPSG natif (2154, 2056…).
     resolution   : résolution de sortie du GeoTIFF DFM (m).
     socle_possible : classes LAS qui, si sélectionnées, forment le socle terrain
@@ -547,9 +548,11 @@ class DfmProvider:
         self.csf_threshold = self.def_csf_threshold
         self.csf_resolution = self.def_csf_resolution
         self.csf_rigidness = self.def_csf_rigidness
+        # Toute dalle .tif porte le token de méthode (dfm_ = réinjection classes,
+        # csf_ = tissu) ; le nuage caché .laz n'en a pas (partagé entre méthodes).
         self.nom_re = re.compile(
-            rf"{re.escape(prefix)}_(?:csf_(?:t\d+_)?(?:r\d+_)?(?:g\d_)?)?"
-            rf"(?:h[\d-]+_)?(?:c[\d-]+_)?(\d+)_(\d+)\.tif$")
+            rf"{re.escape(prefix)}_(?:dfm_(?:h[\d-]+_)?(?:c[\d-]+_)?"
+            rf"|csf_(?:t\d+_)?(?:r\d+_)?(?:g\d_)?)(\d+)_(\d+)\.tif$")
 
     # ── socle / réinjectées ──────────────────────────────────────────────────
     def socle(self):
@@ -621,11 +624,11 @@ class DfmProvider:
 
     # ── nommage / cache ──────────────────────────────────────────────────────
     def suffix(self):
-        """Encodage des réglages ≠ défauts. '' si défauts. ground=csf → 'csf_' +
-        ses réglages ≠ défauts en ordre FIXE t/r/g ; hmin/hmax/classes ignorés
-        par le tissu ne sont PAS encodés (des caches distincts pour des sorties
-        identiques), et réciproquement. Injectif : ·10 sans perte, classes
-        séparées par '-' (c1-34 ≠ c1-3-4), 'csf_' ≠ 'c<digits>_'."""
+        """Partie variable du nom de dalle : TOUJOURS le token de méthode en tête
+        ('dfm_' = réinjection classes, 'csf_' = tissu), puis les réglages ≠
+        défauts en ordre FIXE. Injectif : ·10 sans perte, classes séparées par
+        '-' (c1-34 ≠ c1-3-4) ; les réglages ignorés par une méthode ne sont PAS
+        encodés (mêmes sorties = même cache)."""
         if self.ground == "csf":
             s = "csf_"
             if self.csf_threshold != self.def_csf_threshold:
@@ -635,7 +638,7 @@ class DfmProvider:
             if self.csf_rigidness != self.def_csf_rigidness:
                 s += f"g{self.csf_rigidness}_"
             return s
-        s = ""
+        s = "dfm_"
         if (self.hmin, self.hmax) != (self.def_hmin, self.def_hmax):
             s += f"h{round(self.hmin * 10):02d}-{round(self.hmax * 10):02d}_"
         if self.classes != self.def_classes:
@@ -643,11 +646,13 @@ class DfmProvider:
         return s
 
     def variant_tag(self):
-        """Tag injecté par le cœur dans le NOM DE ZONE → projet DFM DISTINCT du
-        projet MNT de la même zone (sans ça, un LRM MNT existant était réutilisé
-        en silence après avoir coché la case)."""
-        s = self.suffix().strip("_")
-        return "dfm" + (("_" + s) if s else "")
+        """Tag injecté par le cœur dans le NOM DE ZONE → projet DISTINCT du projet
+        MNT de la même zone (sans ça, un LRM MNT existant était réutilisé en
+        silence après avoir coché la case). « laz_ » = la SOURCE (nuage de
+        points), « dfm »/« csf » = la MÉTHODE. Ex. laz_dfm, laz_csf, laz_csf_t08,
+        laz_dfm_h03-30. Le MNT (défaut) reste SANS marqueur (on marque
+        l'exception, pas le cas courant — choix Nico 2026-07-17)."""
+        return "laz_" + self.suffix().strip("_")
 
     def dalle_filename(self, x_km, y_km):
         return f"{self.prefix}_{self.suffix()}{int(x_km)}_{int(y_km)}.tif"

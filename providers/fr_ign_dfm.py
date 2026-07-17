@@ -38,7 +38,7 @@
 # ARCHITECTURE : la machinerie DFM (réglages, nommage injectif, variant_tag,
 #   hooks pre_download/post_fetch) vit dans common.DfmProvider, partagée avec
 #   ch-swisstopo-dfm. Ce module ne porte que les spécificités IGN : CRS 2154,
-#   préfixe fr_dfm05, découverte WFS, bornes nominales (convention Ymax),
+#   préfixe fr_laz05, découverte WFS, bornes nominales (convention Ymax),
 #   download LAS/LAZ brut (pas zippé).
 #
 # Self-contained : stdlib uniquement (laspy/lazrs/rasterio requis au runtime).
@@ -86,15 +86,16 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
 
 # ── Machinerie DFM (mutualisée) ──────────────────────────────────────────────
-# CONVENTION préfixe « fr_dfm05 » = MÉTHODE de conversion actuelle. Si l'algo de
-# las_to_dfm change de façon incompatible, BUMPER (fr_dfm06…) pour que les dalles
-# de l'ancienne méthode ne soient pas réutilisées en silence.
+# CONVENTION préfixe « fr_laz05 » (laz = source nuage de points ; 05 = version de
+# MÉTHODE de conversion). Si l'algo de las_to_dfm change de façon incompatible,
+# BUMPER (fr_laz06…) pour que les dalles de l'ancienne méthode ne soient pas
+# réutilisées en silence.
 # UN SEUL ensemble de classes (choix Nico 2026-07-16) ; défaut 1,2,3,4,9,66 :
 #   {2,9,66} = socle terrain (= classes du MNT IGN), 1/3/4 = réinjectées (murs
 #   mesurés ~70% en classe 3/4 sur le site test ; ~30% en classe 5 → essayer
 #   --dfm-classes 1,2,3,4,5,9,66 si les murs sortent incomplets).
 _P = common.DfmProvider(
-    prefix="fr_dfm05", crs_epsg=2154, resolution=RESOLUTION_M,
+    prefix="fr_laz05", crs_epsg=2154, resolution=RESOLUTION_M,
     socle_possible=(2, 9, 66),
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
     csf_defaults=(0.5, 0.5, 1),

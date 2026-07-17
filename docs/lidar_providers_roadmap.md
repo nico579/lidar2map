@@ -127,7 +127,9 @@ By access paradigm:
   background, heights still referenced to ground; field-tested 2026-07-16 on the
   Var ruins: adds nothing over the full DFM, kept but not promoted). The zone
   name is auto-suffixed
-  (`_dfm…`) so DTM and DFM outputs never mix; tiles are gridded on the nominal
+  (`_laz_dfm` / `_laz_csf`, 2026-07-17: `laz` = point-cloud source, `dfm`/`csf` =
+  method; the DTM default stays unmarked) so DTM and point-cloud outputs never
+  mix; tile files are prefixed `<cc>_laz05_`; tiles are gridded on the nominal
   km bounds (no VRT seams); conversions are serialized (RAM) and written
   atomically. The LAZ stays in the tile cache: retuning re-converts in ~20 s
   without re-downloading (core `pre_download` hook).

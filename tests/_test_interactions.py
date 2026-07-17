@@ -520,16 +520,16 @@ try:
         # provider jetable zipped=True (le mur synthétique zippé).
         import zipfile as _zf
         _Pz = _common.DfmProvider(
-            prefix="zz_dfm", crs_epsg=2154, resolution=0.5,
+            prefix="zz_laz", crs_epsg=2154, resolution=0.5,
             socle_possible=(2, 9, 66),
             defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
             bounds_fn=None, discover_fn=None, zipped=True)
-        _tile = _dd / _Pz.dalle_filename(0, 0)          # zz_dfm_0_0.tif
+        _tile = _dd / _Pz.dalle_filename(0, 0)          # zz_laz_dfm_0_0.tif
         with _zf.ZipFile(_tile, "w", _zf.ZIP_DEFLATED) as z:
             z.write(_dd / "syn.las", arcname="cloud.las")
         _Pz.post_fetch(_tile)                            # PK détecté → dézip
-        check("ZIP path : nuage caché extrait (zz_dfm_0_0.laz)",
-              (_dd / "zz_dfm_0_0.laz").exists())
+        check("ZIP path : nuage caché extrait (zz_laz_0_0.laz)",
+              (_dd / "zz_laz_0_0.laz").exists())
         check("ZIP path : GeoTIFF DFM produit (plus un ZIP)",
               _tile.exists() and _tile.read_bytes()[:2] != b"PK")
         with _rio.open(_tile) as ds:
@@ -545,14 +545,22 @@ if _dfm is None:
     # le scan de la section 7 saute *_dfm ? Non : il liste tout module à CODE.
     import importlib as _il
     _dfm = _il.import_module("providers.fr_ign_dfm")
-check("défauts → nom SANS suffixe", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+# NOUVEAU nommage 2026-07-17 : préfixe fr_laz05 (laz = source nuage), token de
+# MÉTHODE toujours présent dans la dalle (dfm_ = classes, csf_ = tissu),
+# variant_tag = laz_dfm / laz_csf (le MNT défaut reste sans marqueur).
+check("défauts classes → token dfm_ (fr_laz05_dfm_)",
+      _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif",
+      detail=_dfm.dalle_filename(932, 6257))
+check("variant_tag classes défaut = laz_dfm", _dfm.variant_tag() == "laz_dfm")
 _dfm.set_dfm_params(hmin=0.3, hmax=3.0)
 _nom = _dfm.dalle_filename(932, 6257)
-check("réglages ≠ défauts → suffixe h03-30", _nom == "fr_dfm05_h03-30_932_6257.tif",
+check("réglages ≠ défauts → suffixe dfm_h03-30", _nom == "fr_laz05_dfm_h03-30_932_6257.tif",
       detail=_nom)
 check("subdir_from_name reconnaît le nom suffixé", _dfm.subdir_from_name(_nom) == "932")
-check("le LAZ persistant reste SANS suffixe (partagé entre essais)",
-      _dfm._laz_filename(932, 6257) == "fr_dfm05_932_6257.laz")
+check("variant_tag classes réglé = laz_dfm_h03-30",
+      _dfm.variant_tag() == "laz_dfm_h03-30")
+check("le nuage caché reste SANS token de méthode (partagé dfm/csf)",
+      _dfm._laz_filename(932, 6257) == "fr_laz05_932_6257.laz")
 _err = False
 try:
     _dfm.set_dfm_params(hmin=3.0, hmax=1.0)
@@ -569,7 +577,7 @@ _dfm.set_dfm_params(classes=(1, 3, 4))     # sans classe 2 : coupe, ne lève pas
 check("socle sans classe 2 → mode coupe (réinjectées seules)",
       _dfm._socle() == () and _dfm._reinjectees() == (1, 3, 4))
 _dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
-check("reset défauts → nom nu", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+check("reset défauts → nom dfm_ nu", _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif")
 check("socle/réinjectées dérivés du même ensemble",
       _dfm._socle() == (2, 9, 66) and _dfm._reinjectees() == (1, 3, 4))
 # Socle CSF : suffixe 'csf_' + réglages du tissu ≠ défauts (ordre fixe t/r/g) ;
@@ -577,27 +585,27 @@ check("socle/réinjectées dérivés du même ensemble",
 # distincts pour des sorties identiques.
 _dfm.set_dfm_params(ground="csf")
 _nom = _dfm.dalle_filename(932, 6257)
-check("ground=csf défauts → suffixe csf_ seul", _nom == "fr_dfm05_csf_932_6257.tif",
+check("ground=csf défauts → suffixe csf_ seul", _nom == "fr_laz05_csf_932_6257.tif",
       detail=_nom)
 check("subdir_from_name reconnaît le nom csf", _dfm.subdir_from_name(_nom) == "932")
-check("variant_tag csf → projet _dfm_csf", _dfm.variant_tag() == "dfm_csf")
+check("variant_tag csf → projet laz_csf", _dfm.variant_tag() == "laz_csf")
 _dfm.set_dfm_params(hmin=0.3)          # ignoré par le tissu : nom inchangé
 check("csf : hmin/classes non encodés (ignorés par le tissu)",
-      _dfm.dalle_filename(932, 6257) == "fr_dfm05_csf_932_6257.tif")
-check("csf : le LAZ persistant reste partagé (sans suffixe)",
-      _dfm._laz_filename(932, 6257) == "fr_dfm05_932_6257.laz")
+      _dfm.dalle_filename(932, 6257) == "fr_laz05_csf_932_6257.tif")
+check("csf : le nuage caché reste partagé (sans token)",
+      _dfm._laz_filename(932, 6257) == "fr_laz05_932_6257.laz")
 # Réglages du tissu (surface CloudCompare) encodés injectifs + reconnus.
 _dfm.set_dfm_params(csf_threshold=0.8, csf_rigidness=2)
 _nom = _dfm.dalle_filename(932, 6257)
 check("csf t=0.8 g=2 → suffixe csf_t08_g2_",
-      _nom == "fr_dfm05_csf_t08_g2_932_6257.tif", detail=_nom)
+      _nom == "fr_laz05_csf_t08_g2_932_6257.tif", detail=_nom)
 check("subdir_from_name reconnaît le nom csf paramétré",
       _dfm.subdir_from_name(_nom) == "932")
-check("variant_tag csf paramétré → projet _dfm_csf_t08_g2",
-      _dfm.variant_tag() == "dfm_csf_t08_g2")
+check("variant_tag csf paramétré → projet laz_csf_t08_g2",
+      _dfm.variant_tag() == "laz_csf_t08_g2")
 _dfm.set_dfm_params(csf_threshold=0.5, csf_rigidness=1, csf_resolution=1.0)
 check("csf r=1.0 seul → suffixe csf_r10_",
-      _dfm.dalle_filename(932, 6257) == "fr_dfm05_csf_r10_932_6257.tif",
+      _dfm.dalle_filename(932, 6257) == "fr_laz05_csf_r10_932_6257.tif",
       detail=_dfm.dalle_filename(932, 6257))
 for _bad in (dict(ground="tissu"), dict(csf_rigidness=4),
              dict(csf_threshold=9.0)):
@@ -610,8 +618,8 @@ for _bad in (dict(ground="tissu"), dict(csf_rigidness=4),
 _dfm.set_dfm_params(ground="classes", hmin=0.4, hmax=2.5,
                     classes=(1, 2, 3, 4, 9, 66), csf_threshold=0.5,
                     csf_resolution=0.5, csf_rigidness=1)   # défauts complets
-check("reset ground=classes → nom nu",
-      _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
+check("reset ground=classes → nom dfm_ nu",
+      _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif")
 
 print("== 9b-bis. ch-swisstopo-dfm : jumeau STAC, socle csf par défaut ==")
 _chdfm = provs.get("ch-swisstopo-dfm")
@@ -620,12 +628,12 @@ if _chdfm is None:
     _chdfm = _il.import_module("providers.ch_swisstopo_dfm")
 check("ch défaut ground=csf (schéma de classes suisse non garanti)",
       _chdfm.DFM_GROUND == "csf")
-check("ch défauts → nom ch_dfm05_csf_",
-      _chdfm.dalle_filename(2600, 1198) == "ch_dfm05_csf_2600_1198.tif",
+check("ch défauts → nom ch_laz05_csf_",
+      _chdfm.dalle_filename(2600, 1198) == "ch_laz05_csf_2600_1198.tif",
       detail=_chdfm.dalle_filename(2600, 1198))
 check("ch bornes = COIN SW (≠ convention Ymax de l'IGN)",
       _chdfm._bounds_nominaux(2600, 1198) == (2600000, 1198000, 2601000, 1199000))
-check("ch variant_tag défaut = dfm_csf", _chdfm.variant_tag() == "dfm_csf")
+check("ch variant_tag défaut = laz_csf", _chdfm.variant_tag() == "laz_csf")
 check("ch subdir_from_name reconnaît le nom ch",
       _chdfm.subdir_from_name(_chdfm.dalle_filename(2600, 1198)) == "2600")
 _chdfm.set_dfm_params(ground="classes")

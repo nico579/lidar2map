@@ -34,7 +34,8 @@ const I18N = {
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
-    "f.dfm":"Mode DFM — structures debout (expérimental, LAZ ~205 Mo/km²)",
+    "f.dfm":"Mode LAZ — structures debout (nuage classé, expérimental)",
+    "f.src.mnt":"Source : MNT (raster)", "f.src.laz":"Source : nuage LAZ",
     "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
     "f.dfmg":"socle", "f.dfmg.classes":"classes IGN", "f.dfmg.csf":"tissu CSF (~3 min/dalle)",
     "f.dfmt":"seuil (m)", "f.dfmr":"maille (m)", "f.dfmrg":"terrain",
@@ -139,7 +140,8 @@ const I18N = {
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
-    "f.dfm":"DFM mode — standing structures (experimental, LAZ ~205 MB/km²)",
+    "f.dfm":"LAZ mode — standing structures (classified cloud, experimental)",
+    "f.src.mnt":"Source: DTM (raster)", "f.src.laz":"Source: LAZ point cloud",
     "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
     "f.dfmg":"ground base", "f.dfmg.classes":"IGN classes", "f.dfmg.csf":"CSF cloth (~3 min/tile)",
     "f.dfmt":"threshold (m)", "f.dfmr":"cloth cell (m)", "f.dfmrg":"terrain",
@@ -240,6 +242,9 @@ function applyI18n(){
     const v = t(el.dataset.i18nHtml); if (v) el.innerHTML = v; });  // contenu statique de confiance
   document.querySelectorAll('[data-lang-btn]').forEach(b =>
     b.classList.toggle('active', b.dataset.langBtn === _lang));
+  // Le badge de source DFM est posé dynamiquement (pas de data-i18n) → le
+  // rafraîchir dans la nouvelle langue.
+  if (typeof updateDfmUI === 'function') updateDfmUI();
 }
 function setLang(code, persist){
   _lang = (code === 'en') ? 'en' : 'fr';
@@ -629,12 +634,8 @@ function buildProviders(providers, activeCode) {
     applyProviderCountry('fr');
     return;
   }
-  sel.innerHTML = providers.map(p => {
-    // Résolution déjà dans le nom officiel (ex. "DEM 5m", "50 cm") ? Ne pas la dupliquer.
-    const hasRes = /\d[\d.,]*\s?(m|cm)\b/i.test(p.name);
-    const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
-    return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${label}</option>`;
-  }).join('');
+  _allProviders = providers.slice();     // liste complète (restaurée si on décoche LAZ)
+  sel.innerHTML = providers.map(_providerOption).join('');
   // Capacité "mode DFM" par provider (jumeau *_dfm côté Python). Les DÉFAUTS
   // des réglages viennent du module Python (source de vérité unique).
   _dfmByCode = {};
@@ -648,15 +649,50 @@ function buildProviders(providers, activeCode) {
   applyProviderApiKey(opt);
   applyProviderDfm(sel.value);
   sel.addEventListener('change', () => {
-    const o = sel.options[sel.selectedIndex];
-    const c = (o && o.dataset.country) || 'fr';
-    sel.dataset.country = c;
-    if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);   // MAJ défaut σ LRM/RRIM
-    applyProviderCountry(c);
-    applyProviderApiKey(o);
-    applyProviderDfm(sel.value);
+    _applyProviderSelection();
     ombShowParams();   // rafraîchit le champ σ ouvert avec le nouveau défaut
   });
+}
+
+// Un <option> à partir d'un descriptor provider (factorisé : buildProviders +
+// onLazToggle produisent la même chose). Résolution apposée seulement si absente
+// du nom officiel (ex. "DEM 5m" ne la duplique pas).
+function _providerOption(p) {
+  const hasRes = /\d[\d.,]*\s?(m|cm)\b/i.test(p.name);
+  const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
+  return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${label}</option>`;
+}
+
+// Effets de bord d'un changement de provider (pays, résolution σ, clé API,
+// capacité DFM). Partagé par le listener 'change' et onLazToggle.
+function _applyProviderSelection() {
+  const sel = document.getElementById('f-provider');
+  const o = sel.options[sel.selectedIndex];
+  const c = (o && o.dataset.country) || 'fr';
+  sel.dataset.country = c;
+  if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);
+  applyProviderCountry(c);
+  applyProviderApiKey(o);
+  applyProviderDfm(sel.value);
+}
+
+// Cocher "Mode LAZ" RÉDUIT le dropdown aux providers DFM-capables (ceux qui ont
+// un jumeau *_dfm) : on ne voit que les sources dont on peut tirer les
+// structures debout depuis le nuage de points. Décocher restaure la liste
+// complète, en gardant le provider courant s'il y figure.
+let _allProviders = [];
+function onLazToggle() {
+  const sel = document.getElementById('f-provider');
+  const cb  = document.getElementById('f-dfm');
+  if (!sel || !cb) return;
+  const keep = sel.value;
+  const list = cb.checked ? _allProviders.filter(p => p.dfm) : _allProviders;
+  sel.innerHTML = list.map(_providerOption).join('');
+  sel.value = list.some(p => p.code === keep) ? keep
+            : ((list[0] && list[0].code) || keep);
+  _applyProviderSelection();
+  ombShowParams();
+  updateDfmUI();
 }
 
 // Capacité DFM du provider actif : affiche la ligne "mode DFM" et préremplit
@@ -703,6 +739,14 @@ function updateDfmUI() {
   const px = document.getElementById('dfm-params-csf');
   if (pc) pc.style.display = csf ? 'none' : 'inline-flex';
   if (px) px.style.display = csf ? 'inline-flex' : 'none';
+  // Badge de source : cocher bascule MNT (raster) → LAZ (nuage de points).
+  const src = document.getElementById('dfm-source');
+  if (src) {
+    const laz = cb && cb.checked;
+    src.textContent = laz ? t('f.src.laz') : t('f.src.mnt');
+    src.style.background = laz ? '#dcfce7' : '#e2e8f0';
+    src.style.color = laz ? '#166534' : '#475569';
+  }
 }
 
 function applyProviderApiKey(opt) {

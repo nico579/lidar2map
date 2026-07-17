@@ -9,7 +9,7 @@
 # JUMEAU de fr-ign-dfm : toute la machinerie DFM (réglages hmin/hmax/classes +
 #   tissu CSF, nommage injectif, variant_tag, hooks pre_download/post_fetch) est
 #   dans common.DfmProvider. Ce module ne porte que les spécificités suisses :
-#     - CRS EPSG:2056 (LV95), préfixe ch_dfm05 ;
+#     - CRS EPSG:2056 (LV95), préfixe ch_laz05 ;
 #     - découverte STAC swisstopo (collection swisssurface3d) via le helper
 #       mutualisé common.swisstopo_stac_dalles (partagé avec ch-swisstopo) ;
 #     - bornes nominales par COIN SW (convention swisstopo, ≠ Ymax de l'IGN) ;
@@ -80,10 +80,10 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
 
 # ── Machinerie DFM (mutualisée) ──────────────────────────────────────────────
-# Préfixe « ch_dfm05 » = MÉTHODE de conversion actuelle (bumper si l'algo change).
-# Socle possible ASPRS (2=sol, 9=eau) ; défaut ground=csf (voir en-tête).
+# Préfixe « ch_laz05 » (laz = nuage de points ; 05 = version de méthode ; bumper
+# si l'algo change). Socle possible ASPRS (2=sol, 9=eau) ; défaut ground=csf.
 _P = common.DfmProvider(
-    prefix="ch_dfm05", crs_epsg=2056, resolution=RESOLUTION_M,
+    prefix="ch_laz05", crs_epsg=2056, resolution=RESOLUTION_M,
     socle_possible=(2, 9),
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9), "csf"),
     csf_defaults=(0.5, 0.5, 1),
