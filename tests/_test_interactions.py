@@ -410,13 +410,17 @@ try:
 
     def _laz_synthetique(path):
         # sol plat z=100 sur 40×40 m (pas 0,5 m), TROU sous le mur ;
-        # mur : bande x∈[18,20[, y∈[10,30[, points classe 4 à z=101,5.
+        # mur : bande x∈[18,20[, y∈[10,30[, points classe 4 à z=101,5 ;
+        # butte à RAMPE (pour le socle CSF) : pyramide 6×6 m centrée (31,31),
+        # crête 1,5 m, pente 0,5 m/m, classe 1, SANS sol dessous (cas ruine).
         xs, ys, zs, cl = [], [], [], []
         for i in range(80):
             for j in range(80):
                 x, y = i * 0.5, j * 0.5
                 if 18 <= x < 20 and 10 <= y < 30:
                     continue                      # pas de sol sous le mur
+                if 28 <= x <= 34 and 28 <= y <= 34:
+                    continue                      # pas de sol sous la butte
                 xs.append(x); ys.append(y); zs.append(100.0); cl.append(2)
         for i in range(18 * 2, 20 * 2):
             for j in range(10 * 2, 30 * 2):
@@ -424,6 +428,12 @@ try:
                 zs.append(101.5)
                 cl.append(1 if (i + j) % 2 else 4)   # mur : mélange « non classé »
                                                      # + « végétation » (cas réels)
+        for i in range(28 * 2, 34 * 2 + 1):
+            for j in range(28 * 2, 34 * 2 + 1):
+                x, y = i * 0.5, j * 0.5
+                xs.append(x); ys.append(y)
+                zs.append(100.0 + max(0.0, 1.5 - 0.5 * max(abs(x - 31), abs(y - 31))))
+                cl.append(1)
         h = _laspy.LasHeader(point_format=0, version="1.2")
         h.offsets = [0, 0, 0]; h.scales = [0.01, 0.01, 0.01]
         las = _laspy.LasData(h)
@@ -471,6 +481,28 @@ try:
             check("valeurs finies ou nodata (jamais 0 résiduel ni inf)",
                   bool(_np.isfinite(a).all())
                   and not bool((a == 0).any()))
+        # Socle CSF (--dfm-ground csf) : le tissu mou doit ABSORBER la butte
+        # à RAMPE continue — le bloc vertical isolé (le mur) est le cas
+        # défavorable pour un tissu, on ne l'asserte pas (sur les sites réels
+        # il passe : les vraies ruines ont des éboulis en pente).
+        try:
+            import CSF as _CSF  # noqa: F401
+            _common.las_to_dfm(_dd / "syn.las", _dd / "csf.tif",
+                               crs_epsg=2154, resolution=0.5,
+                               ground_method="csf", bounds=(0, 0, 40, 40))
+            z_bu = _z_a(_dd / "csf.tif", 31.0, 31.0)   # crête de la butte
+            z_fd = _z_a(_dd / "csf.tif", 5.0, 5.0)     # sol nu
+            check("CSF : butte à rampe absorbée dans le socle (z > 100,7)",
+                  z_bu > 100.7, detail=f"z_butte={z_bu:.2f}")
+            check("CSF : sol nu inchangé (z ≈ 100)", abs(z_fd - 100.0) < 0.2,
+                  detail=f"z_fond={z_fd:.2f}")
+            with _rio.open(_dd / "csf.tif") as ds:
+                a = ds.read(1)
+                check("CSF : grille 80×80, finie, pas de 0 résiduel",
+                      ds.width == 80 and bool(_np.isfinite(a).all())
+                      and not bool((a == 0).any()))
+        except ImportError:
+            print("  [SKIP] cloth-simulation-filter absent (chemin csf non testé)")
 except ImportError as _e_dfm:
     print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
 
@@ -507,24 +539,50 @@ _dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
 check("reset défauts → nom nu", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
 check("socle/réinjectées dérivés du même ensemble",
       _dfm._socle() == (2, 9, 66) and _dfm._reinjectees() == (1, 3, 4))
+# Socle CSF : suffixe 'csf_' SEUL — hmin/hmax/classes sont ignorés par le
+# tissu, les encoder créerait des caches distincts pour des sorties identiques.
+_dfm.set_dfm_params(ground="csf")
+_nom = _dfm.dalle_filename(932, 6257)
+check("ground=csf → suffixe csf_ seul", _nom == "fr_dfm05_csf_932_6257.tif",
+      detail=_nom)
+check("subdir_from_name reconnaît le nom csf", _dfm.subdir_from_name(_nom) == "932")
+check("variant_tag csf → projet _dfm_csf", _dfm.variant_tag() == "dfm_csf")
+_dfm.set_dfm_params(hmin=0.3)          # ignoré par le tissu : nom inchangé
+check("csf : hmin/classes non encodés (ignorés par le tissu)",
+      _dfm.dalle_filename(932, 6257) == "fr_dfm05_csf_932_6257.tif")
+check("csf : le LAZ persistant reste partagé (sans suffixe)",
+      _dfm._laz_filename(932, 6257) == "fr_dfm05_932_6257.laz")
+_err = False
+try:
+    _dfm.set_dfm_params(ground="tissu")
+except ValueError:
+    _err = True
+check("ground invalide → ValueError", _err)
+_dfm.set_dfm_params(ground="classes", hmin=0.4, hmax=2.5,
+                    classes=(1, 2, 3, 4, 9, 66))   # défauts complets
+check("reset ground=classes → nom nu",
+      _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
 # traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
 # porte les défauts du module (source de vérité unique).
-check("HTML : case f-dfm + 3 réglages",
+check("HTML : case f-dfm + 4 réglages",
       all(k in _html for k in ('id="f-dfm"', 'id="f-dfm-hmin"',
-                               'id="f-dfm-hmax"', 'id="f-dfm-classes"')))
-check("app.js : applyProviderDfm + payload dfm_hmin",
-      "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs)
+                               'id="f-dfm-hmax"', 'id="f-dfm-classes"',
+                               'id="f-dfm-ground"')))
+check("app.js : applyProviderDfm + payloads dfm_hmin/dfm_ground",
+      "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs
+      and "dfm_ground" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
-check("_build_cmd traduit --dfm/--dfm-hmin",
-      '"--dfm"' in _src and '"--dfm-hmin"' in _src)
+check("_build_cmd traduit --dfm/--dfm-hmin/--dfm-ground",
+      '"--dfm"' in _src and '"--dfm-hmin"' in _src and '"--dfm-ground"' in _src)
 _provs_gui = l2m._discover_providers()
 _fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
 check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
       _fr is not None and _fr.get("dfm", {}).get("hmin") == _dfm.DFM_HMIN
-      and _fr.get("dfm", {}).get("hmax") == _dfm.DFM_HMAX)
+      and _fr.get("dfm", {}).get("hmax") == _dfm.DFM_HMAX
+      and _fr.get("dfm", {}).get("ground") == "classes")
 check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
       all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
 

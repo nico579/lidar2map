@@ -226,12 +226,13 @@ try:
 except Exception as _e:
     print(f"  [WARN] copie osmium.libs/ echouee : {_e}")
 
-# laspy + lazrs (lecture LAS/LAZ — lazy dans le script)
+# laspy + lazrs + CSF (lecture LAS/LAZ + socle DFM — lazy dans le script)
 # lazrs = backend de décompression LAZ (extension Rust) requis par laspy pour
 # lire les .laz des providers LiDAR (cz, se, es…). Sans lui, le bundle lève
-# "No LazBackend selected, cannot decompress data". collect_all embarque le
-# binaire compilé.
-for _laz_pkg in ("laspy", "lazrs"):
+# "No LazBackend selected, cannot decompress data". CSF (package pip
+# cloth-simulation-filter, extension C++/SWIG) = socle --dfm-ground csf du
+# mode DFM. collect_all embarque les binaires compilés.
+for _laz_pkg in ("laspy", "lazrs", "CSF"):
     try:
         d, b, h = collect_all(_laz_pkg)
         datas += d; binaries += b; hiddenimports += h

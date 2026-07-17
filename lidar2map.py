@@ -132,6 +132,11 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   autres sont réinjectées dans les trous du sol
                                   (tranche hmin-hmax). Essayer 1,2,3,4,5,9,66
                                   si les murs sortent incomplets.
+    --dfm-ground classes|csf    Socle terrain du DFM (déf. classes) :
+                                  csf = Cloth Simulation Filter (Zhang 2016),
+                                  ignore les classes du producteur, fond plus
+                                  propre, ~3 min/dalle (hmin/hmax/classes
+                                  alors ignorés — le tissu fait le tri).
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
                                   lrm vat svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
@@ -1571,7 +1576,9 @@ if _INSTALL_ALL_DEPS:
            if __import__("platform").system() in ("Darwin", "Linux")]),
         # Optionnelles / lazy (non installées par le bootstrap standard)
         # lazrs = backend décompression LAZ pour laspy (providers LiDAR cz/se/es)
+        # cloth-simulation-filter = socle CSF du mode DFM (--dfm-ground csf)
         "osmium", "numba", "laspy", "lazrs", "py7zr", "mapbox-vector-tile",
+        "cloth-simulation-filter",
     ]
     import subprocess as _sp_id
     # Table de correspondance explicite pkg pip → nom de module importable.
@@ -1596,6 +1603,7 @@ if _INSTALL_ALL_DEPS:
         "lazrs":              "lazrs",
         "py7zr":              "py7zr",
         "mapbox-vector-tile": "mapbox_vector_tile",
+        "cloth-simulation-filter": "CSF",
     }
     for _pkg in _toutes_deps:
         _mod = _pkg_to_mod.get(_pkg, _pkg.replace("-", "_").lower())
@@ -2378,6 +2386,7 @@ def _discover_providers():
                         "hmax":    float(getattr(twin, "DFM_HMAX", 2.5)),
                         "classes": ",".join(str(c) for c in
                                             getattr(twin, "DFM_CLASSES", (1, 3, 4))),
+                        "ground":  str(getattr(twin, "DFM_GROUND", "classes")),
                     }
                 except Exception:
                     pass
@@ -2401,6 +2410,8 @@ def _load_provider():
     #                    providers/<code>_dfm.py — convention de nommage)
     #   --dfm-hmin/--dfm-hmax  tranche de hauteur réintroduite (m)
     #   --dfm-classes    classes LAS réintroduites (ex. 1,3,4)
+    #   --dfm-ground     socle terrain : "classes" (défaut) ou "csf" (Cloth
+    #                    Simulation Filter — hmin/hmax/classes alors ignorés)
     # Réglages appliqués au module via set_dfm_params() après import.
     _dfm = False
     _dfm_params = {}
@@ -2422,7 +2433,7 @@ def _load_provider():
             del _argv[_i]
             continue
         _m = None
-        for _k in ("hmin", "hmax", "classes"):
+        for _k in ("hmin", "hmax", "classes", "ground"):
             if _a == f"--dfm-{_k}":
                 if _i + 1 < len(_argv):
                     _dfm_params[_k] = _argv[_i + 1]
@@ -2456,7 +2467,8 @@ def _load_provider():
                 _setp(hmin=float(_dfm_params["hmin"]) if "hmin" in _dfm_params else None,
                       hmax=float(_dfm_params["hmax"]) if "hmax" in _dfm_params else None,
                       classes=tuple(int(c) for c in _dfm_params["classes"].split(","))
-                              if "classes" in _dfm_params else None)
+                              if "classes" in _dfm_params else None,
+                      ground=_dfm_params.get("ground"))
             except ValueError as _e_v:
                 print(f"  ERROR: invalid --dfm-* value: {_e_v}", file=sys.stderr)
                 sys.exit(1)
@@ -16003,6 +16015,8 @@ def lancer_gui():
                     cmd += ["--dfm-hmax", str(cfg["dfm_hmax"])]
                 if cfg.get("dfm_classes"):
                     cmd += ["--dfm-classes", str(cfg["dfm_classes"])]
+                if cfg.get("dfm_ground"):
+                    cmd += ["--dfm-ground", str(cfg["dfm_ground"])]
             # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
             # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
             if cfg.get("lidar_apikey"):

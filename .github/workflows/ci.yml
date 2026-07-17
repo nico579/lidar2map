@@ -262,7 +262,8 @@ jobs:
         # (l'import sous bootstrap=none vérifie ijson/fiona/certifi aussi).
         # laspy/lazrs : le test DFM (interactions section 9a, mur synthétique)
         # doit TOURNER en CI, pas être sauté en ImportError (revue 2026-07-16).
-        run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi laspy lazrs
+        # cloth-simulation-filter : idem pour le chemin --dfm-ground csf (9a).
+        run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi laspy lazrs cloth-simulation-filter
 
       - name: Tests calculs scientifiques
         run: python tests/_test_corrections.py

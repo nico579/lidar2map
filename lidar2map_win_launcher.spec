@@ -48,6 +48,7 @@ excludes = [
     "webview", "clr_loader", "pythonnet", "clr",
     "osmium",
     "laspy",                            # ajout
+    "CSF",                              # socle DFM csf (lazy dans common)
     "py7zr",                            # ajout
     "mapbox_vector_tile", "google.protobuf",
     "ijson",

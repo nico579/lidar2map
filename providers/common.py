@@ -74,6 +74,7 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
 def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                hmin=0.4, hmax=2.5, classes_low=(1, 3, 4),
                classes_ground=(2, 9, 66), ref_ground=(2,),
+               ground_method="classes",
                nodata=-9999.0, bounds=None):
     """LAS/LAZ classé → GeoTIFF façon **DFM** (Digital Feature Model) :
     le terrain PLUS les structures encore debout que le bare-earth efface.
@@ -87,7 +88,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     reclassification (semi-)manuelle du nuage (cas canonique : ruine de château
     sous forêt). Première passe de prospection, pas la méthode publiée.
 
-    Méthode (heuristique, cf. tools/dfm_ruines.py) :
+    Méthode `ground_method="classes"` (heuristique, cf. tools/dfm_ruines.py) :
       1. binning min-z du sol (`classes_ground`, défaut 2/9/66 = les classes du
          MNT IGN officiel : sol + eau + points virtuels) — les murs y font des
          TROUS ;
@@ -99,21 +100,47 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
       4. comblement final IDW borné (rasterio fillnodata) ; les cellules HORS
          portée restent nodata (jamais 0 : un faux z=0 ferait une falaise
          artificielle dans le LRM).
+
+    Méthode `ground_method="csf"` (Cloth Simulation Filter, Zhang et al. 2016,
+    package pip cloth-simulation-filter) : IGNORE les classes du producteur.
+    Un tissu « mou » (rigidness 1) est drapé sur le nuage inversé ; ses points
+    « sol » ABSORBENT les structures basses continues (murs, ruines) tout en
+    rejetant la végétation — validé terrain 2026-07-16 sur les 2 sites du Var :
+    fond plus propre que la réinjection par classes (pas de mouchetis), signal
+    équivalent. Pas de réinjection ensuite (le tissu fait le tri) : hmin/hmax/
+    classes_low/classes_ground sont IGNORÉS. Pré-filtre canopée AVANT le tissu
+    (grille 5 m de min-z, garde z ≤ min+3,5 m, indépendant des classes) :
+    ~57 % des points gardés, sans quoi la simulation paie la canopée entière.
+    Coût mesuré (dalle IGN 34 M pts) : ~3 min et 1,7 Go de RAM, contre ~25 s
+    pour "classes".
+
     `bounds=(x0,y0,x1,y1)` : bornes NOMINALES de la dalle (ex. le km IGN) →
     grille exactement alignée entre dalles voisines (sans ça, l'origine dérive
     de la position des points réels et le VRT mosaïque des dalles décalées
     d'une fraction de pixel — coutures). Points hors bornes clippés.
-    Le maquis dense revient AUSSI (mouchetis) : la discrimination finale est
-    visuelle (murs = lignes continues). RAM : pic ~2-3 Go pour une dalle IGN de
-    34 M pts — les conversions sont SÉRIALISÉES par _CONV_LOCK (le pool de
-    download a 8 workers). Écriture ATOMIQUE (.tmp → replace) : un crash en
-    cours de conversion ne laisse pas de GeoTIFF partiel pris pour valide.
+    Le maquis dense revient AUSSI (mouchetis en "classes", résidus ponctuels en
+    "csf") : la discrimination finale est visuelle (murs = lignes continues).
+    RAM : pic ~2-3 Go pour une dalle IGN de 34 M pts — les conversions sont
+    SÉRIALISÉES par _CONV_LOCK (le pool de download a 8 workers). Écriture
+    ATOMIQUE (.tmp → replace) : un crash en cours de conversion ne laisse pas
+    de GeoTIFF partiel pris pour valide.
     """
     import laspy
     import numpy as np
     import rasterio
     from rasterio.fill import fillnodata
     from rasterio.transform import from_bounds
+
+    if ground_method == "csf":
+        try:
+            import CSF
+        except ImportError:
+            raise RuntimeError(
+                "ground_method='csf' requires the 'cloth-simulation-filter' "
+                "package (pip install cloth-simulation-filter)")
+    elif ground_method != "classes":
+        raise ValueError(f"ground_method inconnu: {ground_method!r} "
+                         "(attendu 'classes' ou 'csf')")
 
     with _CONV_LOCK:
         las = laspy.read(str(src_las))
@@ -160,30 +187,65 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                                smoothing_iterations=0)
             return G
 
-        # RÉFÉRENCE de hauteur (toujours la classe sol, indépendante du socle
-        # de SORTIE) : une « coupe à 1,5 m du sol » en terrain penté exige de
-        # connaître le sol même s'il n'apparaît pas dans le raster produit.
-        if tuple(ref_ground) == tuple(classes_ground):
-            sol_ref_raw = _binmin(np.isin(cls, ref_ground))
-            sol_raw = sol_ref_raw
+        if ground_method == "csf":
+            # Pré-filtre canopée : grille 5 m de min-z, garde z ≤ min+3,5 m
+            # (marge au-dessus de la tranche murs ~2,5 m). Indépendant des
+            # classes : c'est le point du CSF (ne pas dépendre du producteur).
+            res5 = 5.0
+            n5x = max(1, int((x1 - x0) / res5) + 1)
+            n5y = max(1, int((y1 - y0) / res5) + 1)
+            c5 = np.clip(((xs - x0) / res5).astype(np.int64), 0, n5x - 1)
+            r5 = np.clip(((y1 - ys) / res5).astype(np.int64), 0, n5y - 1)
+            f5 = r5 * n5x + c5
+            g5 = np.full(n5y * n5x, np.inf)
+            np.minimum.at(g5, f5, zs)
+            keep = zs <= (g5[f5] + 3.5)
+            del c5, r5, f5, g5
+            # Tissu MOU : rigidness 1 + seuil 0,5 m → les structures basses
+            # continues sont absorbées dans le « sol », la canopée résiduelle
+            # est rejetée. Paramètres figés (calibrés Var 2026-07-16).
+            csf = CSF.CSF()
+            csf.params.bSloopSmooth = True
+            csf.params.cloth_resolution = 0.5
+            csf.params.rigidness = 1
+            csf.params.class_threshold = 0.5
+            csf.params.time_step = 0.65
+            # np-array (N,3) accepté directement (testé cloth-simulation-filter
+            # 1.1.5) : pas de .tolist(), qui multiplierait la RAM par ~4.
+            csf.setPointCloud(np.column_stack([xs[keep], ys[keep], zs[keep]]))
+            g_idx, ng_idx = CSF.VecInt(), CSF.VecInt()
+            csf.do_filtering(g_idx, ng_idx)
+            sol_csf = np.zeros(xs.size, dtype=bool)
+            sol_csf[np.flatnonzero(keep)[np.asarray(g_idx, dtype=np.int64)]] = True
+            del csf, g_idx, ng_idx, keep
+            grid = _fill(_binmin(sol_csf))             # pas de réinjection
         else:
-            sol_ref_raw = _binmin(np.isin(cls, ref_ground))
-            sol_raw = (_binmin(np.isin(cls, classes_ground))
-                       if classes_ground else np.full(ny * nx, np.inf))
-        sol_ref = _fill(sol_ref_raw)
-        h = zs - np.where(np.isfinite(sol_ref), sol_ref, np.inf)[row, col]
-        low = np.isin(cls, classes_low) & (h >= hmin) & (h <= hmax)
-        low_min = _binmin(low)
+            # RÉFÉRENCE de hauteur (toujours la classe sol, indépendante du
+            # socle de SORTIE) : une « coupe à 1,5 m du sol » en terrain penté
+            # exige de connaître le sol même s'il n'apparaît pas dans le
+            # raster produit.
+            if tuple(ref_ground) == tuple(classes_ground):
+                sol_ref_raw = _binmin(np.isin(cls, ref_ground))
+                sol_raw = sol_ref_raw
+            else:
+                sol_ref_raw = _binmin(np.isin(cls, ref_ground))
+                sol_raw = (_binmin(np.isin(cls, classes_ground))
+                           if classes_ground else np.full(ny * nx, np.inf))
+            sol_ref = _fill(sol_ref_raw)
+            h = zs - np.where(np.isfinite(sol_ref), sol_ref, np.inf)[row, col]
+            low = np.isin(cls, classes_low) & (h >= hmin) & (h <= hmax)
+            low_min = _binmin(low)
 
-        dfm = sol_raw.copy()
-        holes = ~np.isfinite(dfm)
-        dfm[holes] = low_min[holes]                    # murs réintroduits
-        if classes_ground:
-            grid = _fill(dfm)                          # DFM : fond continu
-        else:
-            # COUPE (socle vide) : les objets de la tranche seuls, fond nodata
-            # (transparent en aval) — pas de comblement qui inventerait un fond.
-            grid = dfm.reshape(ny, nx).astype(np.float32)
+            dfm = sol_raw.copy()
+            holes = ~np.isfinite(dfm)
+            dfm[holes] = low_min[holes]                # murs réintroduits
+            if classes_ground:
+                grid = _fill(dfm)                      # DFM : fond continu
+            else:
+                # COUPE (socle vide) : les objets de la tranche seuls, fond
+                # nodata (transparent en aval) — pas de comblement qui
+                # inventerait un fond.
+                grid = dfm.reshape(ny, nx).astype(np.float32)
         grid = np.where(np.isfinite(grid), grid, nodata).astype(np.float32)
 
         transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)

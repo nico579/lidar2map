@@ -123,12 +123,28 @@ By access paradigm:
   tuning; the twin module `<code>_dfm.py` is hidden from the provider dropdown).
   Classes are ONE user-visible set (default `1,2,3,4,9,66`: 2/9/66 = terrain
   base as in the official DTM, the rest re-injected into ground gaps within the
-  height band); removing class 2 yields a **slice** (band objects on transparent
-  background, heights still referenced to ground). The zone name is auto-suffixed
+  height band); removing class 2 yields a slice (band objects on transparent
+  background, heights still referenced to ground; field-tested 2026-07-16 on the
+  Var ruins: adds nothing over the full DFM, kept but not promoted). The zone
+  name is auto-suffixed
   (`_dfm…`) so DTM and DFM outputs never mix; tiles are gridded on the nominal
   km bounds (no VRT seams); conversions are serialized (RAM) and written
   atomically. The LAZ stays in the tile cache: retuning re-converts in ~20 s
-  without re-downloading (core `pre_download` hook). Companion analysis tool:
+  without re-downloading (core `pre_download` hook).
+  **Alternative ground base `--dfm-ground csf`** (Cloth Simulation Filter,
+  Zhang et al. 2016, pip `cloth-simulation-filter`): a SOFT cloth (rigidness 1,
+  cloth_resolution 0.5, class_threshold 0.5, time_step 0.65, slope smoothing)
+  draped over the inverted cloud absorbs low continuous structures (walls) into
+  the ground while rejecting vegetation, ignoring producer classes entirely.
+  Field-validated 2026-07-16 on both Var sites: background cleaner than class
+  re-injection (no speckle), equivalent wall signal. No re-injection afterwards
+  (hmin/hmax/classes ignored; cache suffix `csf_` only, injective). Canopy
+  pre-filter before the cloth (5 m min-z grid, keep z ≤ min+3.5 m, ~57% kept);
+  `setPointCloud` takes the numpy array directly (no `.tolist()`, RAM ~1.7 GB);
+  measured ~3 min per 34M-pt tile vs ~25 s for "classes". A STRICT cloth
+  (rigidness 3) as bare-earth and the soft-minus-strict delta were prototyped
+  and REJECTED (strict ≈ IGN DTM, erases the walls too; the delta is noise).
+  Companion analysis tool:
   `tools/dfm_ruines.py`. Deferred (by choice, after field validation): built-in
   control products (DTM witness / delta / re-injected mask / confidence map —
   the standalone tool provides them), block-wise COPC reading, cross-process LAZ

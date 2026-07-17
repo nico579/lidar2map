@@ -42,6 +42,9 @@ excludes = [
     "webview", "clr_loader", "pythonnet", "clr",
     "PyQt6", "PyQt5", "PySide2", "PySide6", "qtpy",
     "osmium",
+    "laspy",                            # aligné launcher win (drift 2026-07-17)
+    "CSF",                              # socle DFM csf (lazy dans common)
+    "py7zr",                            # aligné launcher win (drift 2026-07-17)
     "mapbox_vector_tile", "google.protobuf",
     "ijson",
     "requests", "urllib3", "charset_normalizer", "certifi",
