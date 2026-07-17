@@ -154,8 +154,25 @@ By access paradigm:
   `tools/dfm_ruines.py`. Deferred (by choice, after field validation): built-in
   control products (DTM witness / delta / re-injected mask / confidence map —
   the standalone tool provides them), block-wise COPC reading, cross-process LAZ
-  lock, min-z vs high-percentile fill. Could extend to any provider whose source
-  is a classified cloud (cz-cuzk, lv-lgia) if field-validated.
+  lock, min-z vs high-percentile fill.
+  **2026-07-17: the whole DFM machinery was factored into `common.DfmProvider`**
+  (params, injective naming, variant_tag, pre_download/post_fetch hooks with a
+  `zipped` flag) so a 2nd DFM provider does not duplicate it, and the swisstopo
+  STAC query into `common.swisstopo_stac_dalles` (shared by the raster provider
+  and its DFM twin). **2nd DFM provider = `ch-swisstopo-dfm`** (swissSURFACE3D):
+  same twin architecture with STAC discovery instead of WFS, EPSG:2056, SW-corner
+  nominal bounds (NOT the IGN Ymax convention), download is a real ZIP
+  (`.las.zip`, PK magic → post_fetch unzips the inner LAS/LAZ), default
+  `ground=csf` (swisstopo class codes are not guaranteed IGN-compatible; the
+  cloth sidesteps them). Which countries CAN get DFM: only those publishing the
+  FULL dense point cloud openly via a programmable endpoint (most publish a
+  raster DTM = useless, or a ground-only cloud = walls already gone, e.g.
+  cz-cuzk DMR5G). lv-lgia is a full classified cloud but ~1.5 pt/m² ground
+  (marginal for 1.5 m walls). Endpoint probe 2026-07-17 for widening: **CH
+  swissSURFACE3D = clean** (STAC `.las.zip` ~125 MB/km², high density, done);
+  **NL AHN = deferred** (dense classified cloud exists but no clean tile
+  endpoint: PDOK serves raster only, GeoTiles is a JS SPA, official is now the
+  Ellipsis-Drive platform API — wireable only with real reverse-engineering).
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 

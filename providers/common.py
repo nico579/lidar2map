@@ -374,6 +374,107 @@ def _membre_sous(nom, cible_resolue):
     return dest == cible_resolue or cible_resolue in dest.parents
 
 
+def swisstopo_stac_dalles(collection, product_prefix, asset_ok,
+                          bbox_wgs84, bbox_natif, cache_path,
+                          stac_base="https://data.geo.admin.ch/api/stac/v1",
+                          ua="lidar2map/1.0 (swisstopo STAC)"):
+    """STAC swisstopo → {(e_km, n_km): (year, nom_asset, href)} dédupliqué au
+    DERNIER millésime par tuile. Partagé par ch-swisstopo (raster COG,
+    collection swissalti3d) et ch-swisstopo-dfm (nuage .las.zip, collection
+    swisssurface3d) : seuls la collection, le préfixe produit et le prédicat
+    d'asset changent (principe generaliser-puis-specialiser).
+
+    collection     : ex. "ch.swisstopo.swissalti3d" / "...swisssurface3d".
+    product_prefix : ex. "swissalti3d" / "swisssurface3d" — sert à extraire
+                     E_km-N_km de l'ID (filtre bbox natif + dédup millésime).
+    asset_ok(nom, asset) -> bool : sélectionne l'asset voulu (COG 0.5m 2056 /
+                     .las.zip). Chaque appelant construit ENSUITE sa propre
+                     table {clé: href} (le raster garde le nom d'asset comme
+                     clé ; le DFM dérive son nom fr_dfm05-style).
+    Retourne None sur échec réseau. Cache PAR bbox (la requête STAC dépend de la
+    bbox → son cache aussi ; un cache unique renverrait les items de la 1re bbox
+    pour toutes, bug #4 vu sur ca-nrcan)."""
+    import hashlib
+    lon_min, lat_min, lon_max, lat_max = bbox_wgs84
+    cache_path = Path(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    bbox_str = f"{lon_min},{lat_min},{lon_max},{lat_max}"
+    bbox_key = hashlib.md5(f"{collection}|{bbox_str}".encode()).hexdigest()[:12]
+    cache_bbox = cache_path.with_name(f"{cache_path.stem}_{bbox_key}.json")
+
+    items = []
+    if cache_bbox.exists():
+        try:
+            items = json.loads(cache_bbox.read_text(encoding="utf-8")).get("items", [])
+        except Exception:
+            items = []
+
+    if not items:
+        url = f"{stac_base}/collections/{collection}/items?bbox={bbox_str}&limit=100"
+        print(f"  swisstopo STAC: querying {collection} bbox {bbox_str[:60]}...",
+              flush=True)
+        while url:
+            req = urllib.request.Request(url, headers={"User-Agent": ua})
+            try:
+                with urllib.request.urlopen(req, timeout=30, context=_CTX) as r:
+                    data = json.load(r)
+            except Exception as e:
+                print(f"  ERROR STAC ({type(e).__name__}): {e}")
+                return None
+            items.extend(data.get("features", []))
+            url = None
+            for link in data.get("links", []):
+                if link.get("rel") == "next" and link.get("href"):
+                    url = link["href"]
+                    break
+        try:
+            cache_bbox.write_text(json.dumps({"bbox": bbox_str, "items": items}),
+                                  encoding="utf-8")
+        except Exception:
+            pass
+
+    # ID = "<prefix>_<year>_<E_km>-<N_km>" (le suffixe d'asset porte res/crs/elev)
+    id_re = re.compile(rf"{re.escape(product_prefix)}_(\d+)_(\d+)-(\d+)")
+
+    def _intersecte_natif(item_id):
+        if bbox_natif is None:
+            return True
+        m = id_re.search(item_id)
+        if not m:
+            return True
+        e_km, n_km = int(m.group(2)), int(m.group(3))
+        fx0, fy0 = e_km * 1000, n_km * 1000       # coin SW (convention CH)
+        fx1, fy1 = fx0 + 1000, fy0 + 1000
+        zx0, zy0, zx1, zy1 = bbox_natif
+        return not (fx1 < zx0 or fx0 > zx1 or fy1 < zy0 or fy0 > zy1)
+
+    candidats = {}   # (e_km, n_km) -> (year, nom, href), dernier millésime
+    n_assets = 0
+    for it in items:
+        iid = it.get("id", "")
+        if not _intersecte_natif(iid):
+            continue
+        for nom, ass in (it.get("assets") or {}).items():
+            if not asset_ok(nom, ass):
+                continue
+            href = ass.get("href")
+            if not href:
+                continue
+            m = id_re.search(nom) or id_re.search(iid)
+            if not m:
+                continue
+            n_assets += 1
+            year, e_km, n_km = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            key = (e_km, n_km)
+            prev = candidats.get(key)
+            if prev is None or year > prev[0]:
+                candidats[key] = (year, nom, href)
+
+    print(f"  swisstopo : {len(items)} items, {n_assets} asset(s) → "
+          f"{len(candidats)} tuile(s) (dernier millésime par tuile)")
+    return candidats
+
+
 def extraire_membre(zf, member, dest_dir):
     """Extrait le membre `member` d'un ZipFile OUVERT `zf` sous `dest_dir`, en
     refusant les chemins absolus et les traversées `..` (zip-slip).
@@ -387,3 +488,276 @@ def extraire_membre(zf, member, dest_dir):
         raise ValueError(f"Chemin de membre ZIP suspect (zip-slip) : {member!r}")
     zf.extract(member, dest_dir)
     return dest_dir / member
+
+
+# ── Machinerie commune du mode DFM (structures debout) ───────────────────────
+# Partagée par les jumeaux <code>-dfm (fr-ign-dfm, ch-swisstopo-dfm…). Un seul
+# endroit pour : réglages (hmin/hmax/classes/ground + tissu CSF t/r/g), encodage
+# INJECTIF des réglages ≠ défauts dans le nom de dalle (pas de collision de cache
+# entre essais), variant_tag (projet DFM distinct du projet MNT), et les hooks
+# pre_download/post_fetch (nuage gardé en cache → reconversion sans réseau).
+# Chaque jumeau instancie DfmProvider avec SES spécificités (préfixe, CRS,
+# découverte, convention de bornes, download zippé ou non, socle par défaut) et
+# expose des delegators module-level pour le contrat provider. Extrait de
+# fr_ign_dfm 2026-07-17 quand ch-swisstopo-dfm est arrivé (2e instance =
+# généralisation consciente, cf. principe generaliser-puis-specialiser).
+
+class DfmProvider:
+    """État + logique du mode DFM d'un provider nuage-de-points.
+
+    prefix       : préfixe de nom de dalle, encode la MÉTHODE (fr_dfm05…). Bumper
+                   si l'algo de las_to_dfm change de façon incompatible.
+    crs_epsg     : EPSG natif (2154, 2056…).
+    resolution   : résolution de sortie du GeoTIFF DFM (m).
+    socle_possible : classes LAS qui, si sélectionnées, forment le socle terrain
+                   (2/9/66 pour l'IGN). Le reste = réinjecté.
+    defaults     : (hmin, hmax, classes, ground) par défaut.
+    csf_defaults : (threshold, resolution, rigidness) du tissu par défaut.
+    bounds_fn    : (x_km, y_km) -> (x0,y0,x1,y1) bornes NOMINALES (anti-couture
+                   VRT). ATTENTION à la convention : IGN nomme par Y_MAX, la
+                   plupart des STAC par coin SW.
+    discover_fn  : découverte spécifique (WFS, STAC…) — signature provider.
+    zipped       : True si le download est un ZIP (PK) enveloppant le nuage
+                   (swisstopo .las.zip) → post_fetch dézippe ; False si LAS/LAZ
+                   brut (IGN COPC, magic LASF).
+    tile_mb      : taille indicative d'une dalle (message utilisateur).
+    """
+
+    def __init__(self, *, prefix, crs_epsg, resolution, socle_possible,
+                 defaults, csf_defaults=(0.5, 0.5, 1),
+                 bounds_fn=None, discover_fn=None, zipped=False,
+                 tile_mb=205, log_tag="DFM"):
+        self.prefix = prefix
+        self.crs_epsg = crs_epsg
+        self.resolution = resolution
+        self.socle_possible = tuple(socle_possible)
+        self.bounds_fn = bounds_fn
+        self._discover = discover_fn
+        self.zipped = zipped
+        self.tile_mb = tile_mb
+        self.log_tag = log_tag
+        # défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
+        (self.def_hmin, self.def_hmax,
+         self.def_classes, self.def_ground) = defaults
+        (self.def_csf_threshold, self.def_csf_resolution,
+         self.def_csf_rigidness) = csf_defaults
+        # état courant du run (muté par set_params)
+        self.hmin, self.hmax = self.def_hmin, self.def_hmax
+        self.classes, self.ground = self.def_classes, self.def_ground
+        self.csf_threshold = self.def_csf_threshold
+        self.csf_resolution = self.def_csf_resolution
+        self.csf_rigidness = self.def_csf_rigidness
+        self.nom_re = re.compile(
+            rf"{re.escape(prefix)}_(?:csf_(?:t\d+_)?(?:r\d+_)?(?:g\d_)?)?"
+            rf"(?:h[\d-]+_)?(?:c[\d-]+_)?(\d+)_(\d+)\.tif$")
+
+    # ── socle / réinjectées ──────────────────────────────────────────────────
+    def socle(self):
+        """Classes du SOCLE terrain (parmi la sélection courante)."""
+        return tuple(c for c in self.classes if c in self.socle_possible)
+
+    def reinjectees(self):
+        """Classes RÉINJECTÉES dans les trous du socle (tranche hmin-hmax)."""
+        return tuple(c for c in self.classes if c not in self.socle_possible)
+
+    # ── réglages du run ──────────────────────────────────────────────────────
+    def set_params(self, hmin=None, hmax=None, classes=None, ground=None,
+                   csf_threshold=None, csf_resolution=None, csf_rigidness=None):
+        """Réglages DFM du run (appelé par _load_provider depuis --dfm-*). Les
+        valeurs ≠ défauts sont ENCODÉES dans le nom des dalles (cf. suffix), et
+        le nuage gardé en cache permet de reconvertir sans retélécharger."""
+        if ground is not None:
+            if ground not in ("classes", "csf"):
+                raise ValueError(f"dfm-ground: {ground!r} (attendu 'classes' ou 'csf')")
+            self.ground = ground
+        # Arrondi décimètre (pas de la GUI) → encodage ·10 du nom INJECTIF
+        # (0,31 et 0,34 ne peuvent pas partager un cache).
+        if csf_threshold is not None:
+            self.csf_threshold = round(float(csf_threshold), 1)
+            if not 0.1 <= self.csf_threshold <= 3.0:
+                raise ValueError(f"dfm-csf-threshold ({self.csf_threshold}) hors 0,1-3,0 m")
+        if csf_resolution is not None:
+            self.csf_resolution = round(float(csf_resolution), 1)
+            if not 0.1 <= self.csf_resolution <= 3.0:
+                raise ValueError(f"dfm-csf-resolution ({self.csf_resolution}) hors 0,1-3,0 m")
+        if csf_rigidness is not None:
+            self.csf_rigidness = int(csf_rigidness)
+            if self.csf_rigidness not in (1, 2, 3):
+                raise ValueError(f"dfm-csf-rigidness ({self.csf_rigidness}) attendu 1, 2 ou 3")
+        if hmin is not None:
+            self.hmin = round(float(hmin), 1)
+        if hmax is not None:
+            self.hmax = round(float(hmax), 1)
+        if classes is not None:
+            self.classes = tuple(sorted(int(c) for c in classes))
+        if self.hmin >= self.hmax:
+            raise ValueError(f"dfm-hmin ({self.hmin}) doit être < dfm-hmax ({self.hmax})")
+        if self.ground == "csf":
+            # Le tissu ignore classes et tranche : prévenir plutôt qu'interdire
+            # (la GUI masque ces champs, le CLI peut encore les passer).
+            if hmin is not None or hmax is not None or classes is not None:
+                print("  DFM: ground=csf -> hmin/hmax/classes are IGNORED "
+                      "(the cloth does the selection)", flush=True)
+            if self.csf_rigidness == 3:
+                print("  DFM: csf rigidness 3 (flat terrain) -> near bare-earth "
+                      "cloth, standing walls may be erased (use 1 on slopes)",
+                      flush=True)
+            return
+        if (csf_threshold is not None or csf_resolution is not None
+                or csf_rigidness is not None):
+            print("  DFM: ground=classes -> csf-* settings are IGNORED "
+                  "(pass --dfm-ground csf)", flush=True)
+        # Compositions légitimes, signalées plutôt qu'interdites :
+        #   - sans classe 2 → COUPE (tranche seule, fond nodata ; la classe 2
+        #     reste la référence de hauteur en interne, cf. las_to_dfm) ;
+        #   - sans classe réinjectée → modèle ≈ MNT reconstruit.
+        if 2 not in self.classes:
+            print("  DFM: class 2 not selected -> slice mode (band objects only, "
+                  "transparent background; heights still measured above class-2 "
+                  "ground)", flush=True)
+        if not self.reinjectees():
+            print("  DFM: no re-injected class selected -> output ≈ rebuilt DTM",
+                  flush=True)
+
+    # ── nommage / cache ──────────────────────────────────────────────────────
+    def suffix(self):
+        """Encodage des réglages ≠ défauts. '' si défauts. ground=csf → 'csf_' +
+        ses réglages ≠ défauts en ordre FIXE t/r/g ; hmin/hmax/classes ignorés
+        par le tissu ne sont PAS encodés (des caches distincts pour des sorties
+        identiques), et réciproquement. Injectif : ·10 sans perte, classes
+        séparées par '-' (c1-34 ≠ c1-3-4), 'csf_' ≠ 'c<digits>_'."""
+        if self.ground == "csf":
+            s = "csf_"
+            if self.csf_threshold != self.def_csf_threshold:
+                s += f"t{round(self.csf_threshold * 10):02d}_"
+            if self.csf_resolution != self.def_csf_resolution:
+                s += f"r{round(self.csf_resolution * 10):02d}_"
+            if self.csf_rigidness != self.def_csf_rigidness:
+                s += f"g{self.csf_rigidness}_"
+            return s
+        s = ""
+        if (self.hmin, self.hmax) != (self.def_hmin, self.def_hmax):
+            s += f"h{round(self.hmin * 10):02d}-{round(self.hmax * 10):02d}_"
+        if self.classes != self.def_classes:
+            s += "c" + "-".join(str(c) for c in self.classes) + "_"
+        return s
+
+    def variant_tag(self):
+        """Tag injecté par le cœur dans le NOM DE ZONE → projet DFM DISTINCT du
+        projet MNT de la même zone (sans ça, un LRM MNT existant était réutilisé
+        en silence après avoir coché la case)."""
+        s = self.suffix().strip("_")
+        return "dfm" + (("_" + s) if s else "")
+
+    def dalle_filename(self, x_km, y_km):
+        return f"{self.prefix}_{self.suffix()}{int(x_km)}_{int(y_km)}.tif"
+
+    def laz_filename(self, x_km, y_km):
+        """Nom du nuage gardé en cache — SANS réglages (partagé entre essais).
+        Suffixe .laz par convention même si le contenu est un .las non compressé
+        (laspy lit selon l'en-tête, pas l'extension)."""
+        return f"{self.prefix}_{int(x_km)}_{int(y_km)}.laz"
+
+    def dalle_subdir(self, x_km):
+        return f"{int(x_km)}"
+
+    def subdir_from_name(self, nom):
+        m = self.nom_re.match(nom)
+        return m.group(1) if m else None
+
+    def defaults_dict(self):
+        """Défauts pour préremplir la GUI (source de vérité unique)."""
+        return {
+            "hmin": float(self.def_hmin), "hmax": float(self.def_hmax),
+            "classes": ",".join(str(c) for c in self.def_classes),
+            "ground": str(self.def_ground),
+            "csf_threshold": float(self.def_csf_threshold),
+            "csf_resolution": float(self.def_csf_resolution),
+            "csf_rigidness": int(self.def_csf_rigidness),
+        }
+
+    # ── découverte / conversion / hooks ──────────────────────────────────────
+    def discover_dalles(self, bbox_wgs84, bbox_natif, cache_path, workers=1):
+        return self._discover(bbox_wgs84, bbox_natif, cache_path, workers)
+
+    def _convert(self, cloud, tif, x_km=None, y_km=None):
+        bounds = (self.bounds_fn(x_km, y_km)
+                  if (self.bounds_fn and x_km is not None) else None)
+        las_to_dfm(cloud, tif, crs_epsg=self.crs_epsg, resolution=self.resolution,
+                   hmin=self.hmin, hmax=self.hmax,
+                   classes_low=self.reinjectees(), classes_ground=self.socle(),
+                   ground_method=self.ground,
+                   csf_threshold=self.csf_threshold,
+                   csf_resolution=self.csf_resolution,
+                   csf_rigidness=self.csf_rigidness, bounds=bounds)
+
+    def _extract_cloud(self, chemin, m):
+        """Dézip du .las.zip swisstopo → le membre nuage (le plus gros .las/.laz)
+        écrit DIRECTEMENT sous le nom de cache stable. On copie le flux du membre
+        au lieu de zf.extract : le nom de membre distant ne touche jamais le
+        système de fichiers (zip-slip impossible par construction) et deux tuiles
+        dont l'archive nommerait son membre à l'identique ne se marchent pas
+        dessus (pas de collision, pas de fichier résiduel au nom du membre)."""
+        import shutil
+        import zipfile
+        cloud = (chemin.parent / self.laz_filename(m.group(1), m.group(2)) if m
+                 else chemin.with_suffix(".laz"))
+        with zipfile.ZipFile(chemin) as z:
+            membres = [n for n in z.namelist()
+                       if n.lower().endswith((".las", ".laz"))]
+            if not membres:
+                raise ValueError(f"Aucun .las/.laz dans {chemin.name}")
+            membre = max(membres, key=lambda n: z.getinfo(n).file_size)
+            tmp = Path(str(cloud) + ".part")
+            with z.open(membre) as src, open(tmp, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        tmp.replace(cloud)                 # atomique
+        chemin.unlink(missing_ok=True)
+        return cloud
+
+    def pre_download(self, chemin):
+        """Hook cœur (avant réseau) : si le nuage de cette dalle est déjà en
+        cache (gardé par post_fetch), reconvertir au lieu de retélécharger.
+        C'est ce qui rend les réglages DFM ajustables sans coût réseau."""
+        chemin = Path(chemin)
+        m = self.nom_re.match(chemin.name)
+        if not m:
+            return False
+        cloud = chemin.parent / self.laz_filename(m.group(1), m.group(2))
+        if not cloud.exists() or cloud.stat().st_size < 1_000_000:
+            return False
+        print(f"  {self.log_tag} {chemin.name}: rebuilding from cached point "
+              f"cloud ({cloud.name}, no re-download"
+              f"{', CSF ~3 min' if self.ground == 'csf' else ''})...", flush=True)
+        self._convert(cloud, chemin, m.group(1), m.group(2))
+        return True
+
+    def post_fetch(self, chemin):
+        """Le download est le nuage (LAS/LAZ brut = magic LASF, ou ZIP = magic PK
+        si zipped), écrit sous un nom .tif par le cœur. On isole le nuage, on le
+        GARDE en cache (reconversion sans réseau, cf. pre_download), puis on
+        convertit via las_to_dfm. Conversion sérialisée (_CONV_LOCK, RAM)."""
+        chemin = Path(chemin)
+        try:
+            with open(chemin, "rb") as fh:
+                magic = fh.read(4)
+        except OSError:
+            return
+        m = self.nom_re.match(chemin.name)
+        if magic[:2] == b"PK":
+            if not self.zipped:
+                return  # ZIP inattendu pour ce provider
+            cloud = self._extract_cloud(chemin, m)
+        elif magic == b"LASF":
+            cloud = (chemin.parent / self.laz_filename(m.group(1), m.group(2))
+                     if m else chemin.with_suffix(".laz"))
+            chemin.replace(cloud)
+        else:
+            return  # déjà un GeoTIFF (ou erreur → validateur)
+        print(f"  {self.log_tag} {chemin.name}: converting point cloud "
+              f"({'CSF, ~3 min' if self.ground == 'csf' else '~20-30 s'})...",
+              flush=True)
+        if m:
+            self._convert(cloud, chemin, m.group(1), m.group(2))
+        else:
+            self._convert(cloud, chemin)

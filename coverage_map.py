@@ -251,11 +251,17 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
     def draw(ax, feats):
         for ft in feats:
             g = ft["geometry"]; col = ft["properties"]["fill"]
+            is_dfm = ft["properties"].get("dfm")
             polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
             for poly in polys:
                 ext = poly[0]
+                # Pays DFM-capable : hachures sombres par-dessus le remplissage
+                # (mode structures debout depuis le nuage de points classé).
                 ax.fill([p[0] for p in ext], [p[1] for p in ext],
-                        facecolor=col, edgecolor=col, alpha=0.55, linewidth=0.5)
+                        facecolor=col, alpha=0.55,
+                        edgecolor="#1e293b" if is_dfm else col,
+                        linewidth=0.8 if is_dfm else 0.5,
+                        hatch="////" if is_dfm else None)
 
     eu = [f for f in features if cen_lon(f["geometry"]) < 100]
     nz = [f for f in features if cen_lon(f["geometry"]) >= 100]
@@ -291,11 +297,13 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
     if lang == "en":
         _pays = f"{n_pays} countries" if n_pays else "multi-country"
         titre = (f"lidar2map — bare-earth LiDAR coverage\n"
-                 f"({len(features)} zones, {_pays} + USA · Canada · Japan project-based)")
+                 f"({len(features)} zones, {_pays} + USA · Canada · Japan project-based)"
+                 f"\nhatched = DFM standing-structures mode (point cloud)")
     else:
         _pays = f"{n_pays} pays" if n_pays else "multi-pays"
         titre = (f"lidar2map — couverture LiDAR sol-nu\n"
-                 f"({len(features)} zones, {_pays} + USA · Canada · Japon par projet)")
+                 f"({len(features)} zones, {_pays} + USA · Canada · Japon par projet)"
+                 f"\nhachuré = mode DFM structures debout (nuage de points)")
     ax.set_title(titre, fontsize=11, weight="bold")
     if nz:
         axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")
@@ -315,6 +323,11 @@ def main():
     # Compte + liste de pays des READMEs (indépendant de Nominatim/la carte).
     if not update_readme_countries(prov):
         return 1
+    # Pays DFM-capables = ceux qui ont un provider jumeau `*-dfm` (nuage de
+    # points classé → mode structures debout). Data-driven : un nouveau jumeau
+    # hachure automatiquement son pays sur la carte, rien à maintenir à la main.
+    dfm_countries = {prov[c]["country"] for c in prov
+                     if c.endswith("-dfm") and prov[c]["country"]}
     # Garde-fou : tout code de REGIONS doit exister comme provider (anti-drift).
     codes = {c for r in REGIONS for c in r[1]}
     missing = sorted(c for c in codes if c not in prov)
@@ -344,6 +357,8 @@ def main():
                 "description": "Provider(s) : " + ", ".join(region_codes),
                 "fill": color, "fill-opacity": 0.35,
                 "stroke": color, "stroke-width": 1.5,
+                "dfm": any(prov.get(c, {}).get("country") in dfm_countries
+                           for c in region_codes),
             },
             "geometry": g,
         })

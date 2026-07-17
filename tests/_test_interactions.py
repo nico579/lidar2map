@@ -513,6 +513,29 @@ try:
                       bool(_np.isfinite(ds.read(1)).all()))
         except ImportError:
             print("  [SKIP] cloth-simulation-filter absent (chemin csf non testé)")
+
+        # Chemin ZIP de DfmProvider (swisstopo .las.zip = PK) : le download est
+        # un ZIP enveloppant le nuage, écrit sous un nom .tif ; post_fetch doit
+        # dézipper (anti zip-slip) → nuage caché → GeoTIFF. Testé avec un
+        # provider jetable zipped=True (le mur synthétique zippé).
+        import zipfile as _zf
+        _Pz = _common.DfmProvider(
+            prefix="zz_dfm", crs_epsg=2154, resolution=0.5,
+            socle_possible=(2, 9, 66),
+            defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
+            bounds_fn=None, discover_fn=None, zipped=True)
+        _tile = _dd / _Pz.dalle_filename(0, 0)          # zz_dfm_0_0.tif
+        with _zf.ZipFile(_tile, "w", _zf.ZIP_DEFLATED) as z:
+            z.write(_dd / "syn.las", arcname="cloud.las")
+        _Pz.post_fetch(_tile)                            # PK détecté → dézip
+        check("ZIP path : nuage caché extrait (zz_dfm_0_0.laz)",
+              (_dd / "zz_dfm_0_0.laz").exists())
+        check("ZIP path : GeoTIFF DFM produit (plus un ZIP)",
+              _tile.exists() and _tile.read_bytes()[:2] != b"PK")
+        with _rio.open(_tile) as ds:
+            _rw, _cw = ds.index(19.0, 20.0)
+            check("ZIP path : mur reconstruit depuis le nuage dézippé (z≈101,5)",
+                  abs(float(ds.read(1)[_rw, _cw]) - 101.5) < 0.3)
 except ImportError as _e_dfm:
     print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
 
@@ -590,6 +613,26 @@ _dfm.set_dfm_params(ground="classes", hmin=0.4, hmax=2.5,
 check("reset ground=classes → nom nu",
       _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
 
+print("== 9b-bis. ch-swisstopo-dfm : jumeau STAC, socle csf par défaut ==")
+_chdfm = provs.get("ch-swisstopo-dfm")
+if _chdfm is None:
+    import importlib as _il
+    _chdfm = _il.import_module("providers.ch_swisstopo_dfm")
+check("ch défaut ground=csf (schéma de classes suisse non garanti)",
+      _chdfm.DFM_GROUND == "csf")
+check("ch défauts → nom ch_dfm05_csf_",
+      _chdfm.dalle_filename(2600, 1198) == "ch_dfm05_csf_2600_1198.tif",
+      detail=_chdfm.dalle_filename(2600, 1198))
+check("ch bornes = COIN SW (≠ convention Ymax de l'IGN)",
+      _chdfm._bounds_nominaux(2600, 1198) == (2600000, 1198000, 2601000, 1199000))
+check("ch variant_tag défaut = dfm_csf", _chdfm.variant_tag() == "dfm_csf")
+check("ch subdir_from_name reconnaît le nom ch",
+      _chdfm.subdir_from_name(_chdfm.dalle_filename(2600, 1198)) == "2600")
+_chdfm.set_dfm_params(ground="classes")
+check("ch mode classes : socle ASPRS (2,9), réinjectées (1,3,4)",
+      _chdfm._socle() == (2, 9) and _chdfm._reinjectees() == (1, 3, 4))
+_chdfm.set_dfm_params(ground="csf")   # reset au défaut CH
+
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
 # traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
@@ -617,6 +660,13 @@ check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
       and _fr.get("dfm", {}).get("csf_rigidness") == _dfm.DFM_CSF_RIGIDNESS)
 check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
       all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
+# 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
+# et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
+_ch = next((p for p in _provs_gui if p["code"] == "ch-swisstopo"), None)
+check("dropdown : ch-swisstopo porte la capacité dfm (défaut ground=csf)",
+      _ch is not None and _ch.get("dfm", {}).get("ground") == "csf")
+check("dropdown : le jumeau ch-swisstopo-dfm n'y est PAS",
+      all(p["code"] != "ch-swisstopo-dfm" for p in _provs_gui))
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")
