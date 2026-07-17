@@ -8,7 +8,8 @@ Un seul script pour tout :
         - docs / meta seulement                 -> push seul
         - lidar2map.py seul                     -> push + patch des 3 bundles (sans rebuild)
         - .spec / _loader / build.* / xml       -> push puis STOP : rebuild via release.yml
-                                                   (via --new-tag, choix de version humain)
+                                                   (via --new-tag ; le tag est dérivé
+                                                    de la constante VERSION du code)
 
 Deux voies pour le patch :
   --mode cloud (défaut)  déclenche update.yml sur le runner GitHub
@@ -20,7 +21,7 @@ Usage :
   python deploy.py -m "mon correctif"                         # cloud, dernière release
   python deploy.py -m "..." --mode local                      # patch local
   python deploy.py -m "..." --patch-tag v1.3.0                # cibler un tag existant
-  python deploy.py -m "..." --new-tag v1.4.0                  # créer nouveau tag → rebuild
+  python deploy.py -m "..." --new-tag                         # rebuild ; tag = v<VERSION> du code
   python deploy.py -m "..." --skip-push                       # patch direct (pas de push)
   python deploy.py -m "..." --dry-run                         # voir le diff sans push
 
@@ -32,6 +33,7 @@ Prérequis :
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -205,6 +207,19 @@ def get_latest_tag(repo: str) -> str:
     if not tag:
         fail(f"aucune release sur {repo}")
     return tag
+
+def read_code_version() -> str:
+    """Lit la constante VERSION de lidar2map.py : SOURCE UNIQUE de la version.
+
+    Le tag de release en est dérivé (v<VERSION>), au lieu d'être saisi une 2e
+    fois : sans ça, tag et constante peuvent diverger (vécu à v1.15.0, taguée
+    alors que la constante était restée à 1.14.0 → bandeau update erroné).
+    """
+    txt = (SRC / APP_PY).read_text(encoding="utf-8")
+    m = re.search(r'^VERSION\s*=\s*"([^"]+)"', txt, re.M)
+    if not m:
+        fail(f"constante VERSION introuvable dans {APP_PY}")
+    return m.group(1)
 
 def find_python() -> str:
     for name in ("python", "python3", "py"):
@@ -382,8 +397,11 @@ def main():
                         help="voie de patch (défaut: cloud = update.yml sur GitHub)")
     parser.add_argument("--patch-tag", default="",
                         help="tag existant à patcher (défaut: dernière release)")
-    parser.add_argument("--new-tag", default="",
-                        help="nouveau tag git à créer → déclenche release.yml (rebuild complet)")
+    parser.add_argument("--new-tag", nargs="?", const="AUTO", default="",
+                        help="rebuild complet via un nouveau tag git → déclenche "
+                             "release.yml. Sans valeur : tag dérivé de VERSION "
+                             "(v<VERSION>, source unique). Avec valeur vX.Y.Z : "
+                             "acceptée mais doit égaler v<VERSION>, sinon refus.")
     parser.add_argument("--skip-push", action="store_true",
                         help="sauter push+détection, patcher directement la release")
     parser.add_argument("--push-only", action="store_true",
@@ -394,6 +412,19 @@ def main():
     parser.add_argument("--repo", default=REPO_DEFAULT,
                         help=f"repo GitHub cible (défaut: {REPO_DEFAULT})")
     args = parser.parse_args()
+
+    # --- Version : source unique (constante VERSION) -> tag dérivé ---
+    # Le tag n'est jamais une 2e saisie de la version : soit on le dérive de
+    # VERSION (--new-tag sans valeur), soit on vérifie que la valeur explicite
+    # colle. Impossible de tagguer v1.16.0 avec VERSION restée à 1.15.x.
+    if args.new_tag:
+        want = f"v{read_code_version()}"
+        if args.new_tag == "AUTO":
+            args.new_tag = want
+        elif args.new_tag != want:
+            fail(f"--new-tag {args.new_tag} != {want} (constante VERSION dans "
+                 f"{APP_PY}). La version a UNE source : bumpe VERSION, puis "
+                 f"passe --new-tag sans valeur (le tag est dérivé).")
 
     # --- Validation ---
     if args.new_tag and args.skip_push:
@@ -471,10 +502,12 @@ def main():
         print()
         print(f"    Le patch (cloud ou local) ne change que _internal/{APP_PY} :")
         print("    il ne peut PAS livrer ces changements. Il faut un vrai rebuild")
-        print("    via release.yml, déclenché par un NOUVEAU tag (choix de version à toi) :")
+        print("    via release.yml, déclenché par un NOUVEAU tag. La version se")
+        print(f"    bumpe dans la constante VERSION de {APP_PY} (source unique) ;")
+        print("    le tag en est dérivé :")
         cur = get_latest_tag(args.repo)
         print()
-        cprint(f"      python deploy.py -m \"{args.message}\" --new-tag <vX.Y.Z>    # dernière release : {cur}", "cyan")
+        cprint(f"      python deploy.py -m \"{args.message}\" --new-tag    # tag = v<VERSION> ; dernière release : {cur}", "cyan")
         print()
         cprint("    Sources déjà poussées ; il ne reste qu'à tagger pour lancer release.yml.", "yellow")
         return 0

@@ -2024,10 +2024,11 @@ _activer_log()
 # ── Requêtes HTTP via urllib (stdlib, zéro dépendance) ──────────────────────
 _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 
-# Version applicative — SOURCE UNIQUE : utilisée par --version (les 3 mains)
-# et par le check de mise à jour du GUI (Api.check_update). Le bump de
-# release se fait ICI (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.14.0"
+# Version applicative — SOURCE UNIQUE : utilisée par --version (les 3 mains),
+# par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
+# fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
+# ailleurs (fini les 3 chaînes argparse à synchroniser).
+VERSION      = "1.16.0"
 VERSION_DATE = "2026-07"
 
 
@@ -16711,7 +16712,7 @@ def lancer_gui():
         pass
 
     win = webview.create_window(
-        "lidar2map — Cartes offline LiDAR / raster / OSM",
+        f"lidar2map v{VERSION} — Cartes offline LiDAR / raster / OSM",
         html=HTML,
         js_api=api,
         width=_w, height=_h,
