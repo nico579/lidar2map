@@ -75,6 +75,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                hmin=0.4, hmax=2.5, classes_low=(1, 3, 4),
                classes_ground=(2, 9, 66), ref_ground=(2,),
                ground_method="classes",
+               csf_threshold=0.5, csf_resolution=0.5, csf_rigidness=1,
                nodata=-9999.0, bounds=None):
     """LAS/LAZ classé → GeoTIFF façon **DFM** (Digital Feature Model) :
     le terrain PLUS les structures encore debout que le bare-earth efface.
@@ -108,11 +109,18 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     rejetant la végétation — validé terrain 2026-07-16 sur les 2 sites du Var :
     fond plus propre que la réinjection par classes (pas de mouchetis), signal
     équivalent. Pas de réinjection ensuite (le tissu fait le tri) : hmin/hmax/
-    classes_low/classes_ground sont IGNORÉS. Pré-filtre canopée AVANT le tissu
-    (grille 5 m de min-z, garde z ≤ min+3,5 m, indépendant des classes) :
-    ~57 % des points gardés, sans quoi la simulation paie la canopée entière.
-    Coût mesuré (dalle IGN 34 M pts) : ~3 min et 1,7 Go de RAM, contre ~25 s
-    pour "classes".
+    classes_low/classes_ground sont IGNORÉS. Réglables par site (surface
+    standard CloudCompare) : `csf_threshold` (distance point-tissu max pour
+    être absorbé au sol, monter = murs plus dégradés ET plus de maquis),
+    `csf_resolution` (maille du tissu en m), `csf_rigidness` (type de terrain
+    Zhang : 1 pentu — défaut, calibré Var —, 2 relief doux, 3 plat ; à 3 le
+    tissu tend vers un bare-earth qui efface les murs, usage « re-MNT sans les
+    classes », pas ruines). time_step/itérations/pré-filtre restent figés
+    (cuisine du solveur, aucun sens terrain). Pré-filtre canopée AVANT le
+    tissu (grille 5 m de min-z, garde z ≤ min+3,5 m, indépendant des
+    classes) : ~57 % des points gardés, sans quoi la simulation paie la
+    canopée entière. Coût mesuré (dalle IGN 34 M pts) : ~3 min et 1,7 Go de
+    RAM, contre ~25 s pour "classes".
 
     `bounds=(x0,y0,x1,y1)` : bornes NOMINALES de la dalle (ex. le km IGN) →
     grille exactement alignée entre dalles voisines (sans ça, l'origine dérive
@@ -201,14 +209,15 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             np.minimum.at(g5, f5, zs)
             keep = zs <= (g5[f5] + 3.5)
             del c5, r5, f5, g5
-            # Tissu MOU : rigidness 1 + seuil 0,5 m → les structures basses
-            # continues sont absorbées dans le « sol », la canopée résiduelle
-            # est rejetée. Paramètres figés (calibrés Var 2026-07-16).
+            # Tissu MOU par défaut : rigidness 1 + seuil 0,5 m → les
+            # structures basses continues sont absorbées dans le « sol », la
+            # canopée résiduelle est rejetée (défauts calibrés Var 2026-07-16,
+            # réglables par site, cf. docstring).
             csf = CSF.CSF()
             csf.params.bSloopSmooth = True
-            csf.params.cloth_resolution = 0.5
-            csf.params.rigidness = 1
-            csf.params.class_threshold = 0.5
+            csf.params.cloth_resolution = float(csf_resolution)
+            csf.params.rigidness = int(csf_rigidness)
+            csf.params.class_threshold = float(csf_threshold)
             csf.params.time_step = 0.65
             # np-array (N,3) accepté directement (testé cloth-simulation-filter
             # 1.1.5) : pas de .tolist(), qui multiplierait la RAM par ~4.

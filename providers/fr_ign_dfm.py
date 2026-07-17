@@ -19,7 +19,9 @@
 #   - "classes" (défaut) : réinjection par classes du producteur, ~25 s/dalle ;
 #   - "csf" : Cloth Simulation Filter mou (Zhang 2016) — ignore les classes,
 #     fond plus propre (pas de mouchetis), signal équivalent (validé terrain
-#     2026-07-16), ~3 min/dalle. hmin/hmax/classes sont alors ignorés.
+#     2026-07-16), ~3 min/dalle. hmin/hmax/classes sont alors ignorés ;
+#     réglables par site : --dfm-csf-threshold / -resolution / -rigidness
+#     (surface standard CloudCompare, cf. las_to_dfm).
 #
 # COÛT (à savoir avant de lancer) : une dalle COPC = ~205 Mo (vs 16 Mo de MNT),
 #   ~34 M de points, conversion ~20-30 s/dalle ("classes") ou ~3 min ("csf"),
@@ -67,9 +69,13 @@ SEUIL_DALLE_VALIDE = 500_000              # GeoTIFF 2000² DEFLATE après conver
 # murs sortent incomplets. CLI --dfm-* ou réglages GUI, via set_dfm_params().
 _SOCLE_POSSIBLE    = (2, 9, 66)
 _DFM_DEFAUTS       = (0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes")
+_CSF_DEFAUTS       = (0.5, 0.5, 1)        # threshold m, maille m, rigidness
 DFM_HMIN, DFM_HMAX = _DFM_DEFAUTS[0], _DFM_DEFAUTS[1]
 DFM_CLASSES        = _DFM_DEFAUTS[2]
 DFM_GROUND         = _DFM_DEFAUTS[3]      # "classes" | "csf"
+DFM_CSF_THRESHOLD  = _CSF_DEFAUTS[0]      # seuil d'absorption point-tissu (m)
+DFM_CSF_RESOLUTION = _CSF_DEFAUTS[1]      # maille du tissu (m)
+DFM_CSF_RIGIDNESS  = _CSF_DEFAUTS[2]      # 1 pentu / 2 relief doux / 3 plat
 
 
 def _socle():
@@ -82,19 +88,33 @@ def _reinjectees():
     return tuple(c for c in DFM_CLASSES if c not in _SOCLE_POSSIBLE)
 
 
-def set_dfm_params(hmin=None, hmax=None, classes=None, ground=None):
+def set_dfm_params(hmin=None, hmax=None, classes=None, ground=None,
+                   csf_threshold=None, csf_resolution=None, csf_rigidness=None):
     """Réglages DFM du run courant (appelé par _load_provider depuis les
     pré-flags --dfm-*). Les valeurs ≠ défauts sont ENCODÉES dans le nom des
     dalles (pattern des ombrages paramétrés) : pas de collision de cache entre
     essais, et le LAZ gardé en cache permet de reconvertir sans retélécharger
     (cf. pre_download)."""
     global DFM_HMIN, DFM_HMAX, DFM_CLASSES, DFM_GROUND
+    global DFM_CSF_THRESHOLD, DFM_CSF_RESOLUTION, DFM_CSF_RIGIDNESS
     if ground is not None:
         if ground not in ("classes", "csf"):
             raise ValueError(f"dfm-ground: {ground!r} (attendu 'classes' ou 'csf')")
         DFM_GROUND = ground
-    # Arrondi au décimètre (pas de la GUI) → l'encodage h·10 du nom de dalle
+    # Arrondi au décimètre (pas de la GUI) → l'encodage ·10 du nom de dalle
     # est INJECTIF (0,31 et 0,34 ne peuvent pas partager un cache).
+    if csf_threshold is not None:
+        DFM_CSF_THRESHOLD = round(float(csf_threshold), 1)
+        if not 0.1 <= DFM_CSF_THRESHOLD <= 3.0:
+            raise ValueError(f"dfm-csf-threshold ({DFM_CSF_THRESHOLD}) hors 0,1-3,0 m")
+    if csf_resolution is not None:
+        DFM_CSF_RESOLUTION = round(float(csf_resolution), 1)
+        if not 0.1 <= DFM_CSF_RESOLUTION <= 3.0:
+            raise ValueError(f"dfm-csf-resolution ({DFM_CSF_RESOLUTION}) hors 0,1-3,0 m")
+    if csf_rigidness is not None:
+        DFM_CSF_RIGIDNESS = int(csf_rigidness)
+        if DFM_CSF_RIGIDNESS not in (1, 2, 3):
+            raise ValueError(f"dfm-csf-rigidness ({DFM_CSF_RIGIDNESS}) attendu 1, 2 ou 3")
     if hmin is not None:
         DFM_HMIN = round(float(hmin), 1)
     if hmax is not None:
@@ -105,11 +125,19 @@ def set_dfm_params(hmin=None, hmax=None, classes=None, ground=None):
         raise ValueError(f"dfm-hmin ({DFM_HMIN}) doit être < dfm-hmax ({DFM_HMAX})")
     if DFM_GROUND == "csf":
         # Le tissu ignore classes et tranche : prévenir plutôt qu'interdire
-        # (la GUI grise ces champs, le CLI peut encore les passer).
+        # (la GUI masque ces champs, le CLI peut encore les passer).
         if (hmin is not None or hmax is not None or classes is not None):
             print("  DFM: ground=csf -> hmin/hmax/classes are IGNORED "
                   "(the cloth does the selection)", flush=True)
+        if DFM_CSF_RIGIDNESS == 3:
+            print("  DFM: csf rigidness 3 (flat terrain) -> near bare-earth "
+                  "cloth, standing walls may be erased (use 1 on slopes)",
+                  flush=True)
         return
+    if (csf_threshold is not None or csf_resolution is not None
+            or csf_rigidness is not None):
+        print("  DFM: ground=classes -> csf-* settings are IGNORED "
+              "(pass --dfm-ground csf)", flush=True)
     # Compositions légitimes, signalées plutôt qu'interdites :
     #   - sans classe 2 dans la sélection → COUPE : les objets de la tranche
     #     seuls, fond nodata/transparent (la classe 2 sert TOUJOURS de
@@ -127,13 +155,22 @@ def set_dfm_params(hmin=None, hmax=None, classes=None, ground=None):
 def _suffix():
     """Encodage des réglages ≠ défauts dans le nom de dalle. '' si défauts.
     Ex. hmin=0.3,hmax=3.0 → 'h03-30_' ; classes=(1,3,4,6) → 'c1-3-4-6_' ;
-    ground=csf → 'csf_' SEUL (hmin/hmax/classes ignorés par le tissu : les
-    encoder créerait des caches distincts pour des sorties identiques).
-    Injectif : set_dfm_params ARRONDIT hmin/hmax au décimètre (le pas de la
-    GUI), donc h·10 sans perte ; classes séparées par '-' (c1-34 ≠ c1-3-4) ;
+    ground=csf → 'csf_' + ses réglages ≠ défauts en ordre FIXE t/r/g
+    ('csf_t08_', 'csf_r10_g3_'…) — hmin/hmax/classes ignorés par le tissu ne
+    sont PAS encodés (des caches distincts pour des sorties identiques), et
+    réciproquement les csf-* ne le sont pas en mode classes.
+    Injectif : set_dfm_params ARRONDIT les mètres au décimètre (le pas de la
+    GUI), donc ·10 sans perte ; classes séparées par '-' (c1-34 ≠ c1-3-4) ;
     'csf_' ne collisionne pas avec 'c<digits>_'."""
     if DFM_GROUND == "csf":
-        return "csf_"
+        s = "csf_"
+        if DFM_CSF_THRESHOLD != _CSF_DEFAUTS[0]:
+            s += f"t{round(DFM_CSF_THRESHOLD * 10):02d}_"
+        if DFM_CSF_RESOLUTION != _CSF_DEFAUTS[1]:
+            s += f"r{round(DFM_CSF_RESOLUTION * 10):02d}_"
+        if DFM_CSF_RIGIDNESS != _CSF_DEFAUTS[2]:
+            s += f"g{DFM_CSF_RIGIDNESS}_"
+        return s
     s = ""
     if (DFM_HMIN, DFM_HMAX) != _DFM_DEFAUTS[:2]:
         s += f"h{round(DFM_HMIN * 10):02d}-{round(DFM_HMAX * 10):02d}_"
@@ -157,7 +194,8 @@ def variant_tag():
 # actuelle. Si l'algorithme de las_to_dfm change de façon incompatible (autre
 # comblement, autre sélection), BUMPER le préfixe (fr_dfm06…) pour que les
 # dalles converties par l'ancienne méthode ne soient pas réutilisées en silence.
-_NOM_RE = re.compile(r"fr_dfm05_(?:csf_)?(?:h[\d-]+_)?(?:c[\d-]+_)?(\d+)_(\d+)\.tif$")
+_NOM_RE = re.compile(r"fr_dfm05_(?:csf_(?:t\d+_)?(?:r\d+_)?(?:g\d_)?)?"
+                     r"(?:h[\d-]+_)?(?:c[\d-]+_)?(\d+)_(\d+)\.tif$")
 
 
 def dalle_filename(x_km, y_km):
@@ -233,6 +271,9 @@ def pre_download(chemin):
                       hmin=DFM_HMIN, hmax=DFM_HMAX,
                       classes_low=_reinjectees(), classes_ground=_socle(),
                       ground_method=DFM_GROUND,
+                      csf_threshold=DFM_CSF_THRESHOLD,
+                      csf_resolution=DFM_CSF_RESOLUTION,
+                      csf_rigidness=DFM_CSF_RIGIDNESS,
                       bounds=_bounds_nominaux(m.group(1), m.group(2)))
     return True
 
@@ -266,5 +307,8 @@ def post_fetch(chemin):
                       hmin=DFM_HMIN, hmax=DFM_HMAX,
                       classes_low=_reinjectees(), classes_ground=_socle(),
                       ground_method=DFM_GROUND,
+                      csf_threshold=DFM_CSF_THRESHOLD,
+                      csf_resolution=DFM_CSF_RESOLUTION,
+                      csf_rigidness=DFM_CSF_RIGIDNESS,
                       bounds=(_bounds_nominaux(m.group(1), m.group(2))
                               if m else None))

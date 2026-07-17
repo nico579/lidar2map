@@ -501,6 +501,16 @@ try:
                 check("CSF : grille 80×80, finie, pas de 0 résiduel",
                       ds.width == 80 and bool(_np.isfinite(a).all())
                       and not bool((a == 0).any()))
+            # Réglages du tissu ≠ défauts : pass-through de bout en bout
+            # (une faute de signature casserait ici, pas en prod).
+            _common.las_to_dfm(_dd / "syn.las", _dd / "csf2.tif",
+                               crs_epsg=2154, resolution=0.5,
+                               ground_method="csf", csf_threshold=0.8,
+                               csf_resolution=1.0, csf_rigidness=2,
+                               bounds=(0, 0, 40, 40))
+            with _rio.open(_dd / "csf2.tif") as ds:
+                check("CSF paramétré (t=0.8 r=1.0 g=2) : sortie finie",
+                      bool(_np.isfinite(ds.read(1)).all()))
         except ImportError:
             print("  [SKIP] cloth-simulation-filter absent (chemin csf non testé)")
 except ImportError as _e_dfm:
@@ -539,11 +549,12 @@ _dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
 check("reset défauts → nom nu", _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
 check("socle/réinjectées dérivés du même ensemble",
       _dfm._socle() == (2, 9, 66) and _dfm._reinjectees() == (1, 3, 4))
-# Socle CSF : suffixe 'csf_' SEUL — hmin/hmax/classes sont ignorés par le
-# tissu, les encoder créerait des caches distincts pour des sorties identiques.
+# Socle CSF : suffixe 'csf_' + réglages du tissu ≠ défauts (ordre fixe t/r/g) ;
+# hmin/hmax/classes sont ignorés par le tissu, les encoder créerait des caches
+# distincts pour des sorties identiques.
 _dfm.set_dfm_params(ground="csf")
 _nom = _dfm.dalle_filename(932, 6257)
-check("ground=csf → suffixe csf_ seul", _nom == "fr_dfm05_csf_932_6257.tif",
+check("ground=csf défauts → suffixe csf_ seul", _nom == "fr_dfm05_csf_932_6257.tif",
       detail=_nom)
 check("subdir_from_name reconnaît le nom csf", _dfm.subdir_from_name(_nom) == "932")
 check("variant_tag csf → projet _dfm_csf", _dfm.variant_tag() == "dfm_csf")
@@ -552,14 +563,30 @@ check("csf : hmin/classes non encodés (ignorés par le tissu)",
       _dfm.dalle_filename(932, 6257) == "fr_dfm05_csf_932_6257.tif")
 check("csf : le LAZ persistant reste partagé (sans suffixe)",
       _dfm._laz_filename(932, 6257) == "fr_dfm05_932_6257.laz")
-_err = False
-try:
-    _dfm.set_dfm_params(ground="tissu")
-except ValueError:
-    _err = True
-check("ground invalide → ValueError", _err)
+# Réglages du tissu (surface CloudCompare) encodés injectifs + reconnus.
+_dfm.set_dfm_params(csf_threshold=0.8, csf_rigidness=2)
+_nom = _dfm.dalle_filename(932, 6257)
+check("csf t=0.8 g=2 → suffixe csf_t08_g2_",
+      _nom == "fr_dfm05_csf_t08_g2_932_6257.tif", detail=_nom)
+check("subdir_from_name reconnaît le nom csf paramétré",
+      _dfm.subdir_from_name(_nom) == "932")
+check("variant_tag csf paramétré → projet _dfm_csf_t08_g2",
+      _dfm.variant_tag() == "dfm_csf_t08_g2")
+_dfm.set_dfm_params(csf_threshold=0.5, csf_rigidness=1, csf_resolution=1.0)
+check("csf r=1.0 seul → suffixe csf_r10_",
+      _dfm.dalle_filename(932, 6257) == "fr_dfm05_csf_r10_932_6257.tif",
+      detail=_dfm.dalle_filename(932, 6257))
+for _bad in (dict(ground="tissu"), dict(csf_rigidness=4),
+             dict(csf_threshold=9.0)):
+    _err = False
+    try:
+        _dfm.set_dfm_params(**_bad)
+    except ValueError:
+        _err = True
+    check(f"réglage invalide {_bad} → ValueError", _err)
 _dfm.set_dfm_params(ground="classes", hmin=0.4, hmax=2.5,
-                    classes=(1, 2, 3, 4, 9, 66))   # défauts complets
+                    classes=(1, 2, 3, 4, 9, 66), csf_threshold=0.5,
+                    csf_resolution=0.5, csf_rigidness=1)   # défauts complets
 check("reset ground=classes → nom nu",
       _dfm.dalle_filename(932, 6257) == "fr_dfm05_932_6257.tif")
 
@@ -567,22 +594,27 @@ print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
 # traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
 # porte les défauts du module (source de vérité unique).
-check("HTML : case f-dfm + 4 réglages",
+check("HTML : case f-dfm + 7 réglages",
       all(k in _html for k in ('id="f-dfm"', 'id="f-dfm-hmin"',
                                'id="f-dfm-hmax"', 'id="f-dfm-classes"',
-                               'id="f-dfm-ground"')))
-check("app.js : applyProviderDfm + payloads dfm_hmin/dfm_ground",
+                               'id="f-dfm-ground"', 'id="f-dfm-csf-threshold"',
+                               'id="f-dfm-csf-resolution"',
+                               'id="f-dfm-csf-rigidness"')))
+check("app.js : applyProviderDfm + payloads dfm_hmin/dfm_ground/dfm_csf_*",
       "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs
-      and "dfm_ground" in _appjs)
+      and "dfm_ground" in _appjs and "dfm_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
-check("_build_cmd traduit --dfm/--dfm-hmin/--dfm-ground",
-      '"--dfm"' in _src and '"--dfm-hmin"' in _src and '"--dfm-ground"' in _src)
+check("_build_cmd traduit --dfm/--dfm-hmin/--dfm-ground/--dfm-csf-threshold",
+      '"--dfm"' in _src and '"--dfm-hmin"' in _src and '"--dfm-ground"' in _src
+      and '"--dfm-csf-threshold"' in _src)
 _provs_gui = l2m._discover_providers()
 _fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
 check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
       _fr is not None and _fr.get("dfm", {}).get("hmin") == _dfm.DFM_HMIN
       and _fr.get("dfm", {}).get("hmax") == _dfm.DFM_HMAX
-      and _fr.get("dfm", {}).get("ground") == "classes")
+      and _fr.get("dfm", {}).get("ground") == "classes"
+      and _fr.get("dfm", {}).get("csf_threshold") == _dfm.DFM_CSF_THRESHOLD
+      and _fr.get("dfm", {}).get("csf_rigidness") == _dfm.DFM_CSF_RIGIDNESS)
 check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
       all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
 

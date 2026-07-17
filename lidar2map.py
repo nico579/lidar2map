@@ -109,9 +109,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
        → <nom>_multi_ombrage.tif, <nom>_slope_ombrage.tif…
     4. gdalwarp + gdaladdo + tuilage Pillow → MBTiles/RMAP/SQLiteDB
        → <nom>_multi_ombrage_tuilage_z18.tif (cache Mercator, réutilisable)
-       → <nom>_multi_ombrage_z8-18.mbtiles
-       → <nom>_multi_ombrage_z8-18.rmap
-       → <nom>_multi_ombrage_z8-18.sqlitedb
+       → <nom>_multi_ombrage_z13-18.mbtiles   (plage --zoom-min/--zoom-max ;
+       → <nom>_multi_ombrage_z13-18.rmap       z18 ≈ 0,6 m/px = la résolution
+       → <nom>_multi_ombrage_z13-18.sqlitedb   native 0,5 m, z19 n'apporte rien)
 
   Paramètres spécifiques :
     --telechargement            Télécharger les dalles manquantes
@@ -137,6 +137,13 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   ignore les classes du producteur, fond plus
                                   propre, ~3 min/dalle (hmin/hmax/classes
                                   alors ignorés — le tissu fait le tri).
+    --dfm-csf-threshold M       Seuil d'absorption point-tissu (déf. 0,5 m) :
+                                  monter = murs plus dégradés absorbés (et
+                                  plus de maquis), baisser = plus strict.
+    --dfm-csf-resolution M      Maille du tissu (déf. 0,5 m).
+    --dfm-csf-rigidness 1|2|3   Type de terrain (Zhang) : 1 pentu (déf.),
+                                  2 relief doux, 3 plat (proche bare-earth,
+                                  efface les murs — pas pour les ruines).
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
                                   lrm vat svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
@@ -173,9 +180,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
         manifeste.json              état de reprise (découpage à priori)
         <nom>_multi_ombrage.tif     ombrage L93, 0.5 m/px
         <nom>_multi_ombrage_tuilage_z18.tif  cache Mercator (réutilisable)
-        <nom>_multi_ombrage_z8-18.mbtiles
-        <nom>_multi_ombrage_z8-18.rmap
-        <nom>_multi_ombrage_z8-18.sqlitedb
+        <nom>_multi_ombrage_z13-18.mbtiles
+        <nom>_multi_ombrage_z13-18.rmap
+        <nom>_multi_ombrage_z13-18.sqlitedb
     cache/ign_lidar/                cache dalles IGN permanent (partagé)
 
   Temps indicatifs (zone 4 km², i3-8130U) :
@@ -184,8 +191,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     Ombrage SVF (numpy, 4 km²)         : ~5 min
     Ombrage LRM (scipy)                : ~2 min
     Ombrage RRIM (slope + LRM)         : ~8 min
-    MBTiles z8-18 (495 tuiles)         : ~5 s
-    MBTiles z8-18 (zone 400 km²)       : ~5-10 min
+    MBTiles z13-18 (495 tuiles)        : ~5 s
+    MBTiles z13-18 (zone 400 km²)      : ~5-10 min
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MODE --ignraster
@@ -2387,6 +2394,9 @@ def _discover_providers():
                         "classes": ",".join(str(c) for c in
                                             getattr(twin, "DFM_CLASSES", (1, 3, 4))),
                         "ground":  str(getattr(twin, "DFM_GROUND", "classes")),
+                        "csf_threshold":  float(getattr(twin, "DFM_CSF_THRESHOLD", 0.5)),
+                        "csf_resolution": float(getattr(twin, "DFM_CSF_RESOLUTION", 0.5)),
+                        "csf_rigidness":  int(getattr(twin, "DFM_CSF_RIGIDNESS", 1)),
                     }
                 except Exception:
                     pass
@@ -2412,6 +2422,8 @@ def _load_provider():
     #   --dfm-classes    classes LAS réintroduites (ex. 1,3,4)
     #   --dfm-ground     socle terrain : "classes" (défaut) ou "csf" (Cloth
     #                    Simulation Filter — hmin/hmax/classes alors ignorés)
+    #   --dfm-csf-threshold/-resolution/-rigidness  réglages du tissu (mode
+    #                    csf seulement ; surface standard CloudCompare)
     # Réglages appliqués au module via set_dfm_params() après import.
     _dfm = False
     _dfm_params = {}
@@ -2433,7 +2445,8 @@ def _load_provider():
             del _argv[_i]
             continue
         _m = None
-        for _k in ("hmin", "hmax", "classes", "ground"):
+        for _k in ("hmin", "hmax", "classes", "ground",
+                   "csf-threshold", "csf-resolution", "csf-rigidness"):
             if _a == f"--dfm-{_k}":
                 if _i + 1 < len(_argv):
                     _dfm_params[_k] = _argv[_i + 1]
@@ -2468,7 +2481,10 @@ def _load_provider():
                       hmax=float(_dfm_params["hmax"]) if "hmax" in _dfm_params else None,
                       classes=tuple(int(c) for c in _dfm_params["classes"].split(","))
                               if "classes" in _dfm_params else None,
-                      ground=_dfm_params.get("ground"))
+                      ground=_dfm_params.get("ground"),
+                      csf_threshold=_dfm_params.get("csf-threshold"),
+                      csf_resolution=_dfm_params.get("csf-resolution"),
+                      csf_rigidness=_dfm_params.get("csf-rigidness"))
             except ValueError as _e_v:
                 print(f"  ERROR: invalid --dfm-* value: {_e_v}", file=sys.stderr)
                 sys.exit(1)
@@ -16017,6 +16033,12 @@ def lancer_gui():
                     cmd += ["--dfm-classes", str(cfg["dfm_classes"])]
                 if cfg.get("dfm_ground"):
                     cmd += ["--dfm-ground", str(cfg["dfm_ground"])]
+                if cfg.get("dfm_csf_threshold"):
+                    cmd += ["--dfm-csf-threshold", str(cfg["dfm_csf_threshold"])]
+                if cfg.get("dfm_csf_resolution"):
+                    cmd += ["--dfm-csf-resolution", str(cfg["dfm_csf_resolution"])]
+                if cfg.get("dfm_csf_rigidness"):
+                    cmd += ["--dfm-csf-rigidness", str(cfg["dfm_csf_rigidness"])]
             # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
             # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
             if cfg.get("lidar_apikey"):

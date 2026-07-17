@@ -93,12 +93,26 @@
         <option value="classes" data-i18n="f.dfmg.classes">classes IGN</option>
         <option value="csf" data-i18n="f.dfmg.csf">tissu CSF (~3 min/dalle)</option>
        </select>
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmh">hauteur (m)</span>
-       <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
-       <span style="color:var(--dim)">–</span>
-       <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
-       <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
+       <span id="dfm-params-classes" style="display:inline-flex;align-items:center;gap:4px">
+        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmh">hauteur (m)</span>
+        <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
+        <span style="color:var(--dim)">–</span>
+        <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
+        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
+        <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
+       </span>
+       <span id="dfm-params-csf" style="display:none;align-items:center;gap:4px">
+        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmt">seuil (m)</span>
+        <input type="number" id="f-dfm-csf-threshold" step="0.1" min="0.1" max="3" style="max-width:70px">
+        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmr">maille (m)</span>
+        <input type="number" id="f-dfm-csf-resolution" step="0.1" min="0.1" max="3" style="max-width:70px">
+        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmrg">terrain</span>
+        <select id="f-dfm-csf-rigidness" style="max-width:120px">
+         <option value="1" data-i18n="f.dfmrg.1">pentu (1)</option>
+         <option value="2" data-i18n="f.dfmrg.2">relief doux (2)</option>
+         <option value="3" data-i18n="f.dfmrg.3">plat (3)</option>
+        </select>
+       </span>
       </span>
      </div>
    </div>

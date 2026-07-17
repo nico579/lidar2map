@@ -138,7 +138,13 @@ By access paradigm:
   the ground while rejecting vegetation, ignoring producer classes entirely.
   Field-validated 2026-07-16 on both Var sites: background cleaner than class
   re-injection (no speckle), equivalent wall signal. No re-injection afterwards
-  (hmin/hmax/classes ignored; cache suffix `csf_` only, injective). Canopy
+  (hmin/hmax/classes ignored; cache suffix `csf_` plus the cloth's own
+  non-default settings in fixed t/r/g order, injective). The cloth exposes the
+  standard CSF surface per site (`--dfm-csf-threshold` absorption distance,
+  `--dfm-csf-resolution` cloth cell, `--dfm-csf-rigidness` terrain type 1
+  steep default / 2 / 3 flat, per Zhang's own guidance; solver internals
+  time_step/iterations/pre-filter stay fixed: without knobs no site could
+  ever "demonstrate the need", per Nico). Canopy
   pre-filter before the cloth (5 m min-z grid, keep z ≤ min+3.5 m, ~57% kept);
   `setPointCloud` takes the numpy array directly (no `.tolist()`, RAM ~1.7 GB);
   measured ~3 min per 34M-pt tile vs ~25 s for "classes". A STRICT cloth

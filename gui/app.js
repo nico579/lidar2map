@@ -37,7 +37,9 @@ const I18N = {
     "f.dfm":"Mode DFM — structures debout (expérimental, LAZ ~205 Mo/km²)",
     "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
     "f.dfmg":"socle", "f.dfmg.classes":"classes IGN", "f.dfmg.csf":"tissu CSF (~3 min/dalle)",
-    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes — fond plus propre, ~3 min/dalle, réglages hauteur/classes ignorés. Zone petite conseillée.",
+    "f.dfmt":"seuil (m)", "f.dfmr":"maille (m)", "f.dfmrg":"terrain",
+    "f.dfmrg.1":"pentu (1)", "f.dfmrg.2":"relief doux (2)", "f.dfmrg.3":"plat (3)",
+    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
     "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
@@ -140,7 +142,9 @@ const I18N = {
     "f.dfm":"DFM mode — standing structures (experimental, LAZ ~205 MB/km²)",
     "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
     "f.dfmg":"ground base", "f.dfmg.classes":"IGN classes", "f.dfmg.csf":"CSF cloth (~3 min/tile)",
-    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"IGN classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes — cleaner background, ~3 min/tile, height/classes settings ignored. Keep the area small.",
+    "f.dfmt":"threshold (m)", "f.dfmr":"cloth cell (m)", "f.dfmrg":"terrain",
+    "f.dfmrg.1":"steep (1)", "f.dfmrg.2":"gentle relief (2)", "f.dfmrg.3":"flat (3)",
+    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"IGN classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
     "sec.zone":"Geographic area",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
     "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
@@ -673,10 +677,16 @@ function applyProviderDfm(code) {
   const hmax = document.getElementById('f-dfm-hmax');
   const cls  = document.getElementById('f-dfm-classes');
   const grd  = document.getElementById('f-dfm-ground');
+  const cthr = document.getElementById('f-dfm-csf-threshold');
+  const cres = document.getElementById('f-dfm-csf-resolution');
+  const crig = document.getElementById('f-dfm-csf-rigidness');
   if (hmin) { hmin.value = cap.hmin; hmin.dataset.def = cap.hmin; }
   if (hmax) { hmax.value = cap.hmax; hmax.dataset.def = cap.hmax; }
   if (cls)  { cls.value  = cap.classes; cls.dataset.def = cap.classes; }
   if (grd)  { grd.value  = cap.ground || 'classes'; grd.dataset.def = cap.ground || 'classes'; }
+  if (cthr) { cthr.value = cap.csf_threshold ?? 0.5;  cthr.dataset.def = cthr.value; }
+  if (cres) { cres.value = cap.csf_resolution ?? 0.5; cres.dataset.def = cres.value; }
+  if (crig) { crig.value = cap.csf_rigidness ?? 1;    crig.dataset.def = crig.value; }
   updateDfmUI();
 }
 
@@ -684,14 +694,15 @@ function updateDfmUI() {
   const cb = document.getElementById('f-dfm');
   const params = document.getElementById('dfm-params');
   if (params) params.style.display = (cb && cb.checked) ? 'inline-flex' : 'none';
-  // Socle CSF : le tissu ignore la tranche de hauteur et les classes → griser
-  // (les valeurs restent posées, réactivées si on rebascule sur "classes").
+  // Socle CSF : le tissu ignore la tranche de hauteur et les classes → on
+  // ÉCHANGE les groupes de réglages (les valeurs cachées restent posées,
+  // ré-affichées si on rebascule).
   const grd = document.getElementById('f-dfm-ground');
   const csf = grd && grd.value === 'csf';
-  ['f-dfm-hmin', 'f-dfm-hmax', 'f-dfm-classes'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = csf;
-  });
+  const pc = document.getElementById('dfm-params-classes');
+  const px = document.getElementById('dfm-params-csf');
+  if (pc) pc.style.display = csf ? 'none' : 'inline-flex';
+  if (px) px.style.display = csf ? 'inline-flex' : 'none';
 }
 
 function applyProviderApiKey(opt) {
@@ -1189,6 +1200,9 @@ function getConfig() {
     dfm_hmax:    (g('f-dfm-hmax')?.value    && g('f-dfm-hmax').value    !== g('f-dfm-hmax').dataset.def)    ? g('f-dfm-hmax').value    : '',
     dfm_classes: (g('f-dfm-classes')?.value && g('f-dfm-classes').value !== g('f-dfm-classes').dataset.def) ? g('f-dfm-classes').value.trim() : '',
     dfm_ground:  (g('f-dfm-ground')?.value  && g('f-dfm-ground').value  !== g('f-dfm-ground').dataset.def)  ? g('f-dfm-ground').value  : '',
+    dfm_csf_threshold:  (g('f-dfm-csf-threshold')?.value  && g('f-dfm-csf-threshold').value  !== g('f-dfm-csf-threshold').dataset.def)  ? g('f-dfm-csf-threshold').value  : '',
+    dfm_csf_resolution: (g('f-dfm-csf-resolution')?.value && g('f-dfm-csf-resolution').value !== g('f-dfm-csf-resolution').dataset.def) ? g('f-dfm-csf-resolution').value : '',
+    dfm_csf_rigidness:  (g('f-dfm-csf-rigidness')?.value  && g('f-dfm-csf-rigidness').value  !== g('f-dfm-csf-rigidness').dataset.def)  ? g('f-dfm-csf-rigidness').value  : '',
     nom:    g('f-nom')?.value.trim(),
     dossier:g('f-dossier')?.value.trim(),
     ville:  g('f-ville')?.value.trim(),
@@ -1507,6 +1521,9 @@ function loadConfig(cfg) {
     if (cfg.dfm_hmax)    s('f-dfm-hmax',    cfg.dfm_hmax);
     if (cfg.dfm_classes) s('f-dfm-classes', cfg.dfm_classes);
     if (cfg.dfm_ground)  s('f-dfm-ground',  cfg.dfm_ground);
+    if (cfg.dfm_csf_threshold)  s('f-dfm-csf-threshold',  cfg.dfm_csf_threshold);
+    if (cfg.dfm_csf_resolution) s('f-dfm-csf-resolution', cfg.dfm_csf_resolution);
+    if (cfg.dfm_csf_rigidness)  s('f-dfm-csf-rigidness',  cfg.dfm_csf_rigidness);
     if (typeof updateDfmUI === 'function') updateDfmUI();
   }
   s('f-couche',     cfg.couche);
