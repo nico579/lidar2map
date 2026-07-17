@@ -2398,6 +2398,9 @@ def _discover_providers():
                         "csf_threshold":  float(getattr(twin, "DFM_CSF_THRESHOLD", 0.5)),
                         "csf_resolution": float(getattr(twin, "DFM_CSF_RESOLUTION", 0.5)),
                         "csf_rigidness":  int(getattr(twin, "DFM_CSF_RIGIDNESS", 1)),
+                        # Plafond de download parallèle (gros nuages LAZ) : la GUI
+                        # l'affiche en mode LAZ. 0 = pas de plafond annoncé.
+                        "download_workers_max": int(getattr(twin, "DOWNLOAD_WORKERS_MAX", 0)),
                     }
                 except Exception:
                     pass
@@ -10845,8 +10848,19 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     # Providers servant de grandes mosaïques COG (ca-nrcan…) : lecture fenêtrée
     # /vsicurl/ sur la bbox zone au lieu de rapatrier le COG entier.
     _cog_windowed = getattr(PROVIDER, "COG_WINDOWED", False)
+    # Plafond de download PROPRE AU PROVIDER : les nuages LAZ (fr/ch mode LAZ)
+    # pèsent ~200 Mo ; à --workers 8, IGN/swisstopo throttlent et coupent la
+    # connexion en silence (transfert tronqué, retry qui repart de zéro → tuile
+    # en erreur → run avorté). DOWNLOAD_WORKERS_MAX borne la SEULE phase de
+    # download ; le tuilage/ombrage garde args.workers. Défaut providers = pas
+    # de plafond (getattr → args.workers).
+    _dl_workers = min(args.workers,
+                      getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", args.workers))
     if a_telecharger:
-        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+        if _dl_workers < args.workers:
+            print(f"  Note: capping downloads to {_dl_workers} parallel "
+                  f"(large point-cloud tiles, avoids server throttling)")
+        with ThreadPoolExecutor(max_workers=_dl_workers) as ex:
             if _cog_windowed:
                 futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
                                      bbox, args.telechargement_ecraser): (nom,)

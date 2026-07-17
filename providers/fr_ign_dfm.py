@@ -47,7 +47,7 @@ from providers import common
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "France — DFM ruines/structures 0,5 m (LiDAR HD LAZ, expérimental)"
+NAME       = "France — mode LAZ structures debout 0,5 m (LiDAR HD, expérimental)"
 CODE       = "fr-ign-dfm"
 COUNTRY    = "fr"
 LICENSE    = "Licence Ouverte 2.0 (Etalab) — © IGN"
@@ -78,10 +78,10 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
     if dalles is None:
         return None
     if dalles:
-        print(f"  FR DFM (LiDAR HD LAZ): {len(dalles)} tile(s) in the bbox "
+        print(f"  FR LAZ (LiDAR HD): {len(dalles)} tile(s) in the bbox "
               f"(~{len(dalles) * 205} MB of point cloud to download!)")
     else:
-        print("  FR DFM: no LiDAR HD point-cloud tile here (not flown yet?)")
+        print("  FR LAZ: no LiDAR HD point-cloud tile here (not flown yet?)")
     return dalles
 
 
@@ -100,7 +100,12 @@ _P = common.DfmProvider(
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
     csf_defaults=(0.5, 0.5, 1),
     bounds_fn=_bounds_nominaux, discover_fn=_discover,
-    zipped=False, tile_mb=205, log_tag="DFM")
+    zipped=False, tile_mb=205)
+
+# Plafond de téléchargements parallèles (lu par le cœur) : les nuages LAZ pèsent
+# ~205 Mo, à 8 en parallèle IGN throttle et tronque le transfert (cf. le retry
+# transitoire 400 IGN). 3 max lisse la charge ; le tuilage/ombrage garde --workers.
+DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
 DFM_HMIN           = _P.def_hmin
@@ -117,6 +122,7 @@ dalle_filename  = _P.dalle_filename
 dalle_subdir    = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
 variant_tag     = _P.variant_tag
+method_label    = _P.method_label
 discover_dalles = _P.discover_dalles
 pre_download    = _P.pre_download
 post_fetch      = _P.post_fetch

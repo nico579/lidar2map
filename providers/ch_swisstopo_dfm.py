@@ -30,7 +30,7 @@ from providers import common
 
 
 # ── Identification ───────────────────────────────────────────────────────────
-NAME       = "Suisse — DFM ruines/structures 0,5 m (swissSURFACE3D LAZ, expérimental)"
+NAME       = "Suisse — mode LAZ structures debout 0,5 m (swissSURFACE3D, expérimental)"
 CODE       = "ch-swisstopo-dfm"
 COUNTRY    = "ch"
 LICENSE    = "Free (BGDI Bundesgeodaten-Verordnung) — © swisstopo"
@@ -72,10 +72,10 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
     dalles = {dalle_filename(e, n): href
               for (e, n), (_y, _nom, href) in candidats.items()}
     if dalles:
-        print(f"  CH DFM (swissSURFACE3D LAZ): {len(dalles)} tile(s) in the bbox "
+        print(f"  CH LAZ (swissSURFACE3D): {len(dalles)} tile(s) in the bbox "
               f"(~{len(dalles) * 125} MB of point cloud to download!)")
     else:
-        print("  CH DFM: no swissSURFACE3D point-cloud tile here")
+        print("  CH LAZ: no swissSURFACE3D point-cloud tile here")
     return dalles
 
 
@@ -88,7 +88,11 @@ _P = common.DfmProvider(
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9), "csf"),
     csf_defaults=(0.5, 0.5, 1),
     bounds_fn=_bounds_nominaux, discover_fn=_discover,
-    zipped=True, tile_mb=125, log_tag="DFM")
+    zipped=True, tile_mb=125)
+
+# Plafond de téléchargements parallèles (lu par le cœur) : nuages ~125 Mo, même
+# raison que fr-ign-dfm (throttle sous forte concurrence). Cf. common.DfmProvider.
+DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
 DFM_HMIN           = _P.def_hmin
@@ -105,6 +109,7 @@ dalle_filename   = _P.dalle_filename
 dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
 variant_tag      = _P.variant_tag
+method_label     = _P.method_label
 discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch

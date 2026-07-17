@@ -522,12 +522,16 @@ class DfmProvider:
                    (swisstopo .las.zip) → post_fetch dézippe ; False si LAS/LAZ
                    brut (IGN COPC, magic LASF).
     tile_mb      : taille indicative d'une dalle (message utilisateur).
+    download_workers_max : plafond de téléchargements PARALLÈLES (le cœur lit
+                   DOWNLOAD_WORKERS_MAX exposé par le module). Les nuages LAZ
+                   pèsent ~200 Mo : à 8 en parallèle, IGN throttle et coupe la
+                   connexion en silence (transferts tronqués) ; 3 max lisse ça.
     """
 
     def __init__(self, *, prefix, crs_epsg, resolution, socle_possible,
                  defaults, csf_defaults=(0.5, 0.5, 1),
                  bounds_fn=None, discover_fn=None, zipped=False,
-                 tile_mb=205, log_tag="DFM"):
+                 tile_mb=205, download_workers_max=3):
         self.prefix = prefix
         self.crs_epsg = crs_epsg
         self.resolution = resolution
@@ -536,7 +540,7 @@ class DfmProvider:
         self._discover = discover_fn
         self.zipped = zipped
         self.tile_mb = tile_mb
-        self.log_tag = log_tag
+        self.download_workers_max = download_workers_max
         # défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
         (self.def_hmin, self.def_hmax,
          self.def_classes, self.def_ground) = defaults
@@ -553,6 +557,13 @@ class DfmProvider:
         self.nom_re = re.compile(
             rf"{re.escape(prefix)}_(?:dfm_(?:h[\d-]+_)?(?:c[\d-]+_)?"
             rf"|csf_(?:t\d+_)?(?:r\d+_)?(?:g\d_)?)(\d+)_(\d+)\.tif$")
+
+    def method_label(self):
+        """Étiquette du mode ACTIF, alignée sur le nom de sortie (laz_dfm /
+        laz_csf) : le log ne dit plus 'DFM' quand on tourne le tissu CSF. La
+        méthode (DFM = réinjection classes, CSF = tissu) reste sous l'ombrelle
+        LAZ (nuage), cohérent avec la case GUI « Mode LAZ »."""
+        return "LAZ_CSF" if self.ground == "csf" else "LAZ_DFM"
 
     # ── socle / réinjectées ──────────────────────────────────────────────────
     def socle(self):
@@ -599,28 +610,28 @@ class DfmProvider:
             # Le tissu ignore classes et tranche : prévenir plutôt qu'interdire
             # (la GUI masque ces champs, le CLI peut encore les passer).
             if hmin is not None or hmax is not None or classes is not None:
-                print("  DFM: ground=csf -> hmin/hmax/classes are IGNORED "
+                print(f"  {self.method_label()}: hmin/hmax/classes are IGNORED "
                       "(the cloth does the selection)", flush=True)
             if self.csf_rigidness == 3:
-                print("  DFM: csf rigidness 3 (flat terrain) -> near bare-earth "
-                      "cloth, standing walls may be erased (use 1 on slopes)",
-                      flush=True)
+                print(f"  {self.method_label()}: rigidness 3 (flat terrain) -> "
+                      "near bare-earth cloth, standing walls may be erased "
+                      "(use 1 on slopes)", flush=True)
             return
         if (csf_threshold is not None or csf_resolution is not None
                 or csf_rigidness is not None):
-            print("  DFM: ground=classes -> csf-* settings are IGNORED "
+            print(f"  {self.method_label()}: csf-* settings are IGNORED "
                   "(pass --dfm-ground csf)", flush=True)
         # Compositions légitimes, signalées plutôt qu'interdites :
         #   - sans classe 2 → COUPE (tranche seule, fond nodata ; la classe 2
         #     reste la référence de hauteur en interne, cf. las_to_dfm) ;
         #   - sans classe réinjectée → modèle ≈ MNT reconstruit.
         if 2 not in self.classes:
-            print("  DFM: class 2 not selected -> slice mode (band objects only, "
-                  "transparent background; heights still measured above class-2 "
-                  "ground)", flush=True)
+            print(f"  {self.method_label()}: class 2 not selected -> slice mode "
+                  "(band objects only, transparent background; heights still "
+                  "measured above class-2 ground)", flush=True)
         if not self.reinjectees():
-            print("  DFM: no re-injected class selected -> output ≈ rebuilt DTM",
-                  flush=True)
+            print(f"  {self.method_label()}: no re-injected class selected -> "
+                  "output ≈ rebuilt DTM", flush=True)
 
     # ── nommage / cache ──────────────────────────────────────────────────────
     def suffix(self):
@@ -731,8 +742,8 @@ class DfmProvider:
         cloud = chemin.parent / self.laz_filename(m.group(1), m.group(2))
         if not cloud.exists() or cloud.stat().st_size < 1_000_000:
             return False
-        print(f"  {self.log_tag} {chemin.name}: rebuilding from cached point "
-              f"cloud ({cloud.name}, no re-download"
+        print(f"  {self.method_label()} {chemin.name}: rebuilding from cached "
+              f"point cloud ({cloud.name}, no re-download"
               f"{', CSF ~3 min' if self.ground == 'csf' else ''})...", flush=True)
         self._convert(cloud, chemin, m.group(1), m.group(2))
         return True
@@ -759,7 +770,7 @@ class DfmProvider:
             chemin.replace(cloud)
         else:
             return  # déjà un GeoTIFF (ou erreur → validateur)
-        print(f"  {self.log_tag} {chemin.name}: converting point cloud "
+        print(f"  {self.method_label()} {chemin.name}: converting point cloud "
               f"({'CSF, ~3 min' if self.ground == 'csf' else '~20-30 s'})...",
               flush=True)
         if m:

@@ -36,6 +36,7 @@ const I18N = {
     "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
     "f.dfm":"Mode LAZ — structures debout (nuage classé, expérimental)",
     "f.src.mnt":"Source : MNT (raster)", "f.src.laz":"Source : nuage LAZ",
+    "f.dlcap":"↓ %d max en parallèle (gros nuages LAZ)",
     "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
     "f.dfmg":"socle", "f.dfmg.classes":"classes IGN", "f.dfmg.csf":"tissu CSF (~3 min/dalle)",
     "f.dfmt":"seuil (m)", "f.dfmr":"maille (m)", "f.dfmrg":"terrain",
@@ -142,6 +143,7 @@ const I18N = {
     "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
     "f.dfm":"LAZ mode — standing structures (classified cloud, experimental)",
     "f.src.mnt":"Source: DTM (raster)", "f.src.laz":"Source: LAZ point cloud",
+    "f.dlcap":"↓ %d max parallel (large LAZ clouds)",
     "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
     "f.dfmg":"ground base", "f.dfmg.classes":"IGN classes", "f.dfmg.csf":"CSF cloth (~3 min/tile)",
     "f.dfmt":"threshold (m)", "f.dfmr":"cloth cell (m)", "f.dfmrg":"terrain",
@@ -740,12 +742,26 @@ function updateDfmUI() {
   if (pc) pc.style.display = csf ? 'none' : 'inline-flex';
   if (px) px.style.display = csf ? 'inline-flex' : 'none';
   // Badge de source : cocher bascule MNT (raster) → LAZ (nuage de points).
+  const laz = cb && cb.checked;
   const src = document.getElementById('dfm-source');
   if (src) {
-    const laz = cb && cb.checked;
     src.textContent = laz ? t('f.src.laz') : t('f.src.mnt');
     src.style.background = laz ? '#dcfce7' : '#e2e8f0';
     src.style.color = laz ? '#166534' : '#475569';
+  }
+  // Note près du champ Workers : le download LAZ est plafonné (gros nuages,
+  // sinon throttle serveur). Valeur lue du provider (source unique, pas de 3
+  // en dur) ; le tuilage/ombrage garde la valeur Workers.
+  const note = document.getElementById('dfm-workers-note');
+  if (note) {
+    const code = document.getElementById('f-provider')?.value;
+    const capN = laz && _dfmByCode[code] ? _dfmByCode[code].download_workers_max : 0;
+    if (capN) {
+      note.textContent = t('f.dlcap').replace('%d', capN);
+      note.style.display = 'inline';
+    } else {
+      note.style.display = 'none';
+    }
   }
 }
 

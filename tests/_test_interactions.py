@@ -552,6 +552,11 @@ check("défauts classes → token dfm_ (fr_laz05_dfm_)",
       _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif",
       detail=_dfm.dalle_filename(932, 6257))
 check("variant_tag classes défaut = laz_dfm", _dfm.variant_tag() == "laz_dfm")
+check("method_label classes = LAZ_DFM (log ≠ 'DFM' figé)",
+      _dfm.method_label() == "LAZ_DFM")
+check("DOWNLOAD_WORKERS_MAX exposé et < 8 (cap download LAZ)",
+      isinstance(getattr(_dfm, "DOWNLOAD_WORKERS_MAX", None), int)
+      and _dfm.DOWNLOAD_WORKERS_MAX < 8)
 _dfm.set_dfm_params(hmin=0.3, hmax=3.0)
 _nom = _dfm.dalle_filename(932, 6257)
 check("réglages ≠ défauts → suffixe dfm_h03-30", _nom == "fr_laz05_dfm_h03-30_932_6257.tif",
@@ -589,6 +594,8 @@ check("ground=csf défauts → suffixe csf_ seul", _nom == "fr_laz05_csf_932_625
       detail=_nom)
 check("subdir_from_name reconnaît le nom csf", _dfm.subdir_from_name(_nom) == "932")
 check("variant_tag csf → projet laz_csf", _dfm.variant_tag() == "laz_csf")
+check("method_label csf = LAZ_CSF (le log dit CSF, pas DFM)",
+      _dfm.method_label() == "LAZ_CSF")
 _dfm.set_dfm_params(hmin=0.3)          # ignoré par le tissu : nom inchangé
 check("csf : hmin/classes non encodés (ignorés par le tissu)",
       _dfm.dalle_filename(932, 6257) == "fr_laz05_csf_932_6257.tif")
@@ -634,6 +641,10 @@ check("ch défauts → nom ch_laz05_csf_",
 check("ch bornes = COIN SW (≠ convention Ymax de l'IGN)",
       _chdfm._bounds_nominaux(2600, 1198) == (2600000, 1198000, 2601000, 1199000))
 check("ch variant_tag défaut = laz_csf", _chdfm.variant_tag() == "laz_csf")
+check("ch method_label défaut = LAZ_CSF", _chdfm.method_label() == "LAZ_CSF")
+check("ch DOWNLOAD_WORKERS_MAX exposé et < 8",
+      isinstance(getattr(_chdfm, "DOWNLOAD_WORKERS_MAX", None), int)
+      and _chdfm.DOWNLOAD_WORKERS_MAX < 8)
 check("ch subdir_from_name reconnaît le nom ch",
       _chdfm.subdir_from_name(_chdfm.dalle_filename(2600, 1198)) == "2600")
 _chdfm.set_dfm_params(ground="classes")
@@ -668,6 +679,15 @@ check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
       and _fr.get("dfm", {}).get("csf_rigidness") == _dfm.DFM_CSF_RIGIDNESS)
 check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
       all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
+# Le cap de download LAZ remonte du provider (source unique) jusqu'au front :
+# entrée registre -> note HTML #dfm-workers-note -> lecture app.js (aucun '3'
+# codé en dur côté GUI).
+check("dropdown : fr-ign porte le cap de download LAZ (source unique)",
+      _fr.get("dfm", {}).get("download_workers_max") == _dfm.DOWNLOAD_WORKERS_MAX
+      and _dfm.DOWNLOAD_WORKERS_MAX > 0)
+check("GUI reflète le cap : note HTML + lecture app.js (pas de 3 en dur)",
+      'id="dfm-workers-note"' in _html
+      and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs)
 # 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
 # et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
 _ch = next((p for p in _provs_gui if p["code"] == "ch-swisstopo"), None)
