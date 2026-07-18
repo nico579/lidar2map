@@ -119,8 +119,8 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     (cuisine du solveur, aucun sens terrain). Pré-filtre canopée AVANT le
     tissu (grille 5 m de min-z, garde z ≤ min+3,5 m, indépendant des
     classes) : ~57 % des points gardés, sans quoi la simulation paie la
-    canopée entière. Coût mesuré (dalle IGN 34 M pts) : ~3 min et 1,7 Go de
-    RAM, contre ~25 s pour "classes".
+    canopée entière. Coût mesuré (dalle IGN 45 M pts, machine 4 cœurs) : ~4 min
+    de sim CSF (machine-dépendant), contre ~25 s pour "classes".
 
     `bounds=(x0,y0,x1,y1)` : bornes NOMINALES de la dalle (ex. le km IGN) →
     grille exactement alignée entre dalles voisines (sans ça, l'origine dérive
@@ -128,10 +128,14 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     d'une fraction de pixel — coutures). Points hors bornes clippés.
     Le maquis dense revient AUSSI (mouchetis en "classes", résidus ponctuels en
     "csf") : la discrimination finale est visuelle (murs = lignes continues).
-    RAM : pic ~2-3 Go pour une dalle IGN de 34 M pts — les conversions sont
-    SÉRIALISÉES par _CONV_LOCK (le pool de download a 8 workers). Écriture
-    ATOMIQUE (.tmp → replace) : un crash en cours de conversion ne laisse pas
-    de GeoTIFF partiel pris pour valide.
+    RAM : pic ~2,9 Go/dalle 45 M pts (mesuré 3,2 Go avant optim ; pic dominé par
+    les copies float64 de PRÉPA, pas par la sim). On saute la copie du clip si
+    tout est déjà dans les bornes, sinon dim par dim (del progressif). Le passage
+    en float32 relatif a été ESSAYÉ puis rejeté : il fait basculer la classif CSF
+    (8k cellules, jusqu'à 3,3 m) pour un gain RAM dérisoire. Conversions
+    SÉRIALISÉES par _CONV_LOCK (anti-OOM : sur 8 Go on ne tient pas 2 en
+    parallèle). Écriture ATOMIQUE (.tmp → replace) : un crash en cours de
+    conversion ne laisse pas de GeoTIFF partiel pris pour valide.
     """
     import laspy
     import numpy as np
@@ -161,13 +165,22 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         res = float(resolution)
         if bounds is not None:
             x0, y0, x1, y1 = (float(v) for v in bounds)
-            dedans = (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
-            xs, ys, zs, cls = xs[dedans], ys[dedans], zs[dedans], cls[dedans]
-            if xs.size == 0:
-                raise ValueError(f"{Path(src_las).name}: aucun point dans les "
-                                 f"bornes nominales {bounds}")
             nx = max(1, int(round((x1 - x0) / res)))
             ny = max(1, int(round((y1 - y0) / res)))
+            # Clip aux bornes. (a) SAUTÉ si tout est déjà dedans (la copie ne
+            # filtrerait rien, cas fréquent) ; (b) sinon dim par dim avec del
+            # progressif (jamais anciens+nouveaux des 4 tableaux en double : ce
+            # doublement momentané était le pic RAM mesuré, 3,2 Go/dalle 45M).
+            # Coords gardées en float64 ABSOLU : le CSF n'est PAS invariant en
+            # flottant au décalage/arrondi (float32 relatif essayé 2026-07-18 ->
+            # 8k cellules divergentes jusqu'à 3,3 m pour ~66 Mo, rejeté).
+            dedans = (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
+            if not dedans.all():
+                xs = xs[dedans]; ys = ys[dedans]; zs = zs[dedans]; cls = cls[dedans]
+                if xs.size == 0:
+                    raise ValueError(f"{Path(src_las).name}: aucun point dans les "
+                                     f"bornes nominales {bounds}")
+            del dedans
         else:
             x0, x1 = float(xs.min()), float(xs.max())
             y0, y1 = float(ys.min()), float(ys.max())
@@ -220,7 +233,9 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             csf.params.class_threshold = float(csf_threshold)
             csf.params.time_step = 0.65
             # np-array (N,3) accepté directement (testé cloth-simulation-filter
-            # 1.1.5) : pas de .tolist(), qui multiplierait la RAM par ~4.
+            # 1.1.5) : pas de .tolist(), qui multiplierait la RAM par ~4. Coords
+            # ABSOLUES float64 : ne PAS décaler/arrondir (le CSF y est sensible,
+            # cf. commentaire clip).
             csf.setPointCloud(np.column_stack([xs[keep], ys[keep], zs[keep]]))
             g_idx, ng_idx = CSF.VecInt(), CSF.VecInt()
             csf.do_filtering(g_idx, ng_idx)
