@@ -3582,7 +3582,11 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
             # gardé en cache quand seuls les réglages DFM changent (évite de
             # retélécharger ~205 Mo). Tentative 1 uniquement : si la dalle
             # produite échoue la validation, le retry passe par le download.
-            _pre = getattr(PROVIDER, "pre_download", None) if tentative == 1 else None
+            # MAIS un overwrite explicite (ecraser) DOIT re-télécharger la source :
+            # on saute alors le hook, sinon --download-overwrite reconstruisait
+            # depuis le LAZ caché sans jamais re-tirer le nuage (choix Nico).
+            _pre = (getattr(PROVIDER, "pre_download", None)
+                    if (tentative == 1 and not ecraser) else None)
             _materialise = False
             if _pre is not None:
                 try:
@@ -9658,7 +9662,7 @@ Examples:
     parser.add_argument("--shadings-compress", "--ombrages-compresser",  action="store_true",
                         dest="ombrages_compresser", help="Compress existing raw shadings (DEFLATE)")
     parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Overwrite existing downloaded tiles")
+                        help="Overwrite & re-download cached tiles, incl. LAZ point clouds (same as --download-force)")
     parser.add_argument("--shadings-overwrite", "--ombrages-ecraser", action="store_true", dest="ombrages_ecraser",
                         help="Overwrite existing shadings")
     parser.add_argument("--svf-sweep", action=argparse.BooleanOptionalAction,
@@ -10823,11 +10827,17 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     ok = skip = absent = erreur = 0
     a_telecharger = []
 
+    # Overwrite = VRAI re-download de la source (choix Nico : --download-overwrite
+    # doit re-tirer, LAZ inclus). Les deux flags convergent (--download-force et
+    # --download-overwrite forcent le re-download) : on re-liste la dalle même si
+    # elle est en cache. La suppression du .tif ET le bypass du hook pre_download
+    # (qui reconstruit depuis le LAZ caché) sont gérés en aval par
+    # telecharger_dalle_directe(ecraser=True) ; sinon un overwrite ne re-tirait
+    # jamais le nuage (vécu : Cache 6 / Downloaded 3 sous --download-overwrite).
+    _force_dl = bool(args.telechargement_forcer or args.telechargement_ecraser)
     for nom, url in dalles_dict.items():
-        if args.telechargement_forcer:
-            chemin_dalle(dossier_dalles, nom).unlink(missing_ok=True)
         cd = chemin_dalle(dossier_dalles, nom)
-        if not cd.exists() or cd.stat().st_size < SEUIL_DALLE_VALIDE:
+        if _force_dl or not cd.exists() or cd.stat().st_size < SEUIL_DALLE_VALIDE:
             a_telecharger.append((nom, url))
         else:
             skip += 1
@@ -10863,11 +10873,11 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         with ThreadPoolExecutor(max_workers=_dl_workers) as ex:
             if _cog_windowed:
                 futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
-                                     bbox, args.telechargement_ecraser): (nom,)
+                                     bbox, _force_dl): (nom,)
                            for nom, url in a_telecharger}
             else:
                 futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
-                                     args.telechargement_ecraser,
+                                     _force_dl,
                                      args.telechargement_compresser): (nom,)
                            for nom, url in a_telecharger}
             for fut in as_completed(futures):

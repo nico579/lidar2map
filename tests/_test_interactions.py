@@ -669,6 +669,15 @@ _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
 check("_build_cmd traduit --dfm/--dfm-hmin/--dfm-ground/--dfm-csf-threshold",
       '"--dfm"' in _src and '"--dfm-hmin"' in _src and '"--dfm-ground"' in _src
       and '"--dfm-csf-threshold"' in _src)
+# --download-overwrite = VRAI re-download de la source (choix Nico) : le hook
+# pre_download (reconstruction depuis le LAZ caché) est SAUTÉ si ecraser, et les
+# deux flags overwrite convergent (_force_dl) dans le download de zone. Sans ça,
+# un overwrite reconstruisait du cache sans jamais re-tirer le nuage.
+check("overwrite → pre_download sauté si ecraser (bypass cache LAZ)",
+      "tentative == 1 and not ecraser" in _src)
+check("overwrite → les 2 flags convergent (_force_dl) dans le download de zone",
+      "_force_dl" in _src
+      and "args.telechargement_forcer or args.telechargement_ecraser" in _src)
 _provs_gui = l2m._discover_providers()
 _fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
 check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
