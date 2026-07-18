@@ -677,6 +677,27 @@ check("ch mode classes : socle ASPRS (2,9), réinjectées (1,3,4)",
       _chdfm._socle() == (2, 9) and _chdfm._reinjectees() == (1, 3, 4))
 _chdfm.set_dfm_params(ground="csf")   # reset au défaut CH
 
+print("== 9b-ter. fr-craig-dfm : 3e jumeau (CRAIG, découverte shapefile) ==")
+import importlib as _il2
+_cg = _il2.import_module("providers.fr_craig_dfm")
+_cgr = _il2.import_module("providers.fr_craig")
+check("craig défaut ground=csf (schéma classes CRAIG ≠ IGN)", _cg.DFM_GROUND == "csf")
+check("craig défauts → nom fr_craig05_csf_",
+      _cg.dalle_filename(7172, 65066) == "fr_craig05_csf_7172_65066.tif",
+      detail=_cg.dalle_filename(7172, 65066))
+check("craig variant_tag défaut = laz_csf", _cg.variant_tag() == "laz_csf")
+check("craig method_label défaut = LAZ_CSF", _cg.method_label() == "LAZ_CSF")
+_cg.set_dfm_params(ground="classes")
+check("craig mode classes : socle (2), réinjectées bâtiment 6 incluses (3,4,6)",
+      _cg._socle() == (2,) and _cg._reinjectees() == (3, 4, 6))
+_cg.set_dfm_params(ground="csf")
+check("craig registre : campagnes cloud (2019+2021) + MNT (2019) config-as-data",
+      len(_common.CRAIG_CLOUD_CAMPAIGNS) >= 2 and len(_common.CRAIG_MNT_CAMPAIGNS) >= 1)
+check("craig bounds_fn = lookup (None hors découverte, pas de crash)",
+      _cg._bounds_nominaux(1, 1) is None)
+check("craig parent fr-craig : post_fetch .asc→GeoTIFF exposé, pas de bounds fig",
+      hasattr(_cgr, "post_fetch") and _cgr.CODE == "fr-craig")
+
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
 # traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
@@ -730,6 +751,13 @@ check("dropdown : ch-swisstopo porte la capacité dfm (défaut ground=csf)",
       _ch is not None and _ch.get("dfm", {}).get("ground") == "csf")
 check("dropdown : le jumeau ch-swisstopo-dfm n'y est PAS",
       all(p["code"] != "ch-swisstopo-dfm" for p in _provs_gui))
+# 3e provider DFM : fr-craig (parent raster MNT) porte la capacité (jumeau
+# fr-craig-dfm détecté, défaut csf), et le jumeau est masqué du dropdown.
+_cgp = next((p for p in _provs_gui if p["code"] == "fr-craig"), None)
+check("dropdown : fr-craig porte la capacité dfm (défaut ground=csf)",
+      _cgp is not None and _cgp.get("dfm", {}).get("ground") == "csf")
+check("dropdown : le jumeau fr-craig-dfm n'y est PAS",
+      all(p["code"] != "fr-craig-dfm" for p in _provs_gui))
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")

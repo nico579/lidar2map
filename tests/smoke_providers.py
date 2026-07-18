@@ -45,6 +45,8 @@ TEST_POINTS = {
     "fr-reunion": (55.45, -20.88), "fr-guadeloupe": (-61.53, 16.24),   # DROM IGN LiDAR HD 0,5 m
     "fr-ign-dfm": (5.86628, 43.37579),       # Ruine1 Var (COPC 205 Mo ! --skip en CI)
     "ch-swisstopo-dfm": (7.442, 46.949),     # Berne (swissSURFACE3D .las.zip 125 Mo ! --skip en CI)
+    "fr-craig": (3.22472, 45.65783),         # Enval (CRAIG MNT .asc 0,5 m, léger)
+    "fr-craig-dfm": (3.22472, 45.65783),     # Enval (nuage classé CRAIG ~10 Mo ! --skip en CI)
     "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
     "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),

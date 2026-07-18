@@ -175,6 +175,30 @@ By access paradigm:
   **NL AHN = deferred** (dense classified cloud exists but no clean tile
   endpoint: PDOK serves raster only, GeoTiles is a JS SPA, official is now the
   Ellipsis-Drive platform API — wireable only with real reverse-engineering).
+  **FR CRAIG / LiDARAURA = VALIDATED 2026-07-18, viable, high value** (regional
+  Auvergne-Rhône-Alpes program; found via data.europa/data.gouv → CRAIG Nextcloud
+  public share `drive.opendata.craig.fr/s/opendata`, path
+  `altimetrie/2019_lidar/02.2_Semis_classe`). Endpoint REPRODUCIBLE (unlike
+  de-sachsen): public WebDAV PROPFIND returns 207 stably, direct GET 200. Data
+  BETTER than IGN for micro-relief: LAS 1.4, **~60 pts/m² (13.9 ground)** vs IGN
+  ~10, 200 m tiles named `<X>-<Y>.laz` (hectometre Xmin/Ymax → nominal bounds
+  derivable), classes 2/3/4/6 (has buildings; NO 1/9/66). CSF conversion validated
+  end-to-end (9 s, EPSG:2154 output, 100% valid). CRS is ABSENT from the header
+  (parse_crs → None) so the provider must declare EPSG:2154 (exactly the CRS gate's
+  lenient path). Caveats before wiring a `fr-craig-dfm`: coverage is NAMED SITES
+  only (lakes/vineyards/villages, 2019 + 2021 campaigns), not wall-to-wall;
+  discovery is WebDAV site-listing (new pattern, not a WFS grid); CSF is the
+  natural default (class scheme ≠ IGN). **INTEGRATED 2026-07-18 as `fr-craig`
+  (raster MNT, ESRI ASCII `.asc` → GeoTIFF at post_fetch) + `fr-craig-dfm` (twin,
+  CSF default).** Discovery = `common.craig_dalles` (config-as-data campaign
+  registry: the archive is ~19 heterogeneous campaigns, each its own micro-format
+  — index field, folder, naming, raw/classified — so wiring all blindly is a
+  5-legged sheep; the union is BOUNDED to validated classified-.laz campaigns,
+  2019 + 2021, extensible by one registry row). Per-tile bounds come from the TA
+  index geometry (tile sizes vary per campaign: 2019 = 200 m, 2021 = 500 m).
+  Download is the public no-auth share URL (`/s/<token>/download?path=&files=`).
+  2016_lidarcheo (the archaeology campaign) is raster-only in the probe (no
+  classified cloud index) → deferred.
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 

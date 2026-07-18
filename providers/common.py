@@ -71,6 +71,112 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
     return dalles
 
 
+# === CRAIG / LiDARAURA (Auvergne-Rhône-Alpes) ================================
+# CRAIG publie ses nuages classés sur un partage Nextcloud PUBLIC (validé
+# 2026-07-18 : PROPFIND 207 stable, download `/s/<token>/download?...` SANS auth).
+# L'archive est MULTI-CAMPAGNES et chacune a son propre micro-format (champ
+# d'index, dossier, nommage, tailles de tuiles) : câbler les ~19 en aveugle =
+# mouton à 5 pattes. On décrit donc explicitement (config-as-data) les campagnes
+# nuage-classé .laz VALIDÉES ; la découverte fait l'UNION filtrée par bbox. Les
+# bornes de chaque tuile viennent de la GÉOMÉTRIE de l'index (tailles variables
+# selon campagne : 2019 = 200 m, 2021 = 500 m), pas d'une formule.
+CRAIG_BASE = "https://drive.opendata.craig.fr"
+CRAIG_SHARE = "opendata"          # token du partage public (download sans auth)
+# (campagne, index TA du nuage classé, champ-sous-dossier, préfixe-dossier)
+CRAIG_CLOUD_CAMPAIGNS = [
+    ("2019_lidar", "TA_LiDAR_2019_semis_classe_L93.shp.zip", "zone", "02.2_Semis_classe"),
+    ("2021_lidar", "TA_LiDAR_2021_semis_classe_L93.shp.zip", "dossier", ""),
+]
+# MNT raster (parent) : 2019 a un index MNT propre (.asc 0,5 m) ; 2021 n'a qu'un
+# index `MN.gpkg` (schéma différent), différé. Le raster CRAIG est secondaire
+# (le MNT IGN couvre déjà la France) ; le parent existe surtout pour héberger le
+# mode LAZ (case DFM) et le remap `--dfm`.
+CRAIG_MNT_CAMPAIGNS = [
+    ("2019_lidar", "TA_LiDAR_2019_MNT_L93.shp.zip", "zone", "03_MNT"),
+]
+
+
+def _craig_public_url(campaign, subdir, filename):
+    """URL de download PUBLIC du partage Nextcloud (aucune auth)."""
+    from urllib.parse import quote
+    path = ("/altimetrie/" + campaign + "/" + subdir).rstrip("/")
+    return (f"{CRAIG_BASE}/s/{CRAIG_SHARE}/download"
+            f"?path={quote(path)}&files={quote(filename)}")
+
+
+def _geom_bbox(geom):
+    """(xmin,ymin,xmax,ymax) d'une géométrie GeoJSON (Polygon/MultiPolygon)."""
+    xs, ys = [], []
+
+    def walk(o):
+        if isinstance(o, (list, tuple)):
+            if len(o) == 2 and all(isinstance(v, (int, float)) for v in o):
+                xs.append(o[0]); ys.append(o[1])
+            else:
+                for e in o:
+                    walk(e)
+    walk(geom.get("coordinates"))
+    return (min(xs), min(ys), max(xs), max(ys)) if xs else None
+
+
+def _craig_ta_local(campaign, ta_index, cache_dir, ua):
+    """Télécharge+cache le shapefile zippé d'assemblage (index) d'une campagne."""
+    cache_dir = Path(cache_dir); cache_dir.mkdir(parents=True, exist_ok=True)
+    local = cache_dir / f"{campaign}__{ta_index}"
+    if local.exists() and local.stat().st_size > 1000:
+        return local
+    url = _craig_public_url(campaign, "01_TA", ta_index)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ua})
+        tmp = local.with_suffix(local.suffix + ".part")
+        with urllib.request.urlopen(req, timeout=90, context=_CTX) as r, \
+                open(tmp, "wb") as f:
+            f.write(r.read())
+        tmp.replace(local)
+        return local
+    except Exception as e:
+        print(f"  ERROR CRAIG index {campaign}/{ta_index}: {type(e).__name__}: {e}")
+        return None
+
+
+def craig_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
+                 campaigns=CRAIG_CLOUD_CAMPAIGNS, ua="lidar2map/1.0"):
+    """Découverte CRAIG (EPSG:2154) : UNION des campagnes du registre. Pour
+    chacune, télécharge+cache l'index TA (shapefile), garde les tuiles dont la
+    géométrie intersecte `bbox_natif`, remplit `bounds_sink[(x,y)]` avec les
+    bornes EXACTES de la tuile (anti-couture, tailles variables) et retourne
+    {filename_fn(x,y): url_download_public}. `dalle` = 'X-Y' (hectomètres)."""
+    import fiona
+    if bbox_natif is None:
+        return {}
+    bb = tuple(float(v) for v in bbox_natif)
+    dalles = {}
+    for (camp, ta, field, prefix) in campaigns:
+        ta_local = _craig_ta_local(camp, ta, cache_dir, ua)
+        if ta_local is None:
+            continue
+        try:
+            with fiona.open(f"zip://{ta_local}") as src:
+                for feat in src.filter(bbox=bb):
+                    p = feat["properties"]
+                    m = re.match(r"^(\d+)-(\d+)$", str(p.get("dalle") or ""))
+                    if not m:
+                        continue
+                    x, y = int(m.group(1)), int(m.group(2))
+                    bbox = _geom_bbox(feat["geometry"])
+                    if bbox is None:
+                        continue
+                    bounds_sink[(x, y)] = bbox
+                    fmt = str(p.get("format") or ".laz")
+                    sub = str(p.get(field) or "").strip("/")
+                    subdir = (prefix + "/" if prefix else "") + sub
+                    dalles[filename_fn(x, y)] = _craig_public_url(
+                        camp, subdir, m.group(0) + fmt)
+        except Exception as e:
+            print(f"  ERROR CRAIG index {camp}: {type(e).__name__}: {e}")
+    return dalles
+
+
 def _verifie_crs_las(nom, las, expected_epsg):
     """Garde défensif (revue LAZ 2026-07-18) : refuse la conversion si le header
     LAS déclare un CRS incompatible avec celui que le provider annonce, plutôt
@@ -204,9 +310,28 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         _verifie_crs_las(Path(src_las).name, las, crs_epsg)
         xs = np.asarray(las.x); ys = np.asarray(las.y)
         zs = np.asarray(las.z); cls = np.asarray(las.classification)
+        try:
+            wh = np.asarray(las.withheld)          # flag WITHHELD (LAS 1.4 pf6+)
+        except Exception:
+            wh = None
         del las
         if xs.size == 0:
             raise ValueError(f"{Path(src_las).name}: nuage vide")
+
+        # Robustesse min-z (revue LAZ 2026-07-18) : le BRUIT (classes ASPRS 7 bas
+        # / 18 haut) et les points WITHHELD ne doivent pas définir le sol — un
+        # seul point aberrant bas creuse le DFM puis se propage au fillnodata. On
+        # les écarte avant tout binning (modes classes ET csf en profitent ; la
+        # spec ASPRS LAS 1.4 dit que les withheld ne se traitent pas comme les
+        # autres).
+        bruit = np.isin(cls, (7, 18))
+        if wh is not None:
+            bruit = bruit | wh
+        if bruit.any():
+            garde = ~bruit
+            xs, ys, zs, cls = xs[garde], ys[garde], zs[garde], cls[garde]
+            if xs.size == 0:
+                raise ValueError(f"{Path(src_las).name}: que du bruit/withheld")
 
         res = float(resolution)
         if bounds is not None:
@@ -754,7 +879,23 @@ class DfmProvider:
         }
 
     # ── découverte / conversion / hooks ──────────────────────────────────────
+    def _check_deps(self):
+        """Deps vérifiées AVANT le download lourd (revue LAZ 2026-07-18) : sans
+        ça on tirait ~200 Mo de nuage puis on échouait à la conversion faute de
+        laspy / CSF."""
+        try:
+            import laspy  # noqa: F401
+        except ImportError:
+            raise RuntimeError("le mode LAZ requiert laspy (pip install laspy lazrs)")
+        if self.ground == "csf":
+            try:
+                import CSF  # noqa: F401
+            except ImportError:
+                raise RuntimeError("--dfm-ground csf requiert 'cloth-simulation-filter' "
+                                   "(pip install cloth-simulation-filter)")
+
     def discover_dalles(self, bbox_wgs84, bbox_natif, cache_path, workers=1):
+        self._check_deps()
         return self._discover(bbox_wgs84, bbox_natif, cache_path, workers)
 
     def _convert(self, cloud, tif, x_km=None, y_km=None):
@@ -784,6 +925,13 @@ class DfmProvider:
                        if n.lower().endswith((".las", ".laz"))]
             if not membres:
                 raise ValueError(f"Aucun .las/.laz dans {chemin.name}")
+            # ZIP multi-nuages (bandes de vol superposées : cf. Danemark/Flandre
+            # dans la revue) : on garde le plus gros mais on le SIGNALE (le drop
+            # silencieux perdait des points sans trace).
+            if len(membres) > 1:
+                print(f"  WARN {chemin.name}: {len(membres)} nuages dans le ZIP, "
+                      f"seul le plus gros est gardé (fusion non implémentée)",
+                      flush=True)
             membre = max(membres, key=lambda n: z.getinfo(n).file_size)
             tmp = Path(str(cloud) + ".part")
             with z.open(membre) as src, open(tmp, "wb") as dst:
