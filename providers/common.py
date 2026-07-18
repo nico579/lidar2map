@@ -409,7 +409,14 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             # cf. commentaire clip).
             csf.setPointCloud(np.column_stack([xs[keep], ys[keep], zs[keep]]))
             g_idx, ng_idx = CSF.VecInt(), CSF.VecInt()
-            csf.do_filtering(g_idx, ng_idx)
+            # exportCloth=False (revue perf 2026-07-18) : le wrapper CSF.py met le
+            # défaut à True, ce qui écrit le tissu dans un cloth_nodes.txt (~188 Mo
+            # sur une dalle 1 km, std::endl = flush par ligne) DANS le cwd APRÈS la
+            # simulation. L'export ne touche PAS la classification (prouvé : la
+            # variance run-to-run est la même avec/sans, = non-détermination OpenMP
+            # de CSF, pas l'export) : -40,6 s/dalle et plus de fichier parasite,
+            # sortie inchangée. (cloth_nodes.txt n'est PAS une sortie de lidar2map.)
+            csf.do_filtering(g_idx, ng_idx, False)
             sol_csf = np.zeros(xs.size, dtype=bool)
             sol_csf[np.flatnonzero(keep)[np.asarray(g_idx, dtype=np.int64)]] = True
             del csf, g_idx, ng_idx, keep
