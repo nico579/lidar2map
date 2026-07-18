@@ -536,6 +536,31 @@ try:
             _rw, _cw = ds.index(19.0, 20.0)
             check("ZIP path : mur reconstruit depuis le nuage dézippé (z≈101,5)",
                   abs(float(ds.read(1)[_rw, _cw]) - 101.5) < 0.3)
+        # Garde CRS/unités (revue LAZ 2026-07-18) : un nuage dont le header
+        # déclare un EPSG/unité incompatible avec le provider est REFUSÉ, au
+        # lieu d'être converti comme si c'était des mètres (sortie silencieusement
+        # fausse, cas USGS ftUS). Lenient sinon : syn.las (sans CRS) passe déjà
+        # ci-dessus.
+        try:
+            import laspy as _lp
+            from pyproj import CRS as _pcrs
+            _hft = _lp.LasHeader(version="1.4", point_format=6)
+            _hft.add_crs(_pcrs.from_epsg(2229))       # California 5, US survey foot
+            _lft = _lp.LasData(_hft)
+            _lft.x = _np.array([0.0, 1.0]); _lft.y = _np.array([0.0, 1.0])
+            _lft.z = _np.array([0.0, 0.0])
+            _lft.classification = _np.array([2, 2], dtype=_np.uint8)
+            _lft.write(str(_dd / "ft.las"))
+            _refuse = False
+            try:
+                _common.las_to_dfm(_dd / "ft.las", _dd / "ft.tif", crs_epsg=2154,
+                                   resolution=0.5, bounds=(0, 0, 40, 40))
+            except ValueError:
+                _refuse = True
+            check("garde CRS : nuage ftUS/EPSG≠provider → REFUSÉ (pas de sortie fausse)",
+                  _refuse)
+        except ImportError:
+            print("  [SKIP] pyproj absent (garde CRS non testé)")
 except ImportError as _e_dfm:
     print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
 

@@ -71,6 +71,51 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
     return dalles
 
 
+def _verifie_crs_las(nom, las, expected_epsg):
+    """Garde défensif (revue LAZ 2026-07-18) : refuse la conversion si le header
+    LAS déclare un CRS incompatible avec celui que le provider annonce, plutôt
+    que de produire un GeoTIFF SILENCIEUSEMENT FAUX. Deux motifs de refus :
+      1. EPSG horizontal RÉSOLUBLE et différent de `expected_epsg` ;
+      2. unité horizontale non-métrique (ex. LAS USGS en ftUS : la grille 0,5 m
+         et les seuils 0,4-2,5 m sont en mètres, un fichier en pieds sortirait
+         faux d'un facteur ~3,28).
+    LENIENT sur l'incertain : CRS absent, compound non dénouable, ou non
+    résoluble -> on PROCÈDE en faisant confiance au provider (comportement
+    historique). Objectif = bloquer le mismatch CONFIANT, pas faux-refuser les
+    sources (fr/ch validées : IGN LAZ porte EPSG:2154 métrique propre).
+    """
+    try:
+        crs = las.header.parse_crs()
+    except Exception:
+        return                        # header illisible -> confiance provider
+    if crs is None:
+        return                        # pas de CRS -> confiance provider
+    horiz = crs
+    try:
+        if crs.is_compound and crs.sub_crs_list:
+            horiz = crs.sub_crs_list[0]   # dénoue 2056+hauteur & co.
+    except Exception:
+        pass
+    try:
+        epsg = horiz.to_epsg()
+    except Exception:
+        epsg = None
+    if epsg is not None and int(epsg) != int(expected_epsg):
+        raise ValueError(
+            f"{nom}: le nuage déclare EPSG:{epsg}, le provider attend "
+            f"EPSG:{expected_epsg} (projection/unités incompatibles, la sortie "
+            f"serait silencieusement fausse)")
+    try:
+        unites = {ax.unit_name.lower() for ax in horiz.axis_info}
+    except Exception:
+        unites = set()
+    if unites and not (unites <= {"metre", "meter", "m"}):
+        raise ValueError(
+            f"{nom}: unité horizontale {sorted(unites)} non-métrique (grille et "
+            f"seuils sont en mètres) ; conversion d'unités requise avant de "
+            f"brancher ce provider")
+
+
 def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                hmin=0.4, hmax=2.5, classes_low=(1, 3, 4),
                classes_ground=(2, 9, 66), ref_ground=(2,),
@@ -156,6 +201,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
 
     with _CONV_LOCK:
         las = laspy.read(str(src_las))
+        _verifie_crs_las(Path(src_las).name, las, crs_epsg)
         xs = np.asarray(las.x); ys = np.asarray(las.y)
         zs = np.asarray(las.z); cls = np.asarray(las.classification)
         del las
