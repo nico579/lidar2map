@@ -9564,6 +9564,13 @@ Examples:
                              "OPENTOPOGRAPHY_API_KEY depending on the provider.")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Parallel connections (default: {NB_WORKERS})")
+    parser.add_argument("--dfm-parallel", type=int, default=1, metavar="N",
+                        dest="dfm_parallel",
+                        help="LAZ (mode LAZ / --dfm) : nb de conversions CSF/DFM "
+                             "SIMULTANÉES (défaut 1). Chaque conversion pique ~3 Go "
+                             "de RAM, donc N>1 exige la RAM (N x 3 Go) ET des cœurs "
+                             "(OMP est réparti à cœurs/N par conversion). Pour une "
+                             "VM multi-cœurs ; laisser 1 sur une machine 8 Go.")
     parser.add_argument("--download-compress", "--telechargement-compresser",
                         action=argparse.BooleanOptionalAction, default=True,
                         dest="telechargement_compresser",
@@ -10058,6 +10065,19 @@ Examples:
         print("  Update: existing tiles re-downloaded")
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
+    # --dfm-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
+    # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
+    # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
+    # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
+    # OMP=tous, sur une VM multi-coeurs.
+    if getattr(args, "dfm_parallel", 1) and args.dfm_parallel > 1:
+        _cores = os.cpu_count() or 1
+        _omp = max(1, _cores // args.dfm_parallel)
+        os.environ["OMP_NUM_THREADS"] = str(_omp)
+        from providers import common as _common_par
+        _common_par.set_dfm_parallelism(args.dfm_parallel)
+        print(f"  DFM parallel : {args.dfm_parallel} conversions simultanees "
+              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.dfm_parallel} Go RAM")
 
     # Compression cache : ON par defaut depuis v1.14 (16→7 Mo par dalle FR,
     # ~90→40 Go par departement) ; --no-download-compress pour du brut.
@@ -10866,6 +10886,11 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     # de plafond (getattr → args.workers).
     _dl_workers = min(args.workers,
                       getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", args.workers))
+    # --dfm-parallel N : il faut >= N workers pour que N conversions (dans le
+    # post_fetch) tournent EN PARALLÈLE (le sémaphore de conversion les autorise).
+    # Le download reste auto-limité : les conversions dominant le temps, peu de
+    # workers téléchargent simultanément (donc pas de throttle serveur K-wide).
+    _dl_workers = max(_dl_workers, getattr(args, "dfm_parallel", 1))
     if a_telecharger:
         if _dl_workers < args.workers:
             print(f"  Note: capping downloads to {_dl_workers} parallel "

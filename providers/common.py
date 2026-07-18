@@ -12,11 +12,21 @@ import threading
 import urllib.request
 from pathlib import Path
 
-# Une seule conversion LAS→raster à la fois : le post_fetch tourne DANS le pool
-# de téléchargement (8 workers par défaut) et une dalle IGN de 34 M pts pique à
-# ~2-3 Go de RAM — 8 conversions parallèles = OOM (revue DFM 2026-07-16). Les
-# téléchargements, eux, restent parallèles (le verrou n'entoure que la conversion).
-_CONV_LOCK = threading.Lock()
+# Concurrence des conversions LAS→raster. Le post_fetch tourne DANS le pool de
+# téléchargement et une dalle IGN de 34 M pts pique à ~3 Go de RAM : par DÉFAUT
+# une seule à la fois (sémaphore 1 = ex-verrou, anti-OOM sur 8 Go). `--dfm-parallel
+# N` élargit à N (VM multi-cœurs + RAM) : CSF scale mal en threads (optimum ~2),
+# donc N conversions à OMP=cœurs/N remplissent mieux les cœurs qu'une seule à
+# OMP=tous. Les téléchargements restent parallèles (le sémaphore n'entoure que la
+# conversion). Réglé par set_dfm_parallelism() avant tout run.
+_CONV_SEM = threading.Semaphore(1)
+
+
+def set_dfm_parallelism(k):
+    """Fixe le nombre de conversions LAS→raster simultanées (défaut 1). Appelé
+    par le cœur quand --dfm-parallel N est passé, AVANT toute conversion."""
+    global _CONV_SEM
+    _CONV_SEM = threading.Semaphore(max(1, int(k)))
 
 try:
     import certifi
@@ -284,7 +294,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     tout est déjà dans les bornes, sinon dim par dim (del progressif). Le passage
     en float32 relatif a été ESSAYÉ puis rejeté : il fait basculer la classif CSF
     (8k cellules, jusqu'à 3,3 m) pour un gain RAM dérisoire. Conversions
-    SÉRIALISÉES par _CONV_LOCK (anti-OOM : sur 8 Go on ne tient pas 2 en
+    SÉRIALISÉES par _CONV_SEM (anti-OOM : sur 8 Go on ne tient pas 2 en
     parallèle). Écriture ATOMIQUE (.tmp → replace) : un crash en cours de
     conversion ne laisse pas de GeoTIFF partiel pris pour valide.
     """
@@ -305,7 +315,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         raise ValueError(f"ground_method inconnu: {ground_method!r} "
                          "(attendu 'classes' ou 'csf')")
 
-    with _CONV_LOCK:
+    with _CONV_SEM:
         las = laspy.read(str(src_las))
         _verifie_crs_las(Path(src_las).name, las, crs_epsg)
         xs = np.asarray(las.x); ys = np.asarray(las.y)
@@ -480,14 +490,14 @@ def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,
     en le signalant. laspy lit le .las ; pour un .laz il faut un backend (lazrs).
     `bounds=(x0,y0,x1,y1)` : bornes NOMINALES de la dalle → grille alignée entre
     dalles voisines (sinon l'origine dérive des points réels → coutures au VRT).
-    Conversion sérialisée (_CONV_LOCK, RAM) ; écriture atomique (.tmp → replace).
+    Conversion sérialisée (_CONV_SEM, RAM) ; écriture atomique (.tmp → replace).
     """
     import laspy
     import numpy as np
     import rasterio
     from rasterio.transform import from_bounds
 
-    with _CONV_LOCK:
+    with _CONV_SEM:
         las = laspy.read(str(src_las))
         cls = np.asarray(las.classification)
         mask = np.isin(cls, classes)
@@ -968,7 +978,7 @@ class DfmProvider:
         """Le download est le nuage (LAS/LAZ brut = magic LASF, ou ZIP = magic PK
         si zipped), écrit sous un nom .tif par le cœur. On isole le nuage, on le
         GARDE en cache (reconversion sans réseau, cf. pre_download), puis on
-        convertit via las_to_dfm. Conversion sérialisée (_CONV_LOCK, RAM)."""
+        convertit via las_to_dfm. Conversion sérialisée (_CONV_SEM, RAM)."""
         chemin = Path(chemin)
         try:
             with open(chemin, "rb") as fh:
