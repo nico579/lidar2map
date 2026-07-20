@@ -434,19 +434,23 @@ en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
 ### Interface graphique
 
-Six onglets pour piloter LiDAR, IGN raster/vecteur, OSM, fusion et découpage.
+Cinq types de traitement : LiDAR, raster, vectoriel, fusion vectorielle et découpage raster. L'onglet LiDAR couvre les deux surfaces, le MNT raster et le nuage de points LAZ (mode DFM « structures debout », avec un socle par classes ou par tissu CSF).
 
-| LiDAR HD (ombrages archéo) | IGN raster (Plan / ortho / historique) | IGN vecteur (BD TOPO) |
+| LiDAR (surface MNT) | LiDAR (LAZ, socle classes sol) | LiDAR (LAZ, socle tissu CSF) |
 |---|---|---|
-| ![Onglet LiDAR](screenshots/GUI/IGN_Lidar.PNG) | ![Onglet IGN raster](screenshots/GUI/IGN_Raster.PNG) | ![Onglet IGN vecteur](screenshots/GUI/IGN_Vectoriel.PNG) |
+| ![Onglet LiDAR, surface MNT](screenshots/GUI/lidar_dtm.PNG) | ![Onglet LiDAR, nuage LAZ socle par classes](screenshots/GUI/lidar_laz_classes.PNG) | ![Onglet LiDAR, nuage LAZ socle tissu CSF](screenshots/GUI/lidar_laz_csf.PNG) |
 
-| OSM vectoriel (Mapsforge) | Fusion vecteur | Découpage raster |
+| Raster (Plan / ortho / historique) | Vectoriel, IGN BD TOPO (WFS) | Vectoriel, OSM (Mapsforge) |
 |---|---|---|
-| ![Onglet OSM](screenshots/GUI/OSM_Vectoriel.PNG) | ![Onglet Fusion](screenshots/GUI/Fusion_Vectoriel.PNG) | ![Onglet Découpage](screenshots/GUI/Decoupage_Raster.PNG) |
+| ![Onglet Raster](screenshots/GUI/raster.PNG) | ![Onglet Vectoriel, source IGN](screenshots/GUI/vector_ign.PNG) | ![Onglet Vectoriel, source OSM](screenshots/GUI/vector_osm.PNG) |
+
+| Fusion vectorielle | Découpage raster |
+|---|---|
+| ![Onglet Fusion vectorielle](screenshots/GUI/vector_merge.PNG) | ![Onglet Découpage raster](screenshots/GUI/raster_split.PNG) |
 
 Envoi vers le téléphone : le bouton 📲 sert les cartes générées sur le WiFi local, on scanne le QR code puis « Ouvrir avec » OsmAnd ou Locus.
 
-![Envoi vers le téléphone (QR)](screenshots/GUI/Phone.PNG)
+![Envoi vers le téléphone (QR)](screenshots/GUI/phone.PNG)
 
 La planche d'assemblage déposée à côté des livrables : contour réel du département et cellules numérotées (ici un run VAT du Var découpé en 3×4 zones ; les légers chevauchements sont les vraies tuiles de bord partagées aux zooms bas).
 

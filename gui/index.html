@@ -222,10 +222,10 @@
      <!-- Réglages du mode LAZ. Visibles seulement en surface = LAZ ; préremplis
           avec les défauts du jumeau Python (applyProviderDfm). -->
      <div class="row" id="dfm-params" style="display:none"
-          data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
+          data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
       <label data-i18n="f.dfmg">Socle</label>
       <select id="f-dfm-ground" onchange="updateDfmUI()" style="max-width:130px">
-       <option value="classes" data-i18n="f.dfmg.classes">classes IGN</option>
+       <option value="classes" data-i18n="f.dfmg.classes">classes sol</option>
        <option value="csf" data-i18n="f.dfmg.csf">tissu CSF (~3 min/dalle)</option>
       </select>
       <span id="dfm-params-classes" style="display:inline-flex;align-items:center;gap:4px">

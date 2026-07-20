@@ -438,19 +438,23 @@ elevation) or **ASC without a CRS**.
 
 ### Graphical interface
 
-Six tabs to drive LiDAR, IGN raster/vector, OSM, merge and splitting.
+Five processing types: LiDAR, raster, vector, vector merge and raster splitting. The LiDAR tab covers both surfaces, the DTM raster and the LAZ point cloud (DFM "standing structures" mode, with a class-based or CSF cloth ground base).
 
-| HD LiDAR (archaeological relief) | IGN raster (Plan / ortho / historical) | IGN vector (BD TOPO) |
+| LiDAR (DTM surface) | LiDAR (LAZ, class-based ground) | LiDAR (LAZ, CSF cloth ground) |
 |---|---|---|
-| ![LiDAR tab](screenshots/GUI/IGN_Lidar.PNG) | ![IGN raster tab](screenshots/GUI/IGN_Raster.PNG) | ![IGN vector tab](screenshots/GUI/IGN_Vectoriel.PNG) |
+| ![LiDAR tab, DTM surface](screenshots/GUI/lidar_dtm.PNG) | ![LiDAR tab, LAZ point cloud with class-based ground](screenshots/GUI/lidar_laz_classes.PNG) | ![LiDAR tab, LAZ point cloud with CSF cloth ground](screenshots/GUI/lidar_laz_csf.PNG) |
 
-| OSM vector (Mapsforge) | Vector merge | Raster splitting |
+| Raster (Plan / ortho / historical) | Vector, IGN BD TOPO (WFS) | Vector, OSM (Mapsforge) |
 |---|---|---|
-| ![OSM tab](screenshots/GUI/OSM_Vectoriel.PNG) | ![Merge tab](screenshots/GUI/Fusion_Vectoriel.PNG) | ![Splitting tab](screenshots/GUI/Decoupage_Raster.PNG) |
+| ![Raster tab](screenshots/GUI/raster.PNG) | ![Vector tab, IGN source](screenshots/GUI/vector_ign.PNG) | ![Vector tab, OSM source](screenshots/GUI/vector_osm.PNG) |
+
+| Vector merge | Raster splitting |
+|---|---|
+| ![Vector merge tab](screenshots/GUI/vector_merge.PNG) | ![Raster splitting tab](screenshots/GUI/raster_split.PNG) |
 
 Send to phone: the 📲 button serves the generated maps over local WiFi, scan the QR code and "Open with" OsmAnd or Locus.
 
-![Send to phone (QR)](screenshots/GUI/Phone.PNG)
+![Send to phone (QR)](screenshots/GUI/phone.PNG)
 
 The index sheet dropped next to the deliverables: real department outline and numbered chunk cells (here a Var department VAT run split into 3×4 zones; the slight overlaps are the real shared edge tiles at low zooms).
 

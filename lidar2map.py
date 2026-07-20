@@ -20,48 +20,53 @@
 lidar2map.py — Prospection archéologique LiDAR & cartes offline
 ======================================================================
 
-Script unifié 5 modes pour Locus Map / OsmAnd / TwoNav.
+Script unifié multi-modes pour Locus Map / OsmAnd / TwoNav.
 Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   CONCEPT ET WORKFLOW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Les 4 types de cartes sont INDÉPENDANTS et complémentaires :
+  Les types de cartes sont INDÉPENDANTS et complémentaires. Dans le GUI, ce
+  sont les onglets LiDAR, Raster, Vectoriel, Fusion vectorielle (plus un onglet
+  utilitaire Découpage raster).
 
-  ① LiDAR MNT   Fond principal d'analyse archéologique. On commence par
-                 ici : téléchargement des dalles, calcul des ombrages
-                 (multi-directionnel, SVF, LRM, RRIM…), export en MBTiles.
-                 On expérimente dans Locus, on identifie les manques.
+  ① LiDAR       Fond principal d'analyse archéologique. On commence par
+                 ici : téléchargement des dalles (surface MNT, ou nuage de
+                 points LAZ en mode DFM « structures debout »), calcul des
+                 ombrages (multi-directionnel, SVF, LRM, RRIM…), export en
+                 MBTiles. Multi-provider / multi-pays (défaut fr-ign HD,
+                 voir --provider). On expérimente dans Locus, on identifie
+                 les manques.
 
-  ② IGN Raster  Fond alternatif ou de recalage (Scan 25, orthophotos…).
-                 Peut remplacer le LiDAR quand les données manquent, ou
-                 servir de fond de référence topographique pour compléter
-                 l'analyse. Se superpose aux overlays vectoriels.
+  ② Raster      Fond alternatif ou de recalage (Scan 25, orthophotos,
+                 NAIP US…). Peut remplacer le LiDAR quand les données
+                 manquent, ou servir de fond de référence topographique.
+                 Se superpose aux overlays vectoriels.
 
-  ③ IGN Vecteur Overlay de précision : cadastre, hydrographie, chemins…
-                 Téléchargé en GeoJSON, chargé en superposition dans Locus
-                 sur le fond LiDAR ou IGN Raster pour enrichir l'analyse.
+  ③ Vectoriel   Overlay de précision. Deux sources au choix :
+                 IGN (cadastre, hydrographie, chemins… en WFS) ou
+                 OSM (routes, cours d'eau, patrimoine… en Mapsforge/GeoJSON).
+                 Superposition sur n'importe quel fond raster.
+                 En CLI, deux modes distincts : --ignvecteur et --osm.
 
-  ④ OSM Vecteur Overlay polyvalent : routes, cours d'eau, patrimoine…
-                 Généré en Mapsforge (.map) et/ou GeoJSON, utilisable en
-                 superposition sur n'importe quel fond raster.
-
-  ⑤ Fusion      Outil utilitaire : fusionne plusieurs GeoJSON (IGN + OSM)
+  ④ Fusion vectorielle
+                 Outil utilitaire : fusionne plusieurs GeoJSON (IGN + OSM)
                  en un seul overlay unifié avec traçabilité de la source.
 
   Flux typique :
     1. Générer le LiDAR → charger dans Locus
-    2. Selon les besoins : ajouter overlay IGN Vecteur et/ou OSM
-    3. Si couverture LiDAR insuffisante : générer IGN Raster (Scan 25/Ortho)
+    2. Selon les besoins : ajouter overlay Vectoriel (IGN et/ou OSM)
+    3. Si couverture LiDAR insuffisante : générer Raster (Scan 25/Ortho)
     4. Fusionner les GeoJSON si besoin d'un overlay unique combiné
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MODES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  --ignlidar      Dalles LiDAR HD IGN (WMS) → ombrages → MBTiles/RMAP/SQLiteDB
-  --ignraster     Tuiles WMTS IGN (Scan 25, Ortho…) → MBTiles/RMAP/SQLiteDB
+  --ignlidar      Dalles LiDAR → ombrages → MBTiles/RMAP/SQLiteDB
+                    (défaut fr-ign HD par WMS ; autres pays via --provider)
+  --ignraster     Tuiles WMTS raster (Scan 25, Ortho, NAIP US…) → MBTiles/RMAP/SQLiteDB
   --ignvecteur    WFS IGN (cadastre, hydrographie…) → GeoJSON(.gz)
   --osm           PBF Geofabrik → carte Mapsforge (.map) + GeoJSON(.gz)
   --fusionner     Fusion de GeoJSON/GeoJSON.gz en un seul fichier
@@ -70,6 +75,14 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   Sans argument   → GUI pywebview (interface HTML/JS)
 
+  Pré-flags globaux (lus AVANT argparse, tel un préfixe de commande :
+  ils sélectionnent la source ou le pipeline, puis sont retirés de argv) :
+    --provider CODE   Source LiDAR/raster (défaut fr-ign). 27 pays câblés :
+                        fr-ign, ch-swisstopo, nl-ahn, us-3dep, no-kartverket…
+                        Liste vivante = un fichier par source dans providers/.
+    --dfm             Mode LAZ « structures debout » (voir MODE --ignlidar).
+                        Bascule vers le jumeau <provider>-dfm.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ZONE GÉOGRAPHIQUE (commune à tous les modes)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -77,7 +90,10 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --zone-ville NOM            Géocodage Nominatim (ex: gareoult)
   --zone-gps   LAT,LON        Coordonnées WGS84  (ex: 43.3156,6.0423)
   --zone-bbox  W,S,E,N        BBox WGS84 en degrés
-  --zone-departement NUM      Department français (ex: 83)
+  --zone-departement NUM      Département français (ex: 83)
+  --zone-region SLUG          Région Geofabrik, ex: provence-alpes-cote-d-azur
+                                (emprise = bbox de ses départements ; avec
+                                 --osm : une seule carte régionale, PBF complet)
   --zone-rayon KM             Rayon autour du point (défaut: 10)
   --zone-nom   NOM            Nom du dossier de sortie (ex: aa)
 
@@ -101,10 +117,11 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   MODE --ignlidar
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Pipeline :
-    1. Dalles IGN LiDAR HD (WMS, cache permanent dans --dossier-dalles)
+  Pipeline (décrit pour le défaut fr-ign ; les autres providers varient sur
+  l'étape 1, via STAC ou tuiles LAZ, et sur le CRS natif, mais la suite est commune) :
+    1. Dalles LiDAR (fr-ign : HD par WMS ; cache permanent dans --dossier-dalles)
        → dalles_zone.txt (liste bbox-versionnée, reconstruite si zone change)
-    2. gdalbuildvrt → VRT global temporaire (EPSG:2154, < 1 s)
+    2. gdalbuildvrt → VRT global temporaire (CRS natif du provider, ex. EPSG:2154, < 1 s)
     3. gdaldem / numpy/scipy → TIF ombrages (étape "ombrage")
        → <nom>_multi_ombrage.tif, <nom>_slope_ombrage.tif…
     4. gdalwarp + gdaladdo + tuilage Pillow → MBTiles/RMAP/SQLiteDB
@@ -152,6 +169,10 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --dfm-csf-rigidness 1|2|3   Type de terrain (Zhang) : 1 pentu (déf.),
                                   2 relief doux, 3 plat (proche bare-earth,
                                   efface les murs — pas pour les ruines).
+    --dfm-parallel N            Conversions CSF/DFM simultanées (déf. 1).
+                                  Chaque conversion pique ~3 Go de RAM, donc
+                                  N>1 exige la RAM (N×3 Go) et les cœurs. Pour
+                                  une VM multi-cœurs ; laisser 1 sur 8 Go.
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
                                   lrm vat svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
@@ -165,12 +186,25 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   conv/dist/gamma (svf), dist/gamma (opos/oneg),
                                   sigma en m (lrm/rrim). Les params explicites
                                   sont encodés dans le nom de fichier.
+    --shading-preset auto|micro|standard|landscape
+                                Stack d'ombrages calibré sur la RÉSOLUTION
+                                  (opt-in, params en mètres) : svf + opos + lrm
+                                  dimensionnés pour le MNT, plus multi + slope.
+                                  'auto' choisit micro (≤0,75 m) / standard
+                                  (~1 m) / landscape (≥5 m) selon le provider.
     --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
     --svf-dist M                Rayon SVF en mètres, 10–200 (déf. 20)
     --svf-sweep / --no-svf-sweep  Kernel sweep-horizon SVF (déf. activé)
     --ombrages-elevation DEG    Angle solaire en degrés (défaut: 25)
     --svf-gamma G               Gamma du SVF (défaut: 2.0 ; <1 éclaircit, >1 assombrit)
     --ombrages-compresser       Compresser les TIF ombrages existants (DEFLATE)
+    --ombrages-ecraser          Recalculer les ombrages même s'ils existent
+    --tuiles-ecraser            Réécrire les tuiles / MBTiles / .map existants
+    --index-map / --no-index-map  Planche d'index <nom>_planche.png à côté des
+                                  livrables (emprise + contour départemental +
+                                  cellules numérotées si découpage). Défaut: activé.
+                                  Sur un projet existant : --index-sheet DOSSIER
+                                  (alias --planche).
     --zoom-min N                Zoom minimum MBTiles (défaut: 13 — inclut z8-12 via --zoom-min 8)
     --zoom-max N                Zoom maximum MBTiles (défaut: 18)
     --cols-decoupe N            Découpe le MBTiles final en N colonnes (avec --rows-decoupe)
@@ -180,6 +214,14 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   .tif   → ombrage existant → tuilage direct
                                   .mbtiles → conversion → RMAP/SQLiteDB
     --osm                       Générer overlay OSM vectoriel (standalone ou après LiDAR)
+
+  Maintenance du cache de dalles (lancer SANS --telechargement) :
+    --dalles-purger-invalides   Supprimer les dalles < 2 Mo (mer, erreurs partielles)
+    --dalles-purger-hors-zone   Supprimer du cache les dalles hors zone courante
+                                  (libère la place prise par d'autres départements)
+    --dalles-migrer             Réorganiser les dalles en sous-dossiers par colonne X
+    --dalles-renommer           Renommer les dalles de l'ancienne convention (x2)
+                                  vers la nouvelle (x1), une seule fois
 
   Arborescence de sortie :
     Projets/<nom>/
@@ -191,7 +233,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
         <nom>_multi_ombrage_z13-18.mbtiles
         <nom>_multi_ombrage_z13-18.rmap
         <nom>_multi_ombrage_z13-18.sqlitedb
-    cache/ign_lidar/                cache dalles IGN permanent (partagé)
+    <cache>/ign_lidar/              cache dalles permanent, partagé entre projets
+                                    (<cache> = cache/ sous le dossier de travail
+                                     par défaut, déplaçable par --cache-dir)
 
   Temps indicatifs (zone 4 km², i3-8130U) :
     Téléchargement (9-12 dalles)       : ~30 s
@@ -206,10 +250,12 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   MODE --ignraster
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Télécharge des tuiles WMTS IGN dans un MBTiles.
-  Sortie dans Projets/<nom>/raster/. Cache permanent : cache/ign_raster/<z>/<x>/<y>.<ext>.
+  Télécharge des tuiles WMTS dans un MBTiles.
+  Sortie dans Projets/<nom>/raster/. Cache permanent : <cache>/ign_raster/<z>/<x>/<y>.<ext>
+  (<cache> = cache/ sous le dossier de travail par défaut, déplaçable par --cache-dir).
 
-  Couches disponibles :
+  Couches disponibles (catalogue fr-ign ci-dessous ; un autre --provider expose
+  ses propres couches, ex. us-tnm → naip) :
     planign     Plan IGN v2 (png, public, z6-18)              ← recommandé particuliers
     etatmajor40 État-Major 1/40000 (jpeg, public, z6-15)
     etatmajor10 État-Major 1/10000 (jpeg, public, z8-16)
@@ -258,7 +304,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
         <nom>_scan25_z8-18.mbtiles
         <nom>_scan25_z8-18.rmap
         <nom>_scan25_z8-18.sqlitedb
-    cache/ign_raster/               cache tuiles WMTS permanent (partagé)
+    <cache>/ign_raster/             cache tuiles WMTS permanent, partagé (--cache-dir)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   MODE --ignvecteur
@@ -325,6 +371,10 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   --dossier CHEMIN      Racine de sortie (défaut: Projets/<nom>/)
+  --dossier-cache CHEMIN  Racine de TOUS les caches persistants : dalles, tuiles
+                          WMTS, PBF OSM, index de découverte (alias --cache-dir).
+                          Défaut : cache/ sous le dossier de travail. Permet de
+                          poser cache et sorties sur des disques différents.
   --nettoyage           Supprimer les fichiers intermédiaires après chaque
                           morceau (dalles, TIF ombrages, TIF warpé).
                           Conserve les sorties finales (.mbtiles .rmap .sqlitedb).
@@ -336,10 +386,22 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   Lancer sans argument : python lidar2map.py
-  Onglets : LiDAR MNT, IGN Raster, IGN Vecteur, OSM Vecteur, Fusion, Découpage.
+  Onglets : LiDAR, Raster, Vectoriel, Fusion vectorielle, Découpage raster.
+
+  Structure commune aux onglets :
+    • Zone géographique : sélecteur de PAYS (issu des providers) qui limite
+      l'autocomplétion des villes ; puis ville / GPS / bbox / département / région.
+    • Bloc « Source des données » : provider + surface MNT ou LAZ (LiDAR),
+      couche (Raster), source IGN/OSM (Vectoriel).
+    • Cadres numérotés : Télécharger → Découpage à priori → Générer la carte,
+      chacun avec sa case d'activation.
+    • Masquages selon le pays : l'onglet Raster disparaît si le pays n'a pas
+      de données raster ; la source IGN se cache dans Vectoriel hors France.
 
   Fonctionnalités :
+    • Bouton Aide (❓) : affiche cette documentation (source UNIQUE = ce docstring)
     • Historique : 50 dernières commandes, rappel par clic, vidable
+    • Partage LAN (📲) : QR + URL pour import direct sur le téléphone
     • Zoom interface : Ctrl+molette (Windows/macOS), Ctrl++/Ctrl+-
     • Annulation : 1er Ctrl+C demande l'arrêt propre, 2nd force la sortie
     • Logs en temps réel + erreurs en boîte de dialogue à la fin
@@ -366,6 +428,12 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --nettoyage           Supprimer dalles + TIF intermédiaires après chaque
                           morceau. Indispensable pour les grandes zones
                           (département entier).
+  --cleanup-keep-tiles  Avec --nettoyage : garder les dalles dans le cache
+                          partagé, ne purger que les autres intermédiaires.
+                          Utile quand une tâche +file suivante les réutilise.
+  --min-disque-go GO    Arrêt propre avant un morceau si l'espace libre passe
+                          sous GO (0 = désactivé). À régler au-dessus du pic
+                          disque d'un morceau.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   DÉPENDANCES
@@ -2036,7 +2104,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.19.0"
+VERSION      = "1.20.0"
 VERSION_DATE = "2026-07"
 
 
