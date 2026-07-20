@@ -38,9 +38,9 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:13px var(
 #sec-lidar .section-hd{background:var(--lidar)}
 /* Bandeaux IGN Raster */
 #sec-scan .section-hd{background:var(--scan)}
-/* Bandeaux OSM */
-#sec-osm .section-hd{background:var(--osm)}
-/* Bandeaux IGN Vectoriel */
+/* Bandeaux Vectoriel : une seule couleur. IGN et OSM sont deux sources d'un
+   MÊME onglet depuis la fusion — recolorer l'onglet selon la source ferait
+   croire à un changement de contexte qui n'existe plus. */
 #sec-vecteur .section-hd{background:var(--vecteur)}
 /* Fond pastel des sections par type */
 .section.sec-projet,.section.sec-projet .section-body{background:rgba(74,96,128,.18)!important;border-color:rgba(74,96,128,.4)!important}
@@ -48,12 +48,14 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:13px var(
 .section.sec-type,.section.sec-type .section-body    {background:rgba(74,96,128,.18)!important;border-color:rgba(74,96,128,.4)!important}
 #sec-lidar   .section{background:rgba(91,138,110,.14)!important;border-color:rgba(91,138,110,.35)!important}
 #sec-scan    .section{background:rgba(122,111,160,.14)!important;border-color:rgba(122,111,160,.35)!important}
-#sec-osm     .section{background:rgba(122,154,191,.14)!important;border-color:rgba(122,154,191,.35)!important}
 #sec-vecteur .section{background:rgba(176,120,64,.14)!important;border-color:rgba(176,120,64,.35)!important}
 #sec-fusion  .section{background:rgba(96,104,120,.14)!important;border-color:rgba(96,104,120,.35)!important}
 .section-body{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
 .section-body.hidden{display:none}
 .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* Champs propres au mode de zone : alignés dans la ligne, échangés par
+   applyMode. `.hidden` est !important, il l'emporte sur ce display. */
+.z-zone{display:inline-flex;align-items:center;gap:6px;margin-left:6px}
 .row label{font-size:11px;color:var(--dim);white-space:nowrap;min-width:110px}
 .row label.wide{min-width:140px}
 input[type=text],input[type=number],select{
@@ -70,7 +72,11 @@ select{cursor:pointer}
   cursor:pointer;color:var(--fg);white-space:nowrap;min-width:auto}
 .seg{display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden}
 .seg input{display:none}
-.seg label{padding:3px 10px;font-size:11px;cursor:pointer;
+/* min-width:auto ANNULE le 110px hérité de `.row label` (même spécificité, donc
+   il s'appliquait aussi aux boutons du segment) : chaque bouton faisait 110px,
+   un segment de 5 boutons 550px, et la ligne débordait dès qu'on lui ajoutait
+   autre chose. Ici la largeur doit venir du padding, pas d'un minimum de label. */
+.seg label{padding:3px 10px;font-size:11px;cursor:pointer;min-width:auto;
   background:var(--bg3);color:var(--dim);white-space:nowrap}
 .seg input:checked+label{background:var(--ac);color:#fff}
 .btn{padding:4px 14px;border:none;border-radius:4px;cursor:pointer;
@@ -94,14 +100,12 @@ body.type-lidar .priori-zone, body.type-scan .priori-zone{display:inline-flex!im
   font-weight:600}
 #t-lidar:checked   +label{border-color:var(--lidar);color:var(--lidar);background:var(--bg2)}
 #t-scan:checked    +label{border-color:var(--scan);color:var(--scan);background:var(--bg2)}
-#t-osm:checked     +label{border-color:var(--osm);color:var(--osm);background:var(--bg2)}
 #t-vecteur:checked +label{border-color:var(--vecteur);color:var(--vecteur);background:var(--bg2)}
 #t-fusion:checked  +label{border-color:var(--fusion);color:var(--fusion);background:var(--bg2)}
 #t-decoupe:checked +label{border-color:var(--decoupe);color:var(--decoupe);background:var(--bg2)}
 /* Couleur btn-run selon type actif */
 body.type-lidar   #btn-run{background:var(--lidar)}
 body.type-scan    #btn-run{background:var(--scan)}
-body.type-osm     #btn-run{background:var(--osm)}
 body.type-vecteur #btn-run{background:var(--vecteur)}
 body.type-fusion  #btn-run{background:var(--fusion)}
 body.type-decoupe #btn-run{background:var(--decoupe)}

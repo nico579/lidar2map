@@ -13,6 +13,12 @@ Style : simplestyle-spec (fill/stroke) lu par le rendu GitHub.
 """
 import glob, importlib.util, json, os, re, sys, time, urllib.parse, urllib.request
 
+# Source UNIQUE du compte + de la liste de pays affichés dans les READMEs.
+# Remontée dans providers/common.py (2026-07-20) : la GUI groupe sa dropdown de
+# providers par pays et a besoin des mêmes noms dans le même ordre. Deux tables
+# auraient dérivé. Le garde-fou anti-drift d'update_readme_countries est inchangé.
+from providers.common import COUNTRY_NAMES
+
 # Console Windows cp1252 : les noms natifs (Česko, Österreich…) planteraient
 # les print — forcer UTF-8 (best effort).
 for _s in (sys.stdout, sys.stderr):
@@ -93,39 +99,6 @@ REGIONS = [
 ]
 
 
-# Source UNIQUE du compte + de la liste de pays affichés dans les READMEs.
-# Ordre = ordre d'affichage ; noms (EN, FR). Un COUNTRY de provider absent d'ici
-# fait échouer la génération (anti-drift, comme le garde-fou REGIONS). Ajouter un
-# pays = 1 ligne ici, puis relancer ce script : les 2 READMEs se mettent à jour.
-COUNTRY_NAMES = [
-    ("fr", "France", "France"),
-    ("gb", "UK", "Royaume-Uni"),
-    ("de", "Germany", "Allemagne"),
-    ("at", "Austria", "Autriche"),
-    ("nl", "Netherlands", "Pays-Bas"),
-    ("ch", "Switzerland", "Suisse"),
-    ("no", "Norway", "Norvège"),
-    ("be", "Belgium", "Belgique"),
-    ("lu", "Luxembourg", "Luxembourg"),
-    ("fi", "Finland", "Finlande"),
-    ("dk", "Denmark", "Danemark"),
-    ("se", "Sweden", "Suède"),
-    ("ie", "Ireland", "Irlande"),
-    ("cz", "Czechia", "Tchéquie"),
-    ("si", "Slovenia", "Slovénie"),
-    ("ee", "Estonia", "Estonie"),
-    ("lv", "Latvia", "Lettonie"),
-    ("es", "Spain", "Espagne"),
-    ("pt", "Portugal", "Portugal"),
-    ("it", "Italy", "Italie"),
-    ("pl", "Poland", "Pologne"),
-    ("us", "USA", "USA"),
-    ("ca", "Canada", "Canada"),
-    ("nz", "New Zealand", "Nouvelle-Zélande"),
-    ("au", "Australia", "Australie"),
-    ("ph", "Philippines", "Philippines"),
-    ("jp", "Japan", "Japon"),
-]
 
 # READMEs et langue : les marqueurs <!--N-->…<!--/N--> (compte) et
 # <!--LIST-->…<!--/LIST--> (liste) sont remplacés en place.

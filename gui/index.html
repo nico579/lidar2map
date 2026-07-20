@@ -68,55 +68,6 @@
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3"
              onchange="refreshProjets()">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
-      <label style="min-width:auto;margin-left:12px"
-             data-i18n-title="tip.provider" title="Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.">Provider</label>
-      <select id="f-provider" style="min-width:200px">
-       <option value="fr-ign" data-i18n="loading">Chargement...</option>
-      </select>
-      <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
-       <span style="color:var(--dim)" data-i18n="apikey">Clé API :</span>
-       <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
-              placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
-      </span>
-     </div>
-     <!-- Mode DFM (structures debout) : visible si le provider a un jumeau *_dfm.
-          Réglages préremplis avec les défauts du module Python (applyProviderDfm). -->
-     <div class="row" id="dfm-row" style="display:none">
-      <label style="min-width:auto;cursor:pointer"
-             data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
-       <input type="checkbox" id="f-dfm" onchange="onLazToggle()" style="vertical-align:middle">
-       <span data-i18n="f.dfm">Mode LAZ — structures debout (nuage classé, expérimental)</span>
-      </label>
-      <!-- Badge de source : montre que cocher la case bascule MNT (raster) →
-           LAZ (nuage de points). Visible dès que la ligne DFM apparaît. -->
-      <span id="dfm-source" style="margin-left:8px;padding:1px 8px;border-radius:10px;font-size:0.82em;font-weight:600"></span>
-      <span id="dfm-params" style="display:none;align-items:center;gap:4px;margin-left:12px">
-       <span style="color:var(--dim)" data-i18n="f.dfmg">socle</span>
-       <select id="f-dfm-ground" onchange="updateDfmUI()" style="max-width:130px">
-        <option value="classes" data-i18n="f.dfmg.classes">classes IGN</option>
-        <option value="csf" data-i18n="f.dfmg.csf">tissu CSF (~3 min/dalle)</option>
-       </select>
-       <span id="dfm-params-classes" style="display:inline-flex;align-items:center;gap:4px">
-        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmh">hauteur (m)</span>
-        <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
-        <span style="color:var(--dim)">–</span>
-        <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
-        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
-        <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
-       </span>
-       <span id="dfm-params-csf" style="display:none;align-items:center;gap:4px">
-        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmt">seuil (m)</span>
-        <input type="number" id="f-dfm-csf-threshold" step="0.1" min="0.1" max="3" style="max-width:70px">
-        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmr">maille (m)</span>
-        <input type="number" id="f-dfm-csf-resolution" step="0.1" min="0.1" max="3" style="max-width:70px">
-        <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmrg">terrain</span>
-        <select id="f-dfm-csf-rigidness" style="max-width:120px">
-         <option value="1" data-i18n="f.dfmrg.1">pentu (1)</option>
-         <option value="2" data-i18n="f.dfmrg.2">relief doux (2)</option>
-         <option value="3" data-i18n="f.dfmrg.3">plat (3)</option>
-        </select>
-       </span>
-      </span>
      </div>
    </div>
   </div>
@@ -125,57 +76,63 @@
   <div class="section sec-zone">
    <div class="section-hd" data-i18n="sec.zone">Zone géographique</div>
    <div class="section-body">
+    <!-- Le pays est une propriété de la ZONE, pas de la source LiDAR. Avant, le
+         périmètre du géocodage était lu sur le provider LiDAR (dataset.country),
+         y compris sur les onglets Raster / OSM / Vecteur qui n'ont pas de
+         provider : choisir une source suisse changeait l'autocomplétion des
+         villes d'un run OSM. Déclaré ici, il cadre le géocodage ET filtre les
+         listes réellement dépendantes du pays. -->
     <div class="row">
-     <div class="seg">
-      <input type="radio" name="mode" id="m-ville" value="ville" checked>
-      <label for="m-ville" data-i18n="mode.ville">Ville</label>
-      <input type="radio" name="mode" id="m-gps" value="gps">
-      <label for="m-gps" data-i18n="mode.gps">GPS</label>
-      <input type="radio" name="mode" id="m-bbox" value="bbox">
-      <label for="m-bbox" data-i18n="mode.bbox">BBox</label>
-      <input type="radio" name="mode" id="m-dep" value="dep">
-      <label for="m-dep" data-i18n="mode.dep">Department</label>
-      <input type="radio" name="mode" id="m-region" value="region">
-      <label for="m-region" data-i18n="mode.region">Région</label>
-     </div>
-    </div>
-    <div class="row z-zone" id="z-ville"><label data-i18n="z.ville">Ville</label>
-     <div class="ac-wrap">
+     <label style="min-width:auto" data-i18n="z.pays">Pays</label>
+     <select id="f-pays" onchange="onPaysChange()" style="max-width:160px"></select>
+     <label style="min-width:auto;margin-left:12px" data-i18n="z.mode">Zone</label>
+     <select id="f-mode" onchange="onModeChange()" style="max-width:105px">
+      <option value="ville"  data-i18n="mode.ville">Ville</option>
+      <option value="gps"    data-i18n="mode.gps">GPS</option>
+      <option value="bbox"   data-i18n="mode.bbox">BBox</option>
+      <option value="dep"    data-i18n="mode.dep">Department</option>
+      <option value="region" data-i18n="mode.region">Région</option>
+     </select>
+     <!-- Champs propres au mode, sur la MÊME ligne. Leur libellé est porté par
+          la liste « Zone » et par le placeholder : le répéter ferait déborder
+          la ligne sans rien apprendre. -->
+     <span class="z-zone" id="z-ville">
+      <div class="ac-wrap">
        <input type="text" id="f-ville" placeholder="ex: Garéoult" autocomplete="off">
        <div id="f-ville-ac" class="ac-dropdown hidden" role="listbox"></div>
-     </div>
-     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
-     <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-gps"><label data-i18n="z.gps">GPS lat,lon</label>
-     <input type="text" id="f-gps" placeholder="43.3156,6.0423" style="max-width:160px">
-     <label style="min-width:auto;margin-left:8px" data-i18n="z.rayonkm">Rayon km</label>
-     <input type="number" id="f-rayon-gps" value="10" min="0" max="500" class="inp-short"></div>
-    <div class="row hidden z-zone" id="z-bbox"><label data-i18n="z.bbox">BBox W,S,E,N</label>
-     <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:200px"></div>
-    <div class="hidden z-zone" id="z-dep">
-     <div class="row">
-      <label data-i18n="z.deps">Department(s)</label>
-      <input type="text" id="f-dep" placeholder="83" style="width:220px;flex:none"
+      </div>
+      <label style="min-width:auto" data-i18n="z.rayonkm">Rayon km</label>
+      <input type="number" id="f-rayon" value="10" min="0" max="500" class="inp-short">
+     </span>
+     <span class="z-zone hidden" id="z-gps">
+      <input type="text" id="f-gps" placeholder="43.3156,6.0423" style="max-width:150px">
+      <label style="min-width:auto" data-i18n="z.rayonkm">Rayon km</label>
+      <input type="number" id="f-rayon-gps" value="10" min="0" max="500" class="inp-short">
+     </span>
+     <span class="z-zone hidden" id="z-bbox">
+      <input type="text" id="f-bbox" placeholder="5.9,43.1,6.6,43.8" style="max-width:190px">
+     </span>
+     <span class="z-zone hidden" id="z-dep">
+      <input type="text" id="f-dep" placeholder="83" style="width:200px;flex:none"
              data-i18n-title="tip.deps" title="Un ou plusieurs départements&#10;Exemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971">
-     </div>
-     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="dep.syntax">
-      Syntaxe : <code>83</code> &nbsp;·&nbsp;
-      <code>83,06,13</code> &nbsp;·&nbsp;
-      <code>1-10</code> &nbsp;·&nbsp;
-      <code>1-3,75,83</code> &nbsp;·&nbsp;
-      DOM : <code>2A</code> <code>971</code>
-      &nbsp;—&nbsp; Multi-département : un fichier par département
-     </div>
+     </span>
+     <span class="z-zone hidden" id="z-region">
+      <select id="f-region" style="min-width:230px"></select>
+     </span>
     </div>
-    <div class="hidden z-zone" id="z-region">
-     <div class="row">
-      <label data-i18n="mode.region">Région</label>
-      <select id="f-region" style="min-width:240px"></select>
-     </div>
-     <div class="hint" style="margin-top:3px;margin-left:0" data-i18n-html="region.hint">
-      Region Geofabrik = bbox englobante de ses départements.
-      &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
-     </div>
+    <!-- Aides de saisie : hors de la ligne des champs, affichées seulement pour
+         le mode concerné (elles sont trop longues pour tenir en ligne). -->
+    <div class="hint hidden" id="z-dep-hint" style="margin-left:0" data-i18n-html="dep.syntax">
+     Syntaxe : <code>83</code> &nbsp;·&nbsp;
+     <code>83,06,13</code> &nbsp;·&nbsp;
+     <code>1-10</code> &nbsp;·&nbsp;
+     <code>1-3,75,83</code> &nbsp;·&nbsp;
+     DOM : <code>2A</code> <code>971</code>
+     &nbsp;—&nbsp; Multi-département : un fichier par département
+    </div>
+    <div class="hint hidden" id="z-region-hint" style="margin-left:0" data-i18n-html="region.hint">
+     Region Geofabrik = bbox englobante de ses départements.
+     &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).
     </div>
    </div>
   </div>
@@ -186,15 +143,19 @@
    <div class="section-body">
     <div id="type-sel">
      <input type="radio" name="type" id="t-lidar"   value="lidar"   checked>
-     <label for="t-lidar" data-i18n="t.lidar">LiDAR MNT</label>
+     <label for="t-lidar" data-i18n="t.lidar">LiDAR</label>
      <input type="radio" name="type" id="t-scan"    value="scan">
-     <label for="t-scan" id="lbl-raster" data-raster-tab="1">IGN Raster</label>
+     <label for="t-scan" id="lbl-raster" data-i18n="t.raster">Raster</label>
+     <!-- Un seul onglet Vectoriel : IGN et OSM avaient le même squelette
+          (source → téléchargement → génération) et les mêmes livrables
+          (.map, .geojson(.gz), transparent-raster). Ils ne différaient que par
+          le fournisseur, ce que porte le bloc « Source des données ».
+          cfg.type reste 'vecteur' ou 'osm', dérivé du sélecteur de source :
+          _build_cmd, les configs sauvées et l'historique sont inchangés. -->
      <input type="radio" name="type" id="t-vecteur" value="vecteur">
-     <label for="t-vecteur" data-fr-only="1" data-i18n="t.vecteur">IGN Vectoriel</label>
-     <input type="radio" name="type" id="t-osm"     value="osm">
-     <label for="t-osm" data-i18n="t.osm">OSM Vectoriel</label>
+     <label for="t-vecteur" data-i18n="t.vect">Vectoriel</label>
      <input type="radio" name="type" id="t-fusion"  value="fusion">
-     <label for="t-fusion" data-i18n="t.fusion">Fusion Vectoriel</label>
+     <label for="t-fusion" data-i18n="t.fusion">Fusion vectorielle</label>
      <input type="radio" name="type" id="t-decoupe" value="decoupe">
      <label for="t-decoupe" data-i18n="t.decoupe">Découpage raster</label>
     </div>
@@ -203,11 +164,76 @@
 
   <!-- ═══ LIDAR ═══ -->
   <div id="sec-lidar">
+   <!-- Source des données : décision la PLUS AMONT de l'onglet, donc en tête.
+        Le type de surface (MNT raster / LAZ nuage) est choisi d'abord, car il
+        conditionne la liste des providers : en LAZ on ne propose que les
+        sources DFM-capables (celles qui ont un jumeau *_dfm). Le provider fixe
+        ensuite résolution, zoom natif et découpage en dalles. -->
+   <div class="section">
+    <div class="section-hd" data-i18n="sec.source">Source des données</div>
+    <div class="section-body">
+     <!-- Surface et provider sur UNE ligne : ils se lisent ensemble (le type de
+          surface filtre la liste de providers). L'option LAZ est désactivée,
+          motif dans son libellé, quand le pays n'a aucune source DFM-capable. -->
+     <div class="row">
+      <label style="min-width:auto" data-i18n="f.surface">Surface</label>
+      <select id="f-surface" onchange="onSurfaceChange()" style="max-width:135px">
+       <option value="mnt" data-i18n="f.surf.mnt">MNT (raster)</option>
+       <option value="laz" data-i18n="f.surf.laz">LAZ (nuage)</option>
+      </select>
+      <label style="min-width:auto;margin-left:12px" data-i18n="f.provider"
+             data-i18n-title="tip.provider" title="Source LiDAR, par pays. La liste est filtrée par le type de surface choisi à gauche.">Provider</label>
+      <select id="f-provider" style="min-width:260px">
+       <option value="fr-ign" data-i18n="loading">Chargement...</option>
+      </select>
+      <span id="lidar-apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px">
+       <span style="color:var(--dim)" data-i18n="apikey">Clé API :</span>
+       <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
+              placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
+      </span>
+     </div>
+     <!-- Réglages du mode LAZ. Visibles seulement en surface = LAZ ; préremplis
+          avec les défauts du jumeau Python (applyProviderDfm). -->
+     <div class="row" id="dfm-params" style="display:none"
+          data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
+      <label data-i18n="f.dfmg">Socle</label>
+      <select id="f-dfm-ground" onchange="updateDfmUI()" style="max-width:130px">
+       <option value="classes" data-i18n="f.dfmg.classes">classes IGN</option>
+       <option value="csf" data-i18n="f.dfmg.csf">tissu CSF (~3 min/dalle)</option>
+      </select>
+      <span id="dfm-params-classes" style="display:inline-flex;align-items:center;gap:4px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmh">hauteur (m)</span>
+       <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
+       <span style="color:var(--dim)">–</span>
+       <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
+       <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
+      </span>
+      <span id="dfm-params-csf" style="display:none;align-items:center;gap:4px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmt">seuil (m)</span>
+       <input type="number" id="f-dfm-csf-threshold" step="0.1" min="0.1" max="3" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmr">maille (m)</span>
+       <input type="number" id="f-dfm-csf-resolution" step="0.1" min="0.1" max="3" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmrg">terrain</span>
+       <select id="f-dfm-csf-rigidness" style="max-width:120px">
+        <option value="1" data-i18n="f.dfmrg.1">pentu (1)</option>
+        <option value="2" data-i18n="f.dfmrg.2">relief doux (2)</option>
+        <option value="3" data-i18n="f.dfmrg.3">plat (3)</option>
+       </select>
+      </span>
+     </div>
+    </div>
+   </div>
+   <!-- Case d'activation comme les autres cadres. Elle est la source UNIQUE de
+        l'état on/off : décochée, _build_cmd n'émet aucun --split-*, quelles que
+        soient les valeurs saisies (qui restent en place et resservent si on
+        recoche). Décochée par défaut : le découpage ne sert qu'aux très grandes
+        zones. -->
    <div class="section">
     <div class="section-hd">
-     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
+     <label><input type="checkbox" id="f-priori"> <span data-i18n="split0">0 — Découpage à priori (grandes zones)</span></label>
     </div>
-    <div class="section-body">
+    <div class="section-body hidden" id="body-priori">
      <div class="row">
       <label data-i18n="grid">Grille :</label>
       <input type="number" id="f-priori-cols" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
@@ -229,14 +255,13 @@
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tel" checked> <span data-i18n="dl.lidar">1 — Télécharger les dalles LiDAR HD IGN</span></label>
+     <label><input type="checkbox" id="f-tel" checked> <span data-i18n="dl">1 — Télécharger</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel">
      <div class="row">
       <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-l" value="8" min="1" max="32" class="inp-short">
-      <span id="dfm-workers-note" style="display:none;margin-left:6px;font-size:0.82em;color:#b45309"></span>
       <label style="min-width:auto"><input type="checkbox" id="f-comp" checked> <span data-i18n="compress">Compresser</span></label>
       <label style="min-width:auto;margin-left:12px" data-i18n="extcache">Cache externe :</label>
       <input type="text" id="f-dossier-dalles" placeholder="(cache auto)" data-i18n-placeholder="ph.cacheauto">
@@ -287,27 +312,28 @@
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-mbtiles-l" checked> <span data-i18n="tiles3">3 — Calculer les tuiles</span></label>
+     <label><input type="checkbox" id="f-mbtiles-l" checked> <span data-i18n="map3">3 — Générer la carte</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-mbt"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body hidden" id="body-mbt">
+     <!-- Tous les réglages de la génération sur UNE ligne. Le plafond de zoom
+          natif du provider n'a plus de mention visible : il est porté par le
+          `max` du champ et par son infobulle (posés par applyZoomCap). -->
      <div class="row">
-      <label data-i18n="zoom">Zoom :</label>
+      <label style="min-width:auto" data-i18n="zoom">Zoom :</label>
       <input type="number" id="f-zoom-min-l" value="8" min="8" max="20" class="inp-short">
       <span style="color:var(--dim)">–</span>
       <input type="number" id="f-zoom-max-l" value="18" min="8" max="20" class="inp-short">
-      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
-      <div class="seg" style="margin-left:6px">
+      <span style="margin-left:10px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
+      <div class="seg">
        <input type="radio" name="fmt-l" id="fl-jpeg" value="jpeg" checked><label for="fl-jpeg">JPEG</label>
        <input type="radio" name="fmt-l" id="fl-png"  value="png"><label for="fl-png">PNG</label>
       </div>
       <span id="wrap-qualite-l">
-       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
+       <span style="margin-left:6px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
        <input type="number" id="f-qualite-l" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
       </span>
-     </div>
-     <div class="row">
-      <label data-i18n="filefmt">Format du fichier :</label>
+      <span style="margin-left:10px;color:var(--dim)" data-i18n="filefmt">Format du fichier :</span>
       <div class="cb-group">
        <label><input type="checkbox" id="f-mbtiles" checked> MBTiles</label>
        <label><input type="checkbox" id="f-rmap"> RMAP</label>
@@ -320,11 +346,36 @@
 
   <!-- ═══ SCAN ═══ -->
   <div id="sec-scan" class="hidden">
+   <!-- Même ordre que l'onglet LiDAR : la source d'abord (décision la plus
+        amont), le découpage ensuite (il dépend du volume, donc de la source). -->
+   <div class="section">
+    <div class="section-hd" data-i18n="sec.source">Source des données</div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="f.service">Service</label>
+      <span id="hd-couche" class="hint" style="color:var(--dim)"></span>
+     </div>
+     <div class="row">
+      <label data-i18n="couche">Couche :</label>
+      <select id="f-couche"></select>
+      <!-- Note « aucune couche pour ce pays » : posée par filtrerCouchesParPays.
+           Elle vit ici et non dans le cadre Zone, parce qu'elle ne concerne que
+           la liste voisine — c'est là qu'elle est actionnable. -->
+      <span id="pays-note" class="hint" style="margin-left:8px;color:var(--dim)"></span>
+      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)" data-i18n="apikey">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN" data-i18n-placeholder="ph.ignpro"></span>
+     </div>
+     <div id="scan-restriction-warning" class="hidden" data-i18n-html="warn.scanpro" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
+      ⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>
+      Une clé API est requise — compte <a href="https://cartes.gouv.fr" target="_blank" style="color:#e07070">cartes.gouv.fr</a> avec SIRET.<br>
+      Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).
+     </div>
+    </div>
+   </div>
    <div class="section">
     <div class="section-hd">
-     <label data-i18n="split0">0 — Découpage à priori (grandes zones)</label>
+     <label><input type="checkbox" id="f-priori-s"> <span data-i18n="split0">0 — Découpage à priori (grandes zones)</span></label>
     </div>
-    <div class="section-body">
+    <div class="section-body hidden" id="body-priori-s">
      <div class="row">
       <label data-i18n="grid">Grille :</label>
       <input type="number" id="f-priori-cols-s" value="1" min="1" max="50" class="inp-short" data-i18n-title="tip.colsew" title="Colonnes Est-Ouest">
@@ -345,21 +396,6 @@
     </div>
    </div>
    <div class="section">
-    <div class="section-hd" id="hd-couche" data-i18n="sec.couche">Couche IGN</div>
-    <div class="section-body">
-     <div class="row">
-      <label data-i18n="couche">Couche :</label>
-      <select id="f-couche"></select>
-      <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)" data-i18n="apikey">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN" data-i18n-placeholder="ph.ignpro"></span>
-     </div>
-     <div id="scan-restriction-warning" class="hidden" data-i18n-html="warn.scanpro" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
-      ⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>
-      Une clé API est requise — compte <a href="https://cartes.gouv.fr" target="_blank" style="color:#e07070">cartes.gouv.fr</a> avec SIRET.<br>
-      Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).
-     </div>
-    </div>
-   </div>
-   <div class="section">
     <div class="section-hd">
      <label><input type="checkbox" id="f-tel-s" checked> <span data-i18n="dl">1 — Télécharger</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
@@ -371,27 +407,26 @@
    </div>
    <div class="section">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-s" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label><input type="checkbox" id="f-tuiles-s" checked> <span data-i18n="map2">2 — Générer la carte</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-s"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tuil-s">
+     <!-- Une seule ligne, à l'identique de l'onglet LiDAR. -->
      <div class="row">
-      <label data-i18n="zoom">Zoom :</label>
+      <label style="min-width:auto" data-i18n="zoom">Zoom :</label>
       <input type="number" id="f-zoom-min-s" value="12" min="1" max="20" class="inp-short">
       <span style="color:var(--dim)">–</span>
       <input type="number" id="f-zoom-max-s" value="16" min="1" max="20" class="inp-short">
-      <span style="margin-left:12px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
-      <div class="seg" style="margin-left:6px">
+      <span style="margin-left:10px;color:var(--dim)" data-i18n="imgfmt">Format de l'image :</span>
+      <div class="seg">
        <input type="radio" name="fmt-s" id="fs-jpeg" value="jpeg" checked><label for="fs-jpeg">JPEG</label>
        <input type="radio" name="fmt-s" id="fs-png"  value="png"><label for="fs-png">PNG</label>
       </div>
       <span id="wrap-qualite-s">
-       <span style="margin-left:8px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
+       <span style="margin-left:6px;color:var(--dim)" data-i18n="jpegq">Qualité Jpeg :</span>
        <input type="number" id="f-qualite-s" value="85" min="50" max="95" class="inp-short" style="margin-left:4px">
       </span>
-     </div>
-     <div class="row">
-      <label data-i18n="filefmt">Format du fichier :</label>
+      <span style="margin-left:10px;color:var(--dim)" data-i18n="filefmt">Format du fichier :</span>
       <div class="cb-group">
        <label><input type="checkbox" id="f-mbtiles-s" checked> MBTiles</label>
        <label><input type="checkbox" id="f-rmap-s"> RMAP</label>
@@ -402,77 +437,157 @@
    </div>
   </div>
 
-  <!-- ═══ OSM ═══ -->
-  <div id="sec-osm" class="hidden">
+  <!-- ═══ VECTORIEL (IGN WFS + OSM Geofabrik) ═══ -->
+  <!-- Onglets « IGN Vectoriel » et « OSM Vectoriel » fusionnés : même squelette
+       (source → téléchargement → génération), mêmes livrables (.map,
+       .geojson(.gz), transparent-raster), seul le fournisseur diffère. Les
+       contrôles gardent TOUS leurs ids d'origine et sont simplement regroupés
+       en blocs .v-ign / .v-osm qui s'échangent, de sorte que getConfig et
+       _build_cmd continuent d'émettre exactement les mêmes clés. -->
+  <div id="sec-vecteur" class="hidden">
    <div class="section">
+    <div class="section-hd" data-i18n="sec.source">Source des données</div>
+    <div class="section-body">
+     <div class="row">
+      <label data-i18n="f.service">Service</label>
+      <div class="seg">
+       <input type="radio" name="vsrc" id="v-ign" value="vecteur" checked onchange="onVecteurSource()">
+       <label for="v-ign" data-i18n="vsrc.ign">IGN Géoplateforme (WFS)</label>
+       <input type="radio" name="vsrc" id="v-osm" value="osm" onchange="onVecteurSource()">
+       <label for="v-osm" data-i18n="vsrc.osm">OSM / Geofabrik (PBF)</label>
+      </div>
+      <span id="vsrc-note" class="hint" style="margin-left:10px;color:#b45309"></span>
+     </div>
+     <!-- Shuttle disponibles ↔ choisis, même idiome que la liste d'ombrages.
+          17 couches WFS en cases à cocher, c'était plusieurs lignes à balayer
+          pour savoir ce qui est pris ; ici l'ensemble choisi se lit d'un coup.
+          Différence avec le shuttle des ombrages : pas de paramètres par
+          entrée, donc pas de panneau de réglages à droite. -->
+     <div class="row v-ign" style="align-items:flex-start">
+      <label data-i18n="f.couches">Couches</label>
+      <select id="wfs-dispo" size="6" style="min-width:200px" ondblclick="listeAdd('wfs')"
+              data-i18n-title="tip.listedispo" title="Couches disponibles. Sélectionnez puis + (ou double-clic) pour ajouter."></select>
+      <div style="display:flex;flex-direction:column;gap:6px;align-self:center">
+       <button type="button" onclick="listeAdd('wfs')" style="min-width:34px"
+               data-i18n-title="tip.listeadd" title="Ajouter la couche sélectionnée">+</button>
+       <button type="button" onclick="listeDel('wfs')" style="min-width:34px"
+               data-i18n-title="tip.listedel" title="Retirer la couche sélectionnée">−</button>
+      </div>
+      <select id="wfs-liste" size="6" style="min-width:200px" ondblclick="listeDel('wfs')"
+              data-i18n-title="tip.listechoisi" title="Couches à télécharger. Double-clic pour retirer."></select>
+     </div>
+     <div class="row v-osm hidden" style="align-items:flex-start">
+      <label data-i18n="f.themes">Thèmes</label>
+      <select id="osm-dispo" size="6" style="min-width:200px" ondblclick="listeAdd('osm')"
+              data-i18n-title="tip.listedispo" title="Thèmes disponibles. Sélectionnez puis + (ou double-clic) pour ajouter."></select>
+      <div style="display:flex;flex-direction:column;gap:6px;align-self:center">
+       <button type="button" onclick="listeAdd('osm')" style="min-width:34px"
+               data-i18n-title="tip.listeadd" title="Ajouter le thème sélectionné">+</button>
+       <button type="button" onclick="listeDel('osm')" style="min-width:34px"
+               data-i18n-title="tip.listedel" title="Retirer le thème sélectionné">−</button>
+      </div>
+      <select id="osm-liste" size="6" style="min-width:200px" ondblclick="listeDel('osm')"
+              data-i18n-title="tip.listechoisi" title="Thèmes à extraire. Double-clic pour retirer."></select>
+     </div>
+    </div>
+   </div>
+   <!-- ── Source OSM ────────────────────────────────────────────────────── -->
+   <div class="section v-osm hidden">
     <div class="section-hd">
      <label><input type="checkbox" id="f-tel-osm" checked> <span data-i18n="dl">1 — Télécharger</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel-osm">
-     <div class="cb-group" id="osm-tag-checks"></div>
-     <div class="row" style="margin-top:4px">
+     <div class="row">
       <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-osm" value="4" min="1" max="16" class="inp-short">
-      <span class="hint" style="margin-left:6px" data-i18n="pbfpar">(parallélisme téléchargement PBF)</span>
      </div>
     </div>
    </div>
-   <div class="section">
+   <div class="section v-osm hidden">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-osm" checked> <span data-i18n="tiles2">2 — Calculer les tuiles</span></label>
+     <label><input type="checkbox" id="f-tuiles-osm" checked> <span data-i18n="map2">2 — Générer la carte</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-osm"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tuil-osm">
      <div class="row">
       <label data-i18n="filefmt">Format du fichier :</label>
+      <!-- Même ORDRE que la source IGN : données brutes, puis dérivé raster,
+           puis carte vecteur. Les deux sources se lisent pareil. -->
       <div class="cb-group">
-       <label><input type="checkbox" id="f-map" checked> Mapsforge (.map)</label>
        <label><input type="checkbox" id="f-osm-geojson" checked> .geojson.gz</label>
        <label><input type="checkbox" id="f-osm-geojson-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
        <label title="Tuiles PNG transparentes (.sqlitedb) pour superposer le vecteur dans OsmAnd par-dessus le LiDAR"><input type="checkbox" id="f-osm-transparent"> transparent-raster (.sqlitedb OsmAnd)</label>
+       <label><input type="checkbox" id="f-map" checked> <span data-i18n="fmt.mapsforge">Mapsforge (.map)</span></label>
       </div>
      </div>
     </div>
    </div>
-  </div>
-
-  <!-- ═══ VECTEUR IGN ═══ -->
-  <div id="sec-vecteur" class="hidden">
-   <div class="section">
+   <!-- ── Source IGN ────────────────────────────────────────────────────── -->
+   <div class="section v-ign">
     <div class="section-hd">
      <label><input type="checkbox" id="f-tel-v" checked> <span data-i18n="dl">1 — Télécharger</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel-v">
-     <div class="cb-group" id="wfs-checks"></div>
-     <div class="row" style="margin-top:4px">
-      <label data-i18n="workers">Workers :</label>
-      <input type="number" id="f-workers-v" value="4" min="1" max="16" class="inp-short">
-      <span class="hint" style="margin-left:6px" data-i18n="max4">(max 4 recommandé)</span>
-     </div>
      <div class="row">
-      <label data-i18n="filefmt">Format du fichier :</label>
-      <div class="cb-group">
-       <label><input type="checkbox" id="f-fusion-gz" checked> .geojson.gz</label>
-       <label><input type="checkbox" id="f-fusion-gz-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
-       <label title="Tuiles PNG transparentes (.sqlitedb) pour superposer le vecteur dans OsmAnd par-dessus le LiDAR"><input type="checkbox" id="f-vec-transparent"> transparent-raster (.sqlitedb OsmAnd)</label>
-      </div>
+      <label data-i18n="workers">Workers :</label>
+      <!-- Le « max 4 » était un conseil affiché à côté d'un champ qui acceptait
+           16 : contrainte dans le champ, motif dans l'infobulle, comme les
+           autres bridages de l'interface. -->
+      <input type="number" id="f-workers-v" value="4" min="1" max="4" class="inp-short"
+             data-i18n-title="tip.max4" title="Le WFS IGN limite les requêtes concurrentes : au-delà de 4, les couches commencent à échouer.">
      </div>
     </div>
    </div>
-   <div class="section">
+   <!-- Aligné sur l'onglet OSM : UN cadre « Générer la carte » où le .map
+        Mapsforge n'est qu'un format parmi les autres, pas un cadre à part.
+        N'y figurent que les livrables DÉRIVÉS du GeoJSON (.map, transparent-
+        raster) : ce sont ceux que --tiles-overwrite gouverne, donc ceux que
+        l'Écraser de ce cadre couvre réellement.
+        Pas de case dans l'en-tête : le pipeline vecteur émet toujours au moins
+        du .geojson.gz (_build_cmd : `if not fmts: fmts = ["gz"]`), donc une
+        case qui prétendrait désactiver l'étape entière mentirait. -->
+   <!-- Case d'activation comme les autres cadres. Elle gouverne les livrables
+        DÉRIVÉS (.map, transparent-raster) : décochée, ils ne sont pas émis. Les
+        deux GeoJSON marqués « natif » continuent de sortir, puisqu'ils sont
+        écrits par le téléchargement lui-même — c'est précisément ce que leur
+        marqueur annonce. Même double niveau que l'onglet OSM (case de cadre +
+        cases de format). -->
+   <div class="section v-ign">
     <div class="section-hd">
-     <label><input type="checkbox" id="f-tuiles-v"> <span data-i18n="gen.map">2 — Générer carte Mapsforge (.map)</span></label>
+     <label><input type="checkbox" id="f-carte-v" checked> <span data-i18n="map2">2 — Générer la carte</span></label>
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tuil-v"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
-    <div class="section-body hidden" id="body-map-v">
-     <span class="hint">GeoJSON IGN → OSM XML → osmosis+mapwriter → .map</span>
-     <div class="row" id="row-simplif-v" class="hidden" style="margin-top:6px">
-      <label data-i18n="simplif">Simplification vecteur</label>
-      <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
-             style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
-      <span class="hint" style="margin-left:6px" data-i18n="simplif.hint1">m  (vide = auto : 3 m local → 40 m région)</span>
+    <div class="section-body" id="body-map-v">
+     <!-- TOUS les formats au même endroit. Les deux GeoJSON sont marqués
+          « natif » : le WFS les écrit directement (telecharger_wfs(formats=…)),
+          ils ne sont pas dérivés, et c'est l'Écraser du cadre 1 qui les
+          gouverne. Ils restent modifiables, parce que le choix compressé vs
+          non compressé est réel ; ce qui est non négociable, c'est qu'AU MOINS
+          un des deux sorte (_build_cmd : `if not fmts: fmts = ["gz"]`), et
+          cet invariant est tenu par _garantirGeojson(). -->
+     <div class="row">
+      <label data-i18n="filefmt">Format du fichier :</label>
+      <div class="cb-group">
+       <label data-i18n-title="tip.natif" title="Écrit directement par le téléchargement WFS : au moins un des deux GeoJSON est toujours produit, et c'est l'Écraser du cadre « Télécharger » qui le régit.">
+        <input type="checkbox" id="f-fusion-gz" checked onchange="_garantirGeojson(this)"> .geojson.gz
+        <span class="hint" style="color:var(--dim)" data-i18n="fmt.natif">(natif)</span></label>
+       <label data-i18n-title="tip.natif" title="Écrit directement par le téléchargement WFS : au moins un des deux GeoJSON est toujours produit, et c'est l'Écraser du cadre « Télécharger » qui le régit.">
+        <input type="checkbox" id="f-fusion-gz-raw" onchange="_garantirGeojson(this)"> <span data-i18n="geojson.raw">.geojson (non compressed)</span>
+        <span class="hint" style="color:var(--dim)" data-i18n="fmt.natif">(natif)</span></label>
+       <label title="Tuiles PNG transparentes (.sqlitedb) pour superposer le vecteur dans OsmAnd par-dessus le LiDAR"><input type="checkbox" id="f-vec-transparent"> transparent-raster (.sqlitedb OsmAnd)</label>
+       <label><input type="checkbox" id="f-tuiles-v"> <span data-i18n="fmt.mapsforge">Mapsforge (.map)</span></label>
+      </div>
+     </div>
+     <div id="map-v-detail" class="hidden">
+      <span class="hint">GeoJSON IGN → OSM XML → osmosis+mapwriter → .map</span>
+      <div class="row" id="row-simplif-v" style="margin-top:6px">
+       <label data-i18n="simplif">Simplification vecteur</label>
+       <input type="number" id="f-simplif-v" min="1" max="200" step="1" placeholder="auto"
+              style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">
+       <span class="hint" style="margin-left:6px" data-i18n="simplif.hint1">m  (vide = auto : 3 m local → 40 m région)</span>
+      </div>
      </div>
     </div>
    </div>
@@ -496,10 +611,13 @@
        <label><input type="checkbox" id="f-fusion-gz2" checked> .geojson.gz</label>
        <label><input type="checkbox" id="f-fusion-gz2-raw"> <span data-i18n="geojson.raw">.geojson (non compressed)</span></label>
        <label title="Tuiles PNG transparentes (.sqlitedb) pour superposer le vecteur fusionné dans OsmAnd par-dessus le LiDAR"><input type="checkbox" id="f-fusion-transparent"> transparent-raster (.sqlitedb OsmAnd)</label>
-       <label><input type="checkbox" id="f-fusion-map"> Mapsforge (.map)</label>
+       <label><input type="checkbox" id="f-fusion-map"> <span data-i18n="fmt.mapsforge">Mapsforge (.map)</span></label>
       </div>
      </div>
-     <div class="row" id="row-simplif-fusion" class="hidden" style="margin-top:6px">
+     <!-- `class` était déclaré DEUX fois ici : le second (hidden) était ignoré
+          par le navigateur, la ligne était donc visible avant le premier
+          applyToggles. Même bug que sur row-simplif-v, corrigé pareil. -->
+     <div class="row hidden" id="row-simplif-fusion" style="margin-top:6px">
       <label data-i18n="simplif">Simplification vecteur</label>
       <input type="number" id="f-simplif-fusion" min="1" max="200" step="1" placeholder="auto"
              style="width:80px" data-i18n-title="tip.epsilon" title="Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.">

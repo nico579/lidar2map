@@ -33,9 +33,22 @@ const I18N = {
     // Projet
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "loading":"Chargement...", "apikey":"Clé API :",
-    "tip.provider":"Source LiDAR (par pays). L'onglet raster s'adapte au provider (IGN pour FR, USGS Imagery pour US) ; l'onglet IGN Vecteur reste FR uniquement.",
+    "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
+    "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
+    "f.service":"Service", "f.themes":"Thèmes", "f.couches":"Couches",
+    "tip.listedispo":"Entrées disponibles. Sélectionnez puis + (ou double-clic) pour ajouter.",
+    "tip.listechoisi":"Entrées retenues. Double-clic pour retirer.",
+    "tip.listeadd":"Ajouter la sélection", "tip.listedel":"Retirer la sélection",
+    "svc.osm":"Geofabrik — extrait PBF régional",
+    "svc.wfs":"IGN Géoplateforme — WFS",
+    "svc.wmts.fr":"IGN Géoplateforme — WMTS",
+    "svc.wmts.us":"USGS National Map — tuiles XYZ",
+    "f.surf.mnt":"MNT (raster)", "f.surf.laz":"LAZ (nuage)",
+    "f.surf.nolaz":"aucune source pour ce pays",
+    "z.pays":"Pays",
+    "z.pays.noraster":"aucune couche raster pour ce pays",
     "f.dfm":"Mode LAZ — structures debout (nuage classé, expérimental)",
-    "f.src.mnt":"Source : MNT (raster)", "f.src.laz":"Source : nuage LAZ",
+    "f.zoomcap":"z%d = résolution native (%s) — au-delà, agrandissement sans information",
     "f.dlcap":"↓ %d max en parallèle (gros nuages LAZ)",
     "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
     "f.dfmg":"socle", "f.dfmg.classes":"classes IGN", "f.dfmg.csf":"tissu CSF (~3 min/dalle)",
@@ -44,34 +57,44 @@ const I18N = {
     "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes IGN » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
+    "z.mode":"Zone", "mode.fronly":"France uniquement",
     "mode.ville":"Ville", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Région",
     "z.ville":"Ville", "z.rayonkm":"Rayon km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
     "z.deps":"Department(s)",
     // Type de traitement
     "sec.type":"Type de traitement de carte",
-    "t.lidar":"LiDAR MNT", "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
-    "t.fusion":"Fusion Vectoriel", "t.decoupe":"Découpage raster",
+    "t.lidar":"LiDAR", "t.raster":"Raster", "t.vect":"Vectoriel",
+    // t.vecteur / t.osm restent : ils nomment les deux TRAITEMENTS dans
+    // l'historique et la file d'attente, même si l'onglet est unique.
+    "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
+    "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
+    "vsrc.ignfr":"couverture France métropolitaine",
+    "t.fusion":"Fusion vectorielle", "t.decoupe":"Découpage raster",
     // Étapes communes
     "split0":"0 — Découpage à priori (grandes zones)",
     "grid":"Grille :", "rows":"lignes", "orradius":"ou rayon", "rows_orradius":"lignes  ou rayon",
     "clean":"Nettoyage intermédiaires",
     "minfree":"min disque", "tip.minfree":"Arrêt propre avant un chunk si disque libre < seuil (0 = désactivé)",
     "split.hint":"1×1 = pas de découpage — reprise automatique via manifeste.json",
-    "dl":"1 — Télécharger", "dl.lidar":"1 — Télécharger les dalles LiDAR HD IGN",
+    "dl":"1 — Télécharger",
     "ovr":"Écraser le fichier résultat", "ovr.short":"Écraser",
     "workers":"Workers :", "compress":"Compresser", "extcache":"Cache externe :",
-    "tiles2":"2 — Calculer les tuiles", "tiles3":"3 — Calculer les tuiles",
+    // Un seul nom pour l'étape de production : les sorties sont hétérogènes
+    // (tuiles raster mbtiles/rmap/sqlitedb, carte vecteur Mapsforge, GeoJSON).
+    // « Calculer les tuiles » n'était exact que pour les sorties raster.
+    "map2":"2 — Générer la carte", "map3":"3 — Générer la carte",
+    "fmt.mapsforge":"Mapsforge (.map)", "fmt.natif":"(natif)",
+    "tip.natif":"Écrit directement par le téléchargement WFS : au moins un des deux GeoJSON est toujours produit, et c'est l'Écraser du cadre « Télécharger » qui le régit.",
     "omb2":"2 — Calculer les ombrages archéologiques",
     "zoom":"Zoom :", "imgfmt":"Format de l'image :", "jpegq":"Qualité Jpeg :", "filefmt":"Format du fichier :",
     // SVF
     "tip.svf":"Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite.",
     "tip.elev":"Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.",
     // IGN Raster
-    "sec.couche":"Couche IGN", "sec.couche.us":"Couche USGS Imagery", "couche":"Couche :",
+    "couche":"Couche :",
     // OSM / Vecteur / Fusion
-    "pbfpar":"(parallélisme téléchargement PBF)", "max4":"(max 4 recommandé)",
+    "tip.max4":"Le WFS IGN limite les requêtes concurrentes : au-delà de 4, les couches commencent à échouer.",
     "geojson.raw":".geojson (non compressed)",
-    "gen.map":"2 — Générer carte Mapsforge (.map)",
     "simplif":"Simplification vecteur",
     "simplif.hint1":"m  (vide = auto : 3 m local → 40 m région)", "simplif.hint2":"m  (vide = auto)",
     "sec.fusion":"Fichiers GeoJSON à fusionner",
@@ -140,9 +163,22 @@ const I18N = {
     "proj.pick":"↻ existing project…",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "loading":"Loading...", "apikey":"API key:",
-    "tip.provider":"LiDAR source (per country). The raster tab adapts to the provider (IGN for FR, USGS Imagery for US); the IGN Vector tab stays FR-only.",
+    "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
+    "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
+    "f.service":"Service", "f.themes":"Themes", "f.couches":"Layers",
+    "tip.listedispo":"Available entries. Select then + (or double-click) to add.",
+    "tip.listechoisi":"Selected entries. Double-click to remove.",
+    "tip.listeadd":"Add the selection", "tip.listedel":"Remove the selection",
+    "svc.osm":"Geofabrik — regional PBF extract",
+    "svc.wfs":"IGN Géoplateforme — WFS",
+    "svc.wmts.fr":"IGN Géoplateforme — WMTS",
+    "svc.wmts.us":"USGS National Map — XYZ tiles",
+    "f.surf.mnt":"DTM (raster)", "f.surf.laz":"LAZ (cloud)",
+    "f.surf.nolaz":"no source for this country",
+    "z.pays":"Country",
+    "z.pays.noraster":"no raster layer for this country",
     "f.dfm":"LAZ mode — standing structures (classified cloud, experimental)",
-    "f.src.mnt":"Source: DTM (raster)", "f.src.laz":"Source: LAZ point cloud",
+    "f.zoomcap":"z%d = native resolution (%s) — beyond that, upscaling with no extra information",
     "f.dlcap":"↓ %d max parallel (large LAZ clouds)",
     "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
     "f.dfmg":"ground base", "f.dfmg.classes":"IGN classes", "f.dfmg.csf":"CSF cloth (~3 min/tile)",
@@ -150,29 +186,34 @@ const I18N = {
     "f.dfmrg.1":"steep (1)", "f.dfmrg.2":"gentle relief (2)", "f.dfmrg.3":"flat (3)",
     "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"IGN classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
     "sec.zone":"Geographic area",
+    "z.mode":"Zone", "mode.fronly":"France only",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
     "z.ville":"City", "z.rayonkm":"Radius km", "z.gps":"GPS lat,lon", "z.bbox":"BBox W,S,E,N",
     "z.deps":"Department(s)",
     "sec.type":"Map processing type",
-    "t.lidar":"LiDAR DEM", "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
+    "t.lidar":"LiDAR", "t.raster":"Raster", "t.vect":"Vector",
+    "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
+    "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
+    "vsrc.ignfr":"covers metropolitan France only",
     "t.fusion":"Vector merge", "t.decoupe":"Raster split",
     "split0":"0 — A priori split (large areas)",
     "grid":"Grid:", "rows":"rows", "orradius":"or radius", "rows_orradius":"rows  or radius",
     "clean":"Clean intermediates",
     "minfree":"min free disk", "tip.minfree":"Stop cleanly before a chunk if free disk < threshold (0 = off)",
     "split.hint":"1×1 = no split — automatic resume via manifeste.json",
-    "dl":"1 — Download", "dl.lidar":"1 — Download IGN LiDAR HD tiles",
+    "dl":"1 — Download",
     "ovr":"Overwrite output file", "ovr.short":"Overwrite",
     "workers":"Workers:", "compress":"Compress", "extcache":"External cache:",
-    "tiles2":"2 — Compute tiles", "tiles3":"3 — Compute tiles",
+    "map2":"2 — Generate the map", "map3":"3 — Generate the map",
+    "fmt.mapsforge":"Mapsforge (.map)", "fmt.natif":"(native)",
+    "tip.natif":"Written directly by the WFS download: at least one of the two GeoJSON files is always produced, and the \"Overwrite\" box of the Download frame governs it.",
     "omb2":"2 — Compute archaeological shadings",
     "zoom":"Zoom:", "imgfmt":"Image format:", "jpegq":"Jpeg quality:", "filefmt":"File format:",
     "tip.svf":"Sky-View Factor — openness of the celestial hemisphere. Options on the right.",
     "tip.elev":"Sun angle of the directional hillshades. 25° = archaeology (micro-relief); 45° = general use.",
-    "sec.couche":"IGN layer", "sec.couche.us":"USGS Imagery layer", "couche":"Layer:",
-    "pbfpar":"(PBF download parallelism)", "max4":"(max 4 recommended)",
+    "couche":"Layer:",
+    "tip.max4":"The IGN WFS limits concurrent requests: past 4, layers start failing.",
     "geojson.raw":".geojson (uncompressed)",
-    "gen.map":"2 — Generate Mapsforge map (.map)",
     "simplif":"Vector simplification",
     "simplif.hint1":"m  (empty = auto: 3 m local → 40 m region)", "simplif.hint2":"m  (empty = auto)",
     "sec.fusion":"GeoJSON files to merge",
@@ -253,8 +294,19 @@ function setLang(code, persist){
   applyI18n();
   // applyI18n a réécrit le header couche depuis sa clé générique : ré-applique
   // la variante conscient-du-pays (IGN vs USGS Imagery) dans la nouvelle langue.
-  const _prov = document.getElementById('f-provider');
-  if (_prov && _prov.dataset.country) applyProviderCountry(_prov.dataset.country);
+  // Elle suit la COUCHE choisie → c'est le listener de f-couche qui la pose.
+  document.getElementById('f-couche')?.dispatchEvent(new Event('change'));
+  // Les listes Pays et Provider portent des noms de pays traduits : les
+  // reconstruire pour qu'elles suivent la langue (sélections préservées).
+  if (_allProviders.length) {
+    const _p = _paysActif();
+    buildPays(_allProviders, document.getElementById('f-provider')?.value || 'fr-ign');
+    const _zs = document.getElementById('f-pays');
+    if (_zs) _zs.value = _p;
+    onSurfaceChange();
+    filtrerCouchesParPays();
+    _majModesDisponibles();   // les libellés Department/Région portent un suffixe
+  }
   // Le placeholder du select projets est créé dynamiquement (hors applyI18n) :
   // re-peupler pour le traduire. No-op silencieux si l'API n'est pas prête.
   refreshProjets();
@@ -548,7 +600,11 @@ async function initAsync() {
     // buildCouches AVANT buildProviders : ce dernier appelle applyProviderCountry
     // qui filtre le dropdown des couches → il doit déjà être peuplé.
     buildCouches(d.couches);
+    // buildPays AVANT buildProviders : le pays filtre la liste de providers.
+    buildPays(d.providers || [], d.active_provider || 'fr-ign');
     buildProviders(d.providers || [], d.active_provider || 'fr-ign');
+    filtrerCouchesParPays();
+    _majModesDisponibles();
     buildRegions(d.regions || []);
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);
@@ -636,8 +692,8 @@ function buildProviders(providers, activeCode) {
     applyProviderCountry('fr');
     return;
   }
-  _allProviders = providers.slice();     // liste complète (restaurée si on décoche LAZ)
-  sel.innerHTML = providers.map(_providerOption).join('');
+  _allProviders = providers.slice();     // liste complète (restaurée en surface MNT)
+  sel.innerHTML = _providerOptionsHtml(providers);
   // Capacité "mode DFM" par provider (jumeau *_dfm côté Python). Les DÉFAUTS
   // des réglages viennent du module Python (source de vérité unique).
   _dfmByCode = {};
@@ -650,23 +706,62 @@ function buildProviders(providers, activeCode) {
   applyProviderCountry(country);
   applyProviderApiKey(opt);
   applyProviderDfm(sel.value);
+  applyZoomCap();
   sel.addEventListener('change', () => {
     _applyProviderSelection();
     ombShowParams();   // rafraîchit le champ σ ouvert avec le nouveau défaut
   });
+  // Le zoom natif dépend aussi de la latitude (156543·cos φ) : recalculer quand
+  // la zone change. Les modes ville/dep/region n'ont pas de latitude sans
+  // géocodage → _latZone retombe sur 45°, ce qui ne décale le résultat que
+  // d'un niveau aux extrêmes.
+  ['f-gps', 'f-bbox'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', applyZoomCap);
+  });
+  // Saisie manuelle du zoom max : c'est le NOUVEAU souhait de l'utilisateur,
+  // qu'on re-mémorise pour pouvoir le restaurer si un provider plus fin
+  // redonne de la marge.
+  document.getElementById('f-zoom-max-l')?.addEventListener('change', function () {
+    this.dataset.preCap = this.value;
+  });
 }
 
 // Un <option> à partir d'un descriptor provider (factorisé : buildProviders +
-// onLazToggle produisent la même chose). Résolution apposée seulement si absente
-// du nom officiel (ex. "DEM 5m" ne la duplique pas).
+// onSurfaceChange produisent la même chose). Résolution apposée seulement si
+// absente du nom officiel (ex. "DEM 5m" ne la duplique pas).
 function _providerOption(p) {
   const hasRes = /\d[\d.,]*\s?(m|cm)\b/i.test(p.name);
   const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
-  return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${label}</option>`;
+  return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${_acEsc(label)}</option>`;
+}
+
+// Liste de providers GROUPÉE PAR PAYS (<optgroup>). Avec 25+ pays et plusieurs
+// sources pour certains (11 Länder allemands…), une liste à plat est illisible.
+// L'ordre des pays vient de providers.common.COUNTRY_NAMES via country_rank
+// (même ordre que les READMEs et la carte de couverture — une seule table), et
+// les sources sont triées par nom à l'intérieur d'un pays.
+function _providerOptionsHtml(list) {
+  const parGroupe = new Map();
+  list.forEach(p => {
+    const cle = p.country || '';
+    if (!parGroupe.has(cle)) parGroupe.set(cle, []);
+    parGroupe.get(cle).push(p);
+  });
+  const nomPays = p => (_lang === 'en' ? p.country_en : p.country_fr)
+                    || (p.country || '').toUpperCase();
+  return Array.from(parGroupe.values())
+    .sort((a, b) => (a[0].country_rank ?? 9999) - (b[0].country_rank ?? 9999))
+    .map(grp => {
+      const opts = grp.slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(_providerOption).join('');
+      return `<optgroup label="${_acEsc(nomPays(grp[0]))}">${opts}</optgroup>`;
+    }).join('');
 }
 
 // Effets de bord d'un changement de provider (pays, résolution σ, clé API,
-// capacité DFM). Partagé par le listener 'change' et onLazToggle.
+// capacité DFM, zoom natif). Partagé par le listener 'change' et
+// onSurfaceChange.
 function _applyProviderSelection() {
   const sel = document.getElementById('f-provider');
   const o = sel.options[sel.selectedIndex];
@@ -676,20 +771,184 @@ function _applyProviderSelection() {
   applyProviderCountry(c);
   applyProviderApiKey(o);
   applyProviderDfm(sel.value);
+  applyZoomCap();
 }
 
-// Cocher "Mode LAZ" RÉDUIT le dropdown aux providers DFM-capables (ceux qui ont
-// un jumeau *_dfm) : on ne voit que les sources dont on peut tirer les
-// structures debout depuis le nuage de points. Décocher restaure la liste
-// complète, en gardant le provider courant s'il y figure.
+// ── Pays de la zone ───────────────────────────────────────────────────────
+// Peuplé depuis les pays réellement couverts par un provider (liste et ordre =
+// providers.common.COUNTRY_NAMES, la même table que les READMEs et la carte).
+// PAS d'entrée « tous pays » : lidar2map est un outil LiDAR, et l'OSM comme le
+// raster y sont des COMPLÉMENTS du LiDAR. Un pays sans provider LiDAR n'a donc
+// rien à faire ici — pour de l'OSM seul, MOBAC fait le travail. La liste des
+// pays est ainsi exactement le périmètre de l'outil.
+function buildPays(providers, activeCode) {
+  const sel = document.getElementById('f-pays');
+  if (!sel) return;
+  const vus = new Map();
+  providers.forEach(p => {
+    if (p.country && !vus.has(p.country)) vus.set(p.country, p);
+  });
+  const tries = Array.from(vus.values())
+    .sort((a, b) => (a.country_rank ?? 9999) - (b.country_rank ?? 9999));
+  const nom = p => (_lang === 'en' ? p.country_en : p.country_fr)
+                || (p.country || '').toUpperCase();
+  sel.innerHTML = tries
+    .map(p => `<option value="${p.country}">${_acEsc(nom(p))}</option>`).join('');
+  // Défaut = pays du provider actif, pour ne rien changer à l'ouverture.
+  const actif = providers.find(p => p.code === activeCode);
+  sel.value = (actif && actif.country) || 'fr';
+}
+
+function _paysActif() {
+  return document.getElementById('f-pays')?.value || '';
+}
+
+// Mode de saisie de la zone (liste « Zone »). Ex-radios name=mode : une liste
+// tient sur la ligne des champs, cinq boutons non.
+function _modeActif() {
+  return document.getElementById('f-mode')?.value || 'ville';
+}
+
+// Un seul point d'entrée pour le changement de mode : bascule des champs,
+// et recalcul du zoom natif (la latitude change avec GPS/BBox).
+function onModeChange() {
+  if (typeof window.applyMode === 'function') window.applyMode();
+  applyZoomCap();
+}
+
+// Department et Région sont des découpages FRANÇAIS : _GEOFABRIK mappe des
+// codes INSEE, et geocoder_departement/geocoder_region rendent du Lambert 93.
+// Il n'existe aucun équivalent pour les 26 autres pays — la liste des régions
+// ne pouvait donc pas « suivre le pays », il fallait retirer les modes.
+// Même traitement que l'option LAZ : désactivés, motif dans leur libellé.
+const _MODES_FR = { dep: 'mode.dep', region: 'mode.region' };
+function _majModesDisponibles() {
+  const sel = document.getElementById('f-mode');
+  if (!sel) return;
+  const fr = _paysActif() === 'fr';
+  Object.entries(_MODES_FR).forEach(([val, cle]) => {
+    const o = sel.querySelector(`option[value="${val}"]`);
+    if (!o) return;
+    o.disabled = !fr;
+    o.textContent = t(cle) + (fr ? '' : ' — ' + t('mode.fronly'));
+  });
+  if (!fr && _MODES_FR[sel.value]) sel.value = 'ville';
+  onModeChange();
+}
+
+// ── Onglet Vectoriel : source IGN (WFS) ou OSM (Geofabrik) ────────────────
+// Le radio porte directement la valeur de cfg.type ('vecteur' | 'osm') : rien
+// à traduire, getConfig la lit telle quelle et _build_cmd ne voit aucun
+// changement.
+function _vecteurSource() {
+  return document.querySelector('input[name=vsrc]:checked')?.value || 'vecteur';
+}
+
+// Invariant du pipeline WFS : au moins un GeoJSON sort toujours (_build_cmd
+// retombe sur "gz" si rien n'est coché). Plutôt que d'afficher une case cochée
+// grisée — qui prétendrait à tort qu'un format PRÉCIS est imposé, alors que le
+// choix compressé/non compressé est libre — on tient l'invariant : décocher le
+// dernier des deux recoche l'autre. L'UI applique la même règle que le backend.
+function _garantirGeojson(source) {
+  const gz  = document.getElementById('f-fusion-gz');
+  const raw = document.getElementById('f-fusion-gz-raw');
+  if (!gz || !raw || gz.checked || raw.checked) return;
+  (source === gz ? raw : gz).checked = true;
+}
+
+function onVecteurSource() {
+  const osm = _vecteurSource() === 'osm';
+  document.querySelectorAll('#sec-vecteur .v-ign')
+    .forEach(el => el.classList.toggle('hidden', osm));
+  document.querySelectorAll('#sec-vecteur .v-osm')
+    .forEach(el => el.classList.toggle('hidden', !osm));
+  // Pas de recoloration selon la source : IGN et OSM sont deux sources du même
+  // onglet, la couleur reste celle de l'onglet Vectoriel.
+  // L'IGN ne couvre que la France : on le signale sans rien bloquer, comme
+  // partout ailleurs depuis le découplage (aucun onglet ne disparaît).
+  const note = document.getElementById('vsrc-note');
+  if (note) {
+    const pays = _paysActif();
+    note.textContent = (!osm && pays && pays !== 'fr') ? t('vsrc.ignfr') : '';
+  }
+}
+
+// Changer de pays recadre ce qui dépend RÉELLEMENT du pays : le géocodage des
+// villes (via _acRequete), la liste des providers LiDAR, et les couches raster
+// (IGN = FR, USGS = US). On ne masque aucun onglet : un pays sans couche raster
+// affiche une liste vide et le dit, plutôt que de faire disparaître l'onglet
+// sous les pieds de l'utilisateur.
+function onPaysChange() {
+  onSurfaceChange();          // refiltre les providers (pays × surface)
+  filtrerCouchesParPays();
+  onVecteurSource();          // note « IGN = France » selon le pays choisi
+  _majModesDisponibles();     // Department / Région : France uniquement
+  const inp = document.getElementById('f-ville');
+  if (inp) inp.value = '';    // une ville d'un autre pays n'a plus de sens
+  _acFermer();
+}
+
+// Couches raster du pays courant. '' (Tous) = aucune restriction.
+function filtrerCouchesParPays() {
+  const sel = document.getElementById('f-couche');
+  if (!sel) return;
+  const pays = _paysActif();
+  let premiere = null;
+  Array.from(sel.options).forEach(o => {
+    const ok = !pays || (o.dataset.pays || 'fr') === pays;
+    o.hidden = !ok;
+    o.disabled = !ok;
+    if (ok && !premiere) premiere = o;
+  });
+  Array.from(sel.getElementsByTagName('optgroup')).forEach(g => {
+    g.hidden = !Array.from(g.children).some(o => !o.hidden);
+  });
+  const cur = sel.selectedOptions[0];
+  if (premiere && (!cur || cur.hidden)) {
+    sel.value = premiere.value;
+    sel.dispatchEvent(new Event('change'));
+  }
+  const note = document.getElementById('pays-note');
+  if (note) {
+    note.textContent = premiere ? '' : t('z.pays.noraster');
+    note.style.color = premiere ? 'var(--dim)' : '#b45309';
+  }
+}
+
+// Surface active. Le contrôle est un radio MNT/LAZ, mais le CONTRAT de config
+// reste le booléen `dfm` (→ --dfm côté CLI) : les configs sauvegardées et la
+// file d'attente sont inchangées. Source unique de vérité pour tout le fichier.
+function lazActif() {
+  return document.getElementById('f-surface')?.value === 'laz';
+}
+
+// Choisir la surface AVANT le provider : "LAZ" réduit le dropdown aux sources
+// DFM-capables (celles qui ont un jumeau *_dfm), "MNT" restaure la liste
+// complète. Le provider courant est conservé s'il figure dans la nouvelle liste.
+// C'est l'ordre chronologique réel : type de surface → sources possibles →
+// résolution → zoom natif.
 let _allProviders = [];
-function onLazToggle() {
+function onSurfaceChange() {
   const sel = document.getElementById('f-provider');
-  const cb  = document.getElementById('f-dfm');
-  if (!sel || !cb) return;
+  if (!sel) return;
+  const pays = _paysActif();
+  const duPays = p => !pays || p.country === pays;
+  // Un pays peut avoir des providers sans qu'aucun soit DFM-capable : la
+  // combinaison pays × LAZ serait alors vide. On désactive l'option LAZ plutôt
+  // que d'afficher une liste vide, on retombe sur MNT, et le motif s'affiche
+  // DANS le libellé de l'option (plus de mention séparée sur la ligne).
+  const optLaz = document.querySelector('#f-surface option[value="laz"]');
+  const dispoLaz = _allProviders.some(p => p.dfm && duPays(p));
+  if (optLaz) {
+    optLaz.disabled = !dispoLaz;
+    optLaz.textContent = t('f.surf.laz') + (dispoLaz ? '' : ' — ' + t('f.surf.nolaz'));
+    const ssel = document.getElementById('f-surface');
+    if (!dispoLaz && ssel && ssel.value === 'laz') ssel.value = 'mnt';
+  }
+  const laz  = lazActif();
   const keep = sel.value;
-  const list = cb.checked ? _allProviders.filter(p => p.dfm) : _allProviders;
-  sel.innerHTML = list.map(_providerOption).join('');
+  const list = _allProviders.filter(p => duPays(p) && (!laz || p.dfm));
+  sel.innerHTML = _providerOptionsHtml(list);
   sel.value = list.some(p => p.code === keep) ? keep
             : ((list[0] && list[0].code) || keep);
   _applyProviderSelection();
@@ -697,20 +956,13 @@ function onLazToggle() {
   updateDfmUI();
 }
 
-// Capacité DFM du provider actif : affiche la ligne "mode DFM" et préremplit
-// les réglages avec les défauts du jumeau Python (hmin/hmax/classes).
+// Capacité DFM du provider actif : préremplit les réglages LAZ avec les défauts
+// du jumeau Python (hmin/hmax/classes/CSF). En surface MNT il n'y a rien à
+// préremplir — la ligne de réglages est masquée par updateDfmUI.
 let _dfmByCode = {};
 function applyProviderDfm(code) {
-  const row = document.getElementById('dfm-row');
-  if (!row) return;
   const cap = _dfmByCode[code];
-  row.style.display = cap ? 'flex' : 'none';
-  if (!cap) {
-    const cb = document.getElementById('f-dfm');
-    if (cb) cb.checked = false;
-    updateDfmUI();
-    return;
-  }
+  if (!cap) { updateDfmUI(); return; }
   const hmin = document.getElementById('f-dfm-hmin');
   const hmax = document.getElementById('f-dfm-hmax');
   const cls  = document.getElementById('f-dfm-classes');
@@ -729,9 +981,8 @@ function applyProviderDfm(code) {
 }
 
 function updateDfmUI() {
-  const cb = document.getElementById('f-dfm');
   const params = document.getElementById('dfm-params');
-  if (params) params.style.display = (cb && cb.checked) ? 'inline-flex' : 'none';
+  if (params) params.style.display = lazActif() ? 'flex' : 'none';
   // Socle CSF : le tissu ignore la tranche de hauteur et les classes → on
   // ÉCHANGE les groupes de réglages (les valeurs cachées restent posées,
   // ré-affichées si on rebascule).
@@ -741,14 +992,7 @@ function updateDfmUI() {
   const px = document.getElementById('dfm-params-csf');
   if (pc) pc.style.display = csf ? 'none' : 'inline-flex';
   if (px) px.style.display = csf ? 'inline-flex' : 'none';
-  // Badge de source : cocher bascule MNT (raster) → LAZ (nuage de points).
-  const laz = cb && cb.checked;
-  const src = document.getElementById('dfm-source');
-  if (src) {
-    src.textContent = laz ? t('f.src.laz') : t('f.src.mnt');
-    src.style.background = laz ? '#dcfce7' : '#e2e8f0';
-    src.style.color = laz ? '#166534' : '#475569';
-  }
+  const laz = lazActif();
   // Champ Workers : en mode LAZ le download est plafonné (gros nuages, sinon
   // throttle serveur). On BORNE le champ (max + valeur) à la valeur du provider
   // (source unique, pas de 3 en dur) et on la restaure à la sortie. Le tuilage/
@@ -773,15 +1017,64 @@ function updateDfmUI() {
       delete wl.dataset.preLazMax;
     }
   }
-  const note = document.getElementById('dfm-workers-note');
-  if (note) {
-    if (capN) {
-      note.textContent = t('f.dlcap').replace('%d', capN);
-      note.style.display = 'inline';
-    } else {
-      note.style.display = 'none';
-    }
+  // Pas de mention visible : le plafond est déjà porté par le `max` du champ.
+  // Le motif vit dans l'infobulle, comme pour le bridage du zoom.
+  if (wl) wl.title = capN ? t('f.dlcap').replace('%d', capN) : '';
+}
+
+// ── Zoom natif du provider ────────────────────────────────────────────────
+// Une tuile Web Mercator 256 px au zoom z couvre 156543,03·cos(φ)/2^z m/px.
+// Le zoom NATIF est le premier z dont la tuile est au moins aussi fine que la
+// source : au-delà, on ne fabrique que de l'agrandissement (×4 de tuiles par
+// niveau pour zéro information), et OsmAnd comme Locus agrandissent déjà
+// nativement la tuile la plus profonde disponible.
+//   0,25 m → z19 · 0,5 m → z18 · 1 m → z17 · 2 m → z16 · 5 m → z15  (φ ≈ 45°)
+// Symétrie avec l'onglet raster, qui plafonne DÉJÀ le zoom aux capacités
+// réelles de la couche (_lire_zoom_limites_wmts / _XYZ_ZOOM_LIMITS côté
+// Python). L'onglet LiDAR n'avait pas d'équivalent alors que la résolution du
+// provider donne la réponse directement.
+function zoomNatif(resM, latDeg) {
+  // NB : pas de `latDeg || 45` — la latitude 0 (équateur) est une valeur
+  // légitime et falsy, elle retomberait à tort sur le défaut.
+  const lat = Math.abs(Number.isFinite(latDeg) ? latDeg : 45);
+  const mpp = 156543.033928 * Math.cos(lat * Math.PI / 180);
+  return Math.max(1, Math.min(22, Math.ceil(Math.log2(mpp / (resM || 0.5)))));
+}
+
+// Latitude représentative de la zone, quand elle est lisible sans géocodage
+// (GPS ou BBox saisis). Sinon 45° : à 0,5 m ça donne z18, qui reste juste de
+// l'équateur (z19) au cercle polaire (z17) à un niveau près.
+function _latZone() {
+  const mode = _modeActif();
+  if (mode === 'gps') {
+    const v = (document.getElementById('f-gps')?.value || '').split(',');
+    const la = parseFloat(v[0]);
+    if (!isNaN(la)) return la;
+  } else if (mode === 'bbox') {
+    const v = (document.getElementById('f-bbox')?.value || '').split(',').map(parseFloat);
+    if (v.length === 4 && !isNaN(v[1]) && !isNaN(v[3])) return (v[1] + v[3]) / 2;
   }
+  return 45;
+}
+
+// Borne le champ « Zoom max » au zoom natif du provider, sur le modèle du
+// clamp Workers : on mémorise la saisie de l'utilisateur et on la restaure si
+// un provider plus fin redonne de la marge. Le backend, lui, reste permissif
+// (il avertit sans refuser) pour ne pas casser un run CLI délibéré.
+function applyZoomCap() {
+  const zl = document.getElementById('f-zoom-max-l');
+  if (!zl) return;
+  const zn = zoomNatif(_resolutionM, _latZone());
+  if (zl.dataset.preCap === undefined) zl.dataset.preCap = zl.value;
+  zl.max = zn;
+  const voulu = parseInt(zl.dataset.preCap) || zn;
+  zl.value = Math.min(voulu, zn);
+  const zmin = document.getElementById('f-zoom-min-l');
+  if (zmin && (parseInt(zmin.value) || 0) > zn) zmin.value = zn;
+  // Pas de mention visible sur la ligne : le bridage est déjà porté par le
+  // `max` du champ. L'explication vit dans l'infobulle, disponible sans
+  // encombrer une ligne qui porte déjà zoom, format image, qualité et formats.
+  zl.title = t('f.zoomcap').replace('%d', zn).replace('%s', fmtRes(_resolutionM));
 }
 
 function applyProviderApiKey(opt) {
@@ -793,72 +1086,18 @@ function applyProviderApiKey(opt) {
   group.style.display = needs ? 'inline-flex' : 'none';
 }
 
-// Libellé de l'onglet raster selon le pays propriétaire des couches.
-const _RASTER_TAB_LABEL = { fr: 'IGN Raster', us: 'USGS Imagery' };
-
-function _bascullerVersLidar(inp) {
-  // Si l'onglet courant devient invisible, basculer sur LiDAR.
-  if (inp && inp.checked) {
-    const lidarRadio = document.getElementById('t-lidar');
-    if (lidarRadio) { lidarRadio.checked = true; lidarRadio.dispatchEvent(new Event('change')); }
-  }
-}
-
-function filterCouchesByCountry(country) {
-  // N'affiche que les couches du pays courant dans le dropdown raster.
-  const sel = document.getElementById('f-couche');
-  if (!sel) return false;
-  let firstVisible = null;
-  Array.from(sel.options).forEach(o => {
-    const match = (o.dataset.pays || 'fr') === country;
-    o.hidden = !match;
-    o.disabled = !match;
-    if (match && !firstVisible) firstVisible = o;
-  });
-  // Si la couche sélectionnée n'est plus du bon pays, prendre la 1re visible.
-  const cur = sel.selectedOptions[0];
-  if (firstVisible && (!cur || cur.hidden)) {
-    sel.value = firstVisible.value;
-    sel.dispatchEvent(new Event('change'));
-  }
-  return firstVisible !== null;   // true si le pays a au moins une couche raster
-}
-
+// Le provider LiDAR ne pilote PLUS l'onglet raster ni l'onglet IGN Vectoriel
+// (découplé 2026-07-20). C'était un artefact GUI : le pipeline raster résout sa
+// zone en WGS84 pur (_resoudre_zone_wgs84), il n'a jamais eu besoin du provider
+// LiDAR. Choisir une source suisse ne doit donc pas faire disparaître les
+// couches IGN. Le pays d'un run raster découle désormais de la COUCHE choisie,
+// et l'onglet IGN Vectoriel est FR par nature : toujours visible.
+//
+// Reste ici ce qui dépend RÉELLEMENT du provider LiDAR : le pays utilisé pour
+// géocoder les villes (Nominatim countrycodes=<pays>).
 function applyProviderCountry(country) {
-  // Cache les onglets/labels marqués data-fr-only="1" si le pays n'est pas FR.
-  const elts = document.querySelectorAll('[data-fr-only="1"]');
-  elts.forEach(el => {
-    el.style.display = (country === 'fr') ? '' : 'none';
-    // Cacher aussi le radio input associé si c'est un <label for="...">
-    const forId = el.getAttribute('for');
-    if (forId) {
-      const inp = document.getElementById(forId);
-      if (inp) {
-        inp.style.display = (country === 'fr') ? '' : 'none';
-        if (country !== 'fr') _bascullerVersLidar(inp);
-      }
-    }
-  });
-
-  // Onglet raster : conscient du pays. Visible si le provider a des couches
-  // raster (FR → IGN, US → USGS Imagery), masqué sinon. Le libellé s'adapte.
-  const hasRaster = filterCouchesByCountry(country);
-  const lblRaster = document.getElementById('lbl-raster');
-  const inpRaster = document.getElementById('t-scan');
-  if (lblRaster) {
-    lblRaster.style.display = hasRaster ? '' : 'none';
-    if (hasRaster) lblRaster.textContent = _RASTER_TAB_LABEL[country] || 'Raster';
-  }
-  if (inpRaster) {
-    inpRaster.style.display = hasRaster ? '' : 'none';
-    if (!hasRaster) _bascullerVersLidar(inpRaster);
-  }
-  // Titre de la section couche : "Couche IGN" (FR) / "Couche USGS Imagery" (US),
-  // dans la langue courante. Survit aux changements de langue (setLang ré-appelle).
-  const hdCouche = document.getElementById('hd-couche');
-  if (hdCouche && hasRaster) {
-    hdCouche.textContent = t(country === 'us' ? 'sec.couche.us' : 'sec.couche');
-  }
+  const sel = document.getElementById('f-provider');
+  if (sel) sel.dataset.country = country || 'fr';
 }
 
 let _historique = [];
@@ -939,15 +1178,36 @@ function rappelHistorique(i) {
     tf('hist.recalled', {nom: e.nom||'', date: e.date});
 }
 
+// Propriétaire d'une couche raster, par pays : sert de libellé d'<optgroup> et
+// de titre de section. C'est la seule notion de "provider raster" qui existe —
+// l'inventaire réel est ~21 couches IGN + 1 couche USGS, donc une 2e dropdown
+// de providers aurait un groupe à une entrée. L'optgroup dit la même chose sans
+// widget supplémentaire.
+const _RASTER_OWNER = { fr: 'IGN (France)', us: 'USGS (USA)' };
+
 function buildCouches(couches) {
   const sel = document.getElementById('f-couche');
+  // Groupées PAR PROPRIÉTAIRE, toutes visibles : la liste ne dépend plus du
+  // provider LiDAR (cf. applyProviderCountry). Le pays du run raster découle
+  // de la couche choisie.
+  const parPays = new Map();
   couches.forEach(c => {
-    const o = document.createElement('option');
-    o.value = c.code; o.textContent = c.label;
-    o.dataset.zmin = c.zoom_min; o.dataset.zmax = c.zoom_max;
-    o.dataset.restreinte = c.restreinte ? '1' : '0';
-    o.dataset.pays = c.pays || 'fr';
-    sel.appendChild(o);
+    const p = c.pays || 'fr';
+    if (!parPays.has(p)) parPays.set(p, []);
+    parPays.get(p).push(c);
+  });
+  parPays.forEach((liste, pays) => {
+    const grp = document.createElement('optgroup');
+    grp.label = _RASTER_OWNER[pays] || pays.toUpperCase();
+    liste.forEach(c => {
+      const o = document.createElement('option');
+      o.value = c.code; o.textContent = c.label;
+      o.dataset.zmin = c.zoom_min; o.dataset.zmax = c.zoom_max;
+      o.dataset.restreinte = c.restreinte ? '1' : '0';
+      o.dataset.pays = pays;
+      grp.appendChild(o);
+    });
+    sel.appendChild(grp);
   });
   const updateWarning = () => {
     const o = sel.selectedOptions[0];
@@ -959,29 +1219,85 @@ function buildCouches(couches) {
       const restricted = o.dataset.restreinte === '1';
       if (warn) warn.classList.toggle('hidden', !restricted);
       if (apikeyGroup) apikeyGroup.style.display = restricted ? 'flex' : 'none';
+      // L'onglet s'appelle « Raster » tout court : il porte des couches de
+      // plusieurs fournisseurs (IGN, USGS), le nommer d'après l'un d'eux était
+      // faux. C'est la ligne Service du bloc Source qui dit lequel est actif.
+      const pays = o.dataset.pays || 'fr';
+      const svc = document.getElementById('hd-couche');
+      if (svc) svc.textContent = t(pays === 'us' ? 'svc.wmts.us' : 'svc.wmts.fr');
     }
   };
   sel.addEventListener('change', updateWarning);
   updateWarning();
 }
 
+// ── Shuttle « disponibles ↔ choisis » ─────────────────────────────────────
+// Pour les sélections SANS paramètre par entrée (couches WFS, thèmes OSM).
+// Le shuttle des ombrages garde sa propre machinerie : lui porte des instances
+// paramétrées (SVF 20 m + SVF 100 m coexistent), ce qui n'a pas d'équivalent
+// ici — d'où l'absence de panneau de réglages.
+// L'état vit dans _shuttleData et les deux <select> sont RE-RENDUS depuis lui :
+// pas de déplacement d'<option> à la main, donc pas de désynchronisation
+// possible entre ce qui est affiché et ce que getConfig lira.
+const _SHUTTLES = {
+  wfs: {dispo: 'wfs-dispo', liste: 'wfs-liste'},
+  osm: {dispo: 'osm-dispo', liste: 'osm-liste'},
+};
+const _shuttleData = {};      // clé -> {items:[{value,label}], choisis:[value]}
+
+function shuttleInit(cle, items, defauts) {
+  _shuttleData[cle] = {
+    items: items,
+    choisis: (defauts || []).filter(v => items.some(i => i.value === v)),
+  };
+  shuttleRender(cle);
+}
+
+function shuttleRender(cle) {
+  const d = _shuttleData[cle], ids = _SHUTTLES[cle];
+  if (!d || !ids) return;
+  const opt = it => `<option value="${_acEsc(it.value)}">${_acEsc(it.label)}</option>`;
+  const pris = new Set(d.choisis);
+  const dispo = document.getElementById(ids.dispo);
+  const liste = document.getElementById(ids.liste);
+  if (dispo) dispo.innerHTML = d.items.filter(i => !pris.has(i.value)).map(opt).join('');
+  if (liste) liste.innerHTML = d.choisis
+    .map(v => opt(d.items.find(i => i.value === v) || {value: v, label: v})).join('');
+}
+
+function listeAdd(cle) {
+  const d = _shuttleData[cle];
+  const v = document.getElementById(_SHUTTLES[cle]?.dispo)?.value;
+  if (!d || !v || d.choisis.includes(v)) return;
+  d.choisis.push(v);
+  shuttleRender(cle);
+}
+
+function listeDel(cle) {
+  const d = _shuttleData[cle];
+  const v = document.getElementById(_SHUTTLES[cle]?.liste)?.value;
+  if (!d || !v) return;
+  d.choisis = d.choisis.filter(x => x !== v);
+  shuttleRender(cle);
+}
+
+function shuttleValeurs(cle) { return (_shuttleData[cle]?.choisis || []).slice(); }
+
+function shuttleSet(cle, valeurs) {
+  const d = _shuttleData[cle];
+  if (!d) return;
+  const v = typeof valeurs === 'string' ? valeurs.split(' ') : (valeurs || []);
+  d.choisis = v.filter(x => d.items.some(i => i.value === x));
+  shuttleRender(cle);
+}
+
 function buildWfsCouches(wfs) {
-  const c = document.getElementById('wfs-checks');
-  wfs.forEach(w => {
-    const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" name="wfs" value="${w.alias}"${w.alias==='cadastre'?' checked':''}> ${w.label}`;
-    c.appendChild(l);
-  });
+  shuttleInit('wfs', wfs.map(w => ({value: w.alias, label: w.label})), ['cadastre']);
 }
 
 function buildOsmTags(tags) {
-  const c = document.getElementById('osm-tag-checks');
-  const defaults = new Set(['highway=*','waterway=*','boundary=administrative','natural=water']);
-  tags.forEach(t => {
-    const l = document.createElement('label');
-    l.innerHTML = `<input type="checkbox" name="osm_tag" value="${t.tag}"${defaults.has(t.tag)?' checked':''}> ${t.label}`;
-    c.appendChild(l);
-  });
+  shuttleInit('osm', tags.map(t => ({value: t.tag, label: t.label})),
+              ['highway=*', 'waterway=*', 'boundary=administrative', 'natural=water']);
 }
 
 // ── Autocomplete ville (API Adresse data.gouv.fr / BAN, via proxy Python) ───
@@ -1055,9 +1371,10 @@ function _acSurleve(delta) {
 }
 
 async function _acRequete(prefix) {
-  // Pays du provider actif : pilote BAN (FR) vs Nominatim (autre)
-  const psel = document.getElementById('f-provider');
-  const country = (psel && psel.dataset.country) || 'fr';
+  // Pays DÉCLARÉ DANS LA ZONE : pilote BAN (FR) vs Nominatim (autre). Lu sur le
+  // provider LiDAR auparavant, ce qui scopait le géocodage d'un run OSM ou
+  // raster selon une source qu'ils n'utilisent pas.
+  const country = _paysActif();
   // Clé de cache incluant le pays : sinon les résultats FR seraient renvoyés
   // pour la même saisie en NL après switch de provider.
   const key = country + '|' + prefix.toLowerCase();
@@ -1130,15 +1447,17 @@ function bindAll() {
   // Même problème que pour 'type' : sr() coche le radio sans tirer 'change',
   // donc loadConfig() doit appeler applyMode() après sr('mode', ...).
   window.applyMode = function() {
-    const cur = document.querySelector('input[name=mode]:checked')?.value || 'ville';
+    const cur = _modeActif();
     ['ville','gps','bbox','dep','region'].forEach(m => {
       const z = document.getElementById('z-'+m);
       if (z) z.classList.toggle('hidden', cur !== m);
     });
+    // Aides de saisie hors ligne : seulement pour le mode concerné.
+    [['dep','z-dep-hint'], ['region','z-region-hint']].forEach(([m, id]) => {
+      const h = document.getElementById(id);
+      if (h) h.classList.toggle('hidden', cur !== m);
+    });
   };
-  document.querySelectorAll('input[name=mode]').forEach(r => {
-    r.addEventListener('change', window.applyMode);
-  });
   window.applyMode();
   // Type carte — appliquer l'état initial immédiatement
   // Fonction réutilisable : sync sections visibles + body class avec le
@@ -1149,11 +1468,14 @@ function bindAll() {
   //     (parce que el.checked = true ne tire PAS l'événement 'change')
   window.applyType = function() {
     const cur = document.querySelector('input[name=type]:checked')?.value || 'lidar';
-    ['lidar','scan','osm','vecteur','fusion','decoupe'].forEach(t => {
+    // 'osm' n'a plus de section propre : il vit dans l'onglet Vectoriel, dont
+    // le radio vaut 'vecteur'. Le sous-bloc actif est choisi par onVecteurSource.
+    ['lidar','scan','vecteur','fusion','decoupe'].forEach(t => {
       const sec = document.getElementById('sec-'+t);
       if (sec) sec.classList.toggle('hidden', t !== cur);
     });
     document.body.className = 'type-' + cur;
+    if (cur === 'vecteur') onVecteurSource();   // repose la classe body + blocs
     const secZone = document.querySelector('.sec-zone');
     if (secZone) secZone.classList.toggle('hidden', cur === 'decoupe');
   };
@@ -1167,6 +1489,9 @@ function bindAll() {
   // (depuis loadConfig) ne tire PAS l'événement 'change'. Donc on expose
   // window.applyToggles() pour que loadConfig puisse forcer la synchro.
   const toggles = [
+    ['f-priori',    'body-priori'],
+    ['f-priori-s',  'body-priori-s'],
+    ['f-carte-v',   'body-map-v'],
     ['f-tel',       'body-tel'],
     ['f-no-omb',    'body-omb'],
     ['f-mbtiles-l', 'body-mbt'],
@@ -1175,8 +1500,10 @@ function bindAll() {
     ['f-tel-osm',   'body-tel-osm'],
     ['f-tuiles-osm','body-tuil-osm'],
     ['f-tel-v',     'body-tel-v'],
-    ['f-tuiles-v',  'body-map-v'],
-    ['f-tuiles-v',  'row-simplif-v'],
+    // Vecteur : le corps de l'étape 2 est TOUJOURS visible (le pipeline émet
+    // toujours au moins du .geojson.gz). Seul le détail propre au Mapsforge
+    // (chaîne de conversion + simplification) suit la case .map.
+    ['f-tuiles-v',  'map-v-detail'],
     ['f-fusion-map','row-simplif-fusion'],
   ];
   window.applyToggles = function() {
@@ -1264,17 +1591,25 @@ function fermerPartage() {
 // ── Config ────────────────────────────────────────────────────────────────────
 function getConfig() {
   const g = id => document.getElementById(id);
-  const mode = document.querySelector('input[name=mode]:checked')?.value || 'ville';
-  const type = document.querySelector('input[name=type]:checked')?.value || 'lidar';
+  const mode = _modeActif();
+  let type = document.querySelector('input[name=type]:checked')?.value || 'lidar';
+  // L'onglet Vectoriel porte deux traitements distincts côté CLI (--vector vs
+  // --osm) : le type effectif vient du sélecteur de source, dont les valeurs
+  // SONT déjà 'vecteur' et 'osm'.
+  if (type === 'vecteur') type = _vecteurSource();
   const rayonId = mode === 'gps' ? 'f-rayon-gps' : 'f-rayon';
 
   const cfg = {
     type, mode,
     provider: g('f-provider')?.value || 'fr-ign',
+    // Pays de la zone : cadre le géocodage et les listes. '' = aucun filtre.
+    pays:     g('f-pays')?.value ?? '',
     lidar_apikey: g('f-lidar-apikey')?.value.trim(),
-    // Mode DFM (structures debout) : la case + réglages ≠ défauts uniquement
-    // (les défauts vivent côté Python, dataset.def posé par applyProviderDfm).
-    dfm: g('f-dfm')?.checked || false,
+    // Surface LAZ (structures debout) + réglages ≠ défauts uniquement (les
+    // défauts vivent côté Python, dataset.def posé par applyProviderDfm).
+    // La clé reste `dfm` (→ --dfm) : le contrôle est passé de case à radio
+    // MNT/LAZ, pas le contrat de config.
+    dfm: lazActif(),
     dfm_hmin:    (g('f-dfm-hmin')?.value    && g('f-dfm-hmin').value    !== g('f-dfm-hmin').dataset.def)    ? g('f-dfm-hmin').value    : '',
     dfm_hmax:    (g('f-dfm-hmax')?.value    && g('f-dfm-hmax').value    !== g('f-dfm-hmax').dataset.def)    ? g('f-dfm-hmax').value    : '',
     dfm_classes: (g('f-dfm-classes')?.value && g('f-dfm-classes').value !== g('f-dfm-classes').dataset.def) ? g('f-dfm-classes').value.trim() : '',
@@ -1313,6 +1648,13 @@ function getConfig() {
     fmt_l:         document.querySelector('input[name=fmt-l]:checked')?.value || 'jpeg',
     qualite_l:     parseInt(g('f-qualite-l')?.value) || 85,
     ecraser_mbt:   g('f-ecraser-mbt')?.checked,
+    // Cases d'activation des cadres sans étape propre : le découpage à priori
+    // (LiDAR / Raster) et la génération des dérivés vecteur. Elles gouvernent
+    // l'ÉMISSION dans _build_cmd ; les valeurs saisies restent intactes pour
+    // qu'un décochage/recochage ne les perde pas.
+    decoupe:       g('f-priori')?.checked || false,
+    decoupe_s:     g('f-priori-s')?.checked || false,
+    carte_v:       g('f-carte-v')?.checked !== false,
     cols_decoupe:  parseInt(g('f-priori-cols')?.value)   || 0,
     rows_decoupe:  parseInt(g('f-priori-rows')?.value)   || 0,
     cols_decoupe_s:parseInt(g('f-priori-cols-s')?.value) || 0,
@@ -1340,7 +1682,7 @@ function getConfig() {
     // OSM
     tel_osm:       g('f-tel-osm')?.checked,
     workers_osm:   parseInt(g('f-workers-osm')?.value) || 4,
-    osm_tags_sel:  [...document.querySelectorAll('input[name=osm_tag]:checked')].map(c=>c.value),
+    osm_tags_sel:  shuttleValeurs('osm'),
     ecraser_tel_osm: g('f-ecraser-tel-osm')?.checked,
     tuiles_osm:    g('f-tuiles-osm')?.checked,
     map:           g('f-map')?.checked,
@@ -1350,7 +1692,7 @@ function getConfig() {
     ecraser_tuil_osm: g('f-ecraser-tuil-osm')?.checked,
     // Vecteur
     tel_v:         g('f-tel-v')?.checked,
-    wfs_couches_sel:[...document.querySelectorAll('input[name=wfs]:checked')].map(c=>c.value),
+    wfs_couches_sel: shuttleValeurs('wfs'),
     workers_v:     parseInt(g('f-workers-v')?.value) || 4,
     ecraser_tel_v: g('f-ecraser-tel-v')?.checked,
     fusion_gz:      g('f-fusion-gz')?.checked,
@@ -1411,8 +1753,21 @@ function loadConfig(cfg) {
   }
 
   // Zone
-  if (cfg.mode) sr('mode', cfg.mode);
-  if (cfg.type) sr('type', cfg.type);
+  // Le mode est passé du radio à une liste : on pose la valeur, applyMode()
+  // est rappelée plus bas comme avant (poser .value ne tire pas 'change').
+  if (cfg.mode) { const ms = document.getElementById('f-mode');
+                  if (ms) ms.value = cfg.mode; }
+  // cfg.type 'osm' n'a plus de radio d'onglet : il se restaure en cochant
+  // l'onglet Vectoriel + la source OSM. Les configs et l'historique d'avant la
+  // fusion se rechargent donc sans conversion.
+  if (cfg.type) {
+    if (cfg.type === 'osm' || cfg.type === 'vecteur') {
+      sr('type', 'vecteur');
+      sr('vsrc', cfg.type);
+    } else {
+      sr('type', cfg.type);
+    }
+  }
   // (window.applyMode/applyType seront rappelées en fin de loadConfig
   //  pour synchroniser les sections visibles avec les radios cochés)
   // NB : le provider + couche + zooms sont restaurés EN DERNIER (voir fin de
@@ -1458,6 +1813,9 @@ function loadConfig(cfg) {
   if (cfg.fmt_l) sr('fmt-l', cfg.fmt_l);
   s('f-qualite-l',      cfg.qualite_l);
   s('f-ecraser-mbt',    cfg.ecraser_mbt);          // FIX: était cfg.ecraser_mbt_l
+  s('f-priori',        cfg.decoupe);
+  s('f-priori-s',      cfg.decoupe_s);
+  s('f-carte-v',       cfg.carte_v !== undefined ? cfg.carte_v : true);
   s('f-priori-cols',   cfg.cols_decoupe);
   s('f-priori-rows',   cfg.rows_decoupe);
   s('f-priori-cols-s', cfg.cols_decoupe_s);
@@ -1499,14 +1857,9 @@ function loadConfig(cfg) {
   s('f-osm-geojson-raw',  cfg.osm_geojson_raw);
   s('f-osm-transparent',  cfg.osm_transparent);
   s('f-ecraser-tuil-osm', cfg.ecraser_tuil_osm);
-  // FIX: était cfg.osm_tags — la clé sauvée par getConfig est osm_tags_sel
-  if (cfg.osm_tags_sel) {
-    const tagSet = new Set(typeof cfg.osm_tags_sel === 'string'
-      ? cfg.osm_tags_sel.split(' ') : cfg.osm_tags_sel);
-    document.querySelectorAll('input[name=osm_tag]').forEach(c => {
-      c.checked = tagSet.has(c.value);
-    });
-  }
+  // FIX: était cfg.osm_tags — la clé sauvée par getConfig est osm_tags_sel.
+  // shuttleSet accepte la liste ET la chaîne espacée (configs CLI héritées).
+  if (cfg.osm_tags_sel) shuttleSet('osm', cfg.osm_tags_sel);
 
   // IGN Vectoriel
   s('f-tel-v',          cfg.tel_v !== undefined ? cfg.tel_v : true);
@@ -1518,13 +1871,7 @@ function loadConfig(cfg) {
   s('f-tuiles-v',       cfg.tuiles_v);
   s('f-ecraser-tuil-v', cfg.ecraser_tuil_v);
   // FIX: était cfg.wfs_couches — la clé sauvée par getConfig est wfs_couches_sel
-  if (cfg.wfs_couches_sel) {
-    const wfsSet = new Set(typeof cfg.wfs_couches_sel === 'string'
-      ? cfg.wfs_couches_sel.split(' ') : cfg.wfs_couches_sel);
-    document.querySelectorAll('input[name=wfs]').forEach(c => {
-      c.checked = wfsSet.has(c.value);
-    });
-  }
+  if (cfg.wfs_couches_sel) shuttleSet('wfs', cfg.wfs_couches_sel);
 
   // Fusion
   s('f-fusion-gz2',     cfg.fusion_gz2 !== undefined ? cfg.fusion_gz2 : true);
@@ -1582,8 +1929,18 @@ function loadConfig(cfg) {
   // ── Restauration des champs sensibles aux cascades, EN DERNIER ────────────
   // Le changement de provider filtre les couches et déclenche updateWarning,
   // qui remet les zooms aux valeurs par défaut de la couche. On restaure donc
-  // provider → couche → zooms dans cet ordre, après tout le reste, pour que les
-  // valeurs sauvées gagnent quel que soit l'ordre d'init (démarrage vs panneau).
+  // pays → provider → couche → zooms dans cet ordre, après tout le reste, pour
+  // que les valeurs sauvées gagnent quel que soit l'ordre d'init (démarrage vs
+  // panneau). Le pays vient EN PREMIER : il filtre la liste de providers, donc
+  // le restaurer après effacerait le provider sauvé.
+  if (cfg.pays !== undefined) {
+    const zsel = document.getElementById('f-pays');
+    if (zsel && zsel.querySelector(`option[value="${cfg.pays}"]`)) {
+      zsel.value = cfg.pays;
+      onSurfaceChange();
+      filtrerCouchesParPays();
+    }
+  }
   if (cfg.provider) {
     const psel = document.getElementById('f-provider');
     if (psel && psel.querySelector(`option[value="${cfg.provider}"]`)) {
@@ -1591,11 +1948,14 @@ function loadConfig(cfg) {
       psel.dispatchEvent(new Event('change'));   // applyProviderCountry + filtre couches
     }
   }
-  // Mode DFM : restauré APRÈS le provider (le change ci-dessus repose les
+  // Surface : restaurée APRÈS le provider (le change ci-dessus repose les
   // défauts via applyProviderDfm ; on ré-applique ensuite les valeurs sauvées).
+  // Cocher un radio par programme ne tire PAS 'change' → onSurfaceChange() est
+  // appelé à la main, ce qui refiltre la liste de providers en gardant le code
+  // sauvé s'il est DFM-capable.
   if (cfg.dfm !== undefined) {
-    const cb = document.getElementById('f-dfm');
-    if (cb) cb.checked = !!cfg.dfm;
+    const ssel = document.getElementById('f-surface');
+    if (ssel) { ssel.value = cfg.dfm ? 'laz' : 'mnt'; onSurfaceChange(); }
     if (cfg.dfm_hmin)    s('f-dfm-hmin',    cfg.dfm_hmin);
     if (cfg.dfm_hmax)    s('f-dfm-hmax',    cfg.dfm_hmax);
     if (cfg.dfm_classes) s('f-dfm-classes', cfg.dfm_classes);
@@ -2024,6 +2384,19 @@ async function lancer() {
 // Continue-on-error : un échec n'arrête pas la file. « Arrêter » pose
 // arretDemande → coupe le job courant (le process tué remonte via poll_log)
 // et sort de la boucle.
+// Signature de ce qu'une tâche télécharge : deux tâches de même signature
+// piochent EXACTEMENT les mêmes dalles dans le cache partagé. Provider et
+// surface parce qu'ils déterminent le nom des dalles (fr_laz05_csf_… vs
+// fr_dalle_…), zone parce qu'elle détermine lesquelles. Comparaison sur les
+// champs bruts du formulaire : pas de géocodage, donc deux libellés de ville
+// différents pour la même ville comptent comme deux zones — conservateur dans
+// le bon sens (on ne garde jamais des dalles plus longtemps que prouvé utile).
+function _signatureDalles(cfg) {
+  return [cfg.provider || '', cfg.dfm ? 'laz' : 'mnt', cfg.dfm_ground || '',
+          cfg.mode || '', cfg.ville || '', cfg.gps || '', cfg.bbox || '',
+          cfg.dep || '', cfg.region || '', cfg.rayon ?? ''].join('|');
+}
+
 async function lancerFile() {
   arretDemande = false;
   document.getElementById('btn-run').disabled = true;
@@ -2037,6 +2410,15 @@ async function lancerFile() {
     renderFile();
     document.getElementById('footer-status').textContent =
       tf('queue.running', {i: i + 1, n: fileAttente.length, label: fileAttente[i].label});
+    // Nettoyage inter-tâches : si une tâche PLUS LOIN dans la file retélécharge
+    // les mêmes dalles, on garde le cache pour elle (--cleanup-keep-tiles). Le
+    // nettoyage inter-chunk, lui, reste actif : c'est ce qui permet de traiter
+    // un département sans saturer le disque. Seule la DERNIÈRE tâche d'un
+    // groupe efface réellement les dalles.
+    const sig = _signatureDalles(fileAttente[i].cfg);
+    const reUtilisee = fileAttente.slice(i + 1).some(
+      it => it.status === 'pending' && _signatureDalles(it.cfg) === sig);
+    fileAttente[i].cfg.cleanup_keep_tiles = reUtilisee;
     const r = await executerCfg(fileAttente[i].cfg, true);
     fileAttente[i].status = r.code === 0 ? 'ok' : 'err';
     if (r.code === 0) ok++; else ko++;

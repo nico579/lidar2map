@@ -28,6 +28,46 @@ def set_dfm_parallelism(k):
     global _CONV_SEM
     _CONV_SEM = threading.Semaphore(max(1, int(k)))
 
+# Source UNIQUE des pays : code ISO, nom EN, nom FR. L'ORDRE est l'ordre
+# d'affichage (READMEs, carte de couverture, dropdown provider de la GUI), pas
+# un tri alphabétique. Un COUNTRY de provider absent d'ici fait échouer la
+# génération de la carte (garde-fou anti-drift dans coverage_map.py).
+# Vit ici plutôt que dans coverage_map.py depuis 2026-07-20 : la GUI groupe sa
+# liste de providers par pays et a besoin des mêmes noms — deux tables auraient
+# dérivé. Ajouter un pays = 1 ligne ici.
+COUNTRY_NAMES = [
+    ("fr", "France", "France"),
+    ("gb", "UK", "Royaume-Uni"),
+    ("de", "Germany", "Allemagne"),
+    ("at", "Austria", "Autriche"),
+    ("nl", "Netherlands", "Pays-Bas"),
+    ("ch", "Switzerland", "Suisse"),
+    ("no", "Norway", "Norvège"),
+    ("be", "Belgium", "Belgique"),
+    ("lu", "Luxembourg", "Luxembourg"),
+    ("fi", "Finland", "Finlande"),
+    ("dk", "Denmark", "Danemark"),
+    ("se", "Sweden", "Suède"),
+    ("ie", "Ireland", "Irlande"),
+    ("cz", "Czechia", "Tchéquie"),
+    ("si", "Slovenia", "Slovénie"),
+    ("ee", "Estonia", "Estonie"),
+    ("lv", "Latvia", "Lettonie"),
+    ("es", "Spain", "Espagne"),
+    ("pt", "Portugal", "Portugal"),
+    ("it", "Italy", "Italie"),
+    ("pl", "Poland", "Pologne"),
+    ("us", "USA", "USA"),
+    ("ca", "Canada", "Canada"),
+    ("nz", "New Zealand", "Nouvelle-Zélande"),
+    ("au", "Australia", "Australie"),
+    ("ph", "Philippines", "Philippines"),
+    ("jp", "Japan", "Japon"),
+]
+
+# code ISO → (rang d'affichage, nom EN, nom FR)
+COUNTRY_INFO = {c: (i, en, fr) for i, (c, en, fr) in enumerate(COUNTRY_NAMES)}
+
 try:
     import certifi
     _CTX = ssl.create_default_context(cafile=certifi.where())

@@ -370,6 +370,7 @@ _mdis = re.search(r'<select id="omb-dispo".*?</select>', _html, re.S)
 opts_html = set(re.findall(r'<option value="([^"]+)"', _mdis.group(0))) if _mdis else set()
 
 _appjs = (_ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+_css = (_ROOT / "gui" / "style.css").read_text(encoding="utf-8")
 _mdefs = re.search(r"const OMB_DEFS = \{(.*?)\n\};", _appjs, re.S)
 types_js = set(re.findall(r"^\s*'?([a-z0-9]+)'?\s*:\s*\{label:", _mdefs.group(1), re.M)) \
            if _mdefs else set()
@@ -699,15 +700,47 @@ check("craig parent fr-craig : post_fetch .asc→GeoTIFF exposé, pas de bounds 
       hasattr(_cgr, "post_fetch") and _cgr.CODE == "fr-craig")
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
-# La case + réglages existent dans le HTML ; app.js les câble ; _build_cmd les
-# traduit en flags ; le dropdown n'expose PAS le jumeau (case seulement) et
-# porte les défauts du module (source de vérité unique).
-check("HTML : case f-dfm + 7 réglages",
-      all(k in _html for k in ('id="f-dfm"', 'id="f-dfm-hmin"',
+# Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;
+# _build_cmd les traduit en flags ; le dropdown n'expose PAS le jumeau et porte
+# les défauts du module (source de vérité unique).
+# Depuis 2026-07-20 le contrôle est une liste MNT/LAZ (f-surface) et non plus
+# une case f-dfm : plus précis, et il conditionne CHRONOLOGIQUEMENT la liste des
+# providers (LAZ ne propose que les sources DFM-capables). Le contrat de config
+# reste le booléen `dfm` → --dfm.
+check("HTML : liste de surface MNT/LAZ + 7 réglages",
+      all(k in _html for k in ('id="f-surface"', 'value="mnt"', 'value="laz"',
+                               'id="f-dfm-hmin"',
                                'id="f-dfm-hmax"', 'id="f-dfm-classes"',
                                'id="f-dfm-ground"', 'id="f-dfm-csf-threshold"',
                                'id="f-dfm-csf-resolution"',
-                               'id="f-dfm-csf-rigidness"')))
+                               'id="f-dfm-csf-rigidness"'))
+      and 'id="f-dfm"' not in _html
+      and 'name="surface"' not in _html)
+# Surface et provider se lisent ensemble (l'un filtre l'autre) : même ligne,
+# sans mention annexe qui la surcharge.
+_i_surf = _html.find('id="f-surface"')
+check("surface et provider sur la même ligne, sans détails annexes",
+      0 < _i_surf < _html.find('id="f-provider"')
+      and '<div class="row"' not in _html[_i_surf:_html.find('id="f-provider"')]
+      and 'id="dfm-source"' not in _html and 'id="surface-hint"' not in _html
+      and '"f.src.mnt"' not in _appjs and '"f.surf.hint.mnt"' not in _appjs)
+check("app.js : la surface pilote la liste des providers (lazActif/onSurfaceChange)",
+      "function lazActif()" in _appjs and "function onSurfaceChange()" in _appjs
+      and "dfm: lazActif()" in _appjs
+      and "_allProviders.filter(p => duPays(p) && (!laz || p.dfm))" in _appjs)
+# Le bloc Source vit dans l'onglet LiDAR, AVANT le cadre « 1 — Télécharger »,
+# et le cadre ne nomme plus un provider en particulier.
+_i_src = _html.find('data-i18n="sec.source"')
+_i_dl  = _html.find('id="body-tel"')
+check("HTML : bloc Source dans l'onglet LiDAR, avant le cadre Télécharger",
+      _html.find('<div id="sec-lidar">') < _i_src < _i_dl and _i_src > 0)
+# Le cadre 1 porte le même libellé sur tous les onglets : plus de mention d'un
+# fournisseur ni du type d'artefact téléchargé.
+check("HTML : cadre 1 identique partout (clé `dl`, plus de `dl.lidar`)",
+      "Télécharger les dalles" not in _html and '"dl.lidar"' not in _appjs
+      and "Download IGN LiDAR HD tiles" not in _appjs
+      # LiDAR + Raster + les deux sources de l'onglet Vectoriel (IGN et OSM)
+      and _html.count('data-i18n="dl"') == 4)
 check("app.js : applyProviderDfm + payloads dfm_hmin/dfm_ground/dfm_csf_*",
       "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs
       and "dfm_ground" in _appjs and "dfm_csf_threshold" in _appjs)
@@ -740,9 +773,12 @@ check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
 check("dropdown : fr-ign porte le cap de download LAZ (source unique)",
       _fr.get("dfm", {}).get("download_workers_max") == _dfm.DOWNLOAD_WORKERS_MAX
       and _dfm.DOWNLOAD_WORKERS_MAX > 0)
-check("GUI reflète le cap : borne le champ Workers + note (pas de 3 en dur)",
-      'id="dfm-workers-note"' in _html
+# Le cap borne le champ Workers ; le motif est dans l'infobulle du champ, plus
+# dans une mention qui encombrait la ligne (même traitement que le cap de zoom).
+check("GUI reflète le cap : borne le champ Workers (pas de 3 en dur)",
+      'id="dfm-workers-note"' not in _html
       and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs
+      and "wl.title = capN" in _appjs
       and "preLaz" in _appjs and "f-workers-l" in _appjs)
 # 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
 # et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
@@ -758,6 +794,341 @@ check("dropdown : fr-craig porte la capacité dfm (défaut ground=csf)",
       _cgp is not None and _cgp.get("dfm", {}).get("ground") == "csf")
 check("dropdown : le jumeau fr-craig-dfm n'y est PAS",
       all(p["code"] != "fr-craig-dfm" for p in _provs_gui))
+
+print("== 9d. Découplage raster / tri pays / zoom natif / cleanup file ==")
+# Le pays de CHAQUE provider est résolu depuis la table unique
+# providers.common.COUNTRY_NAMES (même ordre que READMEs + carte). Un provider
+# sans nom de pays déclaré sortirait au rang 9999 : c'est le drift qu'on guette.
+_sans_nom = [p["code"] for p in _provs_gui if p.get("country_rank", 9999) >= 9999]
+check("providers : tous les pays ont un nom + un rang (table unique)",
+      not _sans_nom, detail=f"sans nom={_sans_nom}")
+check("providers : country_fr/country_en remontent au front",
+      _fr.get("country_fr") == "France" and _fr.get("country_en") == "France")
+check("COUNTRY_NAMES : une seule table (coverage_map l'importe de common)",
+      _common.COUNTRY_NAMES is __import__("coverage_map").COUNTRY_NAMES)
+check("app.js : dropdown providers groupée par pays, triée par rang",
+      "_providerOptionsHtml" in _appjs and "<optgroup" in _appjs
+      and "country_rank" in _appjs)
+# Découplage : le provider LiDAR ne filtre plus les couches raster ni les
+# onglets FR-only. Le pipeline raster résout sa zone en WGS84 pur, il n'a jamais
+# eu besoin du provider — le couplage était un artefact GUI.
+check("app.js : filterCouchesByCountry supprimé (raster découplé du provider)",
+      "filterCouchesByCountry" not in _appjs and "_RASTER_TAB_LABEL" not in _appjs)
+check("app.js : couches raster groupées par propriétaire (IGN / USGS)",
+      "_RASTER_OWNER" in _appjs and "createElement('optgroup')" in _appjs)
+check("raster : main_wmts résout la zone en WGS84, sans PROVIDER",
+      "_resoudre_zone_wgs84(args)" in _src
+      and "CRS_NATIF" not in _src[_src.find("def _resoudre_zone_wgs84"):
+                                  _src.find("def _resoudre_zone_wgs84") + 4000])
+# Zoom natif : premier zoom Web Mercator au moins aussi fin que la source.
+# 0,5 m → z18 aux latitudes métropolitaines ; au-delà = agrandissement pur.
+check("app.js : zoomNatif + bornage du champ Zoom max (miroir du cap raster)",
+      "function zoomNatif(" in _appjs and "function applyZoomCap(" in _appjs
+      and "156543.033928" in _appjs and "preCap" in _appjs
+      # Le bridage est porté par le `max` du champ ; l'explication est dans
+      # l'infobulle, pas dans une mention qui encombrait la ligne.
+      and 'id="zoom-cap-note"' not in _html
+      and "zl.title = t('f.zoomcap')" in _appjs)
+# « Générer la carte » (LiDAR) : zoom, format image, qualité et formats de
+# fichier tiennent sur une seule ligne.
+for _nom, _debut, _fin, _champs in (
+        ("LiDAR", 'id="body-mbt"', '<div id="sec-scan"',
+         ('id="f-zoom-min-l"', 'id="f-qualite-l"', 'id="f-mbtiles"', 'id="f-sqlitedb"')),
+        ("Raster", 'id="body-tuil-s"', '<div id="sec-vecteur"',
+         ('id="f-zoom-min-s"', 'id="f-qualite-s"', 'id="f-mbtiles-s"', 'id="f-sqlitedb-s"'))):
+    _b = _html[_html.find(_debut):_html.find(_fin)]
+    check("générer la carte %s : tous les champs sur une seule ligne" % _nom,
+          _b.count('<div class="row">') == 1 and all(k in _b for k in _champs))
+# --cleanup-keep-tiles : le nettoyage inter-chunk reste actif, seules les dalles
+# du cache partagé sont épargnées, et uniquement si une tâche ULTÉRIEURE de la
+# file retélécharge exactement les mêmes (même provider × surface × zone).
+check("CLI : --cleanup-keep-tiles déclaré et câblé au nettoyage",
+      "--cleanup-keep-tiles" in _src and "nettoyage_garder_dalles" in _src
+      and "def _supprimer_fichiers(fichiers: list, dossier_dalles=None)" in _src)
+check("_build_cmd émet --cleanup-keep-tiles depuis cleanup_keep_tiles",
+      'cfg.get("cleanup_keep_tiles")' in _src)
+check("app.js : la file ne garde les dalles que pour un groupe réutilisé",
+      "_signatureDalles" in _appjs and "cleanup_keep_tiles" in _appjs
+      and "status === 'pending' && _signatureDalles" in _appjs)
+
+# _supprimer_fichiers : comportement réel sur un cache de dalles + un intermédiaire.
+import tempfile as _tf
+with _tf.TemporaryDirectory() as _d:
+    _cache = Path(_d) / "cache" / "lidar" / "fr"
+    _cache.mkdir(parents=True)
+    _dalle = _cache / "fr_dalle_0932_6257.tif"; _dalle.write_bytes(b"x")
+    _inter = Path(_d) / "ombrage.tif";          _inter.write_bytes(b"y")
+    l2m._supprimer_fichiers([str(_dalle), str(_inter)], _cache)
+    check("keep-tiles : dalle du cache épargnée, intermédiaire supprimé",
+          _dalle.exists() and not _inter.exists())
+    _inter.write_bytes(b"y")
+    l2m._supprimer_fichiers([str(_dalle), str(_inter)], None)
+    check("sans keep-tiles : tout est supprimé (comportement historique)",
+          not _dalle.exists() and not _inter.exists())
+
+print("== 9e. Uniformité « Source des données » sur les 4 onglets ==")
+# Chaque onglet producteur de carte expose D'ABORD sa source (quoi + d'où),
+# PUIS un cadre « 1 — Télécharger » qui ne garde que la mécanique du transfert
+# (workers, compression, cache). Avant 2026-07-20 : LiDAR et Raster avaient un
+# bloc dédié, mais OSM et IGN Vecteur enterraient leur sélecteur DANS le cadre
+# de téléchargement — décocher « Télécharger » masquait donc la sélection, qui
+# sert encore à l'étape suivante.
+_ONGLETS = [
+    ("LiDAR",     '<div id="sec-lidar">',                 "body-tel",     "f-provider"),
+    ("Raster",    '<div id="sec-scan" class="hidden">',    "body-tel-s",   "f-couche"),
+    ("Vectoriel", '<div id="sec-vecteur" class="hidden">', "body-tel-v",   "wfs-dispo"),
+]
+for _nom, _ancre, _corps_dl, _selecteur in _ONGLETS:
+    _i0 = _html.find(_ancre)
+    _fin = min([x for x in (_html.find('<div id="sec-', _i0 + 10), len(_html)) if x > 0])
+    _bloc = _html[_i0:_fin]
+    _i_src = _bloc.find('data-i18n="sec.source"')
+    _i_sel = _bloc.find('id="%s"' % _selecteur)
+    _i_dl  = _bloc.find('id="%s"' % _corps_dl)
+    check("onglet %s : Source, puis sélecteur, puis Télécharger" % _nom,
+          0 <= _i_src < _i_sel < _i_dl,
+          detail="source=%d sel=%d dl=%d" % (_i_src, _i_sel, _i_dl))
+check("chaque onglet nomme son service amont (WMTS raster, WFS/PBF vecteur)",
+      all(k in _appjs for k in ('"svc.wmts.fr"', '"svc.wmts.us"',
+                                '"vsrc.ign"', '"vsrc.osm"'))
+      and 'data-i18n="vsrc.ign"' in _html and 'data-i18n="vsrc.osm"' in _html)
+
+print("== 9f. Onglets vecteur fusionnés (IGN WFS + OSM Geofabrik) ==")
+# Les deux onglets avaient le même squelette et les mêmes livrables : un seul
+# onglet « Vectoriel » avec un sélecteur de source. Le CONTRAT ne bouge pas —
+# cfg.type vaut toujours 'vecteur' ou 'osm', donc _build_cmd est inchangé.
+check("un seul onglet vecteur : le radio t-osm a disparu",
+      'id="t-osm"' not in _html and 'id="sec-osm"' not in _html
+      and 'id="t-vecteur"' in _html and '"t.vect":"Vectoriel"' in _appjs)
+check("sélecteur de source aux valeurs du contrat ('vecteur' | 'osm')",
+      'name="vsrc"' in _html
+      and 'id="v-ign" value="vecteur"' in _html
+      and 'id="v-osm" value="osm"' in _html)
+check("getConfig dérive le type de la source",
+      "if (type === 'vecteur') type = _vecteurSource();" in _appjs
+      and "function _vecteurSource()" in _appjs)
+check("loadConfig : une config 'osm' d'avant la fusion se recharge",
+      "sr('type', 'vecteur');" in _appjs and "sr('vsrc', cfg.type);" in _appjs)
+# Sélection des couches/thèmes : shuttle « disponibles ↔ choisis », même idiome
+# que la liste d'ombrages. 17 couches WFS en cases à cocher demandaient de
+# balayer plusieurs lignes pour lire l'ensemble retenu. Pas de panneau de
+# réglages : contrairement aux ombrages, ces entrées n'ont pas de paramètres.
+check("vecteur : couches et thèmes en shuttle, plus en cases à cocher",
+      all(k in _html for k in ('id="wfs-dispo"', 'id="wfs-liste"',
+                               'id="osm-dispo"', 'id="osm-liste"'))
+      and 'id="wfs-checks"' not in _html and 'id="osm-tag-checks"' not in _html
+      and "name=wfs" not in _appjs and "name=osm_tag" not in _appjs)
+check("shuttle : état unique re-rendu, pas de déplacement d'<option>",
+      "_shuttleData" in _appjs and "function shuttleRender(" in _appjs
+      and "function listeAdd(" in _appjs and "function listeDel(" in _appjs
+      and "osm_tags_sel:  shuttleValeurs('osm')" in _appjs
+      and "wfs_couches_sel: shuttleValeurs('wfs')" in _appjs)
+check("shuttle : restauration tolérante (liste ou chaîne espacée héritée)",
+      "typeof valeurs === 'string' ? valeurs.split(' ')" in _appjs
+      and "shuttleSet('osm', cfg.osm_tags_sel)" in _appjs
+      and "shuttleSet('wfs', cfg.wfs_couches_sel)" in _appjs)
+# La source ne recolore plus l'onglet : IGN et OSM sont deux sources du même
+# onglet depuis la fusion, pas deux contextes.
+# Même ORDRE de formats partout où l'on produit du vecteur : données brutes,
+# dérivé raster, carte vecteur. Fusion et IGN l'appliquaient déjà, OSM plaçait
+# Mapsforge en tête.
+_ORDRE = ["geojson", "geojson-raw", "transparent", "map"]
+for _nom, _ids in (
+        ("IGN",    ["f-fusion-gz", "f-fusion-gz-raw", "f-vec-transparent", "f-tuiles-v"]),
+        ("OSM",    ["f-osm-geojson", "f-osm-geojson-raw", "f-osm-transparent", "f-map"]),
+        ("Fusion", ["f-fusion-gz2", "f-fusion-gz2-raw", "f-fusion-transparent", "f-fusion-map"])):
+    _pos = [_html.find('id="%s"' % i) for i in _ids]
+    check("formats %s : ordre commun (brut, transparent, Mapsforge)" % _nom,
+          all(p > 0 for p in _pos) and _pos == sorted(_pos),
+          detail=" < ".join(_ids))
+# --workers est unique en CLI, la GUI a un champ par type : ne le reporter que
+# sur le type réellement lancé. Sinon un run LiDAR `--workers 8` repeuplait le
+# champ vecteur (plafonné à 4) au rechargement de l'historique. Les jumeaux
+# osm_tags_sel / wfs_couches_sel du même dict avaient déjà ce conditionnement.
+check("cfg depuis argv : --workers ne va qu'au champ du type lancé",
+      all(k in _src for k in (
+          '"workers_l":     _arg_int("--workers", default=8) if t == "lidar" else 8',
+          '"workers_s":     _arg_int("--workers", default=8) if t == "scan" else 8',
+          '"workers_osm":   _arg_int("--workers", default=4) if t == "osm" else 4')))
+check("vecteur : workers plafonné à 4 dans le champ ET à la relecture",
+      'id="f-workers-v" value="4" min="1" max="4"' in _html
+      and 'min(_arg_int("--workers", default=4), 4) if t == "vecteur"' in _src
+      and '"max4"' not in _appjs and '"pbfpar"' not in _appjs)
+check("row-simplif-fusion : plus de double attribut class",
+      '<div class="row hidden" id="row-simplif-fusion"' in _html
+      and 'id="row-simplif-fusion" class="hidden"' not in _html)
+check("vecteur : pas de recoloration selon la source",
+      "type-osm" not in _css and "type-osm" not in _appjs
+      and ".v-osm .section-hd" not in _css
+      and ".section.v-osm" not in _css)
+check("les contrôles des 2 sources gardent leurs ids (contrat intact)",
+      all(k in _html for k in ('id="f-tel-osm"', 'id="f-workers-osm"',
+                               'id="f-tuiles-osm"', 'id="f-map"',
+                               'id="f-osm-geojson"', 'id="f-osm-transparent"',
+                               'id="f-tel-v"', 'id="f-workers-v"',
+                               'id="f-fusion-gz"', 'id="f-vec-transparent"',
+                               'id="f-tuiles-v"', 'id="f-simplif-v"')))
+check("blocs .v-ign / .v-osm échangés par onVecteurSource",
+      "function onVecteurSource()" in _appjs
+      and "#sec-vecteur .v-ign" in _appjs and "#sec-vecteur .v-osm" in _appjs
+      and _html.count('class="section v-osm hidden"') == 2
+      and _html.count('class="section v-ign"') == 2)
+check("applyType ne cherche plus de section 'osm'",
+      "['lidar','scan','vecteur','fusion','decoupe']" in _appjs)
+# _build_cmd doit rester capable de traiter les deux types, inchangé.
+check("_build_cmd : les 2 branches vecteur/osm intactes",
+      'elif t == "osm":' in _src and 'elif t == "vecteur":' in _src
+      and 'cmd.append("--osm")' in _src and 'cmd.append("--vector")' in _src)
+check("raster : le service suit la couche, plus le provider LiDAR",
+      "svc.wmts.us" in _appjs and "getElementById('hd-couche')" in _appjs)
+# Pays : déclaré dans la ZONE (partagée par tous les onglets), plus déduit du
+# provider LiDAR. Il cadre le géocodage des villes, la liste des providers et
+# les couches raster. Entrée « Tous » indispensable : OSM est mondial.
+check("zone : sélecteur de pays alimenté par les providers",
+      'id="f-pays"' in _html and "function buildPays(" in _appjs
+      and "country_rank" in _appjs)
+# lidar2map est un outil LiDAR : OSM et raster y sont des compléments du LiDAR.
+# Un pays sans provider LiDAR est donc hors périmètre — pas d'entrée « tous
+# pays », et pas de chemin de géocodage mondial à maintenir pour elle.
+# Zone : liste déroulante au lieu de 5 radios, et tous les champs du mode sur
+# la même ligne que Pays + Zone. Les libellés par mode sont supprimés (la liste
+# et le placeholder les portent) ; les aides longues (dep/region) restent hors
+# ligne, affichées par applyMode.
+check("zone : mode en liste déroulante, plus en radios",
+      'id="f-mode"' in _html and 'name="mode"' not in _html
+      and "function _modeActif()" in _appjs
+      and "input[name=mode]" not in _appjs)
+check("zone : pays, mode et champs sur la même ligne",
+      _html.count('class="z-zone"') + _html.count('class="z-zone hidden"') == 5
+      and _html.find('id="f-pays"') < _html.find('id="f-mode"')
+                                    < _html.find('id="z-ville"')
+      and ".z-zone{display:inline-flex" in _css)
+check("zone : aides dep/region hors ligne, pilotées par applyMode",
+      'id="z-dep-hint"' in _html and 'id="z-region-hint"' in _html
+      and "['dep','z-dep-hint']" in _appjs)
+# Department et Région sont des découpages FRANÇAIS (_GEOFABRIK = codes INSEE,
+# geocoder_* rend du Lambert 93). Il n'existe pas d'équivalent ailleurs : la
+# liste des régions ne pouvait pas « suivre le pays », il faut retirer les modes.
+check("zone : Department/Région désactivés hors de France",
+      "_MODES_FR" in _appjs and "function _majModesDisponibles()" in _appjs
+      and '"mode.fronly"' in _appjs
+      and "_majModesDisponibles();" in _appjs)
+check("les régions restent une notion française (aucune donnée étrangère)",
+      "return sorted(set(_GEOFABRIK.values()))" in _src)
+check("pas d'entrée « tous pays » (hors périmètre d'un outil LiDAR)",
+      '"z.pays.tous"' not in _appjs
+      and '<option value="">' not in _appjs
+      and 'country = (country or "fr").lower()' in _src)
+check("géocodage : scopé par le pays de la zone, plus par le provider",
+      "const country = _paysActif();" in _appjs
+      and "psel.dataset.country) || 'fr'" not in _appjs)
+check("pays : filtre providers ET couches raster",
+      "function onPaysChange()" in _appjs
+      and "function filtrerCouchesParPays()" in _appjs
+      and "filtrerCouchesParPays();" in _appjs)
+# Pays sans provider DFM : la combinaison pays × LAZ serait vide → on désactive
+# le choix LAZ au lieu d'afficher une liste de providers vide.
+# Pays sans provider DFM : l'option LAZ est désactivée et porte son motif dans
+# son propre libellé (plus de mention séparée sur la ligne).
+check("pays sans source LAZ : l'option LAZ est désactivée, motif dans le libellé",
+      "optLaz.disabled = !dispoLaz" in _appjs and '"f.surf.nolaz"' in _appjs
+      and "optLaz.textContent = t('f.surf.laz')" in _appjs)
+check("cfg : le pays est sauvegardé et restauré AVANT le provider",
+      "pays:     g('f-pays')?.value ?? ''" in _appjs
+      and _appjs.find("if (cfg.pays !== undefined)") < _appjs.find("if (cfg.provider) {"))
+# Chaque pays proposé a au moins un provider (la liste EN vient) : aucune
+# sélection ne peut produire une liste de providers vide.
+_pays_dispo = {p["country"] for p in _provs_gui if p["country"]}
+check("tout pays proposé a au moins un provider",
+      all(any(p["country"] == c for p in _provs_gui) for c in _pays_dispo),
+      detail=f"{len(_pays_dispo)} pays")
+# Le découpage à priori dépend du VOLUME, donc de la source : il vient après
+# elle sur les deux onglets qui l'exposent (LiDAR et Raster). Le raster l'avait
+# en premier, avant même de savoir quelle couche on tire.
+for _nom, _ancre in (("LiDAR", '<div id="sec-lidar">'),
+                     ("Raster", '<div id="sec-scan" class="hidden">')):
+    _i0 = _html.find(_ancre)
+    _fin = min([x for x in (_html.find('<div id="sec-', _i0 + 10), len(_html)) if x > 0])
+    _bloc = _html[_i0:_fin]
+    check("onglet %s : découpage à priori APRÈS la source" % _nom,
+          0 <= _bloc.find('data-i18n="sec.source"') < _bloc.find('data-i18n="split0"'))
+# L'onglet couvre MNT ET LAZ depuis le sélecteur de surface : « LiDAR MNT » ne
+# décrivait plus que la moitié de ce qu'il fait.
+check("onglet LiDAR : libellé sans 'MNT' (il traite aussi le LAZ)",
+      '"t.lidar":"LiDAR"' in _appjs
+      and "LiDAR MNT" not in _appjs and "LiDAR MNT" not in _html
+      and "LiDAR DEM" not in _appjs)
+# Un seul nom pour l'étape de production. « Calculer les tuiles » n'était exact
+# que pour les sorties raster : OSM et IGN Vecteur produisent un .map Mapsforge
+# et du GeoJSON, pas des tuiles.
+# NB : on teste les VALEURS i18n et les libellés du HTML, pas le texte brut du
+# .js — un commentaire qui documente l'ancien nom est légitime et ne doit pas
+# faire échouer le test.
+check("étape de production : un seul nom « Générer la carte » partout",
+      '"map2":"2 — Générer la carte"' in _appjs and '"map3"' in _appjs
+      and '"2 — Calculer les tuiles"' not in _appjs
+      and '"3 — Calculer les tuiles"' not in _appjs
+      and '"2 — Compute tiles"' not in _appjs
+      and "Calculer les tuiles" not in _html
+      and '"gen.map"' not in _appjs and 'data-i18n="gen.map"' not in _html
+      and _html.count('data-i18n="map2"') == 3)   # raster + osm + vecteur
+# IGN Vecteur : répartition des formats calquée sur le pipeline, pas sur
+# l'apparence. .geojson.gz/.geojson sont ÉCRITS par telecharger_wfs (étape 1,
+# écrasement --download-overwrite) ; .map et transparent-raster en dérivent
+# (étape 2, écrasement --tiles-overwrite). Les mettre tous en étape 2 aurait
+# décorrélé les GeoJSON de leur case Écraser.
+_i_v = _html.find('<div id="sec-vecteur" class="hidden">')
+_bloc_v = _html[_i_v:]
+_i_tel_v = _bloc_v.find('id="body-tel-v"')
+_i_map_v = _bloc_v.find('id="body-map-v"')
+check("vecteur : TOUS les formats regroupés dans « Générer la carte »",
+      _i_map_v < _bloc_v.find('id="f-fusion-gz"')
+      and _i_map_v < _bloc_v.find('id="f-vec-transparent"')
+      and _i_map_v < _bloc_v.find('id="f-tuiles-v"')
+      and _i_tel_v < _i_map_v)
+# Les GeoJSON sont écrits PAR le téléchargement : marqués « natif » plutôt que
+# grisés — le choix compressé/non compressé reste libre, seul le fait qu'au
+# moins un des deux sorte est imposé, et l'UI tient cet invariant.
+check("vecteur : GeoJSON marqués natifs, invariant « au moins un » tenu",
+      _html.count('data-i18n="fmt.natif"') == 2
+      and "function _garantirGeojson(" in _appjs
+      and 'onchange="_garantirGeojson(this)"' in _html
+      and 'if (not fmts)' not in _appjs)
+check("vecteur : le fallback backend existe toujours (miroir de l'UI)",
+      'if not fmts: fmts = ["gz"]' in _src)
+check("vecteur : Mapsforge est un format, plus un cadre séparé",
+      'data-i18n="fmt.mapsforge"' in _html
+      and "'map-v-detail'" in _appjs
+      and "'row-simplif-v'" not in _appjs)
+# Les gates de _build_cmd doivent rester ceux du pipeline : gz/geojson
+# inconditionnels, map et overwrite gatés sur tuiles_v.
+check("_build_cmd vecteur : GeoJSON toujours émis, dérivés gatés par la case",
+      'if cfg.get("fusion_gz", True):  fmts.append("gz")' in _src
+      and 'if _carte_v and cfg.get("tuiles_v"): fmts.append("map")' in _src
+      and '_carte_v = cfg.get("carte_v", True)' in _src)
+
+print("== 9g. Cases d'activation uniformes sur tous les cadres ==")
+# Les cadres « 0 — Découpage » (LiDAR + Raster) et « 2 — Générer la carte »
+# (vecteur IGN) n'avaient pas de case, contrairement à tous les autres.
+check("découpage à priori : case + corps repliable sur les 2 onglets",
+      'id="f-priori"' in _html and 'id="body-priori"' in _html
+      and 'id="f-priori-s"' in _html and 'id="body-priori-s"' in _html
+      and "['f-priori',    'body-priori']" in _appjs
+      and "['f-priori-s',  'body-priori-s']" in _appjs)
+# La case est la source UNIQUE de l'état on/off : décochée, aucun --split-*
+# n'est émis même si des valeurs traînent dans les champs.
+check("découpage : la case gouverne l'émission, pas les valeurs saisies",
+      'if not cfg.get("decoupe", False):' in _src
+      and 'if not cfg.get("decoupe_s", False):' in _src
+      and 'and cfg.get("rayon_decoupe_l", 0) > 0)' in _src)
+check("vecteur : case sur « Générer la carte », défaut coché",
+      'id="f-carte-v" checked' in _html
+      and "['f-carte-v',   'body-map-v']" in _appjs
+      and "carte_v:       g('f-carte-v')?.checked !== false" in _appjs)
+check("les 3 cases se sauvegardent et se restaurent",
+      "decoupe:       g('f-priori')?.checked" in _appjs
+      and "s('f-priori',        cfg.decoupe)" in _appjs
+      and "s('f-carte-v',       cfg.carte_v !== undefined" in _appjs)
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")

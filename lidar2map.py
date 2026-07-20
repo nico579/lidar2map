@@ -110,8 +110,16 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     4. gdalwarp + gdaladdo + tuilage Pillow → MBTiles/RMAP/SQLiteDB
        → <nom>_multi_ombrage_tuilage_z18.tif (cache Mercator, réutilisable)
        → <nom>_multi_ombrage_z13-18.mbtiles   (plage --zoom-min/--zoom-max ;
-       → <nom>_multi_ombrage_z13-18.rmap       z18 ≈ 0,6 m/px = la résolution
-       → <nom>_multi_ombrage_z13-18.sqlitedb   native 0,5 m, z19 n'apporte rien)
+       → <nom>_multi_ombrage_z13-18.rmap       z18 ≈ 0,43 m/px en métropole,
+       → <nom>_multi_ombrage_z13-18.sqlitedb   plus fin que la native 0,5 m
+                                               → z19 n'apporte rien)
+       ATTENTION au facteur latitude : une tuile Web Mercator fait
+       156543,03·cos(φ)/2^z m/px. Le 156543,03/2^z qu'on lit partout est la
+       valeur À L'ÉQUATEUR (z18 = 0,597 m/px) ; sans le cos(φ) on conclut à
+       tort que z18 est trop grossier pour du 0,5 m et qu'il faut z19. En
+       métropole cos(43-49°) ≈ 0,70 et z18 passe à ~0,42-0,44 m/px.
+       Zoom natif = ceil(log2(156543,03·cos(φ)/résolution)) : 0,25 m → z19,
+       0,5 m → z18, 1 m → z17, 2 m → z16, 5 m → z15.
 
   Paramètres spécifiques :
     --telechargement            Télécharger les dalles manquantes
@@ -2028,7 +2036,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.16.0"
+VERSION      = "1.17.0"
 VERSION_DATE = "2026-07"
 
 
@@ -2234,7 +2242,7 @@ def _creer_fichiers(paths):
     m.enregistrer_fichiers(paths, cle)
 
 
-def _supprimer_fichiers(fichiers: list):
+def _supprimer_fichiers(fichiers: list, dossier_dalles=None):
     """
     Supprime tous les fichiers créés par un morceau (--nettoyage).
     Cela inclut : dalles LiDAR, tuiles WMTS, TIF ombrages, TIF warpé.
@@ -2246,11 +2254,26 @@ def _supprimer_fichiers(fichiers: list):
     Seuls les fichiers créés/téléchargés PAR ce morceau (enregistrés dans le
     manifest via _creer_fichier) sont removeds. Les fichiers déjà
     présents avant le début du morceau ne sont pas touchés.
+
+    *dossier_dalles* non nul (--cleanup-keep-tiles) : les fichiers situés sous
+    ce dossier (le cache de dalles, partagé entre runs) sont ÉPARGNÉS, les
+    autres intermédiaires sont supprimés normalement. Sert quand une tâche
+    ultérieure de la même file retraite la même zone : sans ça elle re-télécharge
+    intégralement des dalles qu'on vient d'effacer.
     """
     suppr = 0
+    gardees = 0
     dirs_a_verifier = set()
+    _cache = Path(dossier_dalles).resolve() if dossier_dalles else None
     for chemin in fichiers:
         p = Path(chemin)
+        if _cache is not None:
+            try:
+                p.resolve().relative_to(_cache)
+                gardees += 1
+                continue
+            except (ValueError, OSError):
+                pass          # hors cache de dalles → intermédiaire ordinaire
         # Tous les fichiers du manifest sont intermédiaires.
         # Les sorties finales (.mbtiles, .rmap…) ne sont jamais enregistrées
         # via _creer_fichier → elles ne se retrouvent jamais ici.
@@ -2267,8 +2290,9 @@ def _supprimer_fichiers(fichiers: list):
                 d.rmdir()
         except Exception:
             pass
-    if suppr:
-        print(f"  Cleanup: {suppr} intermediate file(s) removed")
+    if suppr or gardees:
+        _kept = f", {gardees} cached tile(s) kept" if gardees else ""
+        print(f"  Cleanup: {suppr} intermediate file(s) removed{_kept}")
 
 
 # Code de sortie dédié au garde-fou disque (--min-free-gb). Permet à un
@@ -2354,10 +2378,15 @@ import os as _os
 def _discover_providers():
     """Liste les providers disponibles dans providers/*.py.
 
-    Retourne une liste de dicts {code, name, country} (sans erreur si un
-    module est cassé). Utilisé par la GUI pour peupler son sélecteur de
-    provider.
+    Retourne une liste de dicts {code, name, country, country_rank,
+    country_fr, country_en, ...} (sans erreur si un module est cassé). Utilisé
+    par la GUI pour peupler son sélecteur de provider, groupé par pays selon
+    country_rank.
     """
+    try:
+        from providers.common import COUNTRY_INFO as _COUNTRY_INFO
+    except Exception:
+        _COUNTRY_INFO = {}
     providers_dir = Path(__file__).resolve().parent / "providers"
     result = []
     if not providers_dir.exists():
@@ -2376,10 +2405,20 @@ def _discover_providers():
             # partagé (ex. providers/common.py) — ne pas le lister.
             if not hasattr(mod, "CODE"):
                 continue
+            # Pays : nom + rang d'affichage lus de la table unique
+            # providers.common.COUNTRY_INFO (même ordre que les READMEs et la
+            # carte de couverture). La GUI groupe sa dropdown là-dessus ; un
+            # pays inconnu tombe en fin de liste sous son code brut.
+            _cc = getattr(mod, "COUNTRY", "")
+            _rank, _cn_en, _cn_fr = _COUNTRY_INFO.get(
+                _cc, (9999, _cc.upper(), _cc.upper()))
             entry = {
                 "code":           getattr(mod, "CODE",           f.stem),
                 "name":           getattr(mod, "NAME",           f.stem),
-                "country":        getattr(mod, "COUNTRY",        ""),
+                "country":        _cc,
+                "country_rank":   _rank,
+                "country_fr":     _cn_fr,
+                "country_en":     _cn_en,
                 "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
                 "resolution_m":   float(getattr(mod, "RESOLUTION_M", 0.5)),
             }
@@ -9527,6 +9566,12 @@ Examples:
     grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
                             help="Delete intermediate tiles + TIFs after each chunk. "
                                  "Essential for large areas (a whole department).")
+    grp_priori.add_argument("--cleanup-keep-tiles", action="store_true",
+                            dest="nettoyage_garder_dalles",
+                            help="With --cleanup: keep the downloaded tiles in the shared "
+                                 "cache, delete the other intermediates. Use when a later "
+                                 "run reprocesses the same area (the GUI queue sets it "
+                                 "automatically) to avoid re-downloading them.")
     grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=float, default=0.0, metavar="GB",
                             dest="min_free_gb",
                             help="Stop cleanly before a chunk if free disk space drops below GB "
@@ -11513,7 +11558,14 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
                 if _has_empty:
                     print(f"  [{cle}] mbtiles empty or missing - cleanup skipped (intermediates kept for inspection)")
                 else:
-                    _supprimer_fichiers(manifeste.fichiers_morceau(cle))
+                    # --cleanup-keep-tiles : épargner le cache de dalles, qu'une
+                    # tâche ultérieure de la même file va relire (cf. GUI, qui
+                    # ne pose ce flag que sur les tâches non-finales d'un groupe
+                    # provider×surface×zone).
+                    _keep = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
+                             else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR) \
+                            if getattr(args, "nettoyage_garder_dalles", False) else None
+                    _supprimer_fichiers(manifeste.fichiers_morceau(cle), _keep)
         except ZoneHorsCouvertureWMTS:
             # Chunk auto-généré entièrement hors couverture (mer, hors frontière) :
             # légitimement vide, pas une bbox erronée. On le marque fait et on
@@ -15311,7 +15363,12 @@ def _cfg_depuis_argv() -> dict:
         "comp":          not _flag("--no-download-compress",
                                    "--no-telechargement-compresser"),
         "ecraser_tel":   _flag("--download-overwrite", "--telechargement-ecraser"),
-        "workers_l":     _arg_int("--workers", default=8),
+        # --workers est UNIQUE en ligne de commande mais la GUI a un champ par
+        # type : ne l'appliquer qu'au champ du type réellement lancé, sinon un
+        # run LiDAR `--workers 8` repeuplait aussi le champ vecteur (plafonné à
+        # 4) et le champ OSM. Même conditionnement que osm_tags_sel /
+        # wfs_couches_sel plus bas, qui l'avaient déjà.
+        "workers_l":     _arg_int("--workers", default=8) if t == "lidar" else 8,
         "dossier_dalles":_arg("--tiles-dir", "--dossier-dalles"),
         "no_omb":        bool(ombs) or _flag("--shadings", "--ombrages", "--shading"),
         "ombrages":      ombs,
@@ -15344,13 +15401,13 @@ def _cfg_depuis_argv() -> dict:
         "rmap_s":        "rmap"    in fmts,
         "sqlitedb_s":    "sqlitedb" in fmts,
         "qualite_s":     _arg_int("--image-quality", "--qualite-image", default=85),
-        "workers_s":     _arg_int("--workers", default=8),
+        "workers_s":     _arg_int("--workers", default=8) if t == "scan" else 8,
         # OSM
         "osm_tags_sel":  _args_after("--layer", "--couche") if t == "osm" else [],
-        "workers_osm":   _arg_int("--workers", default=4),
+        "workers_osm":   _arg_int("--workers", default=4) if t == "osm" else 4,
         # IGN Vectoriel
         "wfs_couches_sel": _args_after("--layer", "--couche") if t == "vecteur" else [],
-        "workers_v":     _arg_int("--workers", default=4),
+        "workers_v":     min(_arg_int("--workers", default=4), 4) if t == "vecteur" else 4,
         # Argv complet pour debug (clés API masquées)
         "argv":    _rediger_secrets(" ".join(argv)),
     }
@@ -16162,14 +16219,26 @@ def lancer_gui():
                         cmd += ["--image-format", cfg["fmt_l"]]
                     if cfg.get("qualite_l"): cmd += ["--image-quality", str(cfg["qualite_l"])]
                     if cfg.get("ecraser_mbt"): cmd.append("--tiles-overwrite")
+                    # La case « 0 — Découpage à priori » est l'interrupteur :
+                    # décochée, on n'émet rien même si des valeurs traînent dans
+                    # les champs (elles sont conservées pour un recochage).
                     _cols = cfg.get("cols_decoupe", 1) or 1
                     _rows = cfg.get("rows_decoupe", 1) or 1
+                    if not cfg.get("decoupe", False):
+                        _cols = _rows = 1
                     if _cols > 1 and _rows > 1:
                         cmd += ["--split-cols", str(_cols),
                                 "--split-rows", str(_rows)]
-                    elif cfg.get("rayon_decoupe_l", 0) > 0:
+                    elif (cfg.get("decoupe", False)
+                          and cfg.get("rayon_decoupe_l", 0) > 0):
                         cmd += ["--split-radius", str(cfg["rayon_decoupe_l"])]
-                    if cfg.get("nettoyage"): cmd.append("--cleanup")
+                    if cfg.get("nettoyage"):
+                        cmd.append("--cleanup")
+                        # Posé par la file d'attente (renderFile/lancerFile) quand
+                        # une tâche ULTÉRIEURE retraite la même zone avec la même
+                        # source : on garde les dalles pour elle.
+                        if cfg.get("cleanup_keep_tiles"):
+                            cmd.append("--cleanup-keep-tiles")
                     if cfg.get("min_free_gb", 0) > 0:
                         cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
                 if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
@@ -16198,12 +16267,16 @@ def lancer_gui():
                     if cfg.get("qualite_s"):
                         cmd += ["--image-quality", str(cfg["qualite_s"])]
                     if cfg.get("ecraser_tuil_s"): cmd.append("--tiles-overwrite")
+                    # Jumeau du LiDAR : la case du cadre est l'interrupteur.
                     _cols = cfg.get("cols_decoupe_s", 0) or 0
                     _rows = cfg.get("rows_decoupe_s", 0) or 0
+                    if not cfg.get("decoupe_s", False):
+                        _cols = _rows = 0
                     if _cols > 0 and _rows > 0:
                         cmd += ["--split-cols", str(_cols),
                                 "--split-rows", str(_rows)]
-                    elif cfg.get("rayon_decoupe_s", 0) > 0:
+                    elif (cfg.get("decoupe_s", False)
+                          and cfg.get("rayon_decoupe_s", 0) > 0):
                         cmd += ["--split-radius", str(cfg["rayon_decoupe_s"])]
                     if cfg.get("nettoyage"): cmd.append("--cleanup")
                     if cfg.get("min_free_gb", 0) > 0:
@@ -16234,16 +16307,22 @@ def lancer_gui():
                 if cfg.get("tel_v"):
                     cmd += ["--workers", str(cfg.get("workers_v", 4))]
                     if cfg.get("ecraser_tel_v"): cmd.append("--download-overwrite")
+                # Les GeoJSON sont écrits par le téléchargement (marqués
+                # « natif » dans la GUI) : ils sortent quel que soit l'état de
+                # la case « 2 — Générer la carte ». Celle-ci ne gouverne que les
+                # livrables DÉRIVÉS du GeoJSON.
                 fmts = []
                 if cfg.get("fusion_gz", True):  fmts.append("gz")
                 if cfg.get("fusion_gz_raw"):     fmts.append("geojson")
                 if not fmts: fmts = ["gz"]  # défaut si rien coché
-                if cfg.get("tuiles_v"): fmts.append("map")
-                if cfg.get("vec_transparent"): fmts.append("transparent-raster")
+                _carte_v = cfg.get("carte_v", True)
+                if _carte_v and cfg.get("tuiles_v"): fmts.append("map")
+                if _carte_v and cfg.get("vec_transparent"):
+                    fmts.append("transparent-raster")
                 cmd += ["--file-formats"] + fmts
-                if cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
+                if _carte_v and cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
                     cmd.append("--tiles-overwrite")
-                if cfg.get("tuiles_v") and cfg.get("simplif_v"):
+                if _carte_v and cfg.get("tuiles_v") and cfg.get("simplif_v"):
                     cmd += ["--vector-simplify", str(cfg["simplif_v"])]
 
             # ── Fusion ────────────────────────────────────────────────────
