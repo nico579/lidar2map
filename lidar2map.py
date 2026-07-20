@@ -2036,7 +2036,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.17.0"
+VERSION      = "1.18.0"
 VERSION_DATE = "2026-07"
 
 
@@ -2364,6 +2364,24 @@ else:
 # dépendances même si le script est lancé depuis plusieurs emplacements.
 # Pour nettoyer complètement lidar2map :  rm -rf ~/.lidar2map
 LIDAR2MAP_HOME = Path.home() / ".lidar2map"
+
+# Racine UNIQUE de tous les caches persistants (dalles LiDAR, tuiles WMTS, PBF
+# OSM, index de découverte, contours de départements, BD TOPO). Déplaçable d'un
+# geste via --cache-dir : utile pour poser le cache (potentiellement des dizaines
+# de Go) sur un autre disque que les sorties. Défaut = <dossier de travail>/cache.
+# Modifiée AU DÉBUT de chaque main via _appliquer_cache_dir(args). --tiles-dir
+# reste le réglage FIN des seules dalles LiDAR, prioritaire sur cette racine.
+DOSSIER_CACHE = DOSSIER_TRAVAIL / "cache"
+
+
+def _appliquer_cache_dir(args):
+    """Repointe la racine du cache si --cache-dir est passé. À appeler tôt dans
+    chaque main, avant tout accès au cache. Idempotent (relance = même valeur)."""
+    global DOSSIER_CACHE
+    _cd = getattr(args, "cache_dir", None)
+    if _cd:
+        DOSSIER_CACHE = Path(_cd).resolve()
+        DOSSIER_CACHE.mkdir(parents=True, exist_ok=True)
 
 # ── Provider LiDAR (par défaut : France IGN HD) ──────────────────────────────
 # POC d'abstraction : tout ce qui est spécifique à une source nationale
@@ -3067,18 +3085,43 @@ def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _lamb93_to_wgs84_safe(x, y):
-    """Lambert 93 → WGS84 avec pyproj si dispo, fallback sur l'approximation.
+def _exiger_pyproj_hors_france(cible):
+    """La reprojection pure-Python de repli n'implémente QUE le Lambert 93
+    (formules France, wgs84_to_lamb93_approx / lamb93_to_wgs84_approx). Le CRS
+    cible vient du PROVIDER (paramétrage), il n'est pas écrit dans la conversion :
+    pour tout autre CRS, pyproj est indispensable. Sans lui on LÈVE, au lieu de
+    rendre silencieusement des coordonnées françaises fausses (ex. un provider
+    suisse EPSG:2056 qui recevrait du Lambert 93). En pratique pyproj est bundlé,
+    donc ce chemin ne se déclenche qu'en environnement minimal cassé."""
+    crs = getattr(PROVIDER, "CRS_NATIF", "EPSG:2154") or "EPSG:2154"
+    if crs != "EPSG:2154":
+        raise RuntimeError(
+            f"pyproj required to reproject {cible} {crs}; the pure-Python "
+            f"fallback only covers France (EPSG:2154).")
 
-    Retourne (lon, lat) en degrés. Utilisée partout où pyproj peut manquer
-    (ex: bootstrap, environnement minimal) pour garantir un résultat même
-    sans proj.db. Précision pyproj < 1 m, approximation < 50 m.
-    """
+
+def _wgs84_vers_natif(lon, lat):
+    """(lon,lat) WGS84 → (x,y) dans le CRS natif du provider. pyproj si dispo ;
+    sinon repli France borné par _exiger_pyproj_hors_france. Remplace les blocs
+    try _get_transformer / except ImportError: wgs84_to_lamb93_approx dupliqués
+    (le fallback y codait la France en dur — cf. paramétrage vs code)."""
     try:
-        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        return _t.transform(x, y)
-    except Exception:
+        return _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF).transform(lon, lat)
+    except ImportError:
+        _exiger_pyproj_hors_france("to")
+        return wgs84_to_lamb93_approx(lon, lat)
+
+
+def _natif_vers_wgs84(x, y):
+    """(x,y) CRS natif du provider → (lon,lat) WGS84. Miroir de _wgs84_vers_natif.
+    Remplace l'ancien helper au nom trompeur (le CRS vient du provider)."""
+    try:
+        return _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326").transform(x, y)
+    except ImportError:
+        _exiger_pyproj_hors_france("from")
         return lamb93_to_wgs84_approx(x, y)
+
+
 
 # ============================================================
 # GÉOCODAGE
@@ -3161,17 +3204,14 @@ def geocoder_ville_wgs84(nom_ville):
 
 
 def geocoder_ville_l93(nom_ville):
-    """Géocode une ville et retourne (x, y) en Lambert 93 (pour le pipeline LiDAR). Retourne (None, None) si échec."""
+    """Géocode une ville → (x, y) dans le CRS natif du provider (pipeline LiDAR).
+    Retourne (None, None) si échec. Nom historique « _l93 » : le CRS vient du
+    provider (paramétrage), ce n'est pas forcément du Lambert 93."""
     lat, lon = geocoder_ville_wgs84(nom_ville)
     if lat is None:
         return None, None
-    try:
-        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-        x, y = t.transform(lon, lat)
-    except ImportError:
-        x, y = wgs84_to_lamb93_approx(lon, lat)
-        print("  (pyproj missing, approximate conversion)")
-    print(f"  Lambert 93 -> X={x:.0f}, Y={y:.0f}")
+    x, y = _wgs84_vers_natif(lon, lat)
+    print(f"  {PROVIDER.CRS_NATIF} -> X={x:.0f}, Y={y:.0f}")
     return x, y
 
 
@@ -3183,7 +3223,7 @@ def geocoder_departement(num_dep):
     Si Overpass indisponible et cache existant → utilise le cache.
     """
     # ── Cache local ──────────────────────────────────────────────────────────
-    _cache_path = DOSSIER_TRAVAIL / "dep_bbox_cache.json"
+    _cache_path = DOSSIER_CACHE / "dep_bbox_cache.json"
     _cache = {}
     if _cache_path.exists():
         try:
@@ -3200,14 +3240,9 @@ def geocoder_departement(num_dep):
         # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : la
         # conversion à 2 coins rognait jusqu'à ~4 km en bordure de bbox,
         # bien au-delà de la marge de 500 m.
-        try:
-            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-            bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-                t.transform, c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
-        except ImportError:
-            bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-                wgs84_to_lamb93_approx,
-                c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
+        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+            _wgs84_vers_natif,
+            c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
         MARGE = 500
         bx1 -= MARGE; by1 -= MARGE; bx2 += MARGE; by2 += MARGE
         surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
@@ -3253,8 +3288,8 @@ def geocoder_departement(num_dep):
 
     if lat_min is None:
         print(f"  ERROR: cannot geocode the department {num_dep}.")
-        print("  Overpass API unavailable. Use --zone-bbox X1,Y1,X2,Y2 (Lambert 93).")
-        print("  Exemple Var 83 : --bbox 905000,6214000,1040000,6322000")
+        print("  Overpass API unavailable. Use --zone-bbox W,S,E,N (WGS84 degrees).")
+        print("  Example Var 83 : --zone-bbox 5.66,42.98,6.79,43.61")
         return None, None, None, None, None
 
     # ── Sauvegarde dans le cache ──────────────────────────────────────────────
@@ -3272,14 +3307,8 @@ def geocoder_departement(num_dep):
 
     # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : min/max sur
     # 2 coins opposés rognait jusqu'à ~4 km en bordure de bbox.
-    try:
-        t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-            t.transform, lon_min, lat_min, lon_max, lat_max)
-    except ImportError:
-        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-            wgs84_to_lamb93_approx, lon_min, lat_min, lon_max, lat_max)
-        print("  (pyproj missing, approximate conversion)")
+    bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+        _wgs84_vers_natif, lon_min, lat_min, lon_max, lat_max)
 
     # Marge de 500 m pour ne pas couper les dalles en bordure
     MARGE = 500
@@ -7411,7 +7440,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         # Enveloppe des 4 coins — même règle que pour l'étendue du warp plus
         # bas : un rectangle L93 ne reste pas axis-aligné après reprojection,
         # min/max sur 2 coins opposés sous-estimerait l'emprise.
-        _pts4 = [_lamb93_to_wgs84_safe(cx4, cy4)
+        _pts4 = [_natif_vers_wgs84(cx4, cy4)
                  for cx4, cy4 in ((bbox_l93[0], bbox_l93[1]),
                                   (bbox_l93[2], bbox_l93[1]),
                                   (bbox_l93[2], bbox_l93[3]),
@@ -7498,9 +7527,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         # plus bas. On garde le calcul de te_xmin/etc. pour la bbox cible.
         # ── Calcul de l'étendue cible en Web Mercator ────────────────────
         te_xmin = te_ymin = te_xmax = te_ymax = None
-        # Conversion Lambert 93 → WGS84 → Web Mercator en Python pur.
-        def _lamb93_to_merc(x, y):
-            lon, lat = lamb93_to_wgs84_approx(x, y)
+        # Repli CRS natif → WGS84 → Web Mercator en Python pur (fallback du
+        # transformer pyproj ci-dessous). _natif_vers_wgs84 borne la France :
+        # hors pyproj et hors France il lève, plutôt que de projeter du natif
+        # étranger avec les formules Lambert 93.
+        def _natif_to_merc(x, y):
+            lon, lat = _natif_vers_wgs84(x, y)
             mx = math.radians(lon) * 6378137.0
             my = math.log(math.tan(math.pi/4 + math.radians(lat)/2)) * 6378137.0
             return mx, my
@@ -7517,7 +7549,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 pts = [_t.transform(cx, cy) for cx, cy in corners]
             except Exception:
-                pts = [_lamb93_to_merc(cx, cy) for cx, cy in corners]
+                pts = [_natif_to_merc(cx, cy) for cx, cy in corners]
             xs = [p[0] for p in pts]
             ys = [p[1] for p in pts]
             te_xmin, te_xmax = min(xs), max(xs)
@@ -7646,7 +7678,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 _t2 = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
                 bb_w = _bbox_enveloppe_transform(_t2.transform, *bb_src)
             except Exception:
-                bb_w = _bbox_enveloppe_transform(_lamb93_to_merc, *bb_src)
+                bb_w = _bbox_enveloppe_transform(_natif_to_merc, *bb_src)
         else:
             bb_w = _bbox_depuis_gdalinfo(warped)
         if bb_w is None:
@@ -9583,8 +9615,9 @@ Examples:
     _ajouter_args_zone(
         parser,
         rayon_default=None,
-        bbox_metavar="X1,Y1,X2,Y2",
-        bbox_help="Lambert 93 bbox in metres, e.g. 880000,6210000,1080000,6360000",
+        bbox_metavar="W,S,E,N",
+        bbox_help="WGS84 bbox in degrees: lon_min,lat_min,lon_max,lat_max, "
+                  "e.g. 5.9,43.1,6.6,43.8",
         avec_help_full=True,
     )
 
@@ -9769,6 +9802,7 @@ Examples:
 
     args = parser.parse_args()
     _valider_zooms(args, parser)
+    _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
 
     # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
     # reflétés dans args.ombrages pour que les gates existants (qui testent
@@ -9911,7 +9945,7 @@ Examples:
     if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps and not getattr(args, "zone_region", None):
         # Mode migration pure : on n'a besoin que de dossier_dalles
         racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
-        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
+        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR
         dossier_dalles.mkdir(parents=True, exist_ok=True)
         _migrer_dalles_colonnes(dossier_dalles)
         sys.exit(0)
@@ -9957,25 +9991,45 @@ Examples:
         print(f"  Folder : {nom_zone}" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
 
     elif args.zone_bbox:
+        # --zone-bbox est en WGS84 (W,S,E,N en degrés), comme TOUS les autres
+        # modes de zone et les onglets raster/vecteur. Le Lambert 93 en entrée
+        # était franco-centré : hors de France le CRS natif n'est pas le 2154
+        # (2056 en Suisse, etc.), donc l'entrée universelle est le WGS84. La
+        # conversion vers le CRS natif du provider se fait ICI, comme le mode
+        # Département (geocoder_departement → calculer_grille_bbox en natif).
         try:
             parts = [float(v.strip()) for v in args.zone_bbox.split(",")]
-            bx1, by1, bx2, by2 = parts
+            lon1, lat1, lon2, lat2 = parts
         except (ValueError, IndexError):
-            print("  Invalid BBox format. Example: --bbox 880000,6210000,1080000,6360000")
+            print("  Invalid BBox format. Example (WGS84 W,S,E,N): "
+                  "--zone-bbox 5.9,43.1,6.6,43.8")
             sys.exit(1)
-        if not all(math.isfinite(v) for v in (bx1, by1, bx2, by2)):
+        if not all(math.isfinite(v) for v in (lon1, lat1, lon2, lat2)):
             print("  ERROR: non-finite bbox coordinate.")
             sys.exit(1)
-        if bx1 > bx2: bx1, bx2 = bx2, bx1
-        if by1 > by2: by1, by2 = by2, by1
-        if bx1 == bx2 or by1 == by2:
+        if lon1 > lon2: lon1, lon2 = lon2, lon1
+        if lat1 > lat2: lat1, lat2 = lat2, lat1
+        if lon1 == lon2 or lat1 == lat2:
             print("  ERROR: degenerate bbox (zero width or height).")
             sys.exit(1)
+        if not (-180 <= lon1 <= 180 and -180 <= lon2 <= 180
+                and -90 <= lat1 <= 90 and -90 <= lat2 <= 90):
+            print("  ERROR: BBox is WGS84 degrees (W,S,E,N): "
+                  "lon in [-180,180], lat in [-90,90].")
+            sys.exit(1)
+        # Enveloppe des 4 coins : un rectangle ne reste pas axis-aligné après
+        # reprojection (cf. _bbox_enveloppe_transform, mode Département).
+        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
+            _wgs84_vers_natif, lon1, lat1, lon2, lat2)
+        # Centre en CRS natif : sert à la détection de département OSM (restée à
+        # 0,0 en mode bbox, ce qui la faisait échouer). cx/cy sont natifs partout.
+        cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2
         if _osm_seul:
             dalles, bbox = [], (bx1, by1, bx2, by2)
         else:
             dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
+        print(f"  BBox WGS84 : {lon1:.4f},{lat1:.4f} → {lon2:.4f},{lat2:.4f}")
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
         print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
         if not args.zone_nom:
@@ -10008,12 +10062,7 @@ Examples:
         # centrée sur l'origine Lambert 93 (au large du Maroc), produisant
         # une bbox Mercator vide et un MBTiles à 0 tuiles.
         print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
-        try:
-            t = _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF)
-            cx, cy = t.transform(lon, lat)
-        except ImportError:
-            cx, cy = wgs84_to_lamb93_approx(lon, lat)
-            print("  (pyproj absent, conversion approchee)")
+        cx, cy = _wgs84_vers_natif(lon, lat)
         print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
 
     elif args.zone_ville:
@@ -10132,7 +10181,7 @@ Examples:
         print(f"  -> {'Compression enabled' if compresser else 'Raw storage'}")
 
     racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
-    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR
+    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR
     dossier_ville  = racine
     _sans_telechargement = not getattr(args, "telechargement", False)
     _sans_ombrages = not getattr(args, "ombrages", None)
@@ -10272,7 +10321,7 @@ Examples:
             _t_wgs.transform, bbox[0], bbox[1], bbox[2], bbox[3])
         bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
         # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
-        cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
         # discover_dalles : None = échec réseau/endpoint, {} = pas de couverture.
         # On distingue les deux (sinon une panne de portail ressemble à "rien
         # ici") et on protège l'appel : un provider qui lève ne doit pas casser
@@ -10587,6 +10636,30 @@ Examples:
             if not pbf.exists():
                 print(f"  ERROR: PBF file not found: {pbf}")
                 pbf = None
+        elif (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower() != "fr":
+            # ── Garde-fou : le téléchargement auto est FRANCO-CENTRÉ ──────────
+            # Trois maillons français en série : cx/cy convertis par
+            # lamb93_to_wgs84_approx (or ils sont dans PROVIDER.CRS_NATIF), le
+            # géocodage inverse geo.api.gouv.fr, et la table _GEOFABRIK de codes
+            # INSEE — sans compter _GEOFABRIK_BASE_URL qui pointe .../europe/france.
+            # Hors de France les trois échouent en chaîne et le repli
+            # téléchargeait 4 Go de PBF FRANÇAIS pour produire un overlay vide :
+            # échec silencieux et coûteux. On refuse explicitement (pbf reste
+            # None → l'étape OSM est sautée, les sorties LiDAR d'un run combiné
+            # sont préservées, même mécanisme que « --source introuvable »).
+            # Geofabrik publie pourtant bien des sous-régions ailleurs (16 Länder
+            # allemands, régions italiennes…) : généraliser demande une table de
+            # slugs par pays + des bbox par géocodage Nominatim, pas juste de
+            # lever ce garde. En attendant --source reste ouvert à tous les pays.
+            print(f"  OSM auto-download is France-only for now "
+                  f"(provider country: "
+                  f"{(getattr(PROVIDER, 'COUNTRY', 'fr') or 'fr').lower()}).")
+            print("  The department lookup and the Geofabrik URL table are "
+                  "French; the fallback would fetch a 4 GB FRENCH PBF and "
+                  "produce an overlay with no feature in your area.")
+            print("  Workaround: grab the PBF for your area at "
+                  "https://download.geofabrik.de/ then pass it with "
+                  "--source <file>.pbf")
         else:
             # Téléchargement automatique — détecter le département depuis le centre
             _zone_region = getattr(args, "zone_region", None)
@@ -10618,12 +10691,12 @@ Examples:
                 print(f"  Department {num_dep} not found in the Geofabrik table.")
                 print("  Falling back to the national France PBF (~4 GB).")
                 url_pbf = f"{_GEOFABRIK_BASE_URL_ROOT}/france-latest.osm.pbf"
-                osm_dir = DOSSIER_TRAVAIL / "cache" / "osm_vecteur"
+                osm_dir = DOSSIER_CACHE / "osm_vecteur"
                 osm_dir.mkdir(parents=True, exist_ok=True)
                 pbf = osm_dir / "france-latest.osm.pbf"
             else:
                 url_pbf = f"{_GEOFABRIK_BASE_URL}/{region_slug}-latest.osm.pbf"
-                osm_dir = DOSSIER_TRAVAIL / "cache" / "osm_vecteur"
+                osm_dir = DOSSIER_CACHE / "osm_vecteur"
                 osm_dir.mkdir(parents=True, exist_ok=True)
                 pbf = osm_dir / f"{region_slug}-latest.osm.pbf"
 
@@ -11268,7 +11341,7 @@ def _planche_contours_dept(bbox_wgs84, args):
         # Numéros simples séparés par des virgules : nom lu dans le cache rempli
         # par geocoder_departement pendant le run (pas de nouvel Overpass).
         try:
-            _cache = json.loads((DOSSIER_TRAVAIL / "dep_bbox_cache.json")
+            _cache = json.loads((DOSSIER_CACHE / "dep_bbox_cache.json")
                                 .read_text(encoding="utf-8"))
         except Exception:
             _cache = {}
@@ -11303,7 +11376,7 @@ def _planche_contours_dept(bbox_wgs84, args):
     # Cache disque des polygones (même logique que dep_bbox_cache.json) : les
     # contours administratifs ne changent pas, les re-télécharger à chaque run
     # coûtait des requêtes Nominatim + les sleep de politesse par planche.
-    _cache_path = DOSSIER_TRAVAIL / "cache" / "dep_contour_cache.json"
+    _cache_path = DOSSIER_CACHE / "dep_contour_cache.json"
     try:
         _cache = json.loads(_cache_path.read_text(encoding="utf-8"))
         if not isinstance(_cache, dict):
@@ -11563,7 +11636,7 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
                     # ne pose ce flag que sur les tâches non-finales d'un groupe
                     # provider×surface×zone).
                     _keep = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                             else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR) \
+                             else DOSSIER_CACHE / LIDAR_SUBDIR) \
                             if getattr(args, "nettoyage_garder_dalles", False) else None
                     _supprimer_fichiers(manifeste.fichiers_morceau(cle), _keep)
         except ZoneHorsCouvertureWMTS:
@@ -11612,7 +11685,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                            else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
             racine = racine_base
             dossier_dalles = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                              else DOSSIER_TRAVAIL / "cache" / LIDAR_SUBDIR)
+                              else DOSSIER_CACHE / LIDAR_SUBDIR)
             dossier_ville = racine / nom_z
             dossier_ville.mkdir(parents=True, exist_ok=True)
             dossier_dalles.mkdir(parents=True, exist_ok=True)
@@ -11626,7 +11699,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
                 _t.transform, bx1, by1, bx2, by2)
             bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-            cache_discover = DOSSIER_TRAVAIL / "cache" / f"discover_{PROVIDER.CODE}.json"
+            cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
             # discover_dalles : None = échec réseau/endpoint, {} = pas de
             # couverture. On DISTINGUE (#5) : None -> lever, sinon le chunk
             # finirait sans erreur et le manifeste le marquerait FAIT (données
@@ -11704,7 +11777,7 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             dossier.mkdir(parents=True, exist_ok=True)
             nom_fichier    = f"{nom_z}_{args.couche}_z{zoom_min}-{zoom_max}"
             chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
-            dossier_cache  = DOSSIER_TRAVAIL / "cache" / "ign_raster"
+            dossier_cache  = DOSSIER_CACHE / "ign_raster"
             dossier_cache.mkdir(parents=True, exist_ok=True)
             _jpeg_q = (args.qualite_image
                        if img_fmt.lower() in ("image/png", "png") else None)
@@ -12064,6 +12137,14 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
     if avec_dossier:
         parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier",
                             help="Root output folder.")
+    # Racine du cache partagé (dalles, tuiles WMTS, PBF OSM, index…). Commune à
+    # tous les modes zone-based, d'où sa place ici. --tiles-dir reste le réglage
+    # fin des seules dalles LiDAR, prioritaire.
+    parser.add_argument("--cache-dir", "--dossier-cache", metavar="PATH", default=None,
+                        dest="cache_dir",
+                        help="Root folder for ALL persistent caches (tiles, WMTS, "
+                             "OSM PBF, discovery index). Default: <work-dir>/cache. "
+                             "Handy to put a large cache on another drive.")
     return loc
 
 
@@ -12090,7 +12171,7 @@ def _resoudre_zone_wgs84(args):
         # geocoder_region retourne du Lambert 93 — reconvertir en WGS84
         # (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
         lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
-            _lamb93_to_wgs84_safe, bx1, by1, bx2, by2)
+            _natif_vers_wgs84, bx1, by1, bx2, by2)
 
     elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
@@ -12102,7 +12183,7 @@ def _resoudre_zone_wgs84(args):
         # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84
         # pour le WFS (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
         lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
-            _lamb93_to_wgs84_safe, bx1, by1, bx2, by2)
+            _natif_vers_wgs84, bx1, by1, bx2, by2)
 
     elif args.zone_bbox:
         try:
@@ -12327,6 +12408,7 @@ Examples:
 
     args = parser.parse_args()
     _valider_zooms(args, parser)
+    _appliquer_cache_dir(args)   # avant le cache WMTS ign_raster
     # Résolution --formats-fichier → flags booléens
     _ff = args.formats_fichier
     args.mbtiles  = "mbtiles"  in _ff
@@ -12479,7 +12561,7 @@ Examples:
     # provider-neutre (raster/), mais le cache garde le nom legacy "ign_raster"
     # pour ne pas orpheliner les tuiles WMTS déjà téléchargées des users FR.
     # naip (US) et IGN (FR) y cohabitent sans collision (x/y disjoints).
-    dossier_cache = DOSSIER_TRAVAIL / "cache" / "ign_raster"
+    dossier_cache = DOSSIER_CACHE / "ign_raster"
     dossier_cache.mkdir(parents=True, exist_ok=True)
     print(f"  Tiles cache: {dossier_cache}")
 
@@ -13912,7 +13994,7 @@ def _decouvrir_url_bdtopo_gpkg(num_dep):
 def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource):
     """Télécharge et extrait le .7z BD TOPO, met le .gpkg en cache. Retourne Path ou None."""
     dep_padded = str(num_dep).zfill(3)
-    cache_dir  = DOSSIER_TRAVAIL / "cache" / "bdtopo"
+    cache_dir  = DOSSIER_CACHE / "bdtopo"
     cache_dir.mkdir(parents=True, exist_ok=True)
     gpkg_path = cache_dir / f"{nom_ressource}.gpkg"
 
@@ -14399,6 +14481,7 @@ def main_wfs():
                              "Without it, computed automatically from the area "
                              "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
     args = parser.parse_args()
+    _appliquer_cache_dir(args)   # avant le cache bdtopo/discover
     _ff = getattr(args, "formats_fichier", ["gz"])
     # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
     _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
@@ -15351,6 +15434,7 @@ def _cfg_depuis_argv() -> dict:
         "mode":    mode,
         "nom":     _arg("--zone-name", "--zone-nom"),
         "dossier": _arg("--output-dir", "--dossier"),
+        "cache_dir": _arg("--cache-dir", "--dossier-cache"),
         "dep":     _arg("--zone-department", "--zone-departement"),
         "region":  _arg("--zone-region"),
         "ville":   _arg("--zone-city", "--zone-ville"),
@@ -16170,6 +16254,10 @@ def lancer_gui():
                     cmd += ["--zone-name", cfg["nom"]]
                 if cfg.get("dossier"):
                     cmd += ["--output-dir", cfg["dossier"]]
+                # Dossier cache global (--cache-dir) : commun à tous les types,
+                # comme --output-dir. Propriété d'installation, saisi dans Projet.
+                if cfg.get("cache_dir"):
+                    cmd += ["--cache-dir", cfg["cache_dir"]]
 
             # ── LiDAR ────────────────────────────────────────────────────
             if t == "lidar":

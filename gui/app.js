@@ -32,6 +32,7 @@ const I18N = {
     "proj.pick":"↻ projet existant…",
     // Projet
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
+    "f.cachedir":"Dossier cache", "ph.cachedir":"(auto)",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
     "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
@@ -78,7 +79,7 @@ const I18N = {
     "split.hint":"1×1 = pas de découpage — reprise automatique via manifeste.json",
     "dl":"1 — Télécharger",
     "ovr":"Écraser le fichier résultat", "ovr.short":"Écraser",
-    "workers":"Workers :", "compress":"Compresser", "extcache":"Cache externe :",
+    "workers":"Workers :", "compress":"Compresser",
     // Un seul nom pour l'étape de production : les sorties sont hétérogènes
     // (tuiles raster mbtiles/rmap/sqlitedb, carte vecteur Mapsforge, GeoJSON).
     // « Calculer les tuiles » n'était exact que pour les sorties raster.
@@ -104,7 +105,7 @@ const I18N = {
     "sec.src":"Fichier source", "sec.split":"Découpage",
     // Placeholders
     "ph.optopo":"clé OpenTopography", "ph.ignpro":"clé pro IGN",
-    "ph.cacheauto":"(cache auto)", "ph.mbtilespath":"chemin vers le fichier .mbtiles",
+    "ph.mbtilespath":"chemin vers le fichier .mbtiles",
     // Dynamiques (JS) — {x} = placeholders remplacés par tf()
     "copied":"✓ copié dans le presse-papier", "copyfail":"✗ copie échouée",
     "apiunavail":"API non disponible", "initerr":"Erreur init : ",
@@ -162,6 +163,7 @@ const I18N = {
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
+    "f.cachedir":"Cache folder", "ph.cachedir":"(auto)",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
     "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
@@ -203,7 +205,7 @@ const I18N = {
     "split.hint":"1×1 = no split — automatic resume via manifeste.json",
     "dl":"1 — Download",
     "ovr":"Overwrite output file", "ovr.short":"Overwrite",
-    "workers":"Workers:", "compress":"Compress", "extcache":"External cache:",
+    "workers":"Workers:", "compress":"Compress",
     "map2":"2 — Generate the map", "map3":"3 — Generate the map",
     "fmt.mapsforge":"Mapsforge (.map)", "fmt.natif":"(native)",
     "tip.natif":"Written directly by the WFS download: at least one of the two GeoJSON files is always produced, and the \"Overwrite\" box of the Download frame governs it.",
@@ -221,7 +223,7 @@ const I18N = {
     "extsel":"Extended selection (Shift/Ctrl)", "fmt":"Format:",
     "sec.src":"Source file", "sec.split":"Split",
     "ph.optopo":"OpenTopography key", "ph.ignpro":"IGN pro key",
-    "ph.cacheauto":"(auto cache)", "ph.mbtilespath":"path to .mbtiles file",
+    "ph.mbtilespath":"path to .mbtiles file",
     "copied":"✓ copied to clipboard", "copyfail":"✗ copy failed",
     "apiunavail":"API unavailable", "initerr":"Init error: ",
     "hist.empty":"No saved run.",
@@ -1604,6 +1606,8 @@ function getConfig() {
     provider: g('f-provider')?.value || 'fr-ign',
     // Pays de la zone : cadre le géocodage et les listes. '' = aucun filtre.
     pays:     g('f-pays')?.value ?? '',
+    // Dossier cache global (--cache-dir) : propriété d'installation, dans Projet.
+    cache_dir: g('f-cache-dir')?.value.trim(),
     lidar_apikey: g('f-lidar-apikey')?.value.trim(),
     // Surface LAZ (structures debout) + réglages ≠ défauts uniquement (les
     // défauts vivent côté Python, dataset.def posé par applyProviderDfm).
@@ -1630,7 +1634,6 @@ function getConfig() {
     comp:          g('f-comp')?.checked,
     ecraser_tel:   g('f-ecraser-tel')?.checked,
     workers_l:     parseInt(g('f-workers-l')?.value) || 8,
-    dossier_dalles:g('f-dossier-dalles')?.value.trim(),
     no_omb:        g('f-no-omb')?.checked,
     // Shuttle list : les instances paramétrées remplacent les cases à cocher.
     // ombrages reste émis vide pour compat avec les vieux lecteurs de cfg.
@@ -1779,6 +1782,7 @@ function loadConfig(cfg) {
   // Projet
   s('f-nom',     cfg.nom);
   s('f-dossier', cfg.dossier);
+  s('f-cache-dir', cfg.cache_dir);
 
   // Zone géo
   s('f-ville',   cfg.ville);
@@ -1798,7 +1802,6 @@ function loadConfig(cfg) {
   // transformerait l'ancien défaut en opt-out permanent pour tout le monde.
   s('f-ecraser-tel',    cfg.ecraser_tel);          // FIX: était cfg.ecraser_tel_l
   s('f-workers-l',      cfg.workers_l);
-  s('f-dossier-dalles', cfg.dossier_dalles);
   s('f-no-omb',         cfg.no_omb);
   // f-elevation / f-svf-* (y compris sweep) : champs globaux remplacés par
   // les paramètres par instance (cfg.shading_specs, restaurés plus bas).

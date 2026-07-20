@@ -1015,6 +1015,74 @@ check("zone : Department/Région désactivés hors de France",
       and "_majModesDisponibles();" in _appjs)
 check("les régions restent une notion française (aucune donnée étrangère)",
       "return sorted(set(_GEOFABRIK.values()))" in _src)
+# Garde-fou OSM : le téléchargement auto est franco-centré (Lambert 93 +
+# geo.api.gouv.fr + table INSEE + URL .../europe/france). Hors de France on
+# refuse, au lieu de tirer 4 Go de PBF français pour un overlay vide. --source
+# reste ouvert à tous les pays → le garde est sur la branche AUTO uniquement.
+# Vérifié à l'exécution (provider ch → refus sans download) ; ici on ancre que
+# le garde est bien conditionné au pays et laisse --source passer.
+check("OSM auto-download refusé hors de France (--source épargné)",
+      'elif (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower() != "fr":' in _src
+      and "OSM auto-download is France-only" in _src
+      and "--source <file>.pbf" in _src)
+# --zone-bbox est WGS84 (W,S,E,N) sur TOUS les modes. main() (lidar/osm) le lisait
+# comme du Lambert 93 en mètres — franco-centré et cassé pour la GUI (champ unique
+# en degrés) et hors de France. Conversion WGS84→CRS natif au parse, comme le mode
+# Département. Vérifié à l'exécution : fr-ign→EPSG:2154, ch→EPSG:2056.
+check("--zone-bbox lu en WGS84 puis converti au CRS natif du provider",
+      'lon1, lat1, lon2, lat2 = parts' in _src
+      and '_bbox_enveloppe_transform(\n            _wgs84_vers_natif, lon1, lat1, lon2, lat2)' in _src
+      and '"Lambert 93 bbox in metres' not in _src)
+# Config vs code : le CRS cible vient du PROVIDER, jamais écrit en dur. Un seul
+# helper _wgs84_vers_natif / _natif_vers_wgs84 ; le repli pur-Python (formules
+# Lambert 93) est BORNÉ à la France, il lève pour tout autre CRS au lieu de
+# rendre des coordonnées françaises fausses. Plus de blocs try/except dupliqués.
+check("conversion WGS84<->natif centralisée + repli France borné",
+      "def _wgs84_vers_natif(lon, lat):" in _src
+      and "def _natif_vers_wgs84(x, y):" in _src
+      and "def _exiger_pyproj_hors_france(" in _src
+      and 'if crs != "EPSG:2154":' in _src)
+check("les sites de zone routés sur les helpers (plus de try/except dupliqués)",
+      # geocoder_ville, gps, dept, region, bbox : tous via _wgs84_vers_natif ;
+      # l'ancien nom trompeur _lamb93_to_wgs84_safe a disparu.
+      "x, y = _wgs84_vers_natif(lon, lat)" in _src
+      and "cx, cy = _wgs84_vers_natif(lon, lat)" in _src
+      and _src.count("_wgs84_vers_natif") >= 5
+      and "_lamb93_to_wgs84_safe" not in _src
+      and "_lamb93_to_merc" not in _src)
+check("--zone-bbox : metavar/help WGS84 sur tous les modes (plus de X1,Y1)",
+      'bbox_metavar="W,S,E,N"' in _src
+      and 'bbox_metavar="X1,Y1,X2,Y2"' not in _src
+      and "WGS84 bbox in degrees" in _src)
+check("--zone-bbox : centre natif calculé (détection dept OSM en mode bbox)",
+      "cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2" in _src)
+# --cache-dir : racine UNIQUE de tous les caches, déplaçable d'un geste (12 sites
+# repointés depuis DOSSIER_CACHE au lieu de DOSSIER_TRAVAIL/"cache" en dur). Posé
+# tôt dans chaque main via _appliquer_cache_dir. Vérifié à l'exécution :
+# dalles → <cd>/lidar/fr, WMTS → <cd>/ign_raster. --tiles-dir reste le réglage
+# fin des seules dalles LiDAR (prioritaire), CLI-only.
+check("--cache-dir : racine de cache unique et déplaçable",
+      "DOSSIER_CACHE = DOSSIER_TRAVAIL / \"cache\"" in _src
+      and "def _appliquer_cache_dir(args):" in _src
+      and 'parser.add_argument("--cache-dir", "--dossier-cache"' in _src
+      # une SEULE occurrence du motif en dur = la définition de DOSSIER_CACHE ;
+      # tous les sites d'accès passent désormais par DOSSIER_CACHE.
+      and _src.count('DOSSIER_TRAVAIL / "cache"') == 1)
+check("--cache-dir : appliqué au début des 3 mains zone-based",
+      _src.count("_appliquer_cache_dir(args)") >= 3)
+# GUI : le champ cache est global (Projet, à côté de « Dossier sortie »), plus
+# dans le cadre Télécharger. « Compresser » reste LiDAR-only. --tiles-dir n'a
+# plus de champ GUI (réglage fin CLI).
+_i_out = _html.find('id="f-dossier"')
+_i_cd  = _html.find('id="f-cache-dir"')
+check("GUI : champ Dossier cache dans Projet, à côté de Dossier sortie",
+      0 < _i_out < _i_cd < _html.find('<div id="sec-lidar">')
+      and 'id="f-dossier-dalles"' not in _html
+      and 'data-i18n="extcache"' not in _html)
+check("GUI : cache_dir sauvé/restauré + émis par _build_cmd (tous types)",
+      "cache_dir: g('f-cache-dir')?.value.trim()" in _appjs
+      and "s('f-cache-dir', cfg.cache_dir)" in _appjs
+      and 'cmd += ["--cache-dir", cfg["cache_dir"]]' in _src)
 check("pas d'entrée « tous pays » (hors périmètre d'un outil LiDAR)",
       '"z.pays.tous"' not in _appjs
       and '<option value="">' not in _appjs

@@ -69,6 +69,18 @@
              onchange="refreshProjets()">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
      </div>
+     <!-- Dossier cache global : propriété de l'INSTALLATION, pas d'une étape de
+          téléchargement, d'où sa place ici à côté du dossier sortie. Tous les
+          caches (dalles LiDAR, tuiles WMTS, PBF OSM, index) y vont d'un geste,
+          typiquement sur un autre disque que les sorties (des dizaines de Go).
+          --cache-dir côté CLI. Le champ « Cache externe » du cadre LiDAR
+          (--tiles-dir, dalles seules) reste distinct : réglage fin, prioritaire. -->
+     <div class="row">
+      <label style="min-width:auto" data-i18n="f.cachedir">Dossier cache</label>
+      <input type="text" id="f-cache-dir" placeholder="(auto)"
+             data-i18n-placeholder="ph.cachedir" style="flex:3">
+      <button class="btn btn-sm" onclick="pickDir('f-cache-dir')">…</button>
+     </div>
    </div>
   </div>
 
@@ -259,13 +271,15 @@
      <label style="margin-left:auto"><input type="checkbox" id="f-ecraser-tel"> <span data-i18n="ovr">Écraser le fichier résultat</span></label>
     </div>
     <div class="section-body" id="body-tel">
+     <!-- Le cache est piloté globalement par « Dossier cache » (Projet) →
+          plus de champ « Cache externe » ici. --tiles-dir (dalles LiDAR sur un
+          disque distinct du reste) reste un réglage fin CLI, rare. « Compresser »
+          reste propre au LiDAR : seul son GeoTIFF brut est compressible (les
+          tuiles raster et le PBF OSM le sont déjà par nature). -->
      <div class="row">
       <label data-i18n="workers">Workers :</label>
       <input type="number" id="f-workers-l" value="8" min="1" max="32" class="inp-short">
       <label style="min-width:auto"><input type="checkbox" id="f-comp" checked> <span data-i18n="compress">Compresser</span></label>
-      <label style="min-width:auto;margin-left:12px" data-i18n="extcache">Cache externe :</label>
-      <input type="text" id="f-dossier-dalles" placeholder="(cache auto)" data-i18n-placeholder="ph.cacheauto">
-      <button class="btn btn-sm" onclick="pickDir('f-dossier-dalles')">…</button>
      </div>
     </div>
    </div>
