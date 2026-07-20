@@ -23,6 +23,9 @@
  <button class="btn" id="btn-share" onclick="partagerTelephone()" data-i18n="btn.share"
          data-i18n-title="tip.share" title="Envoyer les cartes générées sur le téléphone via QR (même WiFi)"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📲 Téléphone</button>
+ <button class="btn" id="btn-help" onclick="afficherAide()" data-i18n="btn.help"
+         data-i18n-title="tip.help" title="Aide : modes et paramètres de la ligne de commande"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">❓ Aide</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
  <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
        title="Langue / Language">
@@ -48,37 +51,49 @@
           style="margin-top:16px;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
  </div>
 </div>
+<!-- Aide : le <pre> est peuplé au runtime par get_help() (docstring du module,
+     source UNIQUE). Aucun texte d'aide en dur ici. -->
+<div id="help-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:16px 20px;width:min(1000px,92vw);max-height:88vh;display:flex;
+      flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="display:flex;align-items:center;margin-bottom:8px">
+   <div style="font-weight:600;font-size:1.1em" data-i18n="help.title">❓ Aide — ligne de commande</div>
+   <button class="btn" onclick="fermerAide()" data-i18n="share.close"
+           style="margin-left:auto;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
+  </div>
+  <pre id="help-text" style="margin:0;overflow:auto;font-family:var(--fnt-mono,monospace);
+       font-size:12px;line-height:1.45;white-space:pre;flex:1"></pre>
+ </div>
+</div>
 <div id="form-inner">
 
   <!-- Projet -->
   <div class="section sec-projet">
    <div class="section-hd" data-i18n="sec.projet">Projet</div>
    <div class="section-body">
+     <!-- Tout sur une ligne. Le « Dossier cache » (--cache-dir) est une propriété
+          d'installation, sa place est à côté de « Dossier sortie ». Le champ
+          « Cache externe » du cadre LiDAR (--tiles-dir, dalles seules) reste
+          distinct : réglage fin CLI, prioritaire. -->
      <div class="row">
       <label style="min-width:auto;margin-right:4px" data-i18n="f.name">Nom *</label>
-      <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1">
+      <input type="text" id="f-nom" placeholder="ex: gareoult" style="flex:1;min-width:90px">
       <!-- Reprise d'un projet existant : select standard avec placeholder
            textuel, remplit le champ Nom. (Pas de datalist : 2e flèche Chromium
            et filtrage par la valeur courante ; pas de select 30px : widget
            non idiomatique.) -->
       <select id="f-nom-liste" onchange="choisirProjet(this)"
               title="Projets existants" data-i18n-title="tip.projlist"
-              style="flex:none;max-width:180px"></select>
-      <label style="min-width:auto;margin-left:12px" data-i18n="f.outdir">Dossier sortie</label>
-      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:3"
+              style="flex:none;max-width:150px"></select>
+      <label style="min-width:auto;margin-left:10px" data-i18n="f.outdir">Dossier sortie</label>
+      <input type="text" id="f-dossier" placeholder="(auto)" style="flex:2;min-width:90px"
              onchange="refreshProjets()">
       <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
-     </div>
-     <!-- Dossier cache global : propriété de l'INSTALLATION, pas d'une étape de
-          téléchargement, d'où sa place ici à côté du dossier sortie. Tous les
-          caches (dalles LiDAR, tuiles WMTS, PBF OSM, index) y vont d'un geste,
-          typiquement sur un autre disque que les sorties (des dizaines de Go).
-          --cache-dir côté CLI. Le champ « Cache externe » du cadre LiDAR
-          (--tiles-dir, dalles seules) reste distinct : réglage fin, prioritaire. -->
-     <div class="row">
-      <label style="min-width:auto" data-i18n="f.cachedir">Dossier cache</label>
+      <label style="min-width:auto;margin-left:10px" data-i18n="f.cachedir">Dossier cache</label>
       <input type="text" id="f-cache-dir" placeholder="(auto)"
-             data-i18n-placeholder="ph.cachedir" style="flex:3">
+             data-i18n-placeholder="ph.cachedir" style="flex:2;min-width:90px">
       <button class="btn btn-sm" onclick="pickDir('f-cache-dir')">…</button>
      </div>
    </div>
@@ -372,10 +387,6 @@
      <div class="row">
       <label data-i18n="couche">Couche :</label>
       <select id="f-couche"></select>
-      <!-- Note « aucune couche pour ce pays » : posée par filtrerCouchesParPays.
-           Elle vit ici et non dans le cadre Zone, parce qu'elle ne concerne que
-           la liste voisine — c'est là qu'elle est actionnable. -->
-      <span id="pays-note" class="hint" style="margin-left:8px;color:var(--dim)"></span>
       <span id="apikey-group" style="display:none;align-items:center;gap:4px;margin-left:8px"><span style="color:var(--dim)" data-i18n="apikey">Clé API :</span><input type="text" id="f-apikey" style="margin-left:4px;max-width:140px" placeholder="clé pro IGN" data-i18n-placeholder="ph.ignpro"></span>
      </div>
      <div id="scan-restriction-warning" class="hidden" data-i18n-html="warn.scanpro" style="margin-top:4px;padding:6px 8px;background:rgba(204,96,96,.15);border:1px solid rgba(204,96,96,.4);border-radius:4px;font-size:11px;color:#e07070">
@@ -470,7 +481,6 @@
        <input type="radio" name="vsrc" id="v-osm" value="osm" onchange="onVecteurSource()">
        <label for="v-osm" data-i18n="vsrc.osm">OSM / Geofabrik (PBF)</label>
       </div>
-      <span id="vsrc-note" class="hint" style="margin-left:10px;color:#b45309"></span>
      </div>
      <!-- Shuttle disponibles ↔ choisis, même idiome que la liste d'ombrages.
           17 couches WFS en cases à cocher, c'était plusieurs lignes à balayer

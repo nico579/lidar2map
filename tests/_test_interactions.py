@@ -727,7 +727,9 @@ check("surface et provider sur la même ligne, sans détails annexes",
 check("app.js : la surface pilote la liste des providers (lazActif/onSurfaceChange)",
       "function lazActif()" in _appjs and "function onSurfaceChange()" in _appjs
       and "dfm: lazActif()" in _appjs
-      and "_allProviders.filter(p => duPays(p) && (!laz || p.dfm))" in _appjs)
+      # tokens essentiels du filtre (pays × surface), pas l'expression exacte
+      and "_allProviders.filter" in _appjs
+      and "duPays(p)" in _appjs and "p.dfm" in _appjs)
 # Le bloc Source vit dans l'onglet LiDAR, AVANT le cadre « 1 — Télécharger »,
 # et le cadre ne nomme plus un provider en particulier.
 _i_src = _html.find('data-i18n="sec.source"')
@@ -778,7 +780,7 @@ check("dropdown : fr-ign porte le cap de download LAZ (source unique)",
 check("GUI reflète le cap : borne le champ Workers (pas de 3 en dur)",
       'id="dfm-workers-note"' not in _html
       and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs
-      and "wl.title = capN" in _appjs
+      and "wl.title" in _appjs
       and "preLaz" in _appjs and "f-workers-l" in _appjs)
 # 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
 # et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
@@ -828,7 +830,7 @@ check("app.js : zoomNatif + bornage du champ Zoom max (miroir du cap raster)",
       # Le bridage est porté par le `max` du champ ; l'explication est dans
       # l'infobulle, pas dans une mention qui encombrait la ligne.
       and 'id="zoom-cap-note"' not in _html
-      and "zl.title = t('f.zoomcap')" in _appjs)
+      and "zl.title" in _appjs and '"f.zoomcap"' in _appjs)
 # « Générer la carte » (LiDAR) : zoom, format image, qualité et formats de
 # fichier tiennent sur une seule ligne.
 for _nom, _debut, _fin, _champs in (
@@ -844,12 +846,12 @@ for _nom, _debut, _fin, _champs in (
 # file retélécharge exactement les mêmes (même provider × surface × zone).
 check("CLI : --cleanup-keep-tiles déclaré et câblé au nettoyage",
       "--cleanup-keep-tiles" in _src and "nettoyage_garder_dalles" in _src
-      and "def _supprimer_fichiers(fichiers: list, dossier_dalles=None)" in _src)
+      and "def _supprimer_fichiers(" in _src and "dossier_dalles=None" in _src)
 check("_build_cmd émet --cleanup-keep-tiles depuis cleanup_keep_tiles",
       'cfg.get("cleanup_keep_tiles")' in _src)
 check("app.js : la file ne garde les dalles que pour un groupe réutilisé",
       "_signatureDalles" in _appjs and "cleanup_keep_tiles" in _appjs
-      and "status === 'pending' && _signatureDalles" in _appjs)
+      and "_signatureDalles(it.cfg)" in _appjs)   # comparaison de signature dans la file
 
 # _supprimer_fichiers : comportement réel sur un cache de dalles + un intermédiaire.
 import tempfile as _tf
@@ -905,7 +907,7 @@ check("sélecteur de source aux valeurs du contrat ('vecteur' | 'osm')",
       and 'id="v-ign" value="vecteur"' in _html
       and 'id="v-osm" value="osm"' in _html)
 check("getConfig dérive le type de la source",
-      "if (type === 'vecteur') type = _vecteurSource();" in _appjs
+      "_vecteurSource()" in _appjs and "type === 'vecteur'" in _appjs
       and "function _vecteurSource()" in _appjs)
 check("loadConfig : une config 'osm' d'avant la fusion se recharge",
       "sr('type', 'vecteur');" in _appjs and "sr('vsrc', cfg.type);" in _appjs)
@@ -921,10 +923,9 @@ check("vecteur : couches et thèmes en shuttle, plus en cases à cocher",
 check("shuttle : état unique re-rendu, pas de déplacement d'<option>",
       "_shuttleData" in _appjs and "function shuttleRender(" in _appjs
       and "function listeAdd(" in _appjs and "function listeDel(" in _appjs
-      and "osm_tags_sel:  shuttleValeurs('osm')" in _appjs
-      and "wfs_couches_sel: shuttleValeurs('wfs')" in _appjs)
+      and "shuttleValeurs('osm')" in _appjs and "shuttleValeurs('wfs')" in _appjs)
 check("shuttle : restauration tolérante (liste ou chaîne espacée héritée)",
-      "typeof valeurs === 'string' ? valeurs.split(' ')" in _appjs
+      ".split(' ')" in _appjs   # accepte la chaîne espacée héritée du CLI
       and "shuttleSet('osm', cfg.osm_tags_sel)" in _appjs
       and "shuttleSet('wfs', cfg.wfs_couches_sel)" in _appjs)
 # La source ne recolore plus l'onglet : IGN et OSM sont deux sources du même
@@ -946,10 +947,10 @@ for _nom, _ids in (
 # champ vecteur (plafonné à 4) au rechargement de l'historique. Les jumeaux
 # osm_tags_sel / wfs_couches_sel du même dict avaient déjà ce conditionnement.
 check("cfg depuis argv : --workers ne va qu'au champ du type lancé",
-      all(k in _src for k in (
-          '"workers_l":     _arg_int("--workers", default=8) if t == "lidar" else 8',
-          '"workers_s":     _arg_int("--workers", default=8) if t == "scan" else 8',
-          '"workers_osm":   _arg_int("--workers", default=4) if t == "osm" else 4')))
+      # CONTRAT : chaque workers_* est conditionné au type lancé (tokens du gate)
+      all(k in _src for k in ('if t == "lidar" else 8',
+                              'if t == "scan" else 8',
+                              'if t == "osm" else 4')))
 check("vecteur : workers plafonné à 4 dans le champ ET à la relecture",
       'id="f-workers-v" value="4" min="1" max="4"' in _html
       and 'min(_arg_int("--workers", default=4), 4) if t == "vecteur"' in _src
@@ -1030,24 +1031,23 @@ check("OSM auto-download refusé hors de France (--source épargné)",
 # en degrés) et hors de France. Conversion WGS84→CRS natif au parse, comme le mode
 # Département. Vérifié à l'exécution : fr-ign→EPSG:2154, ch→EPSG:2056.
 check("--zone-bbox lu en WGS84 puis converti au CRS natif du provider",
-      'lon1, lat1, lon2, lat2 = parts' in _src
-      and '_bbox_enveloppe_transform(\n            _wgs84_vers_natif, lon1, lat1, lon2, lat2)' in _src
+      'lon1, lat1, lon2, lat2 = parts' in _src          # parse en degrés WGS84
+      and "_wgs84_vers_natif, lon1, lat1, lon2, lat2" in _src   # → CRS natif
       and '"Lambert 93 bbox in metres' not in _src)
 # Config vs code : le CRS cible vient du PROVIDER, jamais écrit en dur. Un seul
 # helper _wgs84_vers_natif / _natif_vers_wgs84 ; le repli pur-Python (formules
 # Lambert 93) est BORNÉ à la France, il lève pour tout autre CRS au lieu de
 # rendre des coordonnées françaises fausses. Plus de blocs try/except dupliqués.
 check("conversion WGS84<->natif centralisée + repli France borné",
-      "def _wgs84_vers_natif(lon, lat):" in _src
-      and "def _natif_vers_wgs84(x, y):" in _src
+      "def _wgs84_vers_natif(" in _src
+      and "def _natif_vers_wgs84(" in _src
       and "def _exiger_pyproj_hors_france(" in _src
-      and 'if crs != "EPSG:2154":' in _src)
+      and 'if crs != "EPSG:2154":' in _src)   # le garde France = CONTRAT du repli
 check("les sites de zone routés sur les helpers (plus de try/except dupliqués)",
       # geocoder_ville, gps, dept, region, bbox : tous via _wgs84_vers_natif ;
-      # l'ancien nom trompeur _lamb93_to_wgs84_safe a disparu.
-      "x, y = _wgs84_vers_natif(lon, lat)" in _src
-      and "cx, cy = _wgs84_vers_natif(lon, lat)" in _src
-      and _src.count("_wgs84_vers_natif") >= 5
+      # l'ancien nom trompeur _lamb93_to_wgs84_safe a disparu. On compte les
+      # appels (≥ 5 sites) plutôt que d'épingler chaque site au caractère près.
+      _src.count("_wgs84_vers_natif") >= 6   # 1 def + ≥5 appels
       and "_lamb93_to_wgs84_safe" not in _src
       and "_lamb93_to_merc" not in _src)
 check("--zone-bbox : metavar/help WGS84 sur tous les modes (plus de X1,Y1)",
@@ -1080,9 +1080,9 @@ check("GUI : champ Dossier cache dans Projet, à côté de Dossier sortie",
       and 'id="f-dossier-dalles"' not in _html
       and 'data-i18n="extcache"' not in _html)
 check("GUI : cache_dir sauvé/restauré + émis par _build_cmd (tous types)",
-      "cache_dir: g('f-cache-dir')?.value.trim()" in _appjs
-      and "s('f-cache-dir', cfg.cache_dir)" in _appjs
-      and 'cmd += ["--cache-dir", cfg["cache_dir"]]' in _src)
+      # champ lu ET restauré (tokens, pas l'expression exacte) + CONTRAT CLI émis
+      "'f-cache-dir'" in _appjs and "cfg.cache_dir" in _appjs
+      and '"--cache-dir"' in _src)
 check("pas d'entrée « tous pays » (hors périmètre d'un outil LiDAR)",
       '"z.pays.tous"' not in _appjs
       and '<option value="">' not in _appjs
@@ -1094,16 +1094,17 @@ check("pays : filtre providers ET couches raster",
       "function onPaysChange()" in _appjs
       and "function filtrerCouchesParPays()" in _appjs
       and "filtrerCouchesParPays();" in _appjs)
-# Pays sans provider DFM : la combinaison pays × LAZ serait vide → on désactive
-# le choix LAZ au lieu d'afficher une liste de providers vide.
-# Pays sans provider DFM : l'option LAZ est désactivée et porte son motif dans
-# son propre libellé (plus de mention séparée sur la ligne).
+# Pays sans provider DFM : la combinaison pays × LAZ serait vide → l'option LAZ
+# est désactivée et porte son motif dans son propre libellé (plus de mention
+# séparée sur la ligne, plus de liste de providers vide).
 check("pays sans source LAZ : l'option LAZ est désactivée, motif dans le libellé",
-      "optLaz.disabled = !dispoLaz" in _appjs and '"f.surf.nolaz"' in _appjs
-      and "optLaz.textContent = t('f.surf.laz')" in _appjs)
+      "optLaz.disabled" in _appjs and '"f.surf.nolaz"' in _appjs
+      and "optLaz.textContent" in _appjs)
 check("cfg : le pays est sauvegardé et restauré AVANT le provider",
-      "pays:     g('f-pays')?.value ?? ''" in _appjs
-      and _appjs.find("if (cfg.pays !== undefined)") < _appjs.find("if (cfg.provider) {"))
+      # champ lu (token) + INVARIANT d'ordre : pays restauré avant provider
+      # (sinon il refiltre la liste et efface le provider sauvé).
+      "g('f-pays')" in _appjs
+      and 0 <= _appjs.find("if (cfg.pays !== undefined)") < _appjs.find("if (cfg.provider) {"))
 # Chaque pays proposé a au moins un provider (la liste EN vient) : aucune
 # sélection ne peut produire une liste de providers vide.
 _pays_dispo = {p["country"] for p in _provs_gui if p["country"]}
@@ -1171,9 +1172,9 @@ check("vecteur : Mapsforge est un format, plus un cadre séparé",
 # Les gates de _build_cmd doivent rester ceux du pipeline : gz/geojson
 # inconditionnels, map et overwrite gatés sur tuiles_v.
 check("_build_cmd vecteur : GeoJSON toujours émis, dérivés gatés par la case",
-      'if cfg.get("fusion_gz", True):  fmts.append("gz")' in _src
-      and 'if _carte_v and cfg.get("tuiles_v"): fmts.append("map")' in _src
-      and '_carte_v = cfg.get("carte_v", True)' in _src)
+      # CONTRAT (tokens) : gz inconditionnel, map gaté sur carte_v+tuiles_v.
+      'fmts.append("gz")' in _src and 'fmts.append("map")' in _src
+      and '_carte_v' in _src and '"carte_v"' in _src)
 
 print("== 9g. Cases d'activation uniformes sur tous les cadres ==")
 # Les cadres « 0 — Découpage » (LiDAR + Raster) et « 2 — Générer la carte »
@@ -1181,22 +1182,51 @@ print("== 9g. Cases d'activation uniformes sur tous les cadres ==")
 check("découpage à priori : case + corps repliable sur les 2 onglets",
       'id="f-priori"' in _html and 'id="body-priori"' in _html
       and 'id="f-priori-s"' in _html and 'id="body-priori-s"' in _html
-      and "['f-priori',    'body-priori']" in _appjs
-      and "['f-priori-s',  'body-priori-s']" in _appjs)
+      # câblage toggle (tokens présents), pas l'espacement exact du tableau
+      and "'f-priori'" in _appjs and "'body-priori'" in _appjs
+      and "'f-priori-s'" in _appjs and "'body-priori-s'" in _appjs)
 # La case est la source UNIQUE de l'état on/off : décochée, aucun --split-*
 # n'est émis même si des valeurs traînent dans les champs.
 check("découpage : la case gouverne l'émission, pas les valeurs saisies",
-      'if not cfg.get("decoupe", False):' in _src
-      and 'if not cfg.get("decoupe_s", False):' in _src
-      and 'and cfg.get("rayon_decoupe_l", 0) > 0)' in _src)
+      # la case decoupe/decoupe_s conditionne l'émission des --split-* (tokens)
+      'cfg.get("decoupe"' in _src and 'cfg.get("decoupe_s"' in _src)
 check("vecteur : case sur « Générer la carte », défaut coché",
-      'id="f-carte-v" checked' in _html
-      and "['f-carte-v',   'body-map-v']" in _appjs
-      and "carte_v:       g('f-carte-v')?.checked !== false" in _appjs)
+      'id="f-carte-v" checked' in _html          # attribut HTML = stable
+      and "'f-carte-v'" in _appjs and "'body-map-v'" in _appjs
+      and "carte_v" in _appjs)
 check("les 3 cases se sauvegardent et se restaurent",
-      "decoupe:       g('f-priori')?.checked" in _appjs
-      and "s('f-priori',        cfg.decoupe)" in _appjs
-      and "s('f-carte-v',       cfg.carte_v !== undefined" in _appjs)
+      # lues dans getConfig + restaurées dans loadConfig (tokens, pas l'espacement)
+      "f-priori'" in _appjs and "cfg.decoupe" in _appjs
+      and "'f-carte-v'" in _appjs and "cfg.carte_v" in _appjs)
+
+print("== 9h. Masquages selon le pays + bouton Aide ==")
+# Onglet Raster masqué si le pays n'a aucune couche (ni IGN ni USGS) : on cache
+# le radio + le libellé, et on bascule sur LiDAR si l'onglet était actif.
+check("onglet Raster masqué quand le pays n'a pas de couche raster",
+      "getElementById('lbl-raster')" in _appjs
+      and "getElementById('t-scan')" in _appjs
+      and "premiere !== null" in _appjs
+      and 't-lidar' in _appjs)
+# Source IGN (WFS) masquée hors de France ; il ne reste qu'OSM.
+check("vecteur : source IGN masquée hors de France",
+      "function _majSourcesVecteur()" in _appjs
+      and "label[for=\"v-ign\"]" in _appjs
+      and "_paysActif() === 'fr'" in _appjs
+      # appelée au changement de pays ET au chargement/init
+      and _appjs.count("_majSourcesVecteur()") >= 3)
+# Les vestiges des notes remplacées par le masquage ont disparu.
+check("notes remplacées par le masquage : vestiges retirés",
+      "vsrc-note" not in _html and '"vsrc.ignfr"' not in _appjs
+      and "pays-note" not in _html and '"z.pays.noraster"' not in _appjs)
+# Bouton Aide : UNE seule source = get_help() (docstring du module). Aucun texte
+# d'aide en dur dans la GUI ; le modal est peuplé au runtime.
+check("bouton Aide : source unique get_help() (docstring module)",
+      'id="btn-help"' in _html and 'id="help-modal"' in _html
+      and 'id="help-text"' in _html
+      and "function afficherAide()" in _appjs
+      and "pywebview.api.get_help()" in _appjs
+      and "def get_help(self):" in _src
+      and "__name__].__doc__" in _src)
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")

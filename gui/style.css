@@ -16,9 +16,15 @@
 .hidden{display:none!important}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);font:13px var(--fnt)}
 #main{padding:10px 24px}
-#form-inner{max-width:900px;width:100%;margin:0 auto;
+/* Le contenu REMPLIT la largeur de la fenêtre (elle-même bornée à l'écran, cf.
+   create_window). L'ancien max-width:900px cappait le formulaire et laissait des
+   bandes sombres sur les côtés d'un écran large ; il forçait aussi les longues
+   lignes (Projet, Zone) à wrapper, ce qui rallongeait le contenu → scroll. On
+   remplit, avec un plafond haut (2100) juste pour ne pas étirer à l'absurde sur
+   écran ultra-large. */
+#form-inner{max-width:2100px;width:100%;margin:0 auto;
   display:flex;flex-direction:column;gap:8px}
-#btn-bar{max-width:900px;margin:8px auto;padding:0;display:flex;gap:8px;align-items:center}
+#btn-bar{max-width:2100px;margin:8px auto;padding:0;display:flex;gap:8px;align-items:center}
 /* Form elements */
 .section{background:var(--bg2);border:1px solid var(--bd);border-radius:6px;
   overflow:hidden}

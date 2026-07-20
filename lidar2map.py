@@ -2036,7 +2036,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.18.0"
+VERSION      = "1.19.0"
 VERSION_DATE = "2026-07"
 
 
@@ -16053,6 +16053,13 @@ def lancer_gui():
                 "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
             }
 
+        def get_help(self):
+            """Texte affiché par le bouton Aide du GUI : le docstring d'usage du
+            module (source UNIQUE — le même bloc qui documente les modes et les
+            paramètres CLI en tête de fichier). Pas de copie à maintenir."""
+            import sys as _sys
+            return (_sys.modules[__name__].__doc__ or "").strip()
+
         # ── Partage LAN vers le téléphone (QR) ────────────────────────────
         def start_share(self, cfg=None):
             """Sert les livrables du dernier run (ou de `cfg`) sur le LAN.
@@ -16913,7 +16920,7 @@ def lancer_gui():
     # Taille initiale bornée à l'écran : sous Qt + DPI, une hauteur fixe peut
     # dépasser un écran de portable -> fenêtre hors écran. On clampe sur la
     # zone de travail (hors barre des tâches) sous Windows. Redimensionnable.
-    _w, _h = 1300, 850
+    _w, _h = 1300, 1000
     try:
         if platform.system() == "Windows":
             import ctypes
@@ -16922,8 +16929,16 @@ def lancer_gui():
             ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(_r), 0)  # SPI_GETWORKAREA
             _wa_w, _wa_h = _r.right - _r.left, _r.bottom - _r.top
             if _wa_h > 0:
-                _h = max(600, min(_h, _wa_h - 48))
-                _w = max(1000, min(_w, _wa_w - 48))
+                # REMPLIR la zone de travail (moins une marge) dans les DEUX
+                # dimensions, au lieu de plafonner à une taille fixe. La hauteur
+                # bloquée à 850 laissait un ascenseur vertical ; la largeur
+                # bloquée à 1300 laissait du vide à droite ET faisait passer les
+                # longues lignes (Projet, Zone) à la ligne, ce qui RAJOUTAIT de
+                # la hauteur → scroll. Plus large = les lignes tiennent d'un
+                # trait = contenu plus court. Cap à 2200 pour ne pas étirer
+                # absurdement une fenêtre sur écran ultra-large.
+                _h = max(600, _wa_h - 48)
+                _w = max(1000, min(2200, _wa_w - 48))
     except Exception:
         pass
 

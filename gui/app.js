@@ -28,6 +28,7 @@ const I18N = {
   fr: {
     "btn.run":"▶ Lancer", "btn.stop":"■ Arrêter", "btn.hist":"⏱ Historique", "btn.log":"📋 Logs",
     "btn.share":"📲 Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Scanne un fichier, télécharge, puis « Ouvrir avec » OsmAnd ou Locus.", "share.close":"Fermer",
+    "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
     "proj.pick":"↻ projet existant…",
     // Projet
@@ -47,7 +48,6 @@ const I18N = {
     "f.surf.mnt":"MNT (raster)", "f.surf.laz":"LAZ (nuage)",
     "f.surf.nolaz":"aucune source pour ce pays",
     "z.pays":"Pays",
-    "z.pays.noraster":"aucune couche raster pour ce pays",
     "f.dfm":"Mode LAZ — structures debout (nuage classé, expérimental)",
     "f.zoomcap":"z%d = résolution native (%s) — au-delà, agrandissement sans information",
     "f.dlcap":"↓ %d max en parallèle (gros nuages LAZ)",
@@ -69,7 +69,6 @@ const I18N = {
     // l'historique et la file d'attente, même si l'onglet est unique.
     "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
-    "vsrc.ignfr":"couverture France métropolitaine",
     "t.fusion":"Fusion vectorielle", "t.decoupe":"Découpage raster",
     // Étapes communes
     "split0":"0 — Découpage à priori (grandes zones)",
@@ -160,6 +159,7 @@ const I18N = {
   en: {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
     "btn.share":"📲 Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Tap a file, download, then \"Open with\" OsmAnd or Locus.", "share.close":"Close",
+    "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
@@ -178,7 +178,6 @@ const I18N = {
     "f.surf.mnt":"DTM (raster)", "f.surf.laz":"LAZ (cloud)",
     "f.surf.nolaz":"no source for this country",
     "z.pays":"Country",
-    "z.pays.noraster":"no raster layer for this country",
     "f.dfm":"LAZ mode — standing structures (classified cloud, experimental)",
     "f.zoomcap":"z%d = native resolution (%s) — beyond that, upscaling with no extra information",
     "f.dlcap":"↓ %d max parallel (large LAZ clouds)",
@@ -196,7 +195,6 @@ const I18N = {
     "t.lidar":"LiDAR", "t.raster":"Raster", "t.vect":"Vector",
     "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
-    "vsrc.ignfr":"covers metropolitan France only",
     "t.fusion":"Vector merge", "t.decoupe":"Raster split",
     "split0":"0 — A priori split (large areas)",
     "grid":"Grid:", "rows":"rows", "orradius":"or radius", "rows_orradius":"rows  or radius",
@@ -307,6 +305,7 @@ function setLang(code, persist){
     if (_zs) _zs.value = _p;
     onSurfaceChange();
     filtrerCouchesParPays();
+    _majSourcesVecteur();
     _majModesDisponibles();   // les libellés Department/Région portent un suffixe
   }
   // Le placeholder du select projets est créé dynamiquement (hors applyI18n) :
@@ -606,6 +605,7 @@ async function initAsync() {
     buildPays(d.providers || [], d.active_provider || 'fr-ign');
     buildProviders(d.providers || [], d.active_provider || 'fr-ign');
     filtrerCouchesParPays();
+    _majSourcesVecteur();
     _majModesDisponibles();
     buildRegions(d.regions || []);
     buildWfsCouches(d.wfs);
@@ -866,13 +866,22 @@ function onVecteurSource() {
     .forEach(el => el.classList.toggle('hidden', !osm));
   // Pas de recoloration selon la source : IGN et OSM sont deux sources du même
   // onglet, la couleur reste celle de l'onglet Vectoriel.
-  // L'IGN ne couvre que la France : on le signale sans rien bloquer, comme
-  // partout ailleurs depuis le découplage (aucun onglet ne disparaît).
-  const note = document.getElementById('vsrc-note');
-  if (note) {
-    const pays = _paysActif();
-    note.textContent = (!osm && pays && pays !== 'fr') ? t('vsrc.ignfr') : '';
+}
+
+// Source IGN (WFS) = France uniquement → on MASQUE le radio IGN hors de France
+// (le WFS IGN ne sert que la métropole). Il ne reste qu'OSM. Si IGN était
+// sélectionné, on bascule sur OSM. Même schéma que _majModesDisponibles.
+function _majSourcesVecteur() {
+  const fr = _paysActif() === 'fr';
+  const ign    = document.getElementById('v-ign');
+  const ignLbl = document.querySelector('label[for="v-ign"]');
+  if (ign)    ign.style.display    = fr ? '' : 'none';
+  if (ignLbl) ignLbl.style.display = fr ? '' : 'none';
+  if (!fr && ign && ign.checked) {
+    const osm = document.getElementById('v-osm');
+    if (osm) osm.checked = true;
   }
+  onVecteurSource();
 }
 
 // Changer de pays recadre ce qui dépend RÉELLEMENT du pays : le géocodage des
@@ -882,8 +891,8 @@ function onVecteurSource() {
 // sous les pieds de l'utilisateur.
 function onPaysChange() {
   onSurfaceChange();          // refiltre les providers (pays × surface)
-  filtrerCouchesParPays();
-  onVecteurSource();          // note « IGN = France » selon le pays choisi
+  filtrerCouchesParPays();    // + masque l'onglet Raster si pas de couche
+  _majSourcesVecteur();       // masque la source IGN hors de France
   _majModesDisponibles();     // Department / Région : France uniquement
   const inp = document.getElementById('f-ville');
   if (inp) inp.value = '';    // une ville d'un autre pays n'a plus de sens
@@ -910,10 +919,19 @@ function filtrerCouchesParPays() {
     sel.value = premiere.value;
     sel.dispatchEvent(new Event('change'));
   }
-  const note = document.getElementById('pays-note');
-  if (note) {
-    note.textContent = premiere ? '' : t('z.pays.noraster');
-    note.style.color = premiere ? 'var(--dim)' : '#b45309';
+  // Pas de couche raster pour ce pays (ni IGN, ni USGS) → on MASQUE l'onglet
+  // Raster plutôt que d'afficher une liste vide. Si l'onglet était actif, on
+  // bascule sur LiDAR (sinon on resterait sur un onglet invisible).
+  const _hasRaster = premiere !== null;
+  const _lbl = document.getElementById('lbl-raster');
+  const _rad = document.getElementById('t-scan');
+  if (_lbl) _lbl.style.display = _hasRaster ? '' : 'none';
+  if (_rad) {
+    _rad.style.display = _hasRaster ? '' : 'none';
+    if (!_hasRaster && _rad.checked) {
+      const _li = document.getElementById('t-lidar');
+      if (_li) { _li.checked = true; _li.dispatchEvent(new Event('change')); }
+    }
   }
 }
 
@@ -1590,6 +1608,28 @@ function fermerPartage() {
     pywebview.api.stop_share().catch(() => {});
 }
 
+// ── Aide ────────────────────────────────────────────────────────────────────
+// Contenu = get_help() côté Python (docstring du module = source UNIQUE). On
+// n'écrit aucun texte d'aide ici : le <pre> est rempli par la réponse.
+function afficherAide() {
+  const pre = document.getElementById('help-text');
+  const modal = document.getElementById('help-modal');
+  if (!modal || !pre) return;
+  pre.textContent = t('loading');
+  modal.style.display = 'flex';
+  if (window.pywebview && pywebview.api && pywebview.api.get_help) {
+    pywebview.api.get_help()
+      .then(txt => { pre.textContent = txt || t('help.empty'); })
+      .catch(() => { pre.textContent = t('help.empty'); });
+  } else {
+    pre.textContent = t('apiunavail');
+  }
+}
+function fermerAide() {
+  const modal = document.getElementById('help-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 function getConfig() {
   const g = id => document.getElementById(id);
@@ -1942,6 +1982,8 @@ function loadConfig(cfg) {
       zsel.value = cfg.pays;
       onSurfaceChange();
       filtrerCouchesParPays();
+      _majSourcesVecteur();
+      _majModesDisponibles();
     }
   }
   if (cfg.provider) {
