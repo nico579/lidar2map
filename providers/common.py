@@ -9,6 +9,7 @@ import json
 import re
 import ssl
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -401,6 +402,47 @@ def ee_maaamet_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
         print(f"  ERROR EE index: {type(e).__name__}: {e}")
         return None
     return dalles
+
+
+# === Québec (RGQ / GeoServer WFS d'index de téléchargement) ===================
+# Québec diffuse son LiDAR (nuage LAZ) et son MNT 1 m (COG) via un GeoServer
+# d'INDEX de téléchargement : une couche WFS par produit, dont CHAQUE feuille
+# porte l'URL de download directe (TELECHARGEMENT_TUILE) + le CODE_EPSG par tuile
+# (le LAZ est en MTM PAR FUSEAU ; le MNT en Lambert provincial 6622 unique). On
+# interroge la couche par bbox. Le serveur coupe parfois la connexion
+# (RemoteDisconnected) → petit retry. Partagé par ca-quebec (MNT) et ca-quebec-laz.
+_QC_WFS = "https://servicesvecto3.mern.gouv.qc.ca/geoserver/{ws}/wfs"
+
+
+def quebec_wfs_features(workspace, layer, bbox_wgs84, count=1000,
+                        ua="lidar2map/1.0", tries=3):
+    """GetFeature WFS 2.0 (GeoJSON) de la couche `workspace:layer` intersectant
+    `bbox_wgs84` (lon1,lat1,lon2,lat2). Retourne la LISTE des features, [] si la
+    bbox est vide, ou None sur échec réseau (après retry — le GeoServer RGQ coupe
+    des connexions par intermittence). L'axe WFS 2.0 pour urn:EPSG::4617 est
+    lat,lon (d'où l'ordre du paramètre bbox)."""
+    if bbox_wgs84 is None:
+        return []
+    lo1, la1, lo2, la2 = (float(v) for v in bbox_wgs84)
+    from urllib.parse import urlencode
+    q = urlencode({
+        "service": "WFS", "version": "2.0.0", "request": "GetFeature",
+        "typeNames": f"{workspace}:{layer}", "outputFormat": "application/json",
+        "srsName": "EPSG:4617", "count": str(count),
+        "bbox": f"{la1},{lo1},{la2},{lo2},urn:ogc:def:crs:EPSG::4617",
+    })
+    url = _QC_WFS.format(ws=workspace) + "?" + q
+    last = None
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": ua})
+            with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+                return json.loads(r.read().decode("utf-8", "replace")).get("features", [])
+        except Exception as e:
+            last = e
+            time.sleep(1.5 * (i + 1))
+    print(f"  ERROR Québec WFS {layer}: {type(last).__name__}: {last}")
+    return None
 
 
 def _verifie_crs_las(nom, las, expected_epsg):

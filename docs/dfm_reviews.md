@@ -191,14 +191,113 @@ suivante, pas encore faite.
   100 % valide. **~40 pts/m²** (le plus dense). LIMITE : très dense → zone d'1 km²
   = ~40 M pts (~1 Go .las tmp, ~3 Go RAM). Zone PETITE conseillée.
 
+### USA — `us-3dep-laz` (LIVRÉ + validé bout-en-bout 2026-07-21, hook signature SAS)
+- `[x]` **Endpoint** : STAC Planetary Computer, collection `3dep-lidar-copc` (le
+  nuage national 3DEP reformaté en COPC ; l'autre forme, l'EPT public sur
+  `s3://usgs-lidar-public`, exige PDAL, absent → écartée). Search par bbox →
+  un COPC par tuile (asset `data`). Couverture CONUS + Alaska + Hawaii + Guam,
+  2012-2022. Dédup par coin SW + tri `datetime desc` (millésime récent, comme EE).
+- `[x]` **NOUVEAU vs Canada : signature SAS**. Le blob Azure PC refuse l'accès
+  public (HTTP 409). Nouveau **hook cœur `PROVIDER.sign_url(url)`** (défaut
+  identité, appelé dans `telecharger_copc_fenetre` juste avant l'ouverture COPC
+  → signé à l'instant du DOWNLOAD, pas de péremption ; mirror de
+  `gdal_env_options()`). `us-3dep-laz.sign_url` = GET sur l'endpoint public
+  anonyme `/api/sas/v1/sign` (stdlib urllib, 0 dépendance, choix Nico ; env
+  `PC_SDK_SUBSCRIPTION_KEY` facultative pour lever la limite anonyme). NRCan
+  n'expose pas le hook → identité. **Aucun compte requis** (le raster jumeau
+  us-3dep, lui, exige une clé OpenTopography et réserve son 1 m à l'académique :
+  le mode LAZ est PLUS accessible que le raster).
+- `[x]` **CRS multi-zones** : `proj:epsg` absent des propriétés STAC → lu dans le
+  header du COPC (UTM NAD83 par zone), posé par run via `set_crs` (identique
+  Canada). CRS_NATIF = géographique NAD83 (4269).
+- `[x]` **Validé bout-en-bout** (Colorado, projet SoPlatteRiver) via le vrai
+  `telecharger_copc_fenetre` : discover STAC (2 tuiles) → sign → fenêtre → conversion.
+  Sortie **1029×1332 px EPSG:26913 (UTM 13N), 0,5 m, z=[1586,1604] m**, 1,37 M px
+  valides, en mode `classes` ET en mode `csf` (défaut). Densité **~5,3 pts/m²**
+  sur un levé 2013 (QL2 ; les projets récents QL1 montent à 8-20), classée ASPRS
+  (classes 7/18 bruit présentes → re-valide le fix withheld). Défaut ground=csf
+  (1254 projets, classif hétérogène). smoke : point Colorado + `--skip` CI.
+- **Carte** : pas de région USA continentale dans `REGIONS` (couverture 3DEP par
+  PROJET, comme le Canada/USA) → rien à hachurer, pas de régen carte.
+
+### Québec — `ca-quebec` (MNT 1 m) + `ca-quebec-laz` (validés bout-en-bout 2026-07-21)
+- `[x]` **1er provider Québec, et 1er jumeau LAZ qui a DÛ créer son raster parent**
+  (tous les `*_laz` en ont un ; aucun `ca-quebec` n'existait). Choix Nico : monter
+  les DEUX (MNT + LAZ), comme la France. `common.quebec_wfs_features` partagé.
+- `[x]` **Parent `ca-quebec` (MNT 1 m, COG_WINDOWED)** : WFS RGQ
+  `Index_Telechargement_Mnt_Pub:IndexTelechargementMNT` par bbox → COG GeoTIFF
+  15 km/feuille (~600 Mo, tiled 256 + overviews) lu en FENÊTRE via /vsicurl. CRS
+  **UNIQUE EPSG:6622** (Québec Lambert). Dédup par emprise → année récente (pas de
+  couche PlusRecent côté MNT). Deux spécificités : `gdal_env_options` autorise
+  l'extension `.TIF` MAJUSCULE (filtre GDAL sensible à la casse), et `post_download`
+  ESTAMPILLE EPSG:6622 (le COG porte un WKT « Quebec Lambert_SCRS » complet mais
+  SANS code EPSG → `to_epsg()`=None ; params identiques à 6622 → assignation, pas
+  reprojection). Validé : fenêtre → .tif EPSG:6622 res 1 m, z=[9,23] m.
+- `[x]` **Jumeau `ca-quebec-laz`** : WFS `IndexTelechargementLidarPlusRecent`
+  (dédup millésime CÔTÉ SERVEUR, une couche dédiée) → `TELECHARGEMENT_TUILE` = URL
+  LAZ directe (pattern IGN/Pologne, pas COPC). **CRS MULTI-ZONES MTM par fuseau**
+  (CODE_EPSG explicite par tuile, 2949-2952) → `set_crs` au fuseau dominant du lot ;
+  contrairement à la Pologne le header LAZ PORTE le CRS → le garde refuse
+  ACTIVEMENT une tuile d'un autre fuseau. Défaut csf (classif hétérogène brute
+  0,1,2,8 / classée 1,2,7,9). Préfixe cache `qc_laz05` (distinct du `ca_laz05`
+  NRCan, même pays 'ca'). Validé bout-en-bout : WFS → set_crs 2949 → download 70 Mo
+  → CSF → .tif **2000×2000 EPSG:2949 (MTM 7), 0,5 m, ~10 pts/m²**, classée
+  (bruit 7 → re-valide fix withheld), z=[3,24] m.
+- Carte : pas de polygone région Québec (couverture par PROJET, un polygone
+  provincial surestimerait, comme le Canada). ca-quebec = 1er provider `ca` raster
+  hors NRCan → README régénérés au release.
+
+### Finlande — `fi-maanmittauslaitos-laz` (DÉCLASSÉ 2026-07-21, mur d'auth + samples-only)
+- `[?]` **Endpoint CARTOGRAPHIÉ** : le nuage laser 5p (≥5 pts/m², LAZ 1.2/1.4,
+  EPSG:3067, tuiles 1 km) vit sur le **file download service** (tiedostopalvelu),
+  PAS sur le WCS raster du parent. Feed ATOM base
+  `https://tiedostopalvelu.maanmittauslaitos.fi/tp/feed/mtp`, param **`api_key=`
+  (UNDERSCORE)** (le WCS parent, lui, veut `api-key=` TIRET), feed produit
+  `/tp/feed/mtp/<produit>/<version>?api_key=…`, download
+  `/tp/lataus/<clé>/1/<filename>`.
+- `[-]` **BLOQUÉ : scope de clé.** 2 clés NLS OmaTili testées (avoin-karttakuva) :
+  **WCS 200** (clés valides) mais tiedostopalvelu **403** (param `api_key=` reconnu,
+  mais NON autorisé) sur TOUS les produits (même l'ortho de référence). Le 403 (≠
+  401) = la clé est reconnue mais n'a pas la permission « file download service ».
+  À régler côté compte NLS (activer l'interface tiedostopalvelu pour la clé dans
+  OmaTili, OU clé séparée ordonnée par email selon le tier). Rien à coder tant que
+  le 403 tient (le feed produit reste invisible : identifiant laser + nommage tuiles
+  indéterminables). NB : la doc OGC API Features / Basic auth ≠ ce service (feed à
+  param URL). Dès le scope OK → discover feed + code + valide (endpoint déjà mappé).
+- `[-]` **Alternatives ÉPUISÉES** : la clé accède AUSSI à l'OGC API Features
+  `avoin-paikkatieto.maanmittauslaitos.fi/maastotiedot` (Basic auth = 200) mais ce
+  service ne sert QUE du VECTORIEL (collections « korkeus » = courbes de niveau,
+  PAS le nuage) ; aucun endpoint laser/élévation sur avoin-paikkatieto (tout 404).
+  Le nuage laser n'existe QUE sur tiedostopalvelu. Les clés OmaTili WMS/WCS/OGC-API
+  n'ouvrent PAS le file download service.
+- `[-]` **MUR D'AUTH INFRANCHISSABLE + samples-only (verdict final)** : activer le
+  scope tiedostopalvelu passe par OmaTili, qui exige une identification **Suomi.fi**.
+  Or la liste des eID étrangers acceptés (NL/BE/ES/IT/AT/HR/CY/LV/LI/LT/LU/MT/PT/PL/
+  SE/DE/SK/SI/DK/CZ/EE) **N'INCLUT PAS LA FRANCE** → Nico ne peut pas s'authentifier.
+  Le service interactif MapSite (`asiointi.../karttapaikka/tiedostopalvelu`) a une
+  API de DÉCOUVERTE OUVERTE (session anonyme : `/karttapaikka/api/spatialDataFiles/
+  laser5pProductionAreas` = 149 zones, `/laser5pMapsheets/<tuotantoalueId>` = feuilles
+  1 km `karttalehtitunnus`), MAIS le DOWNLOAD laser5p est **login-gated**
+  (i18n `laserkeilausaineisto_5p.login` = « Kirjaudu asiointipalveluun » →
+  `/kiinteistoasiat/?auth=4`) et **sous restrictions d'usage** (publication/
+  redistribution limitées, traitement hors UE/EEE restreint). Le seul chemin PUBLIC
+  (`tiedostopalvelu/tp/julkinen/lataus/tuotteet/Avoin_laseraineisto5p`, ZIP par
+  feuille sans auth) ne contient que **6 zones ÉCHANTILLONS** (Nurmijärvi, Nuuksio,
+  Pieksämäki, Suomutunturi, Forssa), PAS la couverture nationale. VERDICT : pas de
+  provider national viable (auth Suomi.fi hors de portée FR + national restreint +
+  public = démos). Comme la Wallonie (accès non reproductible/gaté). Ré-ouvrir SEULEMENT
+  si NLS ouvre un accès national programmatique sans Suomi.fi.
+
 ### Suite de la chasse
-- **Pologne + Estonie + Flandre + Canada LIVRÉES** (4 pays cette session, jumeaux
-  LAZ 3 → 7). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
-- Non encore sondés : Québec, USGS LPC, Danemark, Finlande. **USGS = COPC/EPT
-  → réutilise directement la capacité COPC fenêtrée qu'on vient de construire**
-  (+ le compte OpenTopography pour certains). Patterns dispo : `set_crs`
-  (multi-zones), index caché+millésime (Estonie), WFS+chemin+base (Flandre),
-  COPC fenêtré + index /vsicurl distant (Canada).
+- **Pologne + Estonie + Flandre + Canada + USA + Québec LIVRÉES** (jumeaux LAZ
+  3 → 9 ; Québec = source de plus sous 'ca', pas un nouveau pays). Reste à valider
+  TERRAIN la densité 4 pts/m² estonienne.
+- Non encore sondés : Danemark (compte Datafordeler, + risque dépréciation
+  Prædefineret LAZ). Finlande = DÉCLASSÉE (mur Suomi.fi sans eID FR + national
+  restreint + public samples-only, ci-dessus).
+  Patterns dispo : `sign_url` (COPC authentifié), `set_crs` (multi-zones), STAC +
+  signature (USA), WFS PlusRecent + LAZ direct (Québec), index caché+millésime
+  (Estonie), COG/COPC fenêtré + /vsicurl (Canada/Québec MNT).
 
 ## A mesurer sur la VM Scaleway (Apple Silicon M-series, macOS ARM)
 - `[?]` `--laz-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE

@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.24.0"
+VERSION      = "1.25.0"
 VERSION_DATE = "2026-07"
 
 
@@ -3916,7 +3916,14 @@ def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
         lo1, la1, lo2, la2 = _bbox_enveloppe_transform(_natif_vers_wgs84,
                                                        bx1, by1, bx2, by2)
         chemin.unlink(missing_ok=True)
-        n, epsg = _common.copc_window_to_las(url, (lo1, la1, lo2, la2), chemin)
+        # Signature d'URL propre au provider (ex. us-3dep-laz : SAS Planetary
+        # Computer, validité ~1 h → signée à l'instant du DOWNLOAD, pas à la
+        # découverte, sinon péremption sur un gros run). Défaut = identité
+        # (ca-nrcan : COPC sur S3 public, aucune signature). Mirror du hook
+        # gdal_env_options() côté COG.
+        _sign = getattr(PROVIDER, "sign_url", None)
+        _url = _sign(url) if callable(_sign) else url
+        n, epsg = _common.copc_window_to_las(_url, (lo1, la1, lo2, la2), chemin)
         if not n or n < 50_000:
             chemin.unlink(missing_ok=True)
             return "absent"          # zone hors de ce COPC (ou quasi vide)

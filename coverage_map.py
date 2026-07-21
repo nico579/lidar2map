@@ -228,7 +228,7 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
             polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
             for poly in polys:
                 ext = poly[0]
-                # Pays LAZ-capable : hachures sombres par-dessus le remplissage
+                # Zone LAZ-capable : hachures sombres par-dessus le remplissage
                 # (mode structures debout depuis le nuage de points classé).
                 ax.fill([p[0] for p in ext], [p[1] for p in ext],
                         facecolor=col, alpha=0.55,
@@ -296,11 +296,13 @@ def main():
     # Compte + liste de pays des READMEs (indépendant de Nominatim/la carte).
     if not update_readme_countries(prov):
         return 1
-    # Pays LAZ-capables = ceux qui ont un provider jumeau `*-laz` (nuage de
-    # points classé → mode structures debout). Data-driven : un nouveau jumeau
-    # hachure automatiquement son pays sur la carte, rien à maintenir à la main.
-    laz_countries = {prov[c]["country"] for c in prov
-                     if c.endswith("-laz") and prov[c]["country"]}
+    # Zones LAZ-capables = celles dont un code a un jumeau `<code>-laz` (nuage de
+    # points classé → mode structures debout). Data-driven via la convention de
+    # nommage : un nouveau jumeau hachure automatiquement SA zone, rien à
+    # maintenir à la main. Précis à la ZONE et pas au pays : fr-ign-laz couvre la
+    # métropole mais PAS les DROM (fr-reunion/fr-guadeloupe = providers distincts,
+    # sans jumeau LAZ) — un critère par pays les hachurerait à tort.
+    laz_codes = {c for c in prov if c.endswith("-laz")}
     # Garde-fou : tout code de REGIONS doit exister comme provider (anti-drift).
     codes = {c for r in REGIONS for c in r[1]}
     missing = sorted(c for c in codes if c not in prov)
@@ -330,7 +332,7 @@ def main():
                 "description": "Provider(s) : " + ", ".join(region_codes),
                 "fill": color, "fill-opacity": 0.35,
                 "stroke": color, "stroke-width": 1.5,
-                "laz": any(prov.get(c, {}).get("country") in laz_countries
+                "laz": any(c in laz_codes or (c + "-laz") in laz_codes
                            for c in region_codes),
             },
             "geometry": g,

@@ -51,6 +51,8 @@ TEST_POINTS = {
     "ee-maaamet-laz": (25.53975, 58.99433),  # Viljandimaa (nuage ALS tava ~4 pts/m² ~44 Mo ! --skip en CI)
     "be-flanders-laz": (3.74510, 51.02979),  # Flandre (nuage DHMV II ~11 pts/m² ~17 Mo ! --skip en CI)
     "ca-nrcan-laz": (-113.2266, 54.7448),    # Athabasca AB (COPC fenêtré ~40 pts/m² ! --skip en CI)
+    "us-3dep-laz": (-105.0, 39.735),         # Colorado SoPlatteRiver (COPC signé PC ~5 pts/m² ! --skip en CI)
+    "ca-quebec-laz": (-71.275, 46.82),       # Québec (WFS RGQ, MTM 7, ~10 pts/m² ! --skip en CI)
     "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
     "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),
@@ -64,6 +66,7 @@ TEST_POINTS = {
     "lv-lgia": (24.105, 56.949),             # Riga (LAS national -> binning classe 2)
     "es-icgc": (2.173, 41.385), "pl-gugik": (21.012, 52.230),
     "ca-nrcan": (-73.567, 45.501), "nz-linz": (174.776, -41.286),
+    "ca-quebec": (-71.275, 46.82),           # Québec (MNT 1 m COG fenêtré, EPSG:6622)
     "au-qld": (153.026, -27.470), "au-nsw": (151.209, -33.868),
     "au-ga": (138.600, -34.920), "us-tnm": (-122.332, 47.606),
     "us-3dep": (-122.332, 47.606),
@@ -104,8 +107,13 @@ def _select(mod):
     L.PROVIDER = mod
     L.CRS_NATIF = mod.CRS_NATIF
     L.RESOLUTION_M = mod.RESOLUTION_M
-    L.DALLE_KM = mod.DALLE_KM
-    L.PX_PAR_DALLE = mod.PX_PAR_DALLE
+    # DALLE_KM / PX_PAR_DALLE : grille de tuiles NOMINALE. Les providers en
+    # lecture fenêtrée (COPC ca-nrcan-laz / us-3dep-laz : la fenêtre lue définit
+    # l'emprise, pas de grille fixe) ne les définissent pas et le chemin
+    # telecharger_copc_fenetre ne les lit pas → défauts inoffensifs plutôt qu'un
+    # AttributeError qui empêchait tout smoke de ces jumeaux.
+    L.DALLE_KM = getattr(mod, "DALLE_KM", 1)
+    L.PX_PAR_DALLE = getattr(mod, "PX_PAR_DALLE", int(1000 / mod.RESOLUTION_M))
     L.SEUIL_DALLE_VALIDE = mod.SEUIL_DALLE_VALIDE
     L.LIDAR_SUBDIR = f"lidar/{getattr(mod, 'COUNTRY', 'xx')}"
 
@@ -145,6 +153,11 @@ def smoke_one(code, mod, lon, lat):
             nom, url = next(iter(dalles.items()))
             if getattr(mod, "COG_WINDOWED", False):
                 res = L.telecharger_cog_fenetre(nom, url, dossier, bbox_natif)
+            elif getattr(mod, "COPC_WINDOWED", False):
+                # Nuages COPC (ca-nrcan-laz, us-3dep-laz…) : lecture fenêtrée
+                # range-request au lieu du download direct (le twin COG_WINDOWED
+                # a toujours été géré, celui-ci manquait — angle mort corrigé).
+                res = L.telecharger_copc_fenetre(nom, url, dossier, bbox_natif)
             else:
                 res = L.telecharger_dalle_directe(nom, url, dossier)
             if res != "ok":

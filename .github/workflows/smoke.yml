@@ -51,4 +51,4 @@ jobs:
         # nuage de points (205 / 125 Mo) à chaque run hebdo (ils partagent leur
         # WFS/STAC avec fr-reunion / ch-swisstopo, testés eux ; la conversion
         # DFM est testée en local via _test_interactions section 9).
-        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-laz,ch-swisstopo-laz,fr-craig-laz,pl-gugik-laz,ee-maaamet-laz,be-flanders-laz,ca-nrcan-laz
+        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-laz,ch-swisstopo-laz,fr-craig-laz,pl-gugik-laz,ee-maaamet-laz,be-flanders-laz,ca-nrcan-laz,us-3dep-laz,ca-quebec-laz

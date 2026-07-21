@@ -1105,10 +1105,15 @@ function applyZoomCap() {
 
 function applyProviderApiKey(opt) {
   // Affiche le champ "Clé API" à côté de la dropdown provider si le provider
-  // actif l'exige (data-apikey-requise="1"). Sinon caché.
+  // actif l'exige (data-apikey-requise="1") ET qu'on n'est PAS en mode LAZ.
+  // En surface LAZ, c'est le jumeau *_laz qui découvre les dalles (ex.
+  // us-3dep-laz : COPC 3DEP signé anonymement via Planetary Computer) : la clé
+  // du raster parent (OpenTopography côté us-3dep) n'y sert à rien. Aucun jumeau
+  // LAZ actuel n'exige de clé ; si un futur en exige une, ajouter un signal
+  // apikey côté twin (entry.laz) plutôt que de tout ré-afficher.
   const group = document.getElementById('lidar-apikey-group');
   if (!group) return;
-  const needs = opt && opt.dataset.apikeyRequise === '1';
+  const needs = opt && opt.dataset.apikeyRequise === '1' && !lazActif();
   group.style.display = needs ? 'inline-flex' : 'none';
 }
 

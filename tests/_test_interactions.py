@@ -713,6 +713,68 @@ check("craig bounds_fn = lookup (None hors découverte, pas de crash)",
 check("craig parent fr-craig : post_fetch .asc→GeoTIFF exposé, pas de bounds fig",
       hasattr(_cgr, "post_fetch") and _cgr.CODE == "fr-craig")
 
+print("== 9b-quater. us-3dep-laz : COPC signé PC (hook sign_url) vs ca-nrcan identité ==")
+_us  = _il2.import_module("providers.us_3dep_laz")
+_usr = _il2.import_module("providers.us_3dep")
+_ca  = _il2.import_module("providers.ca_nrcan_laz")
+check("us défaut ground=csf (1254 projets, classif hétérogène d'un levé à l'autre)",
+      _us.LAZ_GROUND == "csf")
+check("us défauts → nom us_laz05_csf_",
+      _us.dalle_filename(749942, 397319) == "us_laz05_csf_749942_397319.tif",
+      detail=_us.dalle_filename(749942, 397319))
+check("us + ca sont COPC fenêtrés (COPC_WINDOWED, lecture range-request)",
+      getattr(_us, "COPC_WINDOWED", False) and getattr(_ca, "COPC_WINDOWED", False))
+check("us variant_tag défaut = laz_csf", _us.variant_tag() == "laz_csf")
+check("us method_label défaut = LAZ_CSF", _us.method_label() == "LAZ_CSF")
+check("us DOWNLOAD_WORKERS_MAX exposé et < 8",
+      isinstance(getattr(_us, "DOWNLOAD_WORKERS_MAX", None), int)
+      and _us.DOWNLOAD_WORKERS_MAX < 8)
+_us.set_laz_params(ground="classes")
+check("us mode classes : socle ASPRS (2), réinjectées (1,3,4,5,6)",
+      _us._socle() == (2,) and _us._reinjectees() == (1, 3, 4, 5, 6))
+_us.set_laz_params(ground="csf")   # reset défaut US
+# Hook sign_url : le blob Azure PC refuse l'accès public (409) → us EXPOSE
+# sign_url (signe via l'endpoint SAS anonyme PC) ; ca-nrcan (COPC sur S3 public)
+# ne l'expose PAS → le cœur telecharger_copc_fenetre reste identité (getattr).
+check("us EXPOSE sign_url (SAS Planetary Computer exigée par le blob Azure)",
+      callable(getattr(_us, "sign_url", None)))
+check("ca-nrcan N'EXPOSE PAS sign_url (COPC public → identité dans le cœur)",
+      getattr(_ca, "sign_url", None) is None)
+check("cœur telecharger_copc_fenetre : appelle le hook sign_url (défaut identité)",
+      "sign_url" in _APP.read_text(encoding="utf-8"))
+check("us parent us-3dep présent → jumeau LAZ-capable (case Mode LAZ affichée)",
+      _usr.CODE == "us-3dep")
+
+print("== 9b-quinquies. ca-quebec (MNT COG) + ca-quebec-laz (WFS RGQ) ==")
+_qc  = _il2.import_module("providers.ca_quebec")
+_qcl = _il2.import_module("providers.ca_quebec_laz")
+# Parent raster MNT 1 m : COG fenêtré, CRS Lambert provincial unique, .TIF majuscule.
+check("qc parent ca-quebec : COG_WINDOWED + CRS_NATIF 6622 (Québec Lambert)",
+      getattr(_qc, "COG_WINDOWED", False) and _qc.CRS_NATIF == "EPSG:6622"
+      and _qc.CODE == "ca-quebec")
+check("qc gdal_env_options autorise .TIF (majuscule) à /vsicurl",
+      ".TIF" in _qc.gdal_env_options().get("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ""))
+check("qc post_download présent (estampille EPSG:6622, COG sans code EPSG)",
+      callable(getattr(_qc, "post_download", None)))
+check("qc dalle_filename → token qc_mnt1m_",
+      _qc.dalle_filename(7145, 4679) == "qc_mnt1m_7145_4679.tif")
+# Jumeau LAZ : WFS PlusRecent, MTM multi-zone, défaut csf, préfixe distinct du NRCan.
+check("qc-laz défaut ground=csf (classif hétérogène brute/classée)",
+      _qcl.LAZ_GROUND == "csf")
+check("qc-laz défauts → nom qc_laz05_csf_ (préfixe distinct de ca-nrcan-laz)",
+      _qcl.dalle_filename(1087275, 468200) == "qc_laz05_csf_1087275_468200.tif"
+      and _ca.dalle_filename(1, 1).startswith("ca_laz05"),
+      detail=_qcl.dalle_filename(1087275, 468200))
+check("qc-laz variant_tag défaut = laz_csf", _qcl.variant_tag() == "laz_csf")
+check("qc-laz set_crs exposé (fuseau MTM par run, posé dans _discover)",
+      callable(getattr(_qcl, "set_crs", None)))
+check("qc-laz mode classes : socle ASPRS (2), réinjectées (1,3,4,5,6)",
+      (_qcl.set_laz_params(ground="classes") or True)
+      and _qcl._socle() == (2,) and _qcl._reinjectees() == (1, 3, 4, 5, 6))
+_qcl.set_laz_params(ground="csf")   # reset défaut QC
+check("common.quebec_wfs_features partagé par les deux jumeaux QC",
+      callable(getattr(_common, "quebec_wfs_features", None)))
+
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;
 # _build_cmd les traduit en flags ; le dropdown n'expose PAS le jumeau et porte
@@ -744,6 +806,12 @@ check("app.js : la surface pilote la liste des providers (lazActif/onSurfaceChan
       # tokens essentiels du filtre (pays × surface), pas l'expression exacte
       and "_allProviders.filter" in _appjs
       and "duPays(p)" in _appjs and "p.laz" in _appjs)
+# En mode LAZ, la découverte passe par le jumeau *_laz : la clé API du raster
+# parent (ex. OpenTopography pour us-3dep) n'y sert pas → champ masqué. Rejoué
+# sur changement de surface via _applyProviderSelection (onSurfaceChange).
+check("app.js : clé API du raster masquée en mode LAZ (applyProviderApiKey × lazActif)",
+      "function applyProviderApiKey" in _appjs
+      and "apikeyRequise === '1' && !lazActif()" in _appjs)
 # Le bloc Source vit dans l'onglet LiDAR, AVANT le cadre « 1 — Télécharger »,
 # et le cadre ne nomme plus un provider en particulier.
 _i_src = _html.find('data-i18n="sec.source"')
