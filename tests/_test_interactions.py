@@ -435,6 +435,13 @@ try:
                 xs.append(x); ys.append(y)
                 zs.append(100.0 + max(0.0, 1.5 - 0.5 * max(abs(x - 31), abs(y - 31))))
                 cl.append(1)
+        # Bruit classe 7 (low noise) : DOIT être écarté avant le binning. Garde
+        # anti-régression du bug « withheld uint8 » (2026-07-21) : sans le cast
+        # bool, la simple PRÉSENCE de bruit faisait basculer ~bruit en complément
+        # BITWISE + indexage ENTIER → l'emprise s'effondrait (dalle 1×1). Invisible
+        # tant que le nuage n'a aucun 7/18. Cf. providers/common.py + dfm_reviews.
+        for (n7x, n7y) in ((1.0, 1.0), (38.0, 2.0), (2.0, 38.0)):
+            xs.append(n7x); ys.append(n7y); zs.append(88.0); cl.append(7)
         h = _laspy.LasHeader(point_format=0, version="1.2")
         h.offsets = [0, 0, 0]; h.scales = [0.01, 0.01, 0.01]
         las = _laspy.LasData(h)
@@ -470,6 +477,13 @@ try:
         check("COUPE : mur présent, fond nodata",
               abs(z_cm - 101.5) < 0.2 and z_cf == -9999.0,
               detail=f"mur={z_cm:.2f} fond={z_cf:.0f}")
+        # Anti-régression bug « withheld uint8 » : dfm.tif est en bounds=None
+        # (emprise dérivée des points) ET le nuage porte du bruit classe 7. Avant
+        # le fix, l'emprise s'effondrait (1×1) ; ici 40 m / 0,5 m ≈ 80×80 px.
+        with _rio.open(_dd / "dfm.tif") as _dds:
+            _dw, _dh = _dds.width, _dds.height
+        check("las_to_dfm : le bruit classe 7 est écarté sans effondrer l'emprise",
+              _dw > 50 and _dh > 50, detail=f"{_dw}x{_dh}px")
         # Grille alignée sur bornes NOMINALES (anti-couture VRT) : 40 m à
         # 0,5 m = exactement 80×80 px, origine (0,40).
         _common.las_to_dfm(_dd / "syn.las", _dd / "dfmb.tif",
@@ -1263,22 +1277,22 @@ check("relocation nuage : fallback cross-device (shutil.move)",
 # production = les 3 tiers de l'onglet Usage). Placé juste après le dossier cache.
 check("GUI : champ production (Projet, à côté du cache), sauvé/restauré",
       'id="f-production-dir"' in _html
-      and "ouvrirDossier('f-production-dir','production')" in _html
+      and "pickDir('f-production-dir','production')" in _html
       and "production_dir: g('f-production-dir')" in _appjs
       and "s('f-production-dir'" in _appjs
       # dans le cadre Projet : après le cache, avant la section Zone
       and _html.find('id="f-cache-dir"') < _html.find('id="f-production-dir"')
                                          < _html.find('data-i18n="sec.zone"'))
-# Bouton « … » des 3 dossiers : ouvre le dossier correspondant dans l'explorateur
-# (champ vide → racine par défaut du tier), réutilise open_folder.
-check("bouton « … » : ouvre le dossier correspondant (explorateur)",
-      "ouvrirDossier('f-dossier','output')" in _html
-      and "ouvrirDossier('f-cache-dir','cache')" in _html
-      and "ouvrirDossier('f-production-dir','production')" in _html
-      and "function ouvrirDossier(" in _appjs
-      and "pywebview.api.open_dir(" in _appjs
-      and "def open_dir(self" in _src
-      and "self.open_folder(p)" in _src)
+# Bouton « … » des 3 dossiers : SÉLECTEUR positionné sur le dossier courant du
+# champ ou, si vide, sur le défaut du tier (start+kind → pick_dir passe directory=).
+# Le dossier choisi est enregistré dans le champ.
+check("bouton « … » : sélecteur positionné (courant ou défaut du tier)",
+      "pickDir('f-dossier','output')" in _html
+      and "pickDir('f-cache-dir','cache')" in _html
+      and "pickDir('f-production-dir','production')" in _html
+      and "pywebview.api.pick_dir(start, kind" in _appjs
+      and "def pick_dir(self, start=" in _src
+      and "create_file_dialog(webview.FOLDER_DIALOG, directory=s)" in _src)
 # CORRECTION à la note : --cleanup-keep-tiles est GARDÉ. La séparation le rend
 # inutile en mode LAZ (le .laz reconvertit sans re-download) mais PAS en MNT, où
 # le .tif téléchargé est évincé par --cleanup → une tâche +file re-téléchargerait.

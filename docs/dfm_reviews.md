@@ -97,6 +97,75 @@ multi-provider qui n'était pas assez défensif.
 
 ---
 
+## Chasse LAZ (2026-07-21) : validation endpoint des leads de la Revue 1
+
+Méthode = celle de CRAIG (endpoint REPRODUCTIBLE + donnée APTE + conversion
+réelle). Ici : endpoints CONFIRMÉS par sondage direct des leads de la revue
+(pas repartir de zéro). Conversion réelle (download LAZ + las_to_dfm) = étape
+suivante, pas encore faite.
+
+### Pologne — `pl-gugik-dfm` (LIVRÉ + validé bout-en-bout 2026-07-21)
+- `[x]` **Endpoint reproductible CONFIRMÉ** : WFS skorowidze
+  `https://mapy.geoportal.gov.pl/wss/service/PZGIK/DanePomiaroweLidarKRON86/WFS/Skorowidze`
+  (WFS 2.0.0, un typename par année `gugik:SkorowidzDanychPomiarowychLIDAR<AAAA>`,
+  2010-2019 ; il existe aussi le service EVRF2007 2018-2020). GetFeature par bbox
+  → chaque feature porte `gugik:url_do_pobrania` = URL LAZ directe
+  (`https://opendata.geoportal.gov.pl/NumDaneWys/DanePomiaroweLAZ/<id>/<...>.laz`),
+  + `gugik:godlo` (nom feuille alphanumérique), `gugik:char_przestrz` (densité),
+  `gugik:blad_sr_wys` (erreur alti), `gugik:uklad_xy`. = pattern IGN/CRAIG (WFS
+  index + url par dalle), réutilise `common.ign_lidar_hd_dalles` adapté.
+- `[x]` **Donnée APTE** : **20 pts/m²** (2× IGN HD), erreur alti **0,02 m**,
+  nuage classé, LAZ. Excellent pour le micro-relief.
+- `[?]` **WRINKLE CRS** : le nuage LAZ est en **PL-2000 par zone** (S5-S8 =
+  EPSG:2176-2179 selon la longitude), PAS en EPSG:2180 (2180 = CRS de l'INDEX WFS
+  seulement). Le `pl-gugik` raster existant est EPSG:2180 (WCS DTM), inadapté ici.
+  → besoin d'un CRS PAR RUN (déterminé du bbox : zones aux méridiens 15/18/21/24°E)
+  = petite extension `DfmProvider` (miroir de `set_cloud_cache_dir`). bounds
+  anti-couture : reprojeter la géométrie d'index 2180→zone, ou lire le header LAZ.
+  DÉCISION À TRANCHER avant impl (design-avant-déploiement).
+
+### Estonie — `ee-maaamet-dfm` (LIVRÉ + validé bout-en-bout 2026-07-21)
+- `[x]` **Endpoint** : le LAZ standard (`andmetyyp=lidar_laz_tava`) exige
+  l'ANNÉE de scan par feuille (`{NR}_{année}_tava.laz`), non dérivable des coords
+  (aucun motif « dernier » : les autres millésimes → HTML). On lit donc l'INDEX
+  1:2000 officiel `epk2T_SHP.zip` (~1,3 Mo, caché, `common.ee_maaamet_dalles`) :
+  par feuille 1 km, champ `NR` + `ALS_TAVA_1..4` (années standard) + géométrie
+  → on prend le millésime le plus récent. `madal` (basse altitude, ~280 Mo/km²)
+  ignoré (tava ~30-45 Mo suffit). **CRS EPSG:3301 UNIQUE** → pas de wrinkle ;
+  header LAZ compound (3301+EVRF2007) dénoué par le garde.
+- `[x]` **Validé** : discover live = 25 tuiles (URLs tava, bon millésime) ; 1
+  tuile téléchargée (44 Mo) = **4,1 pts/m²**, classée ; conversion `las_to_dfm`
+  = **2000×2000 px EPSG:3301, 100 % valide** (avec bruit 7/18 → re-valide le fix
+  withheld). bounds = géométrie de l'index (anti-couture 1 km propre, contrairement
+  à la Pologne). Défaut ground=csf (sursol dominé par la classe 5).
+- `[?]` **Densité 4 pts/m²** (~0,5 m d'espacement) = APTE mais MARGINAL pour du
+  0,5 m (vs 20 PL, 60 CRAIG) : à confirmer en validation terrain sur un site connu.
+
+### Pologne : ce que la CONVERSION RÉELLE a livré + révélé (2026-07-21)
+- `[x]` `providers/pl_gugik_dfm.py` + helper `common.gugik_dalles` + extension
+  `DfmProvider.set_crs` (CRS par run). CRS_NATIF=2180 (index/Mercator), tuiles
+  produites en zone PL-2000 (le warp du cœur lit le CRS DU FICHIER, l.~7743).
+  bounds_fn=None. Défaut ground=csf. Parent raster `pl-gugik` → DFM-capable auto
+  (dropdown Mode LAZ + hachure carte). smoke : point Lubuskie + `--skip` CI.
+- `[x]` **Validé** : discover live = 194 tuiles (URLs LAZ réelles) ; 1 tuile
+  téléchargée (59 Mo) = **28,4 pts/m²**, header CRS vide (garde lenient), classes
+  ASPRS ; conversion `las_to_dfm` = **1600×913 px EPSG:2176, 100 % valide**.
+- `[x]` **BUG LATENT CORRIGÉ dans le `las_to_dfm` partagé** (révélé PAR la vraie
+  conversion, exactement l'intérêt de la méthode) : `np.asarray(las.withheld)`
+  renvoie un **uint8**, donc `bruit(bool) | wh(uint8)` promeut en uint8 → `~bruit`
+  = complément BITWISE et `xs[garde]` = indexage ENTIER → l'emprise s'effondrait
+  (dalle 1×1). Invisible sur fr/ch (0 bruit → `bruit.any()` False → bloc sauté) ;
+  déclenché par la Pologne (classe 7). Fix = `.astype(bool)`. Garde anti-régression
+  = classe 7 ajoutée au nuage synthétique 9a de `_test_interactions`.
+
+### Suite de la chasse
+- **Pologne + Estonie LIVRÉES** (2 pays LAZ ajoutés cette session, portant les
+  jumeaux DFM de 3 à 5). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
+- Non encore sondés : Québec, USGS LPC, NRCan, Flandre, Danemark, Finlande.
+  L'extension `set_crs` (Pologne) resservira aux pays multi-zones (Allemagne UTM
+  32/33, USGS UTM…) ; le pattern « index caché + année par feuille » (Estonie)
+  resservira aux sources à millésime explicite.
+
 ## A mesurer sur la VM Scaleway (Apple Silicon M-series, macOS ARM)
 - `[?]` `--dfm-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE
   conversion utilise, et macOS ARM peut threader autrement que mes mesures

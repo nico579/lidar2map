@@ -112,21 +112,21 @@
       <label style="min-width:auto;margin-left:10px" data-i18n="f.outdir">Dossier sortie</label>
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:2;min-width:90px"
              onchange="refreshProjets()">
-      <button class="btn btn-sm" onclick="ouvrirDossier('f-dossier','output')"
-              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
+      <button class="btn btn-sm" onclick="pickDir('f-dossier','output')"
+              title="Choisir le dossier (positionné sur le dossier courant)" data-i18n-title="tip.pickdir">…</button>
       <label style="min-width:auto;margin-left:10px" data-i18n="f.cachedir">Dossier cache</label>
       <input type="text" id="f-cache-dir" placeholder="(auto)"
              data-i18n-placeholder="ph.cachedir" style="flex:2;min-width:90px">
-      <button class="btn btn-sm" onclick="ouvrirDossier('f-cache-dir','cache')"
-              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
+      <button class="btn btn-sm" onclick="pickDir('f-cache-dir','cache')"
+              title="Choisir le dossier (positionné sur le dossier courant)" data-i18n-title="tip.pickdir">…</button>
       <!-- Dossier production (--production-dir) : racine du .tif LAZ/DFM (produit,
            calculé du nuage). N'a d'effet qu'en mode LAZ, mais placé ici avec les
            autres racines (sortie/cache) : ce sont les 3 tiers de l'onglet Usage. -->
       <label style="min-width:auto;margin-left:10px" data-i18n="f.proddir">Dossier production</label>
       <input type="text" id="f-production-dir" placeholder="(auto)"
              data-i18n-placeholder="ph.proddir" style="flex:2;min-width:90px">
-      <button class="btn btn-sm" onclick="ouvrirDossier('f-production-dir','production')"
-              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
+      <button class="btn btn-sm" onclick="pickDir('f-production-dir','production')"
+              title="Choisir le dossier (positionné sur le dossier courant)" data-i18n-title="tip.pickdir">…</button>
      </div>
    </div>
   </div>

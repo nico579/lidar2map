@@ -121,6 +121,63 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
     return dalles
 
 
+# === Pologne GUGiK (nuage LiDAR ISOK) ========================================
+# GUGiK publie l'INDEX des nuages LiDAR (« skorowidze ») en WFS, un typename par
+# année. Chaque feature porte l'URL de download LAZ DIRECTE (attribut
+# `gugik:url_do_pobrania`) — même paradigme que le WFS IGN. Deux subtilités
+# validées par sondage (2026-07-21) :
+#   1. l'INDEX est en EPSG:2180 (PL-1992) mais le WFS attend le BBOX en ordre
+#      (Nord, Est) — l'inverse de always_xy (Est, Nord) — d'où le swap ;
+#   2. le NUAGE lui-même est en PL-2000 PAR ZONE (EPSG:2176-2179 selon la
+#      longitude), pas en 2180 : c'est le provider qui pose la zone via set_crs.
+_GUGIK_WFS = ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/"
+              "DanePomiaroweLidarKRON86/WFS/Skorowidze")
+_GUGIK_TN = "gugik:SkorowidzDanychPomiarowychLIDAR{year}"
+
+
+def gugik_dalles(bbox_natif, filename_fn, years=tuple(range(2019, 2009, -1)),
+                 ua="lidar2map/1.0"):
+    """WFS skorowidze GUGiK → {filename_fn(x, y): url_laz}. `bbox_natif` =
+    EPSG:2180 en always_xy (E, N) ; le WFS veut (N, E) → swap. UNION des années
+    (newest-first), dédup par tuile (une feuille reprise garde le millésime le
+    plus récent = le plus dense). (x, y) = coin SW de la feuille en 2180 (entiers,
+    unique par tuile ; le nommage n'a pas besoin d'être km-aligné). None sur échec
+    réseau total, {} si aucune tuile dans la bbox."""
+    if bbox_natif is None:
+        return {}
+    x1, y1, x2, y2 = (float(v) for v in bbox_natif)      # always_xy (E, N)
+    bbox = f"{y1},{x1},{y2},{x2},EPSG:2180"              # WFS veut (N, E)
+    dalles, vus, any_ok = {}, set(), False
+    for year in years:
+        q = (f"{_GUGIK_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
+             f"&TYPENAMES={_GUGIK_TN.format(year=year)}&SRSNAME=EPSG:2180"
+             f"&BBOX={bbox}&COUNT=2000")
+        try:
+            req = urllib.request.Request(q, headers={"User-Agent": ua})
+            with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+                body = r.read().decode("utf-8", "replace")
+        except Exception as e:
+            print(f"  WARN GUGiK WFS {year}: {type(e).__name__}: {e}")
+            continue
+        any_ok = True
+        # Un membre = une feuille. On parse par membre pour associer chaque
+        # url_do_pobrania à SON lowerCorner (pas au boundedBy du document).
+        for member in re.split(r"<(?:gml|wfs):(?:featureMember|member)\b", body)[1:]:
+            u = re.search(r"<gugik:url_do_pobrania>([^<]+)</", member)
+            lc = re.search(r"<gml:lowerCorner>([^<]+)</", member)
+            if not u or not lc:
+                continue
+            p = lc.group(1).split()
+            if len(p) < 2:
+                continue
+            x, y = int(float(p[0])), int(float(p[1]))    # coin SW (N, E) brut
+            if (x, y) in vus:
+                continue
+            vus.add((x, y))
+            dalles[filename_fn(x, y)] = u.group(1).strip()
+    return dalles if any_ok else None
+
+
 # === CRAIG / LiDARAURA (Auvergne-Rhône-Alpes) ================================
 # CRAIG publie ses nuages classés sur un partage Nextcloud PUBLIC (validé
 # 2026-07-18 : PROPFIND 207 stable, download `/s/<token>/download?...` SANS auth).
@@ -224,6 +281,75 @@ def craig_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
                         camp, subdir, m.group(0) + fmt)
         except Exception as e:
             print(f"  ERROR CRAIG index {camp}: {type(e).__name__}: {e}")
+    return dalles
+
+
+# === Estonie Maa-amet (nuage LiDAR ALS) ======================================
+# Le nuage LiDAR 1 km est en LAZ tava (standard, ~4 pts/m²) — le DTM raster
+# (ee_maaamet) est une FORMULE de feuilles 5 km, mais le nuage exige l'ANNÉE de
+# scan par feuille (le nom `{NR}_{année}_tava.laz`), non dérivable des coords.
+# On lit donc l'index 1:2000 officiel (epk2T, ~1,3 Mo, caché) qui porte, par
+# feuille 1 km : NR (numéro), ALS_TAVA_1..4 (années standard), géométrie. CRS
+# EPSG:3301 unique (pas de wrinkle). Validé bout-en-bout 2026-07-21.
+_EE_INDEX_URL = "https://geoportaal.maaamet.ee/docs/pohikaart/epk2T_SHP.zip"
+_EE_LAZ_TMPL = ("https://geoportaal.maaamet.ee/index.php?lang_id=1&page_id=614"
+                "&plugin_act=otsing&andmetyyp=lidar_laz_tava&kaardiruut={nr}"
+                "&dl=1&f={nr}_{year}_tava.laz")
+
+
+def _cache_download(url, local, ua):
+    """Télécharge+cache un fichier (index). Retourne le Path local ou None."""
+    local = Path(local)
+    local.parent.mkdir(parents=True, exist_ok=True)
+    if local.exists() and local.stat().st_size > 1000:
+        return local
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ua})
+        tmp = local.with_suffix(local.suffix + ".part")
+        with urllib.request.urlopen(req, timeout=120, context=_CTX) as r, \
+                open(tmp, "wb") as f:
+            f.write(r.read())
+        tmp.replace(local)
+        return local
+    except Exception as e:
+        print(f"  ERROR index {url}: {type(e).__name__}: {e}")
+        return None
+
+
+def ee_maaamet_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
+                      ua="lidar2map/1.0"):
+    """Découverte Estonie (EPSG:3301) : index 1:2000 epk2T (caché) filtré par
+    bbox. Par feuille 1 km : NR + année tava la plus récente (ALS_TAVA_1..4) →
+    URL LAZ standard ; bounds = géométrie de la feuille (1 km, anti-couture) dans
+    `bounds_sink[(x_km,y_km)]`. Feuilles sans acquisition standard (madal/mets
+    seuls) ignorées. {filename_fn(x_km,y_km): url}. None sur échec index."""
+    import fiona
+    if bbox_natif is None:
+        return {}
+    idx = _cache_download(_EE_INDEX_URL, Path(cache_dir) / "ee_epk2T_SHP.zip", ua)
+    if idx is None:
+        return None
+    bb = tuple(float(v) for v in bbox_natif)
+    dalles = {}
+    try:
+        with fiona.open(f"zip://{idx}") as src:
+            for feat in src.filter(bbox=bb):
+                p = feat["properties"]
+                nr = p.get("NR")
+                years = [p.get(f"ALS_TAVA_{i}") for i in (1, 2, 3, 4)]
+                years = [int(y) for y in years if y]
+                if nr is None or not years:
+                    continue
+                bbox = _geom_bbox(feat["geometry"])
+                if bbox is None:
+                    continue
+                x_km, y_km = int(bbox[0] // 1000), int(bbox[1] // 1000)
+                bounds_sink[(x_km, y_km)] = bbox
+                dalles[filename_fn(x_km, y_km)] = _EE_LAZ_TMPL.format(
+                    nr=int(nr), year=max(years))
+    except Exception as e:
+        print(f"  ERROR EE index: {type(e).__name__}: {e}")
+        return None
     return dalles
 
 
@@ -361,7 +487,13 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         xs = np.asarray(las.x); ys = np.asarray(las.y)
         zs = np.asarray(las.z); cls = np.asarray(las.classification)
         try:
-            wh = np.asarray(las.withheld)          # flag WITHHELD (LAS 1.4 pf6+)
+            # .astype(bool) OBLIGATOIRE : laspy renvoie le flag WITHHELD (LAS 1.4
+            # pf6+) en uint8. Sans le cast, `bruit(bool) | wh(uint8)` promeut en
+            # uint8, puis `~bruit` fait un complément BITWISE et `xs[garde]` un
+            # indexage ENTIER (fancy) au lieu d'un masque → l'emprise collapse.
+            # Invisible sur fr/ch (0 bruit → bloc filtre sauté) ; révélé par la
+            # Pologne (classe 7 présente), cf. docs/dfm_reviews.md.
+            wh = np.asarray(las.withheld).astype(bool)
         except Exception:
             wh = None
         del las
@@ -1005,6 +1137,15 @@ class DfmProvider:
         """Le cœur indique où GARDER le nuage .laz (le cache), distinct du dossier
         des .tif produits (la production). None = co-localisé avec le .tif."""
         self.cloud_cache_dir = Path(path) if path is not None else None
+
+    def set_crs(self, epsg):
+        """Fixe le CRS EPSG du run. Défaut = celui de l'init (mono-CRS, fr/ch).
+        Sert aux sources MULTI-ZONES (ex. Pologne PL-2000, EPSG:2176-2179 selon
+        la longitude) : le provider calcule la zone du bbox à la découverte et
+        la pose ici → las_to_dfm sort le GeoTIFF dans la bonne zone, et le garde
+        CRS (_verifie_crs_las) compare le header à cette zone."""
+        if epsg is not None:
+            self.crs_epsg = int(epsg)
 
     def _cloud_path(self, chemin, m):
         """Chemin du nuage .laz. Avec cloud_cache_dir posé, il vit sous

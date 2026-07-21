@@ -36,7 +36,7 @@ const I18N = {
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "f.cachedir":"Dossier cache", "ph.cachedir":"(auto)",
     "f.proddir":"Dossier production", "ph.proddir":"(auto)",
-    "tip.opendir":"Ouvrir le dossier dans l'explorateur",
+    "tip.pickdir":"Choisir le dossier (le sélecteur s'ouvre sur le dossier courant / auto)",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
     "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
@@ -169,7 +169,7 @@ const I18N = {
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "f.cachedir":"Cache folder", "ph.cachedir":"(auto)",
     "f.proddir":"Production folder", "ph.proddir":"(auto)",
-    "tip.opendir":"Open the folder in the file explorer",
+    "tip.pickdir":"Pick the folder (dialog opens at the current / auto folder)",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
     "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
@@ -2276,8 +2276,13 @@ window.addEventListener('keydown', e => {
 });
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
-async function pickDir(fieldId) {
-  const p = await pywebview.api.pick_dir();
+// Bouton « … » d'un champ dossier : sélecteur, positionné sur le dossier courant
+// du champ ou, si « (auto) »/vide, sur la racine par défaut du tier (kind). Le
+// dossier choisi remplace la valeur du champ.
+async function pickDir(fieldId, kind) {
+  const cur = (document.getElementById(fieldId)?.value || '').trim();
+  const start = (cur && cur !== '(auto)') ? cur : '';
+  const p = await pywebview.api.pick_dir(start, kind || '');
   if (p) {
     const el = document.getElementById(fieldId);
     el.value = p;
@@ -2285,15 +2290,6 @@ async function pickDir(fieldId) {
     // l'événement comme le ferait une saisie (ex. f-dossier → refreshProjets).
     el.dispatchEvent(new Event('change'));
   }
-}
-// Bouton « … » d'un champ dossier : ouvre le dossier correspondant dans
-// l'explorateur (comme les boutons « ouvrir » de l'onglet Usage). Champ vide /
-// « (auto) » → le backend ouvre la racine par défaut du tier (kind).
-function ouvrirDossier(fieldId, kind) {
-  const v = (document.getElementById(fieldId)?.value || '').trim();
-  const path = (v && v !== '(auto)') ? v : '';
-  if (window.pywebview && pywebview.api && pywebview.api.open_dir)
-    pywebview.api.open_dir(path, kind);
 }
 async function pickFile(fieldId, multiple, exts) {
   const p = await pywebview.api.pick_file(multiple, false, exts);

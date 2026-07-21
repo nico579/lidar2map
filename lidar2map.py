@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.21.0"
+VERSION      = "1.22.0"
 VERSION_DATE = "2026-07"
 
 
@@ -16368,11 +16368,24 @@ def lancer_gui():
                 self.window = webview.windows[0]
             return self.window
 
-        def pick_dir(self):
+        def pick_dir(self, start="", kind=""):
+            """Sélecteur de dossier, positionné sur le dossier COURANT du champ
+            (start) ou, si vide (« (auto) »), sur la racine par défaut du tier
+            (output/cache/production), créée si absente pour que le dialog s'y
+            ouvre. Le dossier choisi est renvoyé au JS qui le pose dans le champ."""
             w = self._get_window()
             if not w: return ""
+            s = (start or "").strip()
+            if not s:
+                s = str({"cache": DOSSIER_CACHE,
+                         "production": DOSSIER_PRODUCTION,
+                         "output": DOSSIER_TRAVAIL / "Projets"}.get(kind, DOSSIER_TRAVAIL))
             try:
-                r = w.create_file_dialog(webview.FOLDER_DIALOG)
+                Path(s).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+            try:
+                r = w.create_file_dialog(webview.FOLDER_DIALOG, directory=s)
                 return r[0] if r else ""
             except Exception as e:
                 print(f"  pick_dir erreur : {e}")
@@ -17010,24 +17023,6 @@ def lancer_gui():
                     subprocess.Popen(["xdg-open", path])
             except Exception:
                 pass
-
-        def open_dir(self, path="", kind=""):
-            """Bouton « … » d'un champ dossier : ouvre le dossier CORRESPONDANT
-            dans l'explorateur. Champ vide (« (auto) ») → racine par défaut du
-            tier (sortie/cache/production). Créé s'il manque (production/ n'existe
-            pas avant le 1er run LAZ) pour que l'explorateur ait quelque chose à
-            ouvrir. Réutilise open_folder (la même que l'onglet Usage)."""
-            p = (path or "").strip()
-            if not p:
-                p = {"cache": DOSSIER_CACHE,
-                     "production": DOSSIER_PRODUCTION,
-                     "output": DOSSIER_TRAVAIL / "Projets"}.get(kind, DOSSIER_TRAVAIL)
-            p = Path(p)
-            try:
-                p.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-            self.open_folder(p)
 
         def get_last_error(self):
             """Retourne le message d'erreur du dernier run (ou chaîne vide).
