@@ -109,7 +109,7 @@ By access paradigm:
   fr-guadeloupe (IGN `IGNF_MNT-LIDAR-HD:dalle`; each dalle feature carries its own
   download `url`, WMS GetMap for Réunion / a direct link+public apikey for
   Guadeloupe; 0.5 m).
-- **Classified point cloud → DFM-style model** (`common.las_to_dfm`): fr-ign-dfm
+- **Classified point cloud → DFM-style model** (`common.las_to_dfm`): fr-ign-laz
   (IGN COPC LAZ via the same WFS, `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`). The
   *Digital Feature Model* concept is from Štular et al. 2021 (ground + standing
   archaeological structures in one model); the automatic selection implemented
@@ -119,7 +119,7 @@ By access paradigm:
   ruins that every national bare-earth DTM erases by design (the taller the
   wall, the cleaner it vanishes; IGN spec documents it). ~205 MB/km², targeted
   prospection only. Exposed as a **mode**, not a source: GUI checkbox "DFM mode"
-  on the parent provider / CLI `--dfm` (+ `--dfm-hmin/hmax/classes` per-site
+  on the parent provider / CLI `--laz` (+ `--laz-hmin/hmax/classes` per-site
   tuning; the twin module `<code>_dfm.py` is hidden from the provider dropdown).
   Classes are ONE user-visible set (default `1,2,3,4,9,66`: 2/9/66 = terrain
   base as in the official DTM, the rest re-injected into ground gaps within the
@@ -133,7 +133,7 @@ By access paradigm:
   km bounds (no VRT seams); conversions are serialized (RAM) and written
   atomically. The LAZ stays in the tile cache: retuning re-converts in ~20 s
   without re-downloading (core `pre_download` hook).
-  **Alternative ground base `--dfm-ground csf`** (Cloth Simulation Filter,
+  **Alternative ground base `--laz-ground csf`** (Cloth Simulation Filter,
   Zhang et al. 2016, pip `cloth-simulation-filter`): a SOFT cloth (rigidness 1,
   cloth_resolution 0.5, class_threshold 0.5, time_step 0.65, slope smoothing)
   draped over the inverted cloud absorbs low continuous structures (walls) into
@@ -142,8 +142,8 @@ By access paradigm:
   re-injection (no speckle), equivalent wall signal. No re-injection afterwards
   (hmin/hmax/classes ignored; cache suffix `csf_` plus the cloth's own
   non-default settings in fixed t/r/g order, injective). The cloth exposes the
-  standard CSF surface per site (`--dfm-csf-threshold` absorption distance,
-  `--dfm-csf-resolution` cloth cell, `--dfm-csf-rigidness` terrain type 1
+  standard CSF surface per site (`--laz-csf-threshold` absorption distance,
+  `--laz-csf-resolution` cloth cell, `--laz-csf-rigidness` terrain type 1
   steep default / 2 / 3 flat, per Zhang's own guidance; solver internals
   time_step/iterations/pre-filter stay fixed: without knobs no site could
   ever "demonstrate the need", per Nico). Canopy
@@ -157,11 +157,11 @@ By access paradigm:
   control products (DTM witness / delta / re-injected mask / confidence map —
   the standalone tool provides them), block-wise COPC reading, cross-process LAZ
   lock, min-z vs high-percentile fill.
-  **2026-07-17: the whole DFM machinery was factored into `common.DfmProvider`**
+  **2026-07-17: the whole DFM machinery was factored into `common.LazProvider`**
   (params, injective naming, variant_tag, pre_download/post_fetch hooks with a
   `zipped` flag) so a 2nd DFM provider does not duplicate it, and the swisstopo
   STAC query into `common.swisstopo_stac_dalles` (shared by the raster provider
-  and its DFM twin). **2nd DFM provider = `ch-swisstopo-dfm`** (swissSURFACE3D):
+  and its DFM twin). **2nd DFM provider = `ch-swisstopo-laz`** (swissSURFACE3D):
   same twin architecture with STAC discovery instead of WFS, EPSG:2056, SW-corner
   nominal bounds (NOT the IGN Ymax convention), download is a real ZIP
   (`.las.zip`, PK magic → post_fetch unzips the inner LAS/LAZ), default
@@ -185,11 +185,11 @@ By access paradigm:
   derivable), classes 2/3/4/6 (has buildings; NO 1/9/66). CSF conversion validated
   end-to-end (9 s, EPSG:2154 output, 100% valid). CRS is ABSENT from the header
   (parse_crs → None) so the provider must declare EPSG:2154 (exactly the CRS gate's
-  lenient path). Caveats before wiring a `fr-craig-dfm`: coverage is NAMED SITES
+  lenient path). Caveats before wiring a `fr-craig-laz`: coverage is NAMED SITES
   only (lakes/vineyards/villages, 2019 + 2021 campaigns), not wall-to-wall;
   discovery is WebDAV site-listing (new pattern, not a WFS grid); CSF is the
   natural default (class scheme ≠ IGN). **INTEGRATED 2026-07-18 as `fr-craig`
-  (raster MNT, ESRI ASCII `.asc` → GeoTIFF at post_fetch) + `fr-craig-dfm` (twin,
+  (raster MNT, ESRI ASCII `.asc` → GeoTIFF at post_fetch) + `fr-craig-laz` (twin,
   CSF default).** Discovery = `common.craig_dalles` (config-as-data campaign
   registry: the archive is ~19 heterogeneous campaigns, each its own micro-format
   — index field, folder, naming, raw/classified — so wiring all blindly is a

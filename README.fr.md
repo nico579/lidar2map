@@ -95,25 +95,25 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   > LRM-DFM / delta à draper sur
   > l'orthophoto dans QGIS. Les murs ressortent en lignes fines continues, le
   > maquis en mouchetis : l'œil fait la discrimination finale. Le même DFM est
-  > aussi intégré au pipeline : cocher la case **« mode DFM »** à côté du
-  > provider (ou CLI `--dfm`) et tous les ombrages (LRM, VAT…) tournent sur le
+  > aussi intégré au pipeline : cocher la case **« mode LAZ »** à côté du
+  > provider (ou CLI `--laz`) et tous les ombrages (LRM, VAT…) tournent sur le
   > DFM au lieu du MNT, au prix du download du nuage : garder la zone petite.
   > Tranche de hauteur et classes LAS ajustables par site (champs GUI /
-  > `--dfm-hmin`, `--dfm-hmax`, `--dfm-classes`) ; le LAZ reste en cache, donc
+  > `--laz-hmin`, `--laz-hmax`, `--laz-classes`) ; le LAZ reste en cache, donc
   > re-régler reconvertit en ~20 s sans retélécharger. Socle alternatif :
-  > `--dfm-ground csf` (select « socle » de la GUI) remplace la réinjection
+  > `--laz-ground csf` (select « socle » de la GUI) remplace la réinjection
   > par classes par un **Cloth Simulation Filter** (Zhang et al. 2016) : un
   > tissu simulé souple absorbe les structures basses continues dans le sol
   > et rejette la végétation, en ignorant totalement les classes du
   > producteur. Fond plus propre (pas de mouchetis), même signal murs sur les
   > sites de test ; ~3 min/dalle au lieu de ~20 s. Le tissu se règle par site
-  > avec la surface CSF standard (`--dfm-csf-threshold`,
-  > `--dfm-csf-resolution`, `--dfm-csf-rigidness` 1 pentu / 2 / 3 plat ;
+  > avec la surface CSF standard (`--laz-csf-threshold`,
+  > `--laz-csf-resolution`, `--laz-csf-rigidness` 1 pentu / 2 / 3 plat ;
   > mêmes champs dans la GUI).
-  > Le mode DFM n'est pas réservé à la France : il tourne aussi sur le nuage
-  > swissSURFACE3D suisse (`--provider ch-swisstopo --dfm`, socle CSF par
+  > Le mode LAZ n'est pas réservé à la France : il tourne aussi sur le nuage
+  > swissSURFACE3D suisse (`--provider ch-swisstopo --laz`, socle CSF par
   > défaut). Tout provider qui publie un nuage de points complet, dense et
-  > classé peut recevoir un jumeau DFM ; un MNT raster bare-earth ou un nuage
+  > classé peut recevoir un jumeau LAZ ; un MNT raster bare-earth ou un nuage
   > sol-seul, non.
 
   Une ruine de maison sans toiture (murs ~1,5 m, dép. 83), sous le maquis.
@@ -351,10 +351,10 @@ Le pipeline en aval (SVF, ombrages, warp EPSG:3857, MBTiles) est provider-agnost
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign` + **mode DFM** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--dfm`, avec `--dfm-hmin/--dfm-hmax/--dfm-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis UN ensemble de classes (défaut `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres sont réinjectées dans les trous du sol, tranche 0,4-2,5 m). **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Socle alternatif `--dfm-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016) : ignore totalement les classes du producteur, fond plus propre, ~3 min/dalle ; tissu réglable par site (`--dfm-csf-threshold/-resolution/-rigidness`, surface CSF standard). (Retirer la classe 2 de l'ensemble = coupe, objets de la tranche seuls sur fond transparent ; rarement utile en pratique.) Le nom de zone est auto-suffixé (`_laz_dfm` / `_laz_csf` : `laz` = la source nuage de points, `dfm`/`csf` = la méthode ; le MNT par défaut reste sans marqueur) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode LAZ** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode LAZ » dans la GUI (ou CLI `--laz`, avec `--laz-hmin/--laz-hmax/--laz-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis UN ensemble de classes (défaut `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres sont réinjectées dans les trous du sol, tranche 0,4-2,5 m). **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Socle alternatif `--laz-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016) : ignore totalement les classes du producteur, fond plus propre, ~3 min/dalle ; tissu réglable par site (`--laz-csf-threshold/-resolution/-rigidness`, surface CSF standard). (Retirer la classe 2 de l'ensemble = coupe, objets de la tranche seuls sur fond transparent ; rarement utile en pratique.) Le nom de zone est auto-suffixé (`_laz_dfm` / `_laz_csf` : `laz` = la source nuage de points, `dfm`/`csf` = la méthode ; le MNT par défaut reste sans marqueur) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
-| `ch-swisstopo` + **mode DFM** | Suisse (**mode structures debout**, expérimental) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode DFM » (ou CLI `--dfm`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--dfm-ground csf`, Cloth Simulation Filter) car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |
+| `ch-swisstopo` + **mode LAZ** | Suisse (**mode structures debout**, expérimental) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode LAZ » (ou CLI `--laz`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--laz-ground csf`, Cloth Simulation Filter) car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |
 | `se-lantmateriet` | Suède | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + COG mosaïque 10 km (lecture fenêtrée), couverture nationale ; **compte GeoTorget gratuit** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) pour le download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` · `de-rlp` | Allemagne (4 Länder : Bavière, RNW, Basse-Saxe, Rhénanie-Palatinat) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data (de-rlp : Metalink d'environ 21k tuiles GeoTIFF, post_fetch retire le CRS vertical composé → 25832) |
@@ -434,7 +434,7 @@ en **WMS seul** (rendu, pas d'altitude brute) ou en **ASC sans CRS**.
 
 ### Interface graphique
 
-Cinq types de traitement : LiDAR, raster, vectoriel, fusion vectorielle et découpage raster. L'onglet LiDAR couvre les deux surfaces, le MNT raster et le nuage de points LAZ (mode DFM « structures debout », avec un socle par classes ou par tissu CSF).
+Cinq types de traitement : LiDAR, raster, vectoriel, fusion vectorielle et découpage raster. L'onglet LiDAR couvre les deux surfaces, le MNT raster et le nuage de points LAZ (mode LAZ « structures debout », avec un socle par classes ou par tissu CSF).
 
 | LiDAR (surface MNT) | LiDAR (LAZ, socle classes sol) | LiDAR (LAZ, socle tissu CSF) |
 |---|---|---|

@@ -14,17 +14,17 @@ from pathlib import Path
 
 # Concurrence des conversions LAS→raster. Le post_fetch tourne DANS le pool de
 # téléchargement et une dalle IGN de 34 M pts pique à ~3 Go de RAM : par DÉFAUT
-# une seule à la fois (sémaphore 1 = ex-verrou, anti-OOM sur 8 Go). `--dfm-parallel
+# une seule à la fois (sémaphore 1 = ex-verrou, anti-OOM sur 8 Go). `--laz-parallel
 # N` élargit à N (VM multi-cœurs + RAM) : CSF scale mal en threads (optimum ~2),
 # donc N conversions à OMP=cœurs/N remplissent mieux les cœurs qu'une seule à
 # OMP=tous. Les téléchargements restent parallèles (le sémaphore n'entoure que la
-# conversion). Réglé par set_dfm_parallelism() avant tout run.
+# conversion). Réglé par set_laz_parallelism() avant tout run.
 _CONV_SEM = threading.Semaphore(1)
 
 
-def set_dfm_parallelism(k):
+def set_laz_parallelism(k):
     """Fixe le nombre de conversions LAS→raster simultanées (défaut 1). Appelé
-    par le cœur quand --dfm-parallel N est passé, AVANT toute conversion."""
+    par le cœur quand --laz-parallel N est passé, AVANT toute conversion."""
     global _CONV_SEM
     _CONV_SEM = threading.Semaphore(max(1, int(k)))
 
@@ -85,7 +85,7 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
     """Interroge le WFS IGN `IGNF_MNT-LIDAR-HD:dalle` (0,5 m LiDAR HD, tuiles
     1 km) pour la bbox EN EPSG:`epsg`, et retourne {filename_fn(e_km,n_km): url}.
     `typename` permet de viser un autre produit LiDAR HD du même WFS : le nuage
-    classé COPC LAZ (`IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`, cf. fr-ign-dfm).
+    classé COPC LAZ (`IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`, cf. fr-ign-laz).
 
     Chaque feature de dalle porte un attribut `url` = le download DIRECT du
     GeoTIFF (WMS GetMap pour la Réunion, lien de téléchargement + apikey public
@@ -178,6 +178,53 @@ def gugik_dalles(bbox_natif, filename_fn, years=tuple(range(2019, 2009, -1)),
     return dalles if any_ok else None
 
 
+# === Belgique / Flandre (DHMV II, nuage LiDAR OpenLidar) =====================
+# Digitaal Vlaanderen publie un WFS d'INDEX des tuiles LAZ 500 m (campagne DHMV
+# II 2013-2015, ~11-16 pts/m² classées). Chaque feature porte `tile_location`
+# (chemin RELATIF du .laz) + la géométrie de la tuile. Le download direct est
+# la BASE fixe ci-dessous + le chemin (le .laz brut, pas zippé ; validé par
+# sondage du featureInfoHandler.js de l'app OpenLidar, 2026-07-21). CRS EPSG:31370
+# UNIQUE (pas de wrinkle). Le WFS accepte le BBOX en ordre always_xy (E, N).
+_BE_WFS = "https://remotesensing.vlaanderen.be/services/openlidar/wfs"
+_BE_TN = "openlidar:LiDAR_DHMV_II_LAZtiles"
+_BE_DL = "https://remotesensing.vlaanderen.be/download/openlidar/"
+
+
+def be_flanders_dalles(bbox_natif, filename_fn, bounds_sink, ua="lidar2map/1.0"):
+    """Découverte Flandre (EPSG:31370) : WFS OpenLidar → {filename_fn(x,y): url}.
+    Par tuile 500 m : `tile_location` (chemin .laz) → URL = base + chemin ;
+    bounds = bloc 500 m nominal (coin SW arrondi, anti-couture) dans
+    `bounds_sink[(x,y)]`. Dédup par bloc (une tuile par bloc, plusieurs bandes de
+    vol sinon). None sur échec réseau, {} si aucune tuile."""
+    if bbox_natif is None:
+        return {}
+    x1, y1, x2, y2 = (float(v) for v in bbox_natif)      # always_xy (E, N)
+    q = (f"{_BE_WFS}?service=WFS&version=2.0.0&request=GetFeature"
+         f"&typeNames={_BE_TN}&srsName=EPSG:31370&outputFormat=application/json"
+         f"&count=4000&bbox={x1},{y1},{x2},{y2},EPSG:31370")
+    try:
+        req = urllib.request.Request(q, headers={"User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+            gj = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        print(f"  ERROR BE Flanders WFS: {type(e).__name__}: {e}")
+        return None
+    dalles = {}
+    for feat in gj.get("features", []):
+        p = feat.get("properties", {})
+        loc = p.get("tile_location")
+        bbox = _geom_bbox(feat.get("geometry") or {})
+        if not loc or bbox is None:
+            continue
+        bx = int(bbox[0] // 500) * 500                    # bloc 500 m (coin SW)
+        by = int(bbox[1] // 500) * 500
+        if (bx, by) in bounds_sink:
+            continue
+        bounds_sink[(bx, by)] = (float(bx), float(by), float(bx + 500), float(by + 500))
+        dalles[filename_fn(bx, by)] = _BE_DL + loc
+    return dalles
+
+
 # === CRAIG / LiDARAURA (Auvergne-Rhône-Alpes) ================================
 # CRAIG publie ses nuages classés sur un partage Nextcloud PUBLIC (validé
 # 2026-07-18 : PROPFIND 207 stable, download `/s/<token>/download?...` SANS auth).
@@ -197,7 +244,7 @@ CRAIG_CLOUD_CAMPAIGNS = [
 # MNT raster (parent) : 2019 a un index MNT propre (.asc 0,5 m) ; 2021 n'a qu'un
 # index `MN.gpkg` (schéma différent), différé. Le raster CRAIG est secondaire
 # (le MNT IGN couvre déjà la France) ; le parent existe surtout pour héberger le
-# mode LAZ (case DFM) et le remap `--dfm`.
+# mode LAZ (case LAZ) et le remap `--laz`.
 CRAIG_MNT_CAMPAIGNS = [
     ("2019_lidar", "TA_LiDAR_2019_MNT_L93.shp.zip", "zone", "03_MNT"),
 ]
@@ -212,12 +259,15 @@ def _craig_public_url(campaign, subdir, filename):
 
 
 def _geom_bbox(geom):
-    """(xmin,ymin,xmax,ymax) d'une géométrie GeoJSON (Polygon/MultiPolygon)."""
+    """(xmin,ymin,xmax,ymax) d'une géométrie GeoJSON (Polygon/MultiPolygon).
+    Gère les coordonnées 2D ET 3D (Flandre DHMV : [X, Y, Z]) : un sommet = une
+    liste d'AU MOINS 2 nombres (on prend X=o[0], Y=o[1], Z ignoré). Un anneau
+    (liste de sommets) a des éléments-listes → on récurse."""
     xs, ys = [], []
 
     def walk(o):
         if isinstance(o, (list, tuple)):
-            if len(o) == 2 and all(isinstance(v, (int, float)) for v in o):
+            if len(o) >= 2 and all(isinstance(v, (int, float)) for v in o):
                 xs.append(o[0]); ys.append(o[1])
             else:
                 for e in o:
@@ -755,7 +805,7 @@ def swisstopo_stac_dalles(collection, product_prefix, asset_ok,
                           ua="lidar2map/1.0 (swisstopo STAC)"):
     """STAC swisstopo → {(e_km, n_km): (year, nom_asset, href)} dédupliqué au
     DERNIER millésime par tuile. Partagé par ch-swisstopo (raster COG,
-    collection swissalti3d) et ch-swisstopo-dfm (nuage .las.zip, collection
+    collection swissalti3d) et ch-swisstopo-laz (nuage .las.zip, collection
     swisssurface3d) : seuls la collection, le préfixe produit et le prédicat
     d'asset changent (principe generaliser-puis-specialiser).
 
@@ -865,20 +915,20 @@ def extraire_membre(zf, member, dest_dir):
     return dest_dir / member
 
 
-# ── Machinerie commune du mode DFM (structures debout) ───────────────────────
-# Partagée par les jumeaux <code>-dfm (fr-ign-dfm, ch-swisstopo-dfm…). Un seul
+# ── Machinerie commune du mode LAZ (structures debout) ───────────────────────
+# Partagée par les jumeaux <code>-laz (fr-ign-laz, ch-swisstopo-laz…). Un seul
 # endroit pour : réglages (hmin/hmax/classes/ground + tissu CSF t/r/g), encodage
 # INJECTIF des réglages ≠ défauts dans le nom de dalle (pas de collision de cache
 # entre essais), variant_tag (projet DFM distinct du projet MNT), et les hooks
 # pre_download/post_fetch (nuage gardé en cache → reconversion sans réseau).
-# Chaque jumeau instancie DfmProvider avec SES spécificités (préfixe, CRS,
+# Chaque jumeau instancie LazProvider avec SES spécificités (préfixe, CRS,
 # découverte, convention de bornes, download zippé ou non, socle par défaut) et
 # expose des delegators module-level pour le contrat provider. Extrait de
-# fr_ign_dfm 2026-07-17 quand ch-swisstopo-dfm est arrivé (2e instance =
+# fr_ign_laz 2026-07-17 quand ch-swisstopo-laz est arrivé (2e instance =
 # généralisation consciente, cf. principe generaliser-puis-specialiser).
 
-class DfmProvider:
-    """État + logique du mode DFM d'un provider nuage-de-points.
+class LazProvider:
+    """État + logique du mode LAZ d'un provider nuage-de-points.
 
     prefix       : préfixe de nom de dalle ('laz' = source nuage), encode la
                    version de MÉTHODE (fr_laz05…). Bumper si l'algo de las_to_dfm
@@ -957,27 +1007,27 @@ class DfmProvider:
     # ── réglages du run ──────────────────────────────────────────────────────
     def set_params(self, hmin=None, hmax=None, classes=None, ground=None,
                    csf_threshold=None, csf_resolution=None, csf_rigidness=None):
-        """Réglages DFM du run (appelé par _load_provider depuis --dfm-*). Les
+        """Réglages DFM du run (appelé par _load_provider depuis --laz-*). Les
         valeurs ≠ défauts sont ENCODÉES dans le nom des dalles (cf. suffix), et
         le nuage gardé en cache permet de reconvertir sans retélécharger."""
         if ground is not None:
             if ground not in ("classes", "csf"):
-                raise ValueError(f"dfm-ground: {ground!r} (attendu 'classes' ou 'csf')")
+                raise ValueError(f"laz-ground: {ground!r} (attendu 'classes' ou 'csf')")
             self.ground = ground
         # Arrondi décimètre (pas de la GUI) → encodage ·10 du nom INJECTIF
         # (0,31 et 0,34 ne peuvent pas partager un cache).
         if csf_threshold is not None:
             self.csf_threshold = round(float(csf_threshold), 1)
             if not 0.1 <= self.csf_threshold <= 3.0:
-                raise ValueError(f"dfm-csf-threshold ({self.csf_threshold}) hors 0,1-3,0 m")
+                raise ValueError(f"laz-csf-threshold ({self.csf_threshold}) hors 0,1-3,0 m")
         if csf_resolution is not None:
             self.csf_resolution = round(float(csf_resolution), 1)
             if not 0.1 <= self.csf_resolution <= 3.0:
-                raise ValueError(f"dfm-csf-resolution ({self.csf_resolution}) hors 0,1-3,0 m")
+                raise ValueError(f"laz-csf-resolution ({self.csf_resolution}) hors 0,1-3,0 m")
         if csf_rigidness is not None:
             self.csf_rigidness = int(csf_rigidness)
             if self.csf_rigidness not in (1, 2, 3):
-                raise ValueError(f"dfm-csf-rigidness ({self.csf_rigidness}) attendu 1, 2 ou 3")
+                raise ValueError(f"laz-csf-rigidness ({self.csf_rigidness}) attendu 1, 2 ou 3")
         if hmin is not None:
             self.hmin = round(float(hmin), 1)
         if hmax is not None:
@@ -985,7 +1035,7 @@ class DfmProvider:
         if classes is not None:
             self.classes = tuple(sorted(int(c) for c in classes))
         if self.hmin >= self.hmax:
-            raise ValueError(f"dfm-hmin ({self.hmin}) doit être < dfm-hmax ({self.hmax})")
+            raise ValueError(f"laz-hmin ({self.hmin}) doit être < laz-hmax ({self.hmax})")
         if self.ground == "csf":
             # Le tissu ignore classes et tranche : prévenir plutôt qu'interdire
             # (la GUI masque ces champs, le CLI peut encore les passer).
@@ -1000,7 +1050,7 @@ class DfmProvider:
         if (csf_threshold is not None or csf_resolution is not None
                 or csf_rigidness is not None):
             print(f"  {self.method_label()}: csf-* settings are IGNORED "
-                  "(pass --dfm-ground csf)", flush=True)
+                  "(pass --laz-ground csf)", flush=True)
         # Compositions légitimes, signalées plutôt qu'interdites :
         #   - sans classe 2 → COUPE (tranche seule, fond nodata ; la classe 2
         #     reste la référence de hauteur en interne, cf. las_to_dfm) ;
@@ -1085,7 +1135,7 @@ class DfmProvider:
             try:
                 import CSF  # noqa: F401
             except ImportError:
-                raise RuntimeError("--dfm-ground csf requiert 'cloth-simulation-filter' "
+                raise RuntimeError("--laz-ground csf requiert 'cloth-simulation-filter' "
                                    "(pip install cloth-simulation-filter)")
 
     def discover_dalles(self, bbox_wgs84, bbox_natif, cache_path, workers=1):
@@ -1162,7 +1212,7 @@ class DfmProvider:
     def pre_download(self, chemin):
         """Hook cœur (avant réseau) : si le nuage de cette dalle est déjà en
         cache (gardé par post_fetch), reconvertir au lieu de retélécharger.
-        C'est ce qui rend les réglages DFM ajustables sans coût réseau."""
+        C'est ce qui rend les réglages LAZ ajustables sans coût réseau."""
         chemin = Path(chemin)
         m = self.nom_re.match(chemin.name)
         if not m:

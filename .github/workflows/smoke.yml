@@ -47,8 +47,8 @@ jobs:
         run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi laspy lazrs
 
       - name: Smoke test providers
-        # fr-ign-dfm / ch-swisstopo-dfm exclus : leur smoke téléchargerait un
+        # fr-ign-laz / ch-swisstopo-laz exclus : leur smoke téléchargerait un
         # nuage de points (205 / 125 Mo) à chaque run hebdo (ils partagent leur
         # WFS/STAC avec fr-reunion / ch-swisstopo, testés eux ; la conversion
         # DFM est testée en local via _test_interactions section 9).
-        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-dfm,ch-swisstopo-dfm,fr-craig-dfm,pl-gugik-dfm,ee-maaamet-dfm
+        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-laz,ch-swisstopo-laz,fr-craig-laz,pl-gugik-laz,ee-maaamet-laz,be-flanders-laz

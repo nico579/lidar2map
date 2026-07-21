@@ -1,4 +1,4 @@
-# providers/fr_craig_dfm.py — France (Auvergne-Rhône-Alpes), CRAIG « mode LAZ »
+# providers/fr_craig_laz.py — France (Auvergne-Rhône-Alpes), CRAIG « mode LAZ »
 #
 # CONTEXTE : le CRAIG (Centre Régional Auvergne-Rhône-Alpes de l'Information
 #   Géographique) diffuse des nuages LiDAR CLASSÉS haute densité (~60 pts/m²,
@@ -6,7 +6,7 @@
 #   relief archéologique (murs étroits). Validé bout-en-bout 2026-07-18.
 #
 # JUMEAU DFM de fr-craig (raster MNT CRAIG) : toute la machinerie DFM vit dans
-#   common.DfmProvider, partagée avec fr-ign-dfm / ch-swisstopo-dfm. Spécifiques
+#   common.LazProvider, partagée avec fr-ign-laz / ch-swisstopo-laz. Spécifiques
 #   CRAIG : découverte multi-campagnes par index shapefile (common.craig_dalles),
 #   bornes par tuile depuis la géométrie de l'index (tailles variables selon
 #   campagne : 2019 = 200 m, 2021 = 500 m), CRS ABSENT du header LAS (le provider
@@ -18,7 +18,7 @@ from providers import common
 
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "France — CRAIG/LiDARAURA mode LAZ 0,5 m (~60 pts/m², expérimental)"
-CODE       = "fr-craig-dfm"
+CODE       = "fr-craig-laz"
 COUNTRY    = "fr"
 LICENSE    = "Licence Ouverte 2.0 (Etalab) — © CRAIG"
 DOC_URL    = "https://www.craig.fr/contenu/nuages-de-points-lidar"
@@ -55,7 +55,7 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 # ── Machinerie DFM (mutualisée) ──────────────────────────────────────────────
 # Préfixe « fr_craig05 » (laz = nuage ; 05 = version de méthode ; bumper si
 # l'algo change). Socle possible ASPRS (2=sol, 9=eau) ; défaut ground=csf.
-_P = common.DfmProvider(
+_P = common.LazProvider(
     prefix="fr_craig05", crs_epsg=2154, resolution=RESOLUTION_M,
     socle_possible=(2, 9),
     defaults=(0.4, 2.5, (2, 3, 4, 6), "csf"),
@@ -68,16 +68,16 @@ _P = common.DfmProvider(
 DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
-DFM_HMIN           = _P.def_hmin
-DFM_HMAX           = _P.def_hmax
-DFM_CLASSES        = _P.def_classes
-DFM_GROUND         = _P.def_ground
-DFM_CSF_THRESHOLD  = _P.def_csf_threshold
-DFM_CSF_RESOLUTION = _P.def_csf_resolution
-DFM_CSF_RIGIDNESS  = _P.def_csf_rigidness
+LAZ_HMIN           = _P.def_hmin
+LAZ_HMAX           = _P.def_hmax
+LAZ_CLASSES        = _P.def_classes
+LAZ_GROUND         = _P.def_ground
+LAZ_CSF_THRESHOLD  = _P.def_csf_threshold
+LAZ_CSF_RESOLUTION = _P.def_csf_resolution
+LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 
 # Contrat provider : delegators vers l'instance partagée
-set_dfm_params   = _P.set_params
+set_laz_params   = _P.set_params
 dalle_filename   = _P.dalle_filename
 dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
@@ -87,7 +87,7 @@ discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-dfm_defaults     = _P.defaults_dict
+laz_defaults     = _P.defaults_dict
 # Internes exposés pour les tests
 _socle           = _P.socle
 _reinjectees     = _P.reinjectees
@@ -95,8 +95,8 @@ _laz_filename    = _P.laz_filename
 
 
 def dalle_url(x, y):
-    raise NotImplementedError("fr-craig-dfm : URL via index TA → discover_dalles()")
+    raise NotImplementedError("fr-craig-laz : URL via index TA → discover_dalles()")
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("fr-craig-dfm : index shapefile → discover_dalles()")
+    raise NotImplementedError("fr-craig-laz : index shapefile → discover_dalles()")

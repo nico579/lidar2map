@@ -21,9 +21,9 @@ multi-provider qui n'était pas assez défensif.
   lenient si CRS absent / compound / non résoluble). `common._verifie_crs_las`.
 - `[x]` Bruit/withheld (classes ASPRS 7/18 + flag) écartés avant le binning
   (robustesse min-z ; no-op sur données propres, IGN/CRAIG = 0 bruit).
-- `[x]` Deps laspy/CSF vérifiées AVANT le download (`DfmProvider.discover_dalles`).
+- `[x]` Deps laspy/CSF vérifiées AVANT le download (`LazProvider.discover_dalles`).
 - `[x]` Warn si un ZIP contient plusieurs nuages (au lieu du drop silencieux).
-- `[x]` Provider CRAIG validé bout-en-bout et intégré (`fr-craig` + `fr-craig-dfm`).
+- `[x]` Provider CRAIG validé bout-en-bout et intégré (`fr-craig` + `fr-craig-laz`).
 
 ### Rejeté
 - `[-]` "Cache non reproductible, diffs de plusieurs mètres livrés" : contresens.
@@ -74,7 +74,7 @@ multi-provider qui n'était pas assez défensif.
   classification, sans la modifier. Gain ~40,6 s/dalle 1 km, plus de fichier
   parasite, sortie inchangée. Prouvé sûr (la variance run-to-run est la même
   avec/sans, = non-détermination OpenMP).
-- `[x]` **`--dfm-parallel N`** : sémaphore réglable + `OMP_NUM_THREADS=coeurs/N`
+- `[x]` **`--laz-parallel N`** : sémaphore réglable + `OMP_NUM_THREADS=coeurs/N`
   + pool download >= N. NEUTRE sur 4 coeurs (une conversion sature déjà via
   lazrs + CSF OpenMP + numpy). Gain sur VM multi-coeurs = a MESURER là-bas.
 - `[-]` **P1** lecture LAZ par blocs (RAM /2) : reco SKIP. Le rationale
@@ -104,7 +104,7 @@ réelle). Ici : endpoints CONFIRMÉS par sondage direct des leads de la revue
 (pas repartir de zéro). Conversion réelle (download LAZ + las_to_dfm) = étape
 suivante, pas encore faite.
 
-### Pologne — `pl-gugik-dfm` (LIVRÉ + validé bout-en-bout 2026-07-21)
+### Pologne — `pl-gugik-laz` (LIVRÉ + validé bout-en-bout 2026-07-21)
 - `[x]` **Endpoint reproductible CONFIRMÉ** : WFS skorowidze
   `https://mapy.geoportal.gov.pl/wss/service/PZGIK/DanePomiaroweLidarKRON86/WFS/Skorowidze`
   (WFS 2.0.0, un typename par année `gugik:SkorowidzDanychPomiarowychLIDAR<AAAA>`,
@@ -120,11 +120,11 @@ suivante, pas encore faite.
   EPSG:2176-2179 selon la longitude), PAS en EPSG:2180 (2180 = CRS de l'INDEX WFS
   seulement). Le `pl-gugik` raster existant est EPSG:2180 (WCS DTM), inadapté ici.
   → besoin d'un CRS PAR RUN (déterminé du bbox : zones aux méridiens 15/18/21/24°E)
-  = petite extension `DfmProvider` (miroir de `set_cloud_cache_dir`). bounds
+  = petite extension `LazProvider` (miroir de `set_cloud_cache_dir`). bounds
   anti-couture : reprojeter la géométrie d'index 2180→zone, ou lire le header LAZ.
   DÉCISION À TRANCHER avant impl (design-avant-déploiement).
 
-### Estonie — `ee-maaamet-dfm` (LIVRÉ + validé bout-en-bout 2026-07-21)
+### Estonie — `ee-maaamet-laz` (LIVRÉ + validé bout-en-bout 2026-07-21)
 - `[x]` **Endpoint** : le LAZ standard (`andmetyyp=lidar_laz_tava`) exige
   l'ANNÉE de scan par feuille (`{NR}_{année}_tava.laz`), non dérivable des coords
   (aucun motif « dernier » : les autres millésimes → HTML). On lit donc l'INDEX
@@ -142,10 +142,10 @@ suivante, pas encore faite.
   0,5 m (vs 20 PL, 60 CRAIG) : à confirmer en validation terrain sur un site connu.
 
 ### Pologne : ce que la CONVERSION RÉELLE a livré + révélé (2026-07-21)
-- `[x]` `providers/pl_gugik_dfm.py` + helper `common.gugik_dalles` + extension
-  `DfmProvider.set_crs` (CRS par run). CRS_NATIF=2180 (index/Mercator), tuiles
+- `[x]` `providers/pl_gugik_laz.py` + helper `common.gugik_dalles` + extension
+  `LazProvider.set_crs` (CRS par run). CRS_NATIF=2180 (index/Mercator), tuiles
   produites en zone PL-2000 (le warp du cœur lit le CRS DU FICHIER, l.~7743).
-  bounds_fn=None. Défaut ground=csf. Parent raster `pl-gugik` → DFM-capable auto
+  bounds_fn=None. Défaut ground=csf. Parent raster `pl-gugik` → LAZ-capable auto
   (dropdown Mode LAZ + hachure carte). smoke : point Lubuskie + `--skip` CI.
 - `[x]` **Validé** : discover live = 194 tuiles (URLs LAZ réelles) ; 1 tuile
   téléchargée (59 Mo) = **28,4 pts/m²**, header CRS vide (garde lenient), classes
@@ -158,15 +158,30 @@ suivante, pas encore faite.
   déclenché par la Pologne (classe 7). Fix = `.astype(bool)`. Garde anti-régression
   = classe 7 ajoutée au nuage synthétique 9a de `_test_interactions`.
 
+### Flandre — `be-flanders-laz` (LIVRÉ + validé bout-en-bout 2026-07-21)
+- `[x]` **Endpoint** : WFS OpenLidar `openlidar:LiDAR_DHMV_II_LAZtiles` (Digitaal
+  Vlaanderen), une feature par tuile 500 m portant `tile_location` (chemin .laz)
+  → URL = base fixe `remotesensing.vlaanderen.be/download/openlidar/` + chemin
+  (le .laz brut, base extraite du featureInfoHandler.js de l'app). CRS EPSG:31370
+  UNIQUE (pas de wrinkle), header vide (garde lenient). `common.be_flanders_dalles`,
+  bounds = bloc 500 m nominal. Défaut ground=csf (classif Flandre = 1/2/9, murs
+  en « non classé » 1).
+- `[x]` **Validé** : discover live 30 tuiles ; tuile 17 Mo = **11,4 pts/m²** (2,86 M
+  pts, meilleur que l'Estonie), classée ; conversion 1000×1000 EPSG:31370 100 % valide.
+- `[x]` **BUG LATENT CORRIGÉ** `common._geom_bbox` ne gérait que le 2D (`len(o)==2`)
+  → géométrie 3D Flandre `[X,Y,Z]` renvoyait None → 0 dalle. Fix `len(o)>=2`
+  (X=o[0],Y=o[1], Z ignoré). Rétro-compatible CRAIG (2D). Encore révélé par la
+  conversion réelle.
+
 ### Suite de la chasse
-- **Pologne + Estonie LIVRÉES** (2 pays LAZ ajoutés cette session, portant les
-  jumeaux DFM de 3 à 5). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
-- Non encore sondés : Québec, USGS LPC, NRCan, Flandre, Danemark, Finlande.
-  L'extension `set_crs` (Pologne) resservira aux pays multi-zones (Allemagne UTM
-  32/33, USGS UTM…) ; le pattern « index caché + année par feuille » (Estonie)
-  resservira aux sources à millésime explicite.
+- **Pologne + Estonie + Flandre LIVRÉES** (3 pays LAZ cette session, jumeaux LAZ
+  3 → 6). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
+- Non encore sondés : Québec, USGS LPC, NRCan, Danemark, Finlande. `set_crs`
+  (Pologne) resservira aux pays multi-zones (Allemagne UTM 32/33, USGS UTM…) ;
+  « index caché + année par feuille » (Estonie) aux sources à millésime explicite ;
+  « WFS + tile_location + base fixe » (Flandre) aux index à chemin relatif.
 
 ## A mesurer sur la VM Scaleway (Apple Silicon M-series, macOS ARM)
-- `[?]` `--dfm-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE
+- `[?]` `--laz-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE
   conversion utilise, et macOS ARM peut threader autrement que mes mesures
   Windows (build CSF OpenMP différent).

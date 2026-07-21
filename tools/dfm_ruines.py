@@ -61,7 +61,7 @@ try:
 except Exception:
     _CTX = ssl.create_default_context()
 
-UA = "lidar2map-dfm/1.0"
+UA = "lidar2map-laz/1.0"
 WFS = "https://data.geopf.fr/wfs/ows"
 TN_LAZ = "IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle"
 

@@ -1,4 +1,4 @@
-# providers/ch_swisstopo_dfm.py — Suisse, DFM « structures debout » 0,5 m
+# providers/ch_swisstopo_laz.py — Suisse, DFM « structures debout » 0,5 m
 # depuis le nuage classé swissSURFACE3D (swisstopo, LAZ)
 #
 # POURQUOI : comme le MNT IGN, swissALTI3D (fr-ign / ch-swisstopo) est un modèle
@@ -6,9 +6,9 @@
 #   jumeau reconstruit un modèle façon DFM depuis le nuage de points classé
 #   swissSURFACE3D, qui contient TOUS les retours (sol + végétation + bâti).
 #
-# JUMEAU de fr-ign-dfm : toute la machinerie DFM (réglages hmin/hmax/classes +
+# JUMEAU de fr-ign-laz : toute la machinerie DFM (réglages hmin/hmax/classes +
 #   tissu CSF, nommage injectif, variant_tag, hooks pre_download/post_fetch) est
-#   dans common.DfmProvider. Ce module ne porte que les spécificités suisses :
+#   dans common.LazProvider. Ce module ne porte que les spécificités suisses :
 #     - CRS EPSG:2056 (LV95), préfixe ch_laz05 ;
 #     - découverte STAC swisstopo (collection swisssurface3d) via le helper
 #       mutualisé common.swisstopo_stac_dalles (partagé avec ch-swisstopo) ;
@@ -18,7 +18,7 @@
 #       pas garantis identiques à l'IGN (2=sol est standard ASPRS, mais 66 =
 #       points virtuels IGN n'existe pas), et le tissu CSF ignore les classes →
 #       zéro dépendance au schéma suisse. Le mode `classes` reste disponible
-#       (--dfm-ground classes) avec un jeu ASPRS raisonnable, à valider.
+#       (--laz-ground classes) avec un jeu ASPRS raisonnable, à valider.
 #
 # COÛT : une tuile swissSURFACE3D = ~125 Mo (.las.zip), 1 km², densité élevée.
 #   Conversion ~3 min/dalle en CSF (défaut). Prospection ciblée, pas de grandes
@@ -31,7 +31,7 @@ from providers import common
 
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "Suisse — mode LAZ structures debout 0,5 m (swissSURFACE3D, expérimental)"
-CODE       = "ch-swisstopo-dfm"
+CODE       = "ch-swisstopo-laz"
 COUNTRY    = "ch"
 LICENSE    = "Free (BGDI Bundesgeodaten-Verordnung) — © swisstopo"
 DOC_URL    = "https://www.swisstopo.admin.ch/en/height-model-swisssurface3d"
@@ -82,7 +82,7 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 # ── Machinerie DFM (mutualisée) ──────────────────────────────────────────────
 # Préfixe « ch_laz05 » (laz = nuage de points ; 05 = version de méthode ; bumper
 # si l'algo change). Socle possible ASPRS (2=sol, 9=eau) ; défaut ground=csf.
-_P = common.DfmProvider(
+_P = common.LazProvider(
     prefix="ch_laz05", crs_epsg=2056, resolution=RESOLUTION_M,
     socle_possible=(2, 9),
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9), "csf"),
@@ -91,20 +91,20 @@ _P = common.DfmProvider(
     zipped=True, tile_mb=125)
 
 # Plafond de téléchargements parallèles (lu par le cœur) : nuages ~125 Mo, même
-# raison que fr-ign-dfm (throttle sous forte concurrence). Cf. common.DfmProvider.
+# raison que fr-ign-laz (throttle sous forte concurrence). Cf. common.LazProvider.
 DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
-DFM_HMIN           = _P.def_hmin
-DFM_HMAX           = _P.def_hmax
-DFM_CLASSES        = _P.def_classes
-DFM_GROUND         = _P.def_ground
-DFM_CSF_THRESHOLD  = _P.def_csf_threshold
-DFM_CSF_RESOLUTION = _P.def_csf_resolution
-DFM_CSF_RIGIDNESS  = _P.def_csf_rigidness
+LAZ_HMIN           = _P.def_hmin
+LAZ_HMAX           = _P.def_hmax
+LAZ_CLASSES        = _P.def_classes
+LAZ_GROUND         = _P.def_ground
+LAZ_CSF_THRESHOLD  = _P.def_csf_threshold
+LAZ_CSF_RESOLUTION = _P.def_csf_resolution
+LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 
 # Contrat provider : delegators vers l'instance partagée
-set_dfm_params   = _P.set_params
+set_laz_params   = _P.set_params
 dalle_filename   = _P.dalle_filename
 dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
@@ -114,7 +114,7 @@ discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-dfm_defaults     = _P.defaults_dict
+laz_defaults     = _P.defaults_dict
 # Internes exposés pour les tests
 _socle           = _P.socle
 _reinjectees     = _P.reinjectees
@@ -122,8 +122,8 @@ _laz_filename    = _P.laz_filename
 
 
 def dalle_url(x_km, y_km):
-    raise NotImplementedError("ch-swisstopo-dfm : URL via STAC → discover_dalles()")
+    raise NotImplementedError("ch-swisstopo-laz : URL via STAC → discover_dalles()")
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ch-swisstopo-dfm : index STAC → discover_dalles()")
+    raise NotImplementedError("ch-swisstopo-laz : index STAC → discover_dalles()")

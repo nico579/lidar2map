@@ -37,8 +37,8 @@ UA = "lidar2map-coverage/1.0 (https://github.com/nico579/lidar2map)"
 # cette emprise — drop des territoires lointains non couverts (Caraïbes NL,
 # Svalbard/Bouvet NO).
 REGIONS = [
-    ("France métropolitaine",  ["fr-ign", "fr-ign-dfm"], "#3b82f6", None,
-     "France — IGN LiDAR HD 0,5 m (MNT + mode DFM ruines/structures)"),
+    ("France métropolitaine",  ["fr-ign", "fr-ign-laz"], "#3b82f6", None,
+     "France — IGN LiDAR HD 0,5 m (MNT + mode LAZ ruines/structures)"),
     ("La Réunion",             ["fr-reunion"],       "#3b82f6", (55.2, -21.4, 55.85, -20.85),
      "La Réunion (DROM) — MNT LiDAR HD 0,5 m (IGN)"),
     ("Guadeloupe",             ["fr-guadeloupe"],    "#3b82f6", (-61.85, 15.8, -61.0, 16.55),
@@ -224,17 +224,17 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
     def draw(ax, feats):
         for ft in feats:
             g = ft["geometry"]; col = ft["properties"]["fill"]
-            is_dfm = ft["properties"].get("dfm")
+            is_laz = ft["properties"].get("laz")
             polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
             for poly in polys:
                 ext = poly[0]
-                # Pays DFM-capable : hachures sombres par-dessus le remplissage
+                # Pays LAZ-capable : hachures sombres par-dessus le remplissage
                 # (mode structures debout depuis le nuage de points classé).
                 ax.fill([p[0] for p in ext], [p[1] for p in ext],
                         facecolor=col, alpha=0.55,
-                        edgecolor="#1e293b" if is_dfm else col,
-                        linewidth=0.8 if is_dfm else 0.5,
-                        hatch="////" if is_dfm else None)
+                        edgecolor="#1e293b" if is_laz else col,
+                        linewidth=0.8 if is_laz else 0.5,
+                        hatch="////" if is_laz else None)
 
     eu = [f for f in features if cen_lon(f["geometry"]) < 100]
     nz = [f for f in features if cen_lon(f["geometry"]) >= 100]
@@ -276,7 +276,7 @@ def render_png(features, out_png, n_pays=None, lang="fr"):
         _pays = f"{n_pays} pays" if n_pays else "multi-pays"
         titre = (f"lidar2map — couverture LiDAR sol-nu\n"
                  f"({len(features)} zones, {_pays} + USA · Canada · Japon par projet)"
-                 f"\nhachuré = mode DFM structures debout (nuage de points)")
+                 f"\nhachuré = mode LAZ structures debout (nuage de points)")
     ax.set_title(titre, fontsize=11, weight="bold")
     if nz:
         axn = ax.inset_axes([0.58, 0.0, 0.41, 0.40]); axn.set_facecolor("#eaf2fb")
@@ -296,11 +296,11 @@ def main():
     # Compte + liste de pays des READMEs (indépendant de Nominatim/la carte).
     if not update_readme_countries(prov):
         return 1
-    # Pays DFM-capables = ceux qui ont un provider jumeau `*-dfm` (nuage de
+    # Pays LAZ-capables = ceux qui ont un provider jumeau `*-laz` (nuage de
     # points classé → mode structures debout). Data-driven : un nouveau jumeau
     # hachure automatiquement son pays sur la carte, rien à maintenir à la main.
-    dfm_countries = {prov[c]["country"] for c in prov
-                     if c.endswith("-dfm") and prov[c]["country"]}
+    laz_countries = {prov[c]["country"] for c in prov
+                     if c.endswith("-laz") and prov[c]["country"]}
     # Garde-fou : tout code de REGIONS doit exister comme provider (anti-drift).
     codes = {c for r in REGIONS for c in r[1]}
     missing = sorted(c for c in codes if c not in prov)
@@ -330,7 +330,7 @@ def main():
                 "description": "Provider(s) : " + ", ".join(region_codes),
                 "fill": color, "fill-opacity": 0.35,
                 "stroke": color, "stroke-width": 1.5,
-                "dfm": any(prov.get(c, {}).get("country") in dfm_countries
+                "laz": any(prov.get(c, {}).get("country") in laz_countries
                            for c in region_codes),
             },
             "geometry": g,

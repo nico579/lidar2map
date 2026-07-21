@@ -119,7 +119,7 @@
              data-i18n-placeholder="ph.cachedir" style="flex:2;min-width:90px">
       <button class="btn btn-sm" onclick="pickDir('f-cache-dir','cache')"
               title="Choisir le dossier (positionné sur le dossier courant)" data-i18n-title="tip.pickdir">…</button>
-      <!-- Dossier production (--production-dir) : racine du .tif LAZ/DFM (produit,
+      <!-- Dossier production (--production-dir) : racine du .tif LAZ (produit,
            calculé du nuage). N'a d'effet qu'en mode LAZ, mais placé ici avec les
            autres racines (sortie/cache) : ce sont les 3 tiers de l'onglet Usage. -->
       <label style="min-width:auto;margin-left:10px" data-i18n="f.proddir">Dossier production</label>
@@ -226,14 +226,14 @@
    <!-- Source des données : décision la PLUS AMONT de l'onglet, donc en tête.
         Le type de surface (MNT raster / LAZ nuage) est choisi d'abord, car il
         conditionne la liste des providers : en LAZ on ne propose que les
-        sources DFM-capables (celles qui ont un jumeau *_dfm). Le provider fixe
+        sources LAZ-capables (celles qui ont un jumeau *_laz). Le provider fixe
         ensuite résolution, zoom natif et découpage en dalles. -->
    <div class="section">
     <div class="section-hd" data-i18n="sec.source">Source des données</div>
     <div class="section-body">
      <!-- Surface et provider sur UNE ligne : ils se lisent ensemble (le type de
           surface filtre la liste de providers). L'option LAZ est désactivée,
-          motif dans son libellé, quand le pays n'a aucune source DFM-capable. -->
+          motif dans son libellé, quand le pays n'a aucune source LAZ-capable. -->
      <div class="row">
       <label style="min-width:auto" data-i18n="f.surface">Surface</label>
       <select id="f-surface" onchange="onSurfaceChange()" style="max-width:135px">
@@ -252,32 +252,32 @@
       </span>
      </div>
      <!-- Réglages du mode LAZ. Visibles seulement en surface = LAZ ; préremplis
-          avec les défauts du jumeau Python (applyProviderDfm). -->
-     <div class="row" id="dfm-params" style="display:none"
-          data-i18n-title="tip.dfm" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
-      <label data-i18n="f.dfmg">Socle</label>
-      <select id="f-dfm-ground" onchange="updateDfmUI()" style="max-width:130px">
-       <option value="classes" data-i18n="f.dfmg.classes">classes sol</option>
-       <option value="csf" data-i18n="f.dfmg.csf">tissu CSF (~3 min/dalle)</option>
+          avec les défauts du jumeau Python (applyProviderLaz). -->
+     <div class="row" id="laz-params" style="display:none"
+          data-i18n-title="tip.laz" title="Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol. Socle « tissu CSF » : tissu simulé, sans les classes, fond plus propre, ~3 min/dalle. Zone petite conseillée.">
+      <label data-i18n="f.lazg">Socle</label>
+      <select id="f-laz-ground" onchange="updateLazUI()" style="max-width:130px">
+       <option value="classes" data-i18n="f.lazg.classes">classes sol</option>
+       <option value="csf" data-i18n="f.lazg.csf">tissu CSF (~3 min/dalle)</option>
       </select>
-      <span id="dfm-params-classes" style="display:inline-flex;align-items:center;gap:4px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmh">hauteur (m)</span>
-       <input type="number" id="f-dfm-hmin" step="0.1" min="0" max="10" style="max-width:70px">
+      <span id="laz-params-classes" style="display:inline-flex;align-items:center;gap:4px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.lazh">hauteur (m)</span>
+       <input type="number" id="f-laz-hmin" step="0.1" min="0" max="10" style="max-width:70px">
        <span style="color:var(--dim)">–</span>
-       <input type="number" id="f-dfm-hmax" step="0.1" min="0" max="10" style="max-width:70px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmc">classes LAS</span>
-       <input type="text" id="f-dfm-classes" placeholder="1,3,4" style="max-width:90px">
+       <input type="number" id="f-laz-hmax" step="0.1" min="0" max="10" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.lazc">classes LAS</span>
+       <input type="text" id="f-laz-classes" placeholder="1,3,4" style="max-width:90px">
       </span>
-      <span id="dfm-params-csf" style="display:none;align-items:center;gap:4px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmt">seuil (m)</span>
-       <input type="number" id="f-dfm-csf-threshold" step="0.1" min="0.1" max="3" style="max-width:70px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmr">maille (m)</span>
-       <input type="number" id="f-dfm-csf-resolution" step="0.1" min="0.1" max="3" style="max-width:70px">
-       <span style="color:var(--dim);margin-left:8px" data-i18n="f.dfmrg">terrain</span>
-       <select id="f-dfm-csf-rigidness" style="max-width:120px">
-        <option value="1" data-i18n="f.dfmrg.1">pentu (1)</option>
-        <option value="2" data-i18n="f.dfmrg.2">relief doux (2)</option>
-        <option value="3" data-i18n="f.dfmrg.3">plat (3)</option>
+      <span id="laz-params-csf" style="display:none;align-items:center;gap:4px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.lazt">seuil (m)</span>
+       <input type="number" id="f-laz-csf-threshold" step="0.1" min="0.1" max="3" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.lazr">maille (m)</span>
+       <input type="number" id="f-laz-csf-resolution" step="0.1" min="0.1" max="3" style="max-width:70px">
+       <span style="color:var(--dim);margin-left:8px" data-i18n="f.lazrg">terrain</span>
+       <select id="f-laz-csf-rigidness" style="max-width:120px">
+        <option value="1" data-i18n="f.lazrg.1">pentu (1)</option>
+        <option value="2" data-i18n="f.lazrg.2">relief doux (2)</option>
+        <option value="3" data-i18n="f.lazrg.3">plat (3)</option>
        </select>
       </span>
      </div>

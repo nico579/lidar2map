@@ -1,4 +1,4 @@
-# providers/fr_ign_dfm.py — France, DFM « ruines/structures debout » 0,5 m
+# providers/fr_ign_laz.py — France, DFM « ruines/structures debout » 0,5 m
 # depuis le nuage classé LiDAR HD IGN (COPC LAZ)
 #
 # POURQUOI : le MNT IGN (fr-ign) efface PAR CONSTRUCTION les murs encore debout
@@ -15,12 +15,12 @@
 #   murs = lignes continues, buissons = tavelures — l'œil discrimine (Kokalj &
 #   Hesse : jamais une seule visualisation).
 #
-# DEUX MÉTHODES DE SOCLE (--dfm-ground, cf. common.las_to_dfm) :
+# DEUX MÉTHODES DE SOCLE (--laz-ground, cf. common.las_to_dfm) :
 #   - "classes" (défaut) : réinjection par classes du producteur, ~25 s/dalle ;
 #   - "csf" : Cloth Simulation Filter mou (Zhang 2016) — ignore les classes,
 #     fond plus propre (pas de mouchetis), signal équivalent (validé terrain
 #     2026-07-16), ~3 min/dalle. hmin/hmax/classes sont alors ignorés ;
-#     réglables par site : --dfm-csf-threshold / -resolution / -rigidness
+#     réglables par site : --laz-csf-threshold / -resolution / -rigidness
 #     (surface standard CloudCompare, cf. las_to_dfm).
 #
 # COÛT (à savoir avant de lancer) : une dalle COPC = ~205 Mo (vs 16 Mo de MNT),
@@ -36,8 +36,8 @@
 #   Licence : Licence Ouverte 2.0 (Etalab) — © IGN.
 #
 # ARCHITECTURE : la machinerie DFM (réglages, nommage injectif, variant_tag,
-#   hooks pre_download/post_fetch) vit dans common.DfmProvider, partagée avec
-#   ch-swisstopo-dfm. Ce module ne porte que les spécificités IGN : CRS 2154,
+#   hooks pre_download/post_fetch) vit dans common.LazProvider, partagée avec
+#   ch-swisstopo-laz. Ce module ne porte que les spécificités IGN : CRS 2154,
 #   préfixe fr_laz05, découverte WFS, bornes nominales (convention Ymax),
 #   download LAS/LAZ brut (pas zippé).
 #
@@ -48,7 +48,7 @@ from providers import common
 
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "France — mode LAZ structures debout 0,5 m (LiDAR HD, expérimental)"
-CODE       = "fr-ign-dfm"
+CODE       = "fr-ign-laz"
 COUNTRY    = "fr"
 LICENSE    = "Licence Ouverte 2.0 (Etalab) — © IGN"
 DOC_URL    = "https://geoservices.ign.fr/lidarhd"
@@ -93,8 +93,8 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 # UN SEUL ensemble de classes (choix Nico 2026-07-16) ; défaut 1,2,3,4,9,66 :
 #   {2,9,66} = socle terrain (= classes du MNT IGN), 1/3/4 = réinjectées (murs
 #   mesurés ~70% en classe 3/4 sur le site test ; ~30% en classe 5 → essayer
-#   --dfm-classes 1,2,3,4,5,9,66 si les murs sortent incomplets).
-_P = common.DfmProvider(
+#   --laz-classes 1,2,3,4,5,9,66 si les murs sortent incomplets).
+_P = common.LazProvider(
     prefix="fr_laz05", crs_epsg=2154, resolution=RESOLUTION_M,
     socle_possible=(2, 9, 66),
     defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
@@ -108,16 +108,16 @@ _P = common.DfmProvider(
 DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
-DFM_HMIN           = _P.def_hmin
-DFM_HMAX           = _P.def_hmax
-DFM_CLASSES        = _P.def_classes
-DFM_GROUND         = _P.def_ground
-DFM_CSF_THRESHOLD  = _P.def_csf_threshold
-DFM_CSF_RESOLUTION = _P.def_csf_resolution
-DFM_CSF_RIGIDNESS  = _P.def_csf_rigidness
+LAZ_HMIN           = _P.def_hmin
+LAZ_HMAX           = _P.def_hmax
+LAZ_CLASSES        = _P.def_classes
+LAZ_GROUND         = _P.def_ground
+LAZ_CSF_THRESHOLD  = _P.def_csf_threshold
+LAZ_CSF_RESOLUTION = _P.def_csf_resolution
+LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 
 # Contrat provider : delegators vers l'instance partagée
-set_dfm_params  = _P.set_params
+set_laz_params  = _P.set_params
 dalle_filename  = _P.dalle_filename
 dalle_subdir    = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
@@ -127,7 +127,7 @@ discover_dalles = _P.discover_dalles
 pre_download    = _P.pre_download
 post_fetch      = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-dfm_defaults    = _P.defaults_dict
+laz_defaults    = _P.defaults_dict
 # Internes exposés pour les tests
 _socle          = _P.socle
 _reinjectees    = _P.reinjectees
@@ -135,8 +135,8 @@ _laz_filename   = _P.laz_filename
 
 
 def dalle_url(x_km, y_km):
-    raise NotImplementedError("fr-ign-dfm : URL via WFS dalle → discover_dalles()")
+    raise NotImplementedError("fr-ign-laz : URL via WFS dalle → discover_dalles()")
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("fr-ign-dfm : index WFS → discover_dalles()")
+    raise NotImplementedError("fr-ign-laz : index WFS → discover_dalles()")

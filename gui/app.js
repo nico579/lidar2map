@@ -51,14 +51,14 @@ const I18N = {
     "f.surf.mnt":"MNT (raster)", "f.surf.laz":"LAZ (nuage)",
     "f.surf.nolaz":"aucune source pour ce pays",
     "z.pays":"Pays",
-    "f.dfm":"Mode LAZ — structures debout (nuage classé, expérimental)",
+    "f.laz":"Mode LAZ — structures debout (nuage classé, expérimental)",
     "f.zoomcap":"z%d = résolution native (%s) — au-delà, agrandissement sans information",
     "f.dlcap":"↓ %d max en parallèle (gros nuages LAZ)",
-    "f.dfmh":"hauteur (m)", "f.dfmc":"classes LAS",
-    "f.dfmg":"socle", "f.dfmg.classes":"classes sol", "f.dfmg.csf":"tissu CSF (~3 min/dalle)",
-    "f.dfmt":"seuil (m)", "f.dfmr":"maille (m)", "f.dfmrg":"terrain",
-    "f.dfmrg.1":"pentu (1)", "f.dfmrg.2":"relief doux (2)", "f.dfmrg.3":"plat (3)",
-    "tip.dfm":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
+    "f.lazh":"hauteur (m)", "f.lazc":"classes LAS",
+    "f.lazg":"socle", "f.lazg.classes":"classes sol", "f.lazg.csf":"tissu CSF (~3 min/dalle)",
+    "f.lazt":"seuil (m)", "f.lazr":"maille (m)", "f.lazrg":"terrain",
+    "f.lazrg.1":"pentu (1)", "f.lazrg.2":"relief doux (2)", "f.lazrg.3":"plat (3)",
+    "tip.laz":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
     "z.mode":"Zone", "mode.fronly":"France uniquement",
@@ -184,14 +184,14 @@ const I18N = {
     "f.surf.mnt":"DTM (raster)", "f.surf.laz":"LAZ (cloud)",
     "f.surf.nolaz":"no source for this country",
     "z.pays":"Country",
-    "f.dfm":"LAZ mode — standing structures (classified cloud, experimental)",
+    "f.laz":"LAZ mode — standing structures (classified cloud, experimental)",
     "f.zoomcap":"z%d = native resolution (%s) — beyond that, upscaling with no extra information",
     "f.dlcap":"↓ %d max parallel (large LAZ clouds)",
-    "f.dfmh":"height (m)", "f.dfmc":"LAS classes",
-    "f.dfmg":"ground base", "f.dfmg.classes":"ground classes", "f.dfmg.csf":"CSF cloth (~3 min/tile)",
-    "f.dfmt":"threshold (m)", "f.dfmr":"cloth cell (m)", "f.dfmrg":"terrain",
-    "f.dfmrg.1":"steep (1)", "f.dfmrg.2":"gentle relief (2)", "f.dfmrg.3":"flat (3)",
-    "tip.dfm":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"ground classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
+    "f.lazh":"height (m)", "f.lazc":"LAS classes",
+    "f.lazg":"ground base", "f.lazg.classes":"ground classes", "f.lazg.csf":"CSF cloth (~3 min/tile)",
+    "f.lazt":"threshold (m)", "f.lazr":"cloth cell (m)", "f.lazrg":"terrain",
+    "f.lazrg.1":"steep (1)", "f.lazrg.2":"gentle relief (2)", "f.lazrg.3":"flat (3)",
+    "tip.laz":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"ground classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
     "sec.zone":"Geographic area",
     "z.mode":"Zone", "mode.fronly":"France only",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
@@ -293,7 +293,7 @@ function applyI18n(){
     b.classList.toggle('active', b.dataset.langBtn === _lang));
   // Le badge de source DFM est posé dynamiquement (pas de data-i18n) → le
   // rafraîchir dans la nouvelle langue.
-  if (typeof updateDfmUI === 'function') updateDfmUI();
+  if (typeof updateLazUI === 'function') updateLazUI();
 }
 function setLang(code, persist){
   _lang = (code === 'en') ? 'en' : 'fr';
@@ -702,10 +702,10 @@ function buildProviders(providers, activeCode) {
   }
   _allProviders = providers.slice();     // liste complète (restaurée en surface MNT)
   sel.innerHTML = _providerOptionsHtml(providers);
-  // Capacité "mode DFM" par provider (jumeau *_dfm côté Python). Les DÉFAUTS
+  // Capacité "mode LAZ" par provider (jumeau *_laz côté Python). Les DÉFAUTS
   // des réglages viennent du module Python (source de vérité unique).
-  _dfmByCode = {};
-  providers.forEach(p => { if (p.dfm) _dfmByCode[p.code] = p.dfm; });
+  _lazByCode = {};
+  providers.forEach(p => { if (p.laz) _lazByCode[p.code] = p.laz; });
   sel.value = activeCode;
   const opt = sel.options[sel.selectedIndex];
   const country = (opt && opt.dataset.country) || 'fr';
@@ -713,7 +713,7 @@ function buildProviders(providers, activeCode) {
   if (opt && opt.dataset.res) _resolutionM = parseFloat(opt.dataset.res);   // défaut σ selon provider
   applyProviderCountry(country);
   applyProviderApiKey(opt);
-  applyProviderDfm(sel.value);
+  applyProviderLaz(sel.value);
   applyZoomCap();
   sel.addEventListener('change', () => {
     _applyProviderSelection();
@@ -768,7 +768,7 @@ function _providerOptionsHtml(list) {
 }
 
 // Effets de bord d'un changement de provider (pays, résolution σ, clé API,
-// capacité DFM, zoom natif). Partagé par le listener 'change' et
+// capacité LAZ, zoom natif). Partagé par le listener 'change' et
 // onSurfaceChange.
 function _applyProviderSelection() {
   const sel = document.getElementById('f-provider');
@@ -778,7 +778,7 @@ function _applyProviderSelection() {
   if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);
   applyProviderCountry(c);
   applyProviderApiKey(o);
-  applyProviderDfm(sel.value);
+  applyProviderLaz(sel.value);
   applyZoomCap();
 }
 
@@ -942,14 +942,14 @@ function filtrerCouchesParPays() {
 }
 
 // Surface active. Le contrôle est un radio MNT/LAZ, mais le CONTRAT de config
-// reste le booléen `dfm` (→ --dfm côté CLI) : les configs sauvegardées et la
+// reste le booléen `dfm` (→ --laz côté CLI) : les configs sauvegardées et la
 // file d'attente sont inchangées. Source unique de vérité pour tout le fichier.
 function lazActif() {
   return document.getElementById('f-surface')?.value === 'laz';
 }
 
 // Choisir la surface AVANT le provider : "LAZ" réduit le dropdown aux sources
-// DFM-capables (celles qui ont un jumeau *_dfm), "MNT" restaure la liste
+// LAZ-capables (celles qui ont un jumeau *_laz), "MNT" restaure la liste
 // complète. Le provider courant est conservé s'il figure dans la nouvelle liste.
 // C'est l'ordre chronologique réel : type de surface → sources possibles →
 // résolution → zoom natif.
@@ -959,12 +959,12 @@ function onSurfaceChange() {
   if (!sel) return;
   const pays = _paysActif();
   const duPays = p => !pays || p.country === pays;
-  // Un pays peut avoir des providers sans qu'aucun soit DFM-capable : la
+  // Un pays peut avoir des providers sans qu'aucun soit LAZ-capable : la
   // combinaison pays × LAZ serait alors vide. On désactive l'option LAZ plutôt
   // que d'afficher une liste vide, on retombe sur MNT, et le motif s'affiche
   // DANS le libellé de l'option (plus de mention séparée sur la ligne).
   const optLaz = document.querySelector('#f-surface option[value="laz"]');
-  const dispoLaz = _allProviders.some(p => p.dfm && duPays(p));
+  const dispoLaz = _allProviders.some(p => p.laz && duPays(p));
   if (optLaz) {
     optLaz.disabled = !dispoLaz;
     optLaz.textContent = t('f.surf.laz') + (dispoLaz ? '' : ' — ' + t('f.surf.nolaz'));
@@ -973,29 +973,29 @@ function onSurfaceChange() {
   }
   const laz  = lazActif();
   const keep = sel.value;
-  const list = _allProviders.filter(p => duPays(p) && (!laz || p.dfm));
+  const list = _allProviders.filter(p => duPays(p) && (!laz || p.laz));
   sel.innerHTML = _providerOptionsHtml(list);
   sel.value = list.some(p => p.code === keep) ? keep
             : ((list[0] && list[0].code) || keep);
   _applyProviderSelection();
   ombShowParams();
-  updateDfmUI();
+  updateLazUI();
 }
 
-// Capacité DFM du provider actif : préremplit les réglages LAZ avec les défauts
+// Capacité LAZ du provider actif : préremplit les réglages LAZ avec les défauts
 // du jumeau Python (hmin/hmax/classes/CSF). En surface MNT il n'y a rien à
-// préremplir — la ligne de réglages est masquée par updateDfmUI.
-let _dfmByCode = {};
-function applyProviderDfm(code) {
-  const cap = _dfmByCode[code];
-  if (!cap) { updateDfmUI(); return; }
-  const hmin = document.getElementById('f-dfm-hmin');
-  const hmax = document.getElementById('f-dfm-hmax');
-  const cls  = document.getElementById('f-dfm-classes');
-  const grd  = document.getElementById('f-dfm-ground');
-  const cthr = document.getElementById('f-dfm-csf-threshold');
-  const cres = document.getElementById('f-dfm-csf-resolution');
-  const crig = document.getElementById('f-dfm-csf-rigidness');
+// préremplir — la ligne de réglages est masquée par updateLazUI.
+let _lazByCode = {};
+function applyProviderLaz(code) {
+  const cap = _lazByCode[code];
+  if (!cap) { updateLazUI(); return; }
+  const hmin = document.getElementById('f-laz-hmin');
+  const hmax = document.getElementById('f-laz-hmax');
+  const cls  = document.getElementById('f-laz-classes');
+  const grd  = document.getElementById('f-laz-ground');
+  const cthr = document.getElementById('f-laz-csf-threshold');
+  const cres = document.getElementById('f-laz-csf-resolution');
+  const crig = document.getElementById('f-laz-csf-rigidness');
   if (hmin) { hmin.value = cap.hmin; hmin.dataset.def = cap.hmin; }
   if (hmax) { hmax.value = cap.hmax; hmax.dataset.def = cap.hmax; }
   if (cls)  { cls.value  = cap.classes; cls.dataset.def = cap.classes; }
@@ -1003,19 +1003,19 @@ function applyProviderDfm(code) {
   if (cthr) { cthr.value = cap.csf_threshold ?? 0.5;  cthr.dataset.def = cthr.value; }
   if (cres) { cres.value = cap.csf_resolution ?? 0.5; cres.dataset.def = cres.value; }
   if (crig) { crig.value = cap.csf_rigidness ?? 1;    crig.dataset.def = crig.value; }
-  updateDfmUI();
+  updateLazUI();
 }
 
-function updateDfmUI() {
-  const params = document.getElementById('dfm-params');
+function updateLazUI() {
+  const params = document.getElementById('laz-params');
   if (params) params.style.display = lazActif() ? 'flex' : 'none';
   // Socle CSF : le tissu ignore la tranche de hauteur et les classes → on
   // ÉCHANGE les groupes de réglages (les valeurs cachées restent posées,
   // ré-affichées si on rebascule).
-  const grd = document.getElementById('f-dfm-ground');
+  const grd = document.getElementById('f-laz-ground');
   const csf = grd && grd.value === 'csf';
-  const pc = document.getElementById('dfm-params-classes');
-  const px = document.getElementById('dfm-params-csf');
+  const pc = document.getElementById('laz-params-classes');
+  const px = document.getElementById('laz-params-csf');
   if (pc) pc.style.display = csf ? 'none' : 'inline-flex';
   if (px) px.style.display = csf ? 'inline-flex' : 'none';
   const laz = lazActif();
@@ -1026,7 +1026,7 @@ function updateDfmUI() {
   // ne coûte rien. Le cap backend (_telecharger_dalles_zone) reste en défense
   // pour les runs CLI. Une note dit le pourquoi.
   const code = document.getElementById('f-provider')?.value;
-  const capN = laz && _dfmByCode[code] ? _dfmByCode[code].download_workers_max : 0;
+  const capN = laz && _lazByCode[code] ? _lazByCode[code].download_workers_max : 0;
   const wl = document.getElementById('f-workers-l');
   if (wl) {
     if (capN) {
@@ -1729,22 +1729,22 @@ function getConfig() {
     pays:     g('f-pays')?.value ?? '',
     // Dossier cache global (--cache-dir) : propriété d'installation, dans Projet.
     cache_dir: g('f-cache-dir')?.value.trim(),
-    // Dossier production (--production-dir) : racine du .tif LAZ/DFM (produit).
+    // Dossier production (--production-dir) : racine du .tif LAZ (produit).
     // Saisi dans Projet, à côté du cache ; n'a d'effet qu'en mode LAZ.
     production_dir: g('f-production-dir')?.value.trim(),
     lidar_apikey: g('f-lidar-apikey')?.value.trim(),
     // Surface LAZ (structures debout) + réglages ≠ défauts uniquement (les
-    // défauts vivent côté Python, dataset.def posé par applyProviderDfm).
-    // La clé reste `dfm` (→ --dfm) : le contrôle est passé de case à radio
+    // défauts vivent côté Python, dataset.def posé par applyProviderLaz).
+    // La clé reste `dfm` (→ --laz) : le contrôle est passé de case à radio
     // MNT/LAZ, pas le contrat de config.
-    dfm: lazActif(),
-    dfm_hmin:    (g('f-dfm-hmin')?.value    && g('f-dfm-hmin').value    !== g('f-dfm-hmin').dataset.def)    ? g('f-dfm-hmin').value    : '',
-    dfm_hmax:    (g('f-dfm-hmax')?.value    && g('f-dfm-hmax').value    !== g('f-dfm-hmax').dataset.def)    ? g('f-dfm-hmax').value    : '',
-    dfm_classes: (g('f-dfm-classes')?.value && g('f-dfm-classes').value !== g('f-dfm-classes').dataset.def) ? g('f-dfm-classes').value.trim() : '',
-    dfm_ground:  (g('f-dfm-ground')?.value  && g('f-dfm-ground').value  !== g('f-dfm-ground').dataset.def)  ? g('f-dfm-ground').value  : '',
-    dfm_csf_threshold:  (g('f-dfm-csf-threshold')?.value  && g('f-dfm-csf-threshold').value  !== g('f-dfm-csf-threshold').dataset.def)  ? g('f-dfm-csf-threshold').value  : '',
-    dfm_csf_resolution: (g('f-dfm-csf-resolution')?.value && g('f-dfm-csf-resolution').value !== g('f-dfm-csf-resolution').dataset.def) ? g('f-dfm-csf-resolution').value : '',
-    dfm_csf_rigidness:  (g('f-dfm-csf-rigidness')?.value  && g('f-dfm-csf-rigidness').value  !== g('f-dfm-csf-rigidness').dataset.def)  ? g('f-dfm-csf-rigidness').value  : '',
+    laz: lazActif(),
+    laz_hmin:    (g('f-laz-hmin')?.value    && g('f-laz-hmin').value    !== g('f-laz-hmin').dataset.def)    ? g('f-laz-hmin').value    : '',
+    laz_hmax:    (g('f-laz-hmax')?.value    && g('f-laz-hmax').value    !== g('f-laz-hmax').dataset.def)    ? g('f-laz-hmax').value    : '',
+    laz_classes: (g('f-laz-classes')?.value && g('f-laz-classes').value !== g('f-laz-classes').dataset.def) ? g('f-laz-classes').value.trim() : '',
+    laz_ground:  (g('f-laz-ground')?.value  && g('f-laz-ground').value  !== g('f-laz-ground').dataset.def)  ? g('f-laz-ground').value  : '',
+    laz_csf_threshold:  (g('f-laz-csf-threshold')?.value  && g('f-laz-csf-threshold').value  !== g('f-laz-csf-threshold').dataset.def)  ? g('f-laz-csf-threshold').value  : '',
+    laz_csf_resolution: (g('f-laz-csf-resolution')?.value && g('f-laz-csf-resolution').value !== g('f-laz-csf-resolution').dataset.def) ? g('f-laz-csf-resolution').value : '',
+    laz_csf_rigidness:  (g('f-laz-csf-rigidness')?.value  && g('f-laz-csf-rigidness').value  !== g('f-laz-csf-rigidness').dataset.def)  ? g('f-laz-csf-rigidness').value  : '',
     nom:    g('f-nom')?.value.trim(),
     dossier:g('f-dossier')?.value.trim(),
     ville:  g('f-ville')?.value.trim(),
@@ -2079,21 +2079,21 @@ function loadConfig(cfg) {
     }
   }
   // Surface : restaurée APRÈS le provider (le change ci-dessus repose les
-  // défauts via applyProviderDfm ; on ré-applique ensuite les valeurs sauvées).
+  // défauts via applyProviderLaz ; on ré-applique ensuite les valeurs sauvées).
   // Cocher un radio par programme ne tire PAS 'change' → onSurfaceChange() est
   // appelé à la main, ce qui refiltre la liste de providers en gardant le code
-  // sauvé s'il est DFM-capable.
-  if (cfg.dfm !== undefined) {
+  // sauvé s'il est LAZ-capable.
+  if (cfg.laz !== undefined) {
     const ssel = document.getElementById('f-surface');
-    if (ssel) { ssel.value = cfg.dfm ? 'laz' : 'mnt'; onSurfaceChange(); }
-    if (cfg.dfm_hmin)    s('f-dfm-hmin',    cfg.dfm_hmin);
-    if (cfg.dfm_hmax)    s('f-dfm-hmax',    cfg.dfm_hmax);
-    if (cfg.dfm_classes) s('f-dfm-classes', cfg.dfm_classes);
-    if (cfg.dfm_ground)  s('f-dfm-ground',  cfg.dfm_ground);
-    if (cfg.dfm_csf_threshold)  s('f-dfm-csf-threshold',  cfg.dfm_csf_threshold);
-    if (cfg.dfm_csf_resolution) s('f-dfm-csf-resolution', cfg.dfm_csf_resolution);
-    if (cfg.dfm_csf_rigidness)  s('f-dfm-csf-rigidness',  cfg.dfm_csf_rigidness);
-    if (typeof updateDfmUI === 'function') updateDfmUI();
+    if (ssel) { ssel.value = cfg.laz ? 'laz' : 'mnt'; onSurfaceChange(); }
+    if (cfg.laz_hmin)    s('f-laz-hmin',    cfg.laz_hmin);
+    if (cfg.laz_hmax)    s('f-laz-hmax',    cfg.laz_hmax);
+    if (cfg.laz_classes) s('f-laz-classes', cfg.laz_classes);
+    if (cfg.laz_ground)  s('f-laz-ground',  cfg.laz_ground);
+    if (cfg.laz_csf_threshold)  s('f-laz-csf-threshold',  cfg.laz_csf_threshold);
+    if (cfg.laz_csf_resolution) s('f-laz-csf-resolution', cfg.laz_csf_resolution);
+    if (cfg.laz_csf_rigidness)  s('f-laz-csf-rigidness',  cfg.laz_csf_rigidness);
+    if (typeof updateLazUI === 'function') updateLazUI();
   }
   s('f-couche',     cfg.couche);
   s('f-zoom-min-s', cfg.zoom_min_s);
@@ -2527,7 +2527,7 @@ async function lancer() {
 // différents pour la même ville comptent comme deux zones — conservateur dans
 // le bon sens (on ne garde jamais des dalles plus longtemps que prouvé utile).
 function _signatureDalles(cfg) {
-  return [cfg.provider || '', cfg.dfm ? 'laz' : 'mnt', cfg.dfm_ground || '',
+  return [cfg.provider || '', cfg.laz ? 'laz' : 'mnt', cfg.laz_ground || '',
           cfg.mode || '', cfg.ville || '', cfg.gps || '', cfg.bbox || '',
           cfg.dep || '', cfg.region || '', cfg.rayon ?? ''].join('|');
 }

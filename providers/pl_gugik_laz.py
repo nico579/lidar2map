@@ -1,4 +1,4 @@
-# providers/pl_gugik_dfm.py — Pologne, « mode LAZ » depuis le nuage LiDAR ISOK
+# providers/pl_gugik_laz.py — Pologne, « mode LAZ » depuis le nuage LiDAR ISOK
 #
 # CONTEXTE : GUGiK (geoportal.gov.pl) diffuse le nuage LiDAR national (projet
 #   ISOK) en données OUVERTES. La 2e génération (2019+, visible dans l'index)
@@ -6,7 +6,7 @@
 #   excellent pour le micro-relief archéologique (murs étroits).
 #
 # JUMEAU DFM de pl-gugik (raster DTM WCS 1 m) : toute la machinerie DFM vit dans
-#   common.DfmProvider, partagée avec fr-ign-dfm / ch-swisstopo-dfm / fr-craig-dfm.
+#   common.LazProvider, partagée avec fr-ign-laz / ch-swisstopo-laz / fr-craig-laz.
 #   Spécifiques Pologne :
 #   - Découverte : WFS « skorowidze » GUGiK (un typename par année) où chaque
 #     feuille porte son URL de download LAZ (attribut gugik:url_do_pobrania) =
@@ -15,7 +15,7 @@
 #     dessous, utilisé par le cœur pour le WFS + le cadrage Mercator), mais le
 #     NUAGE est en PL-2000 PAR ZONE (EPSG:2176-2179 selon la longitude). Le
 #     provider calcule la zone du bbox à la découverte et la pose via
-#     DfmProvider.set_crs → las_to_dfm sort dans la bonne zone, le garde CRS
+#     LazProvider.set_crs → las_to_dfm sort dans la bonne zone, le garde CRS
 #     compare le header à cette zone (le warp du cœur lit le CRS DU FICHIER, pas
 #     CRS_NATIF, donc la zone est respectée jusqu'aux tuiles Mercator).
 #     LIMITE : une bbox à cheval sur deux zones PL-2000 ne convertit que celles
@@ -34,7 +34,7 @@ from providers import common
 
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "Pologne — mode LAZ nuage LiDAR ISOK 0,5 m (~20 pts/m², expérimental)"
-CODE       = "pl-gugik-dfm"
+CODE       = "pl-gugik-laz"
 COUNTRY    = "pl"
 LICENSE    = "Dane otwarte — GUGiK (données ouvertes, gratuit)"
 DOC_URL    = "https://www.geoportal.gov.pl/pl/dane/pomiary-lidarowe-lidar/"
@@ -84,7 +84,7 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 # via set_crs. Socle ASPRS (2=sol, 9=eau) ; défaut ground=csf : le tissu ignore
 # le schéma de classes (ISOK = ASPRS standard mais on reste provider-agnostique,
 # comme CRAIG).
-_P = common.DfmProvider(
+_P = common.LazProvider(
     prefix="pl_laz05", crs_epsg=2178, resolution=RESOLUTION_M,
     socle_possible=(2, 9),
     defaults=(0.4, 2.5, (2, 3, 4, 6), "csf"),
@@ -93,20 +93,20 @@ _P = common.DfmProvider(
     zipped=False, tile_mb=80)
 
 # Plafond de téléchargements parallèles : nuages lourds (~80 Mo) sur opendata
-# public → prudent, 3 max (comme fr-ign-dfm).
+# public → prudent, 3 max (comme fr-ign-laz).
 DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
-DFM_HMIN           = _P.def_hmin
-DFM_HMAX           = _P.def_hmax
-DFM_CLASSES        = _P.def_classes
-DFM_GROUND         = _P.def_ground
-DFM_CSF_THRESHOLD  = _P.def_csf_threshold
-DFM_CSF_RESOLUTION = _P.def_csf_resolution
-DFM_CSF_RIGIDNESS  = _P.def_csf_rigidness
+LAZ_HMIN           = _P.def_hmin
+LAZ_HMAX           = _P.def_hmax
+LAZ_CLASSES        = _P.def_classes
+LAZ_GROUND         = _P.def_ground
+LAZ_CSF_THRESHOLD  = _P.def_csf_threshold
+LAZ_CSF_RESOLUTION = _P.def_csf_resolution
+LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 
 # Contrat provider : delegators vers l'instance partagée
-set_dfm_params   = _P.set_params
+set_laz_params   = _P.set_params
 dalle_filename   = _P.dalle_filename
 dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
@@ -116,7 +116,7 @@ discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-dfm_defaults     = _P.defaults_dict
+laz_defaults     = _P.defaults_dict
 # Internes exposés pour les tests
 _socle           = _P.socle
 _reinjectees     = _P.reinjectees
@@ -124,8 +124,8 @@ _laz_filename    = _P.laz_filename
 
 
 def dalle_url(x, y):
-    raise NotImplementedError("pl-gugik-dfm : URL via WFS skorowidze → discover_dalles()")
+    raise NotImplementedError("pl-gugik-laz : URL via WFS skorowidze → discover_dalles()")
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("pl-gugik-dfm : index WFS → discover_dalles()")
+    raise NotImplementedError("pl-gugik-laz : index WFS → discover_dalles()")

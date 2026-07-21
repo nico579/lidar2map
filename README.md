@@ -96,21 +96,21 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   > drape over the orthophoto in QGIS. Walls show up as thin continuous lines;
   > scrub shows as speckle — the eye does the final discrimination. The same DFM
   > is also built into the pipeline: tick the **"DFM mode"** checkbox next to the
-  > provider (or CLI `--dfm`) and all shadings (LRM, VAT…) run on the DFM instead
+  > provider (or CLI `--laz`) and all shadings (LRM, VAT…) run on the DFM instead
   > of the DTM, at the point-cloud download cost — keep the area small. Height
-  > band and LAS classes are tunable per site (GUI fields / `--dfm-hmin`,
-  > `--dfm-hmax`, `--dfm-classes`); the LAZ stays cached so retuning
+  > band and LAS classes are tunable per site (GUI fields / `--laz-hmin`,
+  > `--laz-hmax`, `--laz-classes`); the LAZ stays cached so retuning
   > re-converts in ~20 s without re-downloading. Alternative ground base:
-  > `--dfm-ground csf` (GUI "ground base" select) replaces the class-based
+  > `--laz-ground csf` (GUI "ground base" select) replaces the class-based
   > re-injection with a **Cloth Simulation Filter** (Zhang et al. 2016): a
   > soft simulated cloth absorbs low continuous structures into the ground
   > while rejecting vegetation, entirely ignoring the producer's classes.
   > Cleaner background (no speckle), same wall signal on the test sites;
   > ~3 min/tile instead of ~20 s. The cloth is tunable per site with the
-  > standard CSF surface (`--dfm-csf-threshold`, `--dfm-csf-resolution`,
-  > `--dfm-csf-rigidness` 1 steep / 2 / 3 flat; same fields in the GUI).
+  > standard CSF surface (`--laz-csf-threshold`, `--laz-csf-resolution`,
+  > `--laz-csf-rigidness` 1 steep / 2 / 3 flat; same fields in the GUI).
   > DFM mode is not France-only: it also runs on Switzerland's swissSURFACE3D
-  > point cloud (`--provider ch-swisstopo --dfm`, CSF ground base by default).
+  > point cloud (`--provider ch-swisstopo --laz`, CSF ground base by default).
   > Any provider that publishes a full, dense, classified point cloud can get a
   > DFM twin; a bare-earth DTM raster or a ground-only cloud cannot.
 
@@ -349,10 +349,10 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 |---|---|---|---|---|---|
 | `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage (mainland) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | WFS `IGNF_MNT-LIDAR-HD:dalle` index (each tile feature carries its direct download `url`), 0.5 m GeoTIFF, Licence Ouverte 2.0 (Martinique/Mayotte announced but WFS empty for now) |
-| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--dfm`, with `--dfm-hmin/--dfm-hmax/--dfm-classes` to tune per site): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from ONE class set (default `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others are re-injected into ground gaps within the 0.4-2.5 m height band). **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier — scrub comes back too; see "Known limit" box). Alternative ground base `--dfm-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016): ignores the producer's classes entirely, cleaner background, ~3 min/tile; cloth tunable per site (`--dfm-csf-threshold/-resolution/-rigidness`, standard CSF surface). (Removing class 2 from the set yields a slice, band objects only on a transparent background; rarely useful in practice.) The zone name is auto-suffixed (`_laz_dfm` / `_laz_csf`: `laz` = the point-cloud source, `dfm`/`csf` = the method; the DTM default stays unmarked), so point-cloud outputs land in their own project and never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
+| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--laz`, with `--laz-hmin/--laz-hmax/--laz-classes` to tune per site): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from ONE class set (default `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others are re-injected into ground gaps within the 0.4-2.5 m height band). **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier — scrub comes back too; see "Known limit" box). Alternative ground base `--laz-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016): ignores the producer's classes entirely, cleaner background, ~3 min/tile; cloth tunable per site (`--laz-csf-threshold/-resolution/-rigidness`, standard CSF surface). (Removing class 2 from the set yields a slice, band objects only on a transparent background; rarely useful in practice.) The zone name is auto-suffixed (`_laz_dfm` / `_laz_csf`: `laz` = the point-cloud source, `dfm`/`csf` = the method; the DTM default stays unmarked), so point-cloud outputs land in their own project and never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
-| `ch-swisstopo` + **DFM mode** | Switzerland (**standing-structures mode**, experimental) | DFM from classified swissSURFACE3D point cloud | 0.5 m | EPSG:2056 (CH1903+/LV95) | GUI checkbox "DFM mode" (or CLI `--dfm`) on the Swiss provider: downloads the **swissSURFACE3D `.las.zip`** tiles (~125 MB/km²) via the same STAC API, unzips the point cloud and rebuilds the standing-structures model. Default ground base is **CSF** (`--dfm-ground csf`, Cloth Simulation Filter) since swisstopo's class codes are not guaranteed IGN-compatible; the `classes` mode is also available. Same per-site tuning and cache-then-retune behaviour as the France DFM (~6 min/tile). Targeted prospection, field validation recommended |
+| `ch-swisstopo` + **DFM mode** | Switzerland (**standing-structures mode**, experimental) | DFM from classified swissSURFACE3D point cloud | 0.5 m | EPSG:2056 (CH1903+/LV95) | GUI checkbox "DFM mode" (or CLI `--laz`) on the Swiss provider: downloads the **swissSURFACE3D `.las.zip`** tiles (~125 MB/km²) via the same STAC API, unzips the point cloud and rebuilds the standing-structures model. Default ground base is **CSF** (`--laz-ground csf`, Cloth Simulation Filter) since swisstopo's class codes are not guaranteed IGN-compatible; the `classes` mode is also available. Same per-site tuning and cache-then-retune behaviour as the France DFM (~6 min/tile). Targeted prospection, field validation recommended |
 | `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, national coverage |
 | `se-lantmateriet` | Sweden | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + 10 km mosaic COG (windowed read), national coverage; **free GeoTorget account** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) for the download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` · `de-rlp` | Germany (4 Länder: Bavaria, NRW, Lower Saxony, Rhineland-Palatinate) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data (de-rlp: Metalink index of ~21k GeoTIFF tiles, post_fetch strips the compound vertical CRS to 25832) |

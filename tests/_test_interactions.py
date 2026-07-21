@@ -403,7 +403,7 @@ print("== 9a. las_to_dfm : mur synthétique (classes 1+4) dans un trou de sol ==
 # que larges », observé dans QGIS). On mélange 1 et 4 ici pour couvrir les
 # deux réalités. Le DTM (classe 2 seule) doit interpoler À PLAT ; le DFM doit
 # faire APPARAÎTRE le mur. NB : ~30% des points de la tranche murs sont en
-# classe 5 sur le site test → hors défaut (1,3,4), réglable via --dfm-classes.
+# classe 5 sur le site test → hors défaut (1,3,4), réglable via --laz-classes.
 try:
     import laspy as _laspy
     import numpy as _np
@@ -496,7 +496,7 @@ try:
             check("valeurs finies ou nodata (jamais 0 résiduel ni inf)",
                   bool(_np.isfinite(a).all())
                   and not bool((a == 0).any()))
-        # Socle CSF (--dfm-ground csf) : le tissu mou doit ABSORBER la butte
+        # Socle CSF (--laz-ground csf) : le tissu mou doit ABSORBER la butte
         # à RAMPE continue — le bloc vertical isolé (le mur) est le cas
         # défavorable pour un tissu, on ne l'asserte pas (sur les sites réels
         # il passe : les vraies ruines ont des éboulis en pente).
@@ -529,12 +529,12 @@ try:
         except ImportError:
             print("  [SKIP] cloth-simulation-filter absent (chemin csf non testé)")
 
-        # Chemin ZIP de DfmProvider (swisstopo .las.zip = PK) : le download est
+        # Chemin ZIP de LazProvider (swisstopo .las.zip = PK) : le download est
         # un ZIP enveloppant le nuage, écrit sous un nom .tif ; post_fetch doit
         # dézipper (anti zip-slip) → nuage caché → GeoTIFF. Testé avec un
         # provider jetable zipped=True (le mur synthétique zippé).
         import zipfile as _zf
-        _Pz = _common.DfmProvider(
+        _Pz = _common.LazProvider(
             prefix="zz_laz", crs_epsg=2154, resolution=0.5,
             socle_possible=(2, 9, 66),
             defaults=(0.4, 2.5, (1, 2, 3, 4, 9, 66), "classes"),
@@ -579,12 +579,12 @@ try:
 except ImportError as _e_dfm:
     print(f"  [SKIP] laspy/rasterio absents ({_e_dfm})")
 
-print("== 9b. fr-ign-dfm : réglages encodés dans le nom (pattern ombrages) ==")
-_dfm = provs.get("fr-ign-dfm")
+print("== 9b. fr-ign-laz : réglages encodés dans le nom (pattern ombrages) ==")
+_dfm = provs.get("fr-ign-laz")
 if _dfm is None:
-    # le scan de la section 7 saute *_dfm ? Non : il liste tout module à CODE.
+    # le scan de la section 7 saute *_laz ? Non : il liste tout module à CODE.
     import importlib as _il
-    _dfm = _il.import_module("providers.fr_ign_dfm")
+    _dfm = _il.import_module("providers.fr_ign_laz")
 # NOUVEAU nommage 2026-07-17 : préfixe fr_laz05 (laz = source nuage), token de
 # MÉTHODE toujours présent dans la dalle (dfm_ = classes, csf_ = tissu),
 # variant_tag = laz_dfm / laz_csf (le MNT défaut reste sans marqueur).
@@ -597,7 +597,7 @@ check("method_label classes = LAZ_DFM (log ≠ 'DFM' figé)",
 check("DOWNLOAD_WORKERS_MAX exposé et < 8 (cap download LAZ)",
       isinstance(getattr(_dfm, "DOWNLOAD_WORKERS_MAX", None), int)
       and _dfm.DOWNLOAD_WORKERS_MAX < 8)
-_dfm.set_dfm_params(hmin=0.3, hmax=3.0)
+_dfm.set_laz_params(hmin=0.3, hmax=3.0)
 _nom = _dfm.dalle_filename(932, 6257)
 check("réglages ≠ défauts → suffixe dfm_h03-30", _nom == "fr_laz05_dfm_h03-30_932_6257.tif",
       detail=_nom)
@@ -608,27 +608,27 @@ check("le nuage caché reste SANS token de méthode (partagé dfm/csf)",
       _dfm._laz_filename(932, 6257) == "fr_laz05_932_6257.laz")
 _err = False
 try:
-    _dfm.set_dfm_params(hmin=3.0, hmax=1.0)
+    _dfm.set_laz_params(hmin=3.0, hmax=1.0)
 except ValueError:
     _err = True
 check("hmin >= hmax → ValueError", _err)
 # Classes = UN ensemble complet (défaut 1,2,3,4,9,66) ; encodage injectif avec
 # séparateurs ; retirer la classe 2 = mode coupe (permis, plus de ValueError).
-_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 5, 9, 66))
+_dfm.set_laz_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 5, 9, 66))
 check("classes ≠ défaut → suffixe séparé injectif",
       "c1-2-3-4-5-9-66_" in _dfm.dalle_filename(932, 6257),
       detail=_dfm.dalle_filename(932, 6257))
-_dfm.set_dfm_params(classes=(1, 3, 4))     # sans classe 2 : coupe, ne lève pas
+_dfm.set_laz_params(classes=(1, 3, 4))     # sans classe 2 : coupe, ne lève pas
 check("socle sans classe 2 → mode coupe (réinjectées seules)",
       _dfm._socle() == () and _dfm._reinjectees() == (1, 3, 4))
-_dfm.set_dfm_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
+_dfm.set_laz_params(hmin=0.4, hmax=2.5, classes=(1, 2, 3, 4, 9, 66))  # défauts
 check("reset défauts → nom dfm_ nu", _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif")
 check("socle/réinjectées dérivés du même ensemble",
       _dfm._socle() == (2, 9, 66) and _dfm._reinjectees() == (1, 3, 4))
 # Socle CSF : suffixe 'csf_' + réglages du tissu ≠ défauts (ordre fixe t/r/g) ;
 # hmin/hmax/classes sont ignorés par le tissu, les encoder créerait des caches
 # distincts pour des sorties identiques.
-_dfm.set_dfm_params(ground="csf")
+_dfm.set_laz_params(ground="csf")
 _nom = _dfm.dalle_filename(932, 6257)
 check("ground=csf défauts → suffixe csf_ seul", _nom == "fr_laz05_csf_932_6257.tif",
       detail=_nom)
@@ -636,13 +636,13 @@ check("subdir_from_name reconnaît le nom csf", _dfm.subdir_from_name(_nom) == "
 check("variant_tag csf → projet laz_csf", _dfm.variant_tag() == "laz_csf")
 check("method_label csf = LAZ_CSF (le log dit CSF, pas DFM)",
       _dfm.method_label() == "LAZ_CSF")
-_dfm.set_dfm_params(hmin=0.3)          # ignoré par le tissu : nom inchangé
+_dfm.set_laz_params(hmin=0.3)          # ignoré par le tissu : nom inchangé
 check("csf : hmin/classes non encodés (ignorés par le tissu)",
       _dfm.dalle_filename(932, 6257) == "fr_laz05_csf_932_6257.tif")
 check("csf : le nuage caché reste partagé (sans token)",
       _dfm._laz_filename(932, 6257) == "fr_laz05_932_6257.laz")
 # Réglages du tissu (surface CloudCompare) encodés injectifs + reconnus.
-_dfm.set_dfm_params(csf_threshold=0.8, csf_rigidness=2)
+_dfm.set_laz_params(csf_threshold=0.8, csf_rigidness=2)
 _nom = _dfm.dalle_filename(932, 6257)
 check("csf t=0.8 g=2 → suffixe csf_t08_g2_",
       _nom == "fr_laz05_csf_t08_g2_932_6257.tif", detail=_nom)
@@ -650,7 +650,7 @@ check("subdir_from_name reconnaît le nom csf paramétré",
       _dfm.subdir_from_name(_nom) == "932")
 check("variant_tag csf paramétré → projet laz_csf_t08_g2",
       _dfm.variant_tag() == "laz_csf_t08_g2")
-_dfm.set_dfm_params(csf_threshold=0.5, csf_rigidness=1, csf_resolution=1.0)
+_dfm.set_laz_params(csf_threshold=0.5, csf_rigidness=1, csf_resolution=1.0)
 check("csf r=1.0 seul → suffixe csf_r10_",
       _dfm.dalle_filename(932, 6257) == "fr_laz05_csf_r10_932_6257.tif",
       detail=_dfm.dalle_filename(932, 6257))
@@ -658,23 +658,23 @@ for _bad in (dict(ground="tissu"), dict(csf_rigidness=4),
              dict(csf_threshold=9.0)):
     _err = False
     try:
-        _dfm.set_dfm_params(**_bad)
+        _dfm.set_laz_params(**_bad)
     except ValueError:
         _err = True
     check(f"réglage invalide {_bad} → ValueError", _err)
-_dfm.set_dfm_params(ground="classes", hmin=0.4, hmax=2.5,
+_dfm.set_laz_params(ground="classes", hmin=0.4, hmax=2.5,
                     classes=(1, 2, 3, 4, 9, 66), csf_threshold=0.5,
                     csf_resolution=0.5, csf_rigidness=1)   # défauts complets
 check("reset ground=classes → nom dfm_ nu",
       _dfm.dalle_filename(932, 6257) == "fr_laz05_dfm_932_6257.tif")
 
-print("== 9b-bis. ch-swisstopo-dfm : jumeau STAC, socle csf par défaut ==")
-_chdfm = provs.get("ch-swisstopo-dfm")
+print("== 9b-bis. ch-swisstopo-laz : jumeau STAC, socle csf par défaut ==")
+_chdfm = provs.get("ch-swisstopo-laz")
 if _chdfm is None:
     import importlib as _il
-    _chdfm = _il.import_module("providers.ch_swisstopo_dfm")
+    _chdfm = _il.import_module("providers.ch_swisstopo_laz")
 check("ch défaut ground=csf (schéma de classes suisse non garanti)",
-      _chdfm.DFM_GROUND == "csf")
+      _chdfm.LAZ_GROUND == "csf")
 check("ch défauts → nom ch_laz05_csf_",
       _chdfm.dalle_filename(2600, 1198) == "ch_laz05_csf_2600_1198.tif",
       detail=_chdfm.dalle_filename(2600, 1198))
@@ -687,25 +687,25 @@ check("ch DOWNLOAD_WORKERS_MAX exposé et < 8",
       and _chdfm.DOWNLOAD_WORKERS_MAX < 8)
 check("ch subdir_from_name reconnaît le nom ch",
       _chdfm.subdir_from_name(_chdfm.dalle_filename(2600, 1198)) == "2600")
-_chdfm.set_dfm_params(ground="classes")
+_chdfm.set_laz_params(ground="classes")
 check("ch mode classes : socle ASPRS (2,9), réinjectées (1,3,4)",
       _chdfm._socle() == (2, 9) and _chdfm._reinjectees() == (1, 3, 4))
-_chdfm.set_dfm_params(ground="csf")   # reset au défaut CH
+_chdfm.set_laz_params(ground="csf")   # reset au défaut CH
 
-print("== 9b-ter. fr-craig-dfm : 3e jumeau (CRAIG, découverte shapefile) ==")
+print("== 9b-ter. fr-craig-laz : 3e jumeau (CRAIG, découverte shapefile) ==")
 import importlib as _il2
-_cg = _il2.import_module("providers.fr_craig_dfm")
+_cg = _il2.import_module("providers.fr_craig_laz")
 _cgr = _il2.import_module("providers.fr_craig")
-check("craig défaut ground=csf (schéma classes CRAIG ≠ IGN)", _cg.DFM_GROUND == "csf")
+check("craig défaut ground=csf (schéma classes CRAIG ≠ IGN)", _cg.LAZ_GROUND == "csf")
 check("craig défauts → nom fr_craig05_csf_",
       _cg.dalle_filename(7172, 65066) == "fr_craig05_csf_7172_65066.tif",
       detail=_cg.dalle_filename(7172, 65066))
 check("craig variant_tag défaut = laz_csf", _cg.variant_tag() == "laz_csf")
 check("craig method_label défaut = LAZ_CSF", _cg.method_label() == "LAZ_CSF")
-_cg.set_dfm_params(ground="classes")
+_cg.set_laz_params(ground="classes")
 check("craig mode classes : socle (2), réinjectées bâtiment 6 incluses (3,4,6)",
       _cg._socle() == (2,) and _cg._reinjectees() == (3, 4, 6))
-_cg.set_dfm_params(ground="csf")
+_cg.set_laz_params(ground="csf")
 check("craig registre : campagnes cloud (2019+2021) + MNT (2019) config-as-data",
       len(_common.CRAIG_CLOUD_CAMPAIGNS) >= 2 and len(_common.CRAIG_MNT_CAMPAIGNS) >= 1)
 check("craig bounds_fn = lookup (None hors découverte, pas de crash)",
@@ -718,17 +718,17 @@ print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # _build_cmd les traduit en flags ; le dropdown n'expose PAS le jumeau et porte
 # les défauts du module (source de vérité unique).
 # Depuis 2026-07-20 le contrôle est une liste MNT/LAZ (f-surface) et non plus
-# une case f-dfm : plus précis, et il conditionne CHRONOLOGIQUEMENT la liste des
-# providers (LAZ ne propose que les sources DFM-capables). Le contrat de config
-# reste le booléen `dfm` → --dfm.
+# une case f-laz : plus précis, et il conditionne CHRONOLOGIQUEMENT la liste des
+# providers (LAZ ne propose que les sources LAZ-capables). Le contrat de config
+# reste le booléen `dfm` → --laz.
 check("HTML : liste de surface MNT/LAZ + 7 réglages",
       all(k in _html for k in ('id="f-surface"', 'value="mnt"', 'value="laz"',
-                               'id="f-dfm-hmin"',
-                               'id="f-dfm-hmax"', 'id="f-dfm-classes"',
-                               'id="f-dfm-ground"', 'id="f-dfm-csf-threshold"',
-                               'id="f-dfm-csf-resolution"',
-                               'id="f-dfm-csf-rigidness"'))
-      and 'id="f-dfm"' not in _html
+                               'id="f-laz-hmin"',
+                               'id="f-laz-hmax"', 'id="f-laz-classes"',
+                               'id="f-laz-ground"', 'id="f-laz-csf-threshold"',
+                               'id="f-laz-csf-resolution"',
+                               'id="f-laz-csf-rigidness"'))
+      and 'id="f-laz"' not in _html
       and 'name="surface"' not in _html)
 # Surface et provider se lisent ensemble (l'un filtre l'autre) : même ligne,
 # sans mention annexe qui la surcharge.
@@ -736,14 +736,14 @@ _i_surf = _html.find('id="f-surface"')
 check("surface et provider sur la même ligne, sans détails annexes",
       0 < _i_surf < _html.find('id="f-provider"')
       and '<div class="row"' not in _html[_i_surf:_html.find('id="f-provider"')]
-      and 'id="dfm-source"' not in _html and 'id="surface-hint"' not in _html
+      and 'id="laz-source"' not in _html and 'id="surface-hint"' not in _html
       and '"f.src.mnt"' not in _appjs and '"f.surf.hint.mnt"' not in _appjs)
 check("app.js : la surface pilote la liste des providers (lazActif/onSurfaceChange)",
       "function lazActif()" in _appjs and "function onSurfaceChange()" in _appjs
-      and "dfm: lazActif()" in _appjs
+      and "laz: lazActif()" in _appjs
       # tokens essentiels du filtre (pays × surface), pas l'expression exacte
       and "_allProviders.filter" in _appjs
-      and "duPays(p)" in _appjs and "p.dfm" in _appjs)
+      and "duPays(p)" in _appjs and "p.laz" in _appjs)
 # Le bloc Source vit dans l'onglet LiDAR, AVANT le cadre « 1 — Télécharger »,
 # et le cadre ne nomme plus un provider en particulier.
 _i_src = _html.find('data-i18n="sec.source"')
@@ -757,13 +757,13 @@ check("HTML : cadre 1 identique partout (clé `dl`, plus de `dl.lidar`)",
       and "Download IGN LiDAR HD tiles" not in _appjs
       # LiDAR + Raster + les deux sources de l'onglet Vectoriel (IGN et OSM)
       and _html.count('data-i18n="dl"') == 4)
-check("app.js : applyProviderDfm + payloads dfm_hmin/dfm_ground/dfm_csf_*",
-      "applyProviderDfm" in _appjs and "dfm_hmin" in _appjs
-      and "dfm_ground" in _appjs and "dfm_csf_threshold" in _appjs)
+check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
+      "applyProviderLaz" in _appjs and "laz_hmin" in _appjs
+      and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
-check("_build_cmd traduit --dfm/--dfm-hmin/--dfm-ground/--dfm-csf-threshold",
-      '"--dfm"' in _src and '"--dfm-hmin"' in _src and '"--dfm-ground"' in _src
-      and '"--dfm-csf-threshold"' in _src)
+check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
+      '"--laz"' in _src and '"--laz-hmin"' in _src and '"--laz-ground"' in _src
+      and '"--laz-csf-threshold"' in _src)
 # --download-overwrite = VRAI re-download de la source (choix Nico) : le hook
 # pre_download (reconstruction depuis le LAZ caché) est SAUTÉ si ecraser, et les
 # deux flags overwrite convergent (_force_dl) dans le download de zone. Sans ça,
@@ -776,40 +776,40 @@ check("overwrite → les 2 flags convergent (_force_dl) dans le download de zone
 _provs_gui = l2m._discover_providers()
 _fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
 check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
-      _fr is not None and _fr.get("dfm", {}).get("hmin") == _dfm.DFM_HMIN
-      and _fr.get("dfm", {}).get("hmax") == _dfm.DFM_HMAX
-      and _fr.get("dfm", {}).get("ground") == "classes"
-      and _fr.get("dfm", {}).get("csf_threshold") == _dfm.DFM_CSF_THRESHOLD
-      and _fr.get("dfm", {}).get("csf_rigidness") == _dfm.DFM_CSF_RIGIDNESS)
-check("dropdown : le jumeau fr-ign-dfm n'y est PAS (case, pas entrée)",
-      all(p["code"] != "fr-ign-dfm" for p in _provs_gui))
+      _fr is not None and _fr.get("laz", {}).get("hmin") == _dfm.LAZ_HMIN
+      and _fr.get("laz", {}).get("hmax") == _dfm.LAZ_HMAX
+      and _fr.get("laz", {}).get("ground") == "classes"
+      and _fr.get("laz", {}).get("csf_threshold") == _dfm.LAZ_CSF_THRESHOLD
+      and _fr.get("laz", {}).get("csf_rigidness") == _dfm.LAZ_CSF_RIGIDNESS)
+check("dropdown : le jumeau fr-ign-laz n'y est PAS (case, pas entrée)",
+      all(p["code"] != "fr-ign-laz" for p in _provs_gui))
 # Le cap de download LAZ remonte du provider (source unique) jusqu'au front :
-# entrée registre -> note HTML #dfm-workers-note -> lecture app.js (aucun '3'
+# entrée registre -> note HTML #laz-workers-note -> lecture app.js (aucun '3'
 # codé en dur côté GUI).
 check("dropdown : fr-ign porte le cap de download LAZ (source unique)",
-      _fr.get("dfm", {}).get("download_workers_max") == _dfm.DOWNLOAD_WORKERS_MAX
+      _fr.get("laz", {}).get("download_workers_max") == _dfm.DOWNLOAD_WORKERS_MAX
       and _dfm.DOWNLOAD_WORKERS_MAX > 0)
 # Le cap borne le champ Workers ; le motif est dans l'infobulle du champ, plus
 # dans une mention qui encombrait la ligne (même traitement que le cap de zoom).
 check("GUI reflète le cap : borne le champ Workers (pas de 3 en dur)",
-      'id="dfm-workers-note"' not in _html
+      'id="laz-workers-note"' not in _html
       and "download_workers_max" in _appjs and '"f.dlcap"' in _appjs
       and "wl.title" in _appjs
       and "preLaz" in _appjs and "f-workers-l" in _appjs)
 # 2e provider DFM : ch-swisstopo porte la capacité (jumeau détecté), défaut csf,
-# et son jumeau ch-swisstopo-dfm est aussi masqué du dropdown.
+# et son jumeau ch-swisstopo-laz est aussi masqué du dropdown.
 _ch = next((p for p in _provs_gui if p["code"] == "ch-swisstopo"), None)
 check("dropdown : ch-swisstopo porte la capacité dfm (défaut ground=csf)",
-      _ch is not None and _ch.get("dfm", {}).get("ground") == "csf")
-check("dropdown : le jumeau ch-swisstopo-dfm n'y est PAS",
-      all(p["code"] != "ch-swisstopo-dfm" for p in _provs_gui))
+      _ch is not None and _ch.get("laz", {}).get("ground") == "csf")
+check("dropdown : le jumeau ch-swisstopo-laz n'y est PAS",
+      all(p["code"] != "ch-swisstopo-laz" for p in _provs_gui))
 # 3e provider DFM : fr-craig (parent raster MNT) porte la capacité (jumeau
-# fr-craig-dfm détecté, défaut csf), et le jumeau est masqué du dropdown.
+# fr-craig-laz détecté, défaut csf), et le jumeau est masqué du dropdown.
 _cgp = next((p for p in _provs_gui if p["code"] == "fr-craig"), None)
 check("dropdown : fr-craig porte la capacité dfm (défaut ground=csf)",
-      _cgp is not None and _cgp.get("dfm", {}).get("ground") == "csf")
-check("dropdown : le jumeau fr-craig-dfm n'y est PAS",
-      all(p["code"] != "fr-craig-dfm" for p in _provs_gui))
+      _cgp is not None and _cgp.get("laz", {}).get("ground") == "csf")
+check("dropdown : le jumeau fr-craig-laz n'y est PAS",
+      all(p["code"] != "fr-craig-laz" for p in _provs_gui))
 
 print("== 9d. Découplage raster / tri pays / zoom natif / cleanup file ==")
 # Le pays de CHAQUE provider est résolu depuis la table unique
@@ -1249,7 +1249,7 @@ _common = (_ROOT / "providers" / "common.py").read_text(encoding="utf-8")
 # des .tif vit dans _dossier_dalles_actif.
 check("dalles : MNT→cache, LAZ/DFM→production (routage par nature)",
       "def _dossier_dalles_actif" in _src
-      and 'PROVIDER.CODE.endswith("-dfm")' in _src
+      and 'PROVIDER.CODE.endswith("-laz")' in _src
       and "DOSSIER_PRODUCTION / LIDAR_SUBDIR" in _src
       and "DOSSIER_CACHE / LIDAR_SUBDIR" in _src)
 # Le nuage .laz reste au cache même quand le .tif descend en production.
@@ -1259,7 +1259,7 @@ check("nuage .laz : reste au cache indépendamment du .tif produit",
       and "self.cloud_cache_dir" in _common
       and all("set_cloud_cache_dir = _P.set_cloud_cache_dir"
               in (_ROOT / "providers" / f"{p}.py").read_text(encoding="utf-8")
-              for p in ("fr_ign_dfm", "ch_swisstopo_dfm", "fr_craig_dfm")))
+              for p in ("fr_ign_laz", "ch_swisstopo_laz", "fr_craig_laz")))
 check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles forcé",
       "def _configurer_cloud_cache" in _src
       and "_configurer_cloud_cache(args)" in _src

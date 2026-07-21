@@ -1,4 +1,4 @@
-# providers/ee_maaamet_dfm.py — Estonie, « mode LAZ » depuis le nuage LiDAR ALS
+# providers/ee_maaamet_laz.py — Estonie, « mode LAZ » depuis le nuage LiDAR ALS
 #
 # CONTEXTE : Maa-amet (Estonian Land and Spatial Development Board) diffuse le
 #   nuage LiDAR national (aerolaserskaneerimine) en données OUVERTES, LAZ 1.4
@@ -7,7 +7,7 @@
 #   nationale complète et rejouée (plusieurs millésimes).
 #
 # JUMEAU DFM de ee-maaamet (raster DTM 1 m, FORMULE de feuilles 5 km) : la
-#   machinerie DFM vit dans common.DfmProvider (partagée fr/ch/pl). Spécifique
+#   machinerie DFM vit dans common.LazProvider (partagée fr/ch/pl). Spécifique
 #   Estonie : le nuage exige l'ANNÉE de scan par feuille (nom
 #   `{NR}_{année}_tava.laz`), non dérivable des coords → on lit l'INDEX 1:2000
 #   officiel (epk2T, ~1,3 Mo, caché) qui porte par feuille 1 km le numéro NR, les
@@ -29,7 +29,7 @@ from providers import common
 
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "Estonie — mode LAZ nuage LiDAR ALS 0,5 m (~4 pts/m², expérimental)"
-CODE       = "ee-maaamet-dfm"
+CODE       = "ee-maaamet-laz"
 COUNTRY    = "ee"
 LICENSE    = "Maa-amet open data — utilisation libre"
 DOC_URL    = "https://geoportaal.maaamet.ee/est/Ruumiandmed/Korgusandmed-p114.html"
@@ -66,7 +66,7 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
 # Préfixe « ee_laz05 » (laz = nuage ; 05 = version de méthode). Socle ASPRS
 # (2=sol, 9=eau) ; classes réinjectables incluent 5 (haute végé, dominante en
 # Estonie) — filtrées par la tranche hmin-hmax de toute façon. Défaut ground=csf.
-_P = common.DfmProvider(
+_P = common.LazProvider(
     prefix="ee_laz05", crs_epsg=3301, resolution=RESOLUTION_M,
     socle_possible=(2, 9),
     defaults=(0.4, 2.5, (2, 3, 4, 5, 6), "csf"),
@@ -79,16 +79,16 @@ _P = common.DfmProvider(
 DOWNLOAD_WORKERS_MAX = _P.download_workers_max
 
 # Défauts exposés (lus par le cœur pour préremplir la GUI + par les tests)
-DFM_HMIN           = _P.def_hmin
-DFM_HMAX           = _P.def_hmax
-DFM_CLASSES        = _P.def_classes
-DFM_GROUND         = _P.def_ground
-DFM_CSF_THRESHOLD  = _P.def_csf_threshold
-DFM_CSF_RESOLUTION = _P.def_csf_resolution
-DFM_CSF_RIGIDNESS  = _P.def_csf_rigidness
+LAZ_HMIN           = _P.def_hmin
+LAZ_HMAX           = _P.def_hmax
+LAZ_CLASSES        = _P.def_classes
+LAZ_GROUND         = _P.def_ground
+LAZ_CSF_THRESHOLD  = _P.def_csf_threshold
+LAZ_CSF_RESOLUTION = _P.def_csf_resolution
+LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 
 # Contrat provider : delegators vers l'instance partagée
-set_dfm_params   = _P.set_params
+set_laz_params   = _P.set_params
 dalle_filename   = _P.dalle_filename
 dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
@@ -98,7 +98,7 @@ discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-dfm_defaults     = _P.defaults_dict
+laz_defaults     = _P.defaults_dict
 # Internes exposés pour les tests
 _socle           = _P.socle
 _reinjectees     = _P.reinjectees
@@ -106,8 +106,8 @@ _laz_filename    = _P.laz_filename
 
 
 def dalle_url(x_km, y_km):
-    raise NotImplementedError("ee-maaamet-dfm : URL via index epk2T → discover_dalles()")
+    raise NotImplementedError("ee-maaamet-laz : URL via index epk2T → discover_dalles()")
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ee-maaamet-dfm : index epk2T → discover_dalles()")
+    raise NotImplementedError("ee-maaamet-laz : index epk2T → discover_dalles()")

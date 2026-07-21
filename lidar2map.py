@@ -33,7 +33,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   ① LiDAR       Fond principal d'analyse archéologique. On commence par
                  ici : téléchargement des dalles (surface MNT, ou nuage de
-                 points LAZ en mode DFM « structures debout »), calcul des
+                 points LAZ en mode LAZ « structures debout »), calcul des
                  ombrages (multi-directionnel, SVF, LRM, RRIM…), export en
                  MBTiles. Multi-provider / multi-pays (défaut fr-ign HD,
                  voir --provider). On expérimente dans Locus, on identifie
@@ -80,8 +80,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --provider CODE   Source LiDAR/raster (défaut fr-ign). 27 pays câblés :
                         fr-ign, ch-swisstopo, nl-ahn, us-3dep, no-kartverket…
                         Liste vivante = un fichier par source dans providers/.
-    --dfm             Mode LAZ « structures debout » (voir MODE --ignlidar).
-                        Bascule vers le jumeau <provider>-dfm.
+    --laz             Mode LAZ « structures debout » (voir MODE --ignlidar).
+                        Bascule vers le jumeau <provider>-laz.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ZONE GÉOGRAPHIQUE (commune à tous les modes)
@@ -145,31 +145,31 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                 (active par défaut : ~2× moins de disque)
     --dossier-dalles CHEMIN     Cache dalles séparé (défaut: ign_lidar/dalles/)
     --workers N                 Connexions parallèles (défaut: 8)
-    --dfm                       Mode DFM « structures debout » (pré-flag global,
+    --laz                       Mode LAZ « structures debout » (pré-flag global,
                                   comme --provider) : bascule vers le jumeau
-                                  <provider>-dfm (France : nuage LAZ ~205 Mo/km²,
-                                  révèle les murs que le MNT efface — zone petite).
-                                  Le nom de projet est suffixé (_dfm[...]) : les
-                                  sorties MNT et DFM ne se mélangent jamais.
-    --dfm-hmin M / --dfm-hmax M Tranche de hauteur réintroduite (déf. 0,4–2,5 m)
-    --dfm-classes 1,2,3,4,9,66  Classes LAS participantes (déf. 1,2,3,4,9,66).
+                                  <provider>-laz (France : nuage LAZ ~205 Mo/km²,
+                                  révèle les murs que le MNT efface, zone petite).
+                                  Le nom de projet est suffixé (laz_dfm / laz_csf
+                                  selon le socle) : MNT et LAZ ne se mélangent jamais.
+    --laz-hmin M / --laz-hmax M Tranche de hauteur réintroduite (déf. 0,4–2,5 m)
+    --laz-classes 1,2,3,4,9,66  Classes LAS participantes (déf. 1,2,3,4,9,66).
                                   2/9/66 = socle terrain (2 obligatoire) ; les
                                   autres sont réinjectées dans les trous du sol
                                   (tranche hmin-hmax). Essayer 1,2,3,4,5,9,66
                                   si les murs sortent incomplets.
-    --dfm-ground classes|csf    Socle terrain du DFM (déf. classes) :
+    --laz-ground classes|csf    Socle terrain (mode LAZ) (déf. classes) :
                                   csf = Cloth Simulation Filter (Zhang 2016),
                                   ignore les classes du producteur, fond plus
                                   propre, ~3 min/dalle (hmin/hmax/classes
                                   alors ignorés — le tissu fait le tri).
-    --dfm-csf-threshold M       Seuil d'absorption point-tissu (déf. 0,5 m) :
+    --laz-csf-threshold M       Seuil d'absorption point-tissu (déf. 0,5 m) :
                                   monter = murs plus dégradés absorbés (et
                                   plus de maquis), baisser = plus strict.
-    --dfm-csf-resolution M      Maille du tissu (déf. 0,5 m).
-    --dfm-csf-rigidness 1|2|3   Type de terrain (Zhang) : 1 pentu (déf.),
+    --laz-csf-resolution M      Maille du tissu (déf. 0,5 m).
+    --laz-csf-rigidness 1|2|3   Type de terrain (Zhang) : 1 pentu (déf.),
                                   2 relief doux, 3 plat (proche bare-earth,
                                   efface les murs — pas pour les ruines).
-    --dfm-parallel N            Conversions CSF/DFM simultanées (déf. 1).
+    --laz-parallel N            Conversions CSF/DFM simultanées (déf. 1).
                                   Chaque conversion pique ~3 Go de RAM, donc
                                   N>1 exige la RAM (N×3 Go) et les cœurs. Pour
                                   une VM multi-cœurs ; laisser 1 sur 8 Go.
@@ -237,7 +237,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                      .tif MNT (download) + nuage .laz du mode LAZ
                                      (<cache> = cache/ sous le dossier de travail
                                       par défaut, déplaçable par --cache-dir)
-    <production>/lidar/<pays>/       mode LAZ/DFM : le .tif est un PRODUIT (calculé
+    <production>/lidar/<pays>/       mode LAZ : le .tif est un PRODUIT (calculé
                                      du nuage avec tes réglages) → il descend ici,
                                      hors du cache (déplaçable par --production-dir).
                                      Le nuage .laz, lui, reste au cache ci-dessus.
@@ -382,7 +382,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                           poser cache et sorties sur des disques différents.
   --dossier-production CHEMIN  Racine des artefacts CALCULÉS mais partagés entre
                           projets (alias --production-dir). Aujourd'hui = le .tif
-                          du mode LAZ/DFM, produit du nuage avec tes réglages (le
+                          du mode LAZ, produit du nuage avec tes réglages (le
                           .tif MNT, lui, vient du serveur → reste au cache ; le
                           nuage .laz aussi). Défaut : production/ sous le dossier
                           de travail. LiDAR uniquement.
@@ -1670,7 +1670,7 @@ if _INSTALL_ALL_DEPS:
            if __import__("platform").system() in ("Darwin", "Linux")]),
         # Optionnelles / lazy (non installées par le bootstrap standard)
         # lazrs = backend décompression LAZ pour laspy (providers LiDAR cz/se/es)
-        # cloth-simulation-filter = socle CSF du mode DFM (--dfm-ground csf)
+        # cloth-simulation-filter = socle CSF du mode LAZ (--laz-ground csf)
         "osmium", "numba", "laspy", "lazrs", "py7zr", "mapbox-vector-tile",
         "cloth-simulation-filter",
     ]
@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.22.0"
+VERSION      = "1.23.0"
 VERSION_DATE = "2026-07"
 
 
@@ -2466,7 +2466,7 @@ def _appliquer_cache_dir(args):
 # 3e tier : la PRODUCTION. Règle Nico : cache = ce qu'on TÉLÉCHARGE des serveurs
 # (.laz, tuiles, PBF) ; production = ce qu'on PRODUIT à partir des réglages mais
 # qui reste PARTAGÉ entre projets (indexé par provider+méthode+réglages+dalle,
-# pas par zone). Aujourd'hui seul le .tif du mode LAZ/DFM est concerné : calculé
+# pas par zone). Aujourd'hui seul le .tif du mode LAZ est concerné : calculé
 # du nuage avec tes réglages, il n'a rien à faire au cache (cf. le .tif MNT qui,
 # lui, vient tel quel du WMS et RESTE au cache). Défaut : frère de cache/.
 DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"
@@ -2510,10 +2510,10 @@ def _discover_providers():
     for f in sorted(providers_dir.glob("*.py")):
         if f.stem.startswith("_"):
             continue
-        # Les modules *_dfm sont des MODES (jumeaux DFM d'une source), pas des
+        # Les modules *_laz sont des MODES (jumeaux LAZ d'une source), pas des
         # sources : ils ne vont pas dans le dropdown. La GUI les atteint via la
-        # case « mode DFM » du provider parent (champ "dfm" ci-dessous).
-        if f.stem.endswith("_dfm"):
+        # case « mode LAZ » du provider parent (champ "laz" ci-dessous).
+        if f.stem.endswith("_laz"):
             continue
         try:
             mod = _importlib.import_module(f"providers.{f.stem}")
@@ -2538,21 +2538,21 @@ def _discover_providers():
                 "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
                 "resolution_m":   float(getattr(mod, "RESOLUTION_M", 0.5)),
             }
-            # Capacité DFM : jumeau providers/<stem>_dfm.py présent → la GUI
-            # affiche la case « mode DFM » + réglages (défauts lus du jumeau =
+            # Capacité LAZ : jumeau providers/<stem>_laz.py présent → la GUI
+            # affiche la case « mode LAZ » + réglages (défauts lus du jumeau =
             # source de vérité unique, anti-drift GUI×pipeline).
-            if (providers_dir / f"{f.stem}_dfm.py").exists():
+            if (providers_dir / f"{f.stem}_laz.py").exists():
                 try:
-                    twin = _importlib.import_module(f"providers.{f.stem}_dfm")
-                    entry["dfm"] = {
-                        "hmin":    float(getattr(twin, "DFM_HMIN", 0.4)),
-                        "hmax":    float(getattr(twin, "DFM_HMAX", 2.5)),
+                    twin = _importlib.import_module(f"providers.{f.stem}_laz")
+                    entry["laz"] = {
+                        "hmin":    float(getattr(twin, "LAZ_HMIN", 0.4)),
+                        "hmax":    float(getattr(twin, "LAZ_HMAX", 2.5)),
                         "classes": ",".join(str(c) for c in
-                                            getattr(twin, "DFM_CLASSES", (1, 3, 4))),
-                        "ground":  str(getattr(twin, "DFM_GROUND", "classes")),
-                        "csf_threshold":  float(getattr(twin, "DFM_CSF_THRESHOLD", 0.5)),
-                        "csf_resolution": float(getattr(twin, "DFM_CSF_RESOLUTION", 0.5)),
-                        "csf_rigidness":  int(getattr(twin, "DFM_CSF_RIGIDNESS", 1)),
+                                            getattr(twin, "LAZ_CLASSES", (1, 3, 4))),
+                        "ground":  str(getattr(twin, "LAZ_GROUND", "classes")),
+                        "csf_threshold":  float(getattr(twin, "LAZ_CSF_THRESHOLD", 0.5)),
+                        "csf_resolution": float(getattr(twin, "LAZ_CSF_RESOLUTION", 0.5)),
+                        "csf_rigidness":  int(getattr(twin, "LAZ_CSF_RIGIDNESS", 1)),
                         # Plafond de download parallèle (gros nuages LAZ) : la GUI
                         # l'affiche en mode LAZ. 0 = pas de plafond annoncé.
                         "download_workers_max": int(getattr(twin, "DOWNLOAD_WORKERS_MAX", 0)),
@@ -2574,18 +2574,18 @@ def _load_provider():
     # à le déclarer. Sinon `--raster --provider us-tnm` → "unrecognized arguments".
     # Accepte les deux formes : `--provider code` et `--provider=code`.
     #
-    # Pré-flags DFM (mode « structures debout », cf. providers/fr_ign_dfm.py) :
-    #   --dfm            bascule vers le provider jumeau <code>-dfm (module
-    #                    providers/<code>_dfm.py — convention de nommage)
-    #   --dfm-hmin/--dfm-hmax  tranche de hauteur réintroduite (m)
-    #   --dfm-classes    classes LAS réintroduites (ex. 1,3,4)
-    #   --dfm-ground     socle terrain : "classes" (défaut) ou "csf" (Cloth
+    # Pré-flags LAZ (mode « structures debout », cf. providers/fr_ign_laz.py) :
+    #   --laz            bascule vers le provider jumeau <code>-laz (module
+    #                    providers/<code>_laz.py — convention de nommage)
+    #   --laz-hmin/--laz-hmax  tranche de hauteur réintroduite (m)
+    #   --laz-classes    classes LAS réintroduites (ex. 1,3,4)
+    #   --laz-ground     socle terrain : "classes" (défaut) ou "csf" (Cloth
     #                    Simulation Filter — hmin/hmax/classes alors ignorés)
-    #   --dfm-csf-threshold/-resolution/-rigidness  réglages du tissu (mode
+    #   --laz-csf-threshold/-resolution/-rigidness  réglages du tissu (mode
     #                    csf seulement ; surface standard CloudCompare)
-    # Réglages appliqués au module via set_dfm_params() après import.
-    _dfm = False
-    _dfm_params = {}
+    # Réglages appliqués au module via set_laz_params() après import.
+    _laz_mode = False
+    _laz_params = {}
     _argv = sys.argv
     _i = 0
     while _i < len(_argv):
@@ -2599,21 +2599,21 @@ def _load_provider():
             code = _a.split("=", 1)[1]
             del _argv[_i]
             continue
-        if _a == "--dfm":
-            _dfm = True
+        if _a == "--laz":
+            _laz_mode = True
             del _argv[_i]
             continue
         _m = None
         for _k in ("hmin", "hmax", "classes", "ground",
                    "csf-threshold", "csf-resolution", "csf-rigidness"):
-            if _a == f"--dfm-{_k}":
+            if _a == f"--laz-{_k}":
                 if _i + 1 < len(_argv):
-                    _dfm_params[_k] = _argv[_i + 1]
+                    _laz_params[_k] = _argv[_i + 1]
                 del _argv[_i:_i + 2]
                 _m = True
                 break
-            if _a.startswith(f"--dfm-{_k}="):
-                _dfm_params[_k] = _a.split("=", 1)[1]
+            if _a.startswith(f"--laz-{_k}="):
+                _laz_params[_k] = _a.split("=", 1)[1]
                 del _argv[_i]
                 _m = True
                 break
@@ -2621,43 +2621,43 @@ def _load_provider():
             continue
         _i += 1
     code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
-    if (_dfm or _dfm_params) and not code.endswith("-dfm"):
-        code = code + "-dfm"
+    if (_laz_mode or _laz_params) and not code.endswith("-laz"):
+        code = code + "-laz"
     # Mapping code → module (kebab-case → snake_case)
     module_name = code.replace("-", "_")
     _pdir = Path(__file__).resolve().parent / "providers"
     try:
         _mod = _importlib.import_module(f"providers.{module_name}")
-        # Réglages DFM (--dfm-hmin/hmax/classes) → posés sur le module jumeau.
-        if _dfm_params:
-            _setp = getattr(_mod, "set_dfm_params", None)
+        # Réglages LAZ (--laz-hmin/hmax/classes) → posés sur le module jumeau.
+        if _laz_params:
+            _setp = getattr(_mod, "set_laz_params", None)
             if _setp is None:
-                print(f"  ERROR: provider '{code}' has no DFM settings "
-                      f"(set_dfm_params).", file=sys.stderr)
+                print(f"  ERROR: provider '{code}' has no LAZ settings "
+                      f"(set_laz_params).", file=sys.stderr)
                 sys.exit(1)
             try:
-                _setp(hmin=float(_dfm_params["hmin"]) if "hmin" in _dfm_params else None,
-                      hmax=float(_dfm_params["hmax"]) if "hmax" in _dfm_params else None,
-                      classes=tuple(int(c) for c in _dfm_params["classes"].split(","))
-                              if "classes" in _dfm_params else None,
-                      ground=_dfm_params.get("ground"),
-                      csf_threshold=_dfm_params.get("csf-threshold"),
-                      csf_resolution=_dfm_params.get("csf-resolution"),
-                      csf_rigidness=_dfm_params.get("csf-rigidness"))
+                _setp(hmin=float(_laz_params["hmin"]) if "hmin" in _laz_params else None,
+                      hmax=float(_laz_params["hmax"]) if "hmax" in _laz_params else None,
+                      classes=tuple(int(c) for c in _laz_params["classes"].split(","))
+                              if "classes" in _laz_params else None,
+                      ground=_laz_params.get("ground"),
+                      csf_threshold=_laz_params.get("csf-threshold"),
+                      csf_resolution=_laz_params.get("csf-resolution"),
+                      csf_rigidness=_laz_params.get("csf-rigidness"))
             except ValueError as _e_v:
-                print(f"  ERROR: invalid --dfm-* value: {_e_v}", file=sys.stderr)
+                print(f"  ERROR: invalid --laz-* value: {_e_v}", file=sys.stderr)
                 sys.exit(1)
         return _mod
     except ModuleNotFoundError as _e_imp:
         _missing = getattr(_e_imp, "name", "") or ""
         _pkg = f"providers.{module_name}"
-        # (a') --dfm sur un provider sans jumeau DFM : message dédié (la liste
+        # (a') --laz sur un provider sans jumeau LAZ : message dédié (la liste
         #      brute mélangerait sources et modes).
-        if _missing == _pkg and _pdir.exists() and code.endswith("-dfm") and _dfm:
-            print(f"  ERROR: provider '{code[:-4]}' has no DFM mode (no module "
-                  f"providers/{module_name}.py). DFM is available for: "
+        if _missing == _pkg and _pdir.exists() and code.endswith("-laz") and _laz_mode:
+            print(f"  ERROR: provider '{code[:-4]}' has no LAZ mode (no module "
+                  f"providers/{module_name}.py). LAZ is available for: "
                   + ", ".join(sorted(p.stem[:-4].replace("_", "-")
-                                     for p in _pdir.glob("*_dfm.py"))),
+                                     for p in _pdir.glob("*_laz.py"))),
                   file=sys.stderr)
             sys.exit(1)
         # (a) code inconnu (module absent alors que le package providers/ est
@@ -3549,21 +3549,21 @@ def chemin_dalle(dossier_dalles, nom):
 def _dossier_dalles_actif(args):
     """Racine des dalles LiDAR, selon la NATURE du .tif :
       - MNT : le .tif vient du serveur (WMS) = DOWNLOAD → cache ;
-      - LAZ/DFM : le .tif est CALCULÉ du nuage avec tes réglages = PRODUIT →
+      - LAZ : le .tif est CALCULÉ du nuage avec tes réglages = PRODUIT →
         production (partagé entre projets, hors du cache). Le nuage .laz, lui,
         RESTE au cache (posé par _configurer_cloud_cache → set_cloud_cache_dir).
     --dossier-dalles force la racine (prioritaire, tous modes)."""
     if args.dossier_dalles:
         return Path(args.dossier_dalles).resolve()
-    if PROVIDER.CODE.endswith("-dfm"):
+    if PROVIDER.CODE.endswith("-laz"):
         return DOSSIER_PRODUCTION / LIDAR_SUBDIR
     return DOSSIER_CACHE / LIDAR_SUBDIR
 
 
 def _configurer_cloud_cache(args):
-    """Mode LAZ/DFM : le .tif descend en production (cf. _dossier_dalles_actif),
+    """Mode LAZ : le .tif descend en production (cf. _dossier_dalles_actif),
     mais le nuage .laz est un download → il RESTE au cache. On indique au
-    DfmProvider où garder le nuage. Si --dossier-dalles force la racine des .tif,
+    LazProvider où garder le nuage. Si --dossier-dalles force la racine des .tif,
     le nuage la suit (co-localisé, sémantique historique du flag « tout le LiDAR
     de cette dalle ici »). No-op pour un provider sans mode LAZ."""
     _set = getattr(PROVIDER, "set_cloud_cache_dir", None)
@@ -3769,8 +3769,8 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
     for tentative in range(1, MAX_TENTATIVES + 1):
         try:
             # Hook pre_download (optionnel) : le provider peut matérialiser la
-            # dalle SANS réseau — ex. fr-ign-dfm reconvertit depuis le nuage LAZ
-            # gardé en cache quand seuls les réglages DFM changent (évite de
+            # dalle SANS réseau — ex. fr-ign-laz reconvertit depuis le nuage LAZ
+            # gardé en cache quand seuls les réglages LAZ changent (évite de
             # retélécharger ~205 Mo). Tentative 1 uniquement : si la dalle
             # produite échoue la validation, le retry passe par le download.
             # MAIS un overwrite explicite (ecraser) DOIT re-télécharger la source :
@@ -9765,9 +9765,9 @@ Examples:
                              "OPENTOPOGRAPHY_API_KEY depending on the provider.")
     parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
                         help=f"Parallel connections (default: {NB_WORKERS})")
-    parser.add_argument("--dfm-parallel", type=int, default=1, metavar="N",
-                        dest="dfm_parallel",
-                        help="LAZ (mode LAZ / --dfm) : nb de conversions CSF/DFM "
+    parser.add_argument("--laz-parallel", type=int, default=1, metavar="N",
+                        dest="laz_parallel",
+                        help="LAZ (mode LAZ / --laz) : nb de conversions CSF/DFM "
                              "SIMULTANÉES (défaut 1). Chaque conversion pique ~3 Go "
                              "de RAM, donc N>1 exige la RAM (N x 3 Go) ET des cœurs "
                              "(OMP est réparti à cœurs/N par conversion). Pour une "
@@ -9926,7 +9926,7 @@ Examples:
     args = parser.parse_args()
     _valider_zooms(args, parser)
     _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
-    _appliquer_production_dir(args)   # racine des .tif LAZ/DFM (produits)
+    _appliquer_production_dir(args)   # racine des .tif LAZ (produits)
     _configurer_cloud_cache(args)     # nuage .laz au cache, .tif en production
 
     # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
@@ -10202,10 +10202,10 @@ Examples:
               "(--zone-city / --zone-gps / --zone-bbox / --zone-department / --zone-region)")
         sys.exit(1)
 
-    # Variante de provider (mode DFM…) : suffixer le nom de zone → le PROJET
+    # Variante de provider (mode LAZ…) : suffixer le nom de zone → le PROJET
     # entier (dossier, ombrages, MBTiles, dalles_zone.txt, manifeste) est
     # DISTINCT du run MNT de la même zone. Sans ça, un LRM MNT existant serait
-    # silencieusement réutilisé après avoir coché DFM ou changé un réglage
+    # silencieusement réutilisé après avoir coché LAZ ou changé un réglage
     # (les noms d'ombrage n'encodent pas le provider — revue DFM 2026-07-16).
     _vtag_fn = getattr(PROVIDER, "variant_tag", None)
     if _vtag_fn:
@@ -10284,19 +10284,19 @@ Examples:
         print("  Update: existing tiles re-downloaded")
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
-    # --dfm-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
+    # --laz-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
     # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
     # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
     # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
     # OMP=tous, sur une VM multi-coeurs.
-    if getattr(args, "dfm_parallel", 1) and args.dfm_parallel > 1:
+    if getattr(args, "laz_parallel", 1) and args.laz_parallel > 1:
         _cores = os.cpu_count() or 1
-        _omp = max(1, _cores // args.dfm_parallel)
+        _omp = max(1, _cores // args.laz_parallel)
         os.environ["OMP_NUM_THREADS"] = str(_omp)
         from providers import common as _common_par
-        _common_par.set_dfm_parallelism(args.dfm_parallel)
-        print(f"  DFM parallel : {args.dfm_parallel} conversions simultanees "
-              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.dfm_parallel} Go RAM")
+        _common_par.set_laz_parallelism(args.laz_parallel)
+        print(f"  LAZ parallel : {args.laz_parallel} conversions simultanees "
+              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.laz_parallel} Go RAM")
 
     # Compression cache : ON par defaut depuis v1.14 (16→7 Mo par dalle FR,
     # ~90→40 Go par departement) ; --no-download-compress pour du brut.
@@ -10322,7 +10322,7 @@ Examples:
         dossier_ville.mkdir(parents=True, exist_ok=True)
     print(f"\n  Root    : {racine}")
     if not _osm_seul:
-        _est_laz = PROVIDER.CODE.endswith("-dfm")
+        _est_laz = PROVIDER.CODE.endswith("-laz")
         print(f"  Tiles   : {dossier_dalles}"
               + ("  (produced .tif -> production)" if _est_laz else ""))
         if _est_laz and not args.dossier_dalles:
@@ -11063,7 +11063,7 @@ def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
 
 def _dalles_zone_entete(bbox):
     """En-tête (2 lignes) de dalles_zone.txt : bbox + provider. La ligne
-    provider évite qu'un run MNT et un run DFM pointés sur le MÊME dossier de
+    provider évite qu'un run MNT et un run LAZ pointés sur le MÊME dossier de
     sortie (--output-dir forcé) se volent la liste de dalles — par défaut, le
     tag de variante dans le nom de zone sépare déjà les projets."""
     return (f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}\n"
@@ -11133,11 +11133,11 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     # de plafond (getattr → args.workers).
     _dl_workers = min(args.workers,
                       getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", args.workers))
-    # --dfm-parallel N : il faut >= N workers pour que N conversions (dans le
+    # --laz-parallel N : il faut >= N workers pour que N conversions (dans le
     # post_fetch) tournent EN PARALLÈLE (le sémaphore de conversion les autorise).
     # Le download reste auto-limité : les conversions dominant le temps, peu de
     # workers téléchargent simultanément (donc pas de throttle serveur K-wide).
-    _dl_workers = max(_dl_workers, getattr(args, "dfm_parallel", 1))
+    _dl_workers = max(_dl_workers, getattr(args, "laz_parallel", 1))
     if a_telecharger:
         if _dl_workers < args.workers:
             print(f"  Note: capping downloads to {_dl_workers} parallel "
@@ -12273,12 +12273,12 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
                              "OSM PBF, discovery index). Default: <work-dir>/cache. "
                              "Handy to put a large cache on another drive.")
     # Racine de PRODUCTION : les artefacts CALCULES mais partages entre projets.
-    # Aujourd'hui = le .tif du mode LAZ/DFM (calcule du nuage avec tes reglages ;
+    # Aujourd'hui = le .tif du mode LAZ (calcule du nuage avec tes reglages ;
     # le .tif MNT, lui, vient du serveur et reste au cache). LiDAR uniquement.
     parser.add_argument("--production-dir", "--dossier-production", metavar="PATH",
                         default=None, dest="production_dir",
                         help="Root folder for COMPUTED-but-shared artifacts "
-                             "(LAZ/DFM .tif). Default: <work-dir>/production. The "
+                             "(LAZ .tif). Default: <work-dir>/production. The "
                              "downloaded point cloud (.laz) stays in the cache.")
     return loc
 
@@ -16417,24 +16417,24 @@ def lancer_gui():
             # Provider (multi-pays) — propagé au subprocess
             if cfg.get("provider") and cfg["provider"] != PROVIDER.CODE:
                 cmd += ["--provider", cfg["provider"]]
-            # Mode DFM (structures debout) : case + réglages ≠ défauts
+            # Mode LAZ (structures debout) : case + réglages ≠ défauts
             # (la GUI n'envoie dfm_* que si modifiés, cf. app.js).
-            if cfg.get("dfm"):
-                cmd += ["--dfm"]
-                if cfg.get("dfm_hmin"):
-                    cmd += ["--dfm-hmin", str(cfg["dfm_hmin"])]
-                if cfg.get("dfm_hmax"):
-                    cmd += ["--dfm-hmax", str(cfg["dfm_hmax"])]
-                if cfg.get("dfm_classes"):
-                    cmd += ["--dfm-classes", str(cfg["dfm_classes"])]
-                if cfg.get("dfm_ground"):
-                    cmd += ["--dfm-ground", str(cfg["dfm_ground"])]
-                if cfg.get("dfm_csf_threshold"):
-                    cmd += ["--dfm-csf-threshold", str(cfg["dfm_csf_threshold"])]
-                if cfg.get("dfm_csf_resolution"):
-                    cmd += ["--dfm-csf-resolution", str(cfg["dfm_csf_resolution"])]
-                if cfg.get("dfm_csf_rigidness"):
-                    cmd += ["--dfm-csf-rigidness", str(cfg["dfm_csf_rigidness"])]
+            if cfg.get("laz"):
+                cmd += ["--laz"]
+                if cfg.get("laz_hmin"):
+                    cmd += ["--laz-hmin", str(cfg["laz_hmin"])]
+                if cfg.get("laz_hmax"):
+                    cmd += ["--laz-hmax", str(cfg["laz_hmax"])]
+                if cfg.get("laz_classes"):
+                    cmd += ["--laz-classes", str(cfg["laz_classes"])]
+                if cfg.get("laz_ground"):
+                    cmd += ["--laz-ground", str(cfg["laz_ground"])]
+                if cfg.get("laz_csf_threshold"):
+                    cmd += ["--laz-csf-threshold", str(cfg["laz_csf_threshold"])]
+                if cfg.get("laz_csf_resolution"):
+                    cmd += ["--laz-csf-resolution", str(cfg["laz_csf_resolution"])]
+                if cfg.get("laz_csf_rigidness"):
+                    cmd += ["--laz-csf-rigidness", str(cfg["laz_csf_rigidness"])]
             # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
             # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
             if cfg.get("lidar_apikey"):
@@ -16463,7 +16463,7 @@ def lancer_gui():
                 # comme --output-dir. Propriété d'installation, saisi dans Projet.
                 if cfg.get("cache_dir"):
                     cmd += ["--cache-dir", cfg["cache_dir"]]
-                # Dossier production (--production-dir) : racine des .tif LAZ/DFM
+                # Dossier production (--production-dir) : racine des .tif LAZ
                 # (produits). Saisi dans Projet (ligne des racines), n'a d'effet
                 # qu'en mode LAZ, mais émis inconditionnellement comme --cache-dir.
                 if cfg.get("production_dir"):
@@ -16795,7 +16795,7 @@ def lancer_gui():
 
                     def _emit_ligne(texte):
                         # Ligne complète → log GUI + buffers de diagnostic.
-                        # Le run peut MODIFIER le nom de projet (le mode DFM
+                        # Le run peut MODIFIER le nom de projet (le mode LAZ
                         # suffixe le nom de zone) : le chemin réel imprimé par
                         # le pipeline (« Done! Folder: … ») est la source de
                         # vérité et écrase le _result_dir précalculé — sinon
