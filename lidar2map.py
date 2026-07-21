@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.23.0"
+VERSION      = "1.24.0"
 VERSION_DATE = "2026-07"
 
 
@@ -3894,6 +3894,48 @@ def _cog_cache_couvre(chemin, bbox_natif):
 # chunk en pratique ; ce garde-fou protège le cas d'une bbox non splittée (petit
 # provider COG, run mono-chunk) × plusieurs workers. 4096² px ≈ 67 Mo/bande f32.
 _MAX_COG_WINDOW_PX = 4096 * 4096
+
+
+def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
+    """Lecture FENÊTRÉE d'un COPC distant (nuage LAZ octree, ex. ca-nrcan) :
+    ne lit QUE les points de la bbox zone via range-requests, écrit le sous-
+    ensemble, puis PROVIDER.post_fetch le convertit en GeoTIFF DFM/CSF. Évite de
+    rapatrier un COPC entier (200-750 Mo) pour une petite zone. Le CRS (UTM PAR
+    ZONE) est lu dans le header du COPC et posé sur le provider (set_crs) → sortie
+    dans la bonne zone ; le warp du cœur lit ensuite le CRS du fichier produit.
+    `bbox` = bbox zone en CRS_NATIF du provider."""
+    from providers import common as _common
+    chemin = chemin_dalle(dossier_dalles, nom)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    _seuil = getattr(PROVIDER, "SEUIL_DALLE_VALIDE", SEUIL_DALLE_VALIDE)
+    if chemin.exists() and chemin.stat().st_size > _seuil and not ecraser:
+        return "skip"
+    try:
+        # bbox zone (CRS_NATIF) → WGS84 pour le fenêtrage COPC.
+        bx1, by1, bx2, by2 = bbox
+        lo1, la1, lo2, la2 = _bbox_enveloppe_transform(_natif_vers_wgs84,
+                                                       bx1, by1, bx2, by2)
+        chemin.unlink(missing_ok=True)
+        n, epsg = _common.copc_window_to_las(url, (lo1, la1, lo2, la2), chemin)
+        if not n or n < 50_000:
+            chemin.unlink(missing_ok=True)
+            return "absent"          # zone hors de ce COPC (ou quasi vide)
+        # CRS du run = la zone UTM du COPC → sortie dans la bonne projection.
+        _set = getattr(PROVIDER, "set_crs", None)
+        if _set and epsg:
+            _set(int(epsg))
+        # chemin porte un fichier LAS (magic LASF) : post_fetch l'isole en .laz
+        # cache et le convertit en GeoTIFF (DFM/CSF) via las_to_dfm.
+        _post_fetch_si_besoin(chemin)
+        if not _valider_tif_dalle(chemin):
+            chemin.unlink(missing_ok=True)
+            return "erreur"
+        _creer_fichier(chemin)
+        return "ok"
+    except Exception as _e:
+        chemin.unlink(missing_ok=True)
+        print(f"\n  ERROR COPC {nom} ({type(_e).__name__}): {_e}")
+        return "erreur"
 
 
 def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
@@ -11145,6 +11187,12 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
         with ThreadPoolExecutor(max_workers=_dl_workers) as ex:
             if _cog_windowed:
                 futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
+                                     bbox, _force_dl): (nom,)
+                           for nom, url in a_telecharger}
+            elif getattr(PROVIDER, "COPC_WINDOWED", False):
+                # Nuages COPC (ca-nrcan…) : fenêtrage /vsicurl sur la bbox au lieu
+                # de rapatrier le COPC entier, puis conversion DFM/CSF.
+                futures = {ex.submit(telecharger_copc_fenetre, nom, url, dossier_dalles,
                                      bbox, _force_dl): (nom,)
                            for nom, url in a_telecharger}
             else:

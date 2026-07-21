@@ -173,13 +173,32 @@ suivante, pas encore faite.
   (X=o[0],Y=o[1], Z ignoré). Rétro-compatible CRAIG (2D). Encore révélé par la
   conversion réelle.
 
+### Canada — `ca-nrcan-laz` (LIVRÉ + validé bout-en-bout 2026-07-21, NOUVELLE CAPACITÉ COPC)
+- `[x]` **Capacité COPC fenêtrée construite** (la roadmap l'avait DIFFÉRÉE) :
+  `common.copc_window_to_las(url, bbox_wgs84, out_las)` lit via range-requests
+  UNIQUEMENT les points de la bbox d'un COPC distant (laspy `CopcReader.open(url)`,
+  pas de download du fichier 200-750 Mo) + reprojette la bbox WGS84 → CRS du COPC.
+  Branche cœur `telecharger_copc_fenetre` (flag `COPC_WINDOWED`, miroir de
+  `telecharger_cog_fenetre`) : fenêtre → .las → `post_fetch` → GeoTIFF.
+- `[x]` **Endpoint** : index GPKG des tuiles (407 Mo) requêté À DISTANCE via
+  `/vsicurl` (R-tree + range-requests, ~2 s/bbox, champ `URL` = COPC directe).
+  Nommage (x,y) = coin SW géographique en entiers positifs ((lon+180)·1e4, lat·1e4).
+- `[x]` **CRS multi-zones** : COPC en UTM NAD83(CSRS) compound (+CGVD2013) PAR
+  ZONE, dénoué dans le header → posé par run via `set_crs` (le warp lit le CRS du
+  fichier). CRS_NATIF = géographique 4617 (cadrage/fenêtrage).
+- `[x]` **Validé** : discover live 36 tuiles ; fenêtre 400 m = ~6,6 M pts en 15 s ;
+  bout-en-bout `telecharger_copc_fenetre` = CSF → .tif 664×644 EPSG:2956 (UTM 12N)
+  100 % valide. **~40 pts/m²** (le plus dense). LIMITE : très dense → zone d'1 km²
+  = ~40 M pts (~1 Go .las tmp, ~3 Go RAM). Zone PETITE conseillée.
+
 ### Suite de la chasse
-- **Pologne + Estonie + Flandre LIVRÉES** (3 pays LAZ cette session, jumeaux LAZ
-  3 → 6). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
-- Non encore sondés : Québec, USGS LPC, NRCan, Danemark, Finlande. `set_crs`
-  (Pologne) resservira aux pays multi-zones (Allemagne UTM 32/33, USGS UTM…) ;
-  « index caché + année par feuille » (Estonie) aux sources à millésime explicite ;
-  « WFS + tile_location + base fixe » (Flandre) aux index à chemin relatif.
+- **Pologne + Estonie + Flandre + Canada LIVRÉES** (4 pays cette session, jumeaux
+  LAZ 3 → 7). Reste à valider TERRAIN la densité 4 pts/m² estonienne.
+- Non encore sondés : Québec, USGS LPC, Danemark, Finlande. **USGS = COPC/EPT
+  → réutilise directement la capacité COPC fenêtrée qu'on vient de construire**
+  (+ le compte OpenTopography pour certains). Patterns dispo : `set_crs`
+  (multi-zones), index caché+millésime (Estonie), WFS+chemin+base (Flandre),
+  COPC fenêtré + index /vsicurl distant (Canada).
 
 ## A mesurer sur la VM Scaleway (Apple Silicon M-series, macOS ARM)
 - `[?]` `--laz-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE

@@ -448,6 +448,63 @@ def _verifie_crs_las(nom, las, expected_epsg):
             f"brancher ce provider")
 
 
+def copc_window_to_las(url, bbox_wgs84, out_las, ua="lidar2map/1.0"):
+    """Lecture FENÊTRÉE d'un COPC distant (nuage LAZ 1.4 réorganisé en octree,
+    ex. CanElevation/USGS) : via range-requests, ne lit QUE les points de la
+    fenêtre `bbox_wgs84` (lon1,lat1,lon2,lat2), pas le fichier entier (200-750 Mo).
+    La bbox WGS84 est reprojetée dans le CRS du COPC (lu dans son header, dénoué
+    s'il est compound UTM+hauteur, cas Canada NAD83+CGVD2013). Écrit le sous-
+    ensemble en .las local `out_las` (atomique). Retourne (n_points, epsg_horizontal).
+    n=0 si la fenêtre est vide (bbox hors de ce COPC)."""
+    import numpy as np
+    import laspy
+    from laspy import CopcReader
+    from pyproj import Transformer
+    try:
+        from laspy.copc import Bounds
+    except Exception:
+        from laspy import Bounds
+    with CopcReader.open(url) as r:
+        epsg = None
+        try:
+            crs = r.header.parse_crs()
+            if crs is not None:
+                horiz = crs
+                if getattr(crs, "is_compound", False) and crs.sub_crs_list:
+                    horiz = crs.sub_crs_list[0]
+                epsg = horiz.to_epsg()
+        except Exception:
+            pass
+        if epsg is None:
+            return 0, None                       # CRS non résoluble : on s'abstient
+        # bbox WGS84 → CRS du COPC : enveloppe des 4 coins (un rectangle ne reste
+        # pas axis-aligné après reprojection).
+        tf = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
+        lo1, la1, lo2, la2 = (float(v) for v in bbox_wgs84)
+        pcs = [tf.transform(lo, la) for lo, la in
+               ((lo1, la1), (lo2, la1), (lo2, la2), (lo1, la2))]
+        xs = [p[0] for p in pcs]; ys = [p[1] for p in pcs]
+        pts = r.query(Bounds(mins=np.asarray([min(xs), min(ys)], dtype=float),
+                             maxs=np.asarray([max(xs), max(ys)], dtype=float)))
+        n = len(pts)
+        if n == 0:
+            return 0, epsg
+        las = laspy.LasData(r.header)
+        las.points = pts
+        # Les VLR/EVLR COPC (hiérarchie octree, user_id "copc") ne sont PAS
+        # inscriptibles en LAS simple (laspy lève « Writing COPC is not
+        # supported ») : on les retire, en gardant la projection (LASF_Projection).
+        las.vlrs = [v for v in las.vlrs if getattr(v, "user_id", "") != "copc"]
+        try:
+            las.evlrs = [v for v in las.evlrs if getattr(v, "user_id", "") != "copc"]
+        except Exception:
+            pass
+        tmp = Path(str(out_las) + ".part")
+        las.write(str(tmp))
+        tmp.replace(Path(out_las))
+    return n, epsg
+
+
 def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                hmin=0.4, hmax=2.5, classes_low=(1, 3, 4),
                classes_ground=(2, 9, 66), ref_ground=(2,),

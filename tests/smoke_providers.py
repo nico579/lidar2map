@@ -50,6 +50,7 @@ TEST_POINTS = {
     "pl-gugik-laz": (15.17499, 52.75839),    # Lubuskie (nuage ISOK ~28 pts/m² ~59 Mo ! --skip en CI)
     "ee-maaamet-laz": (25.53975, 58.99433),  # Viljandimaa (nuage ALS tava ~4 pts/m² ~44 Mo ! --skip en CI)
     "be-flanders-laz": (3.74510, 51.02979),  # Flandre (nuage DHMV II ~11 pts/m² ~17 Mo ! --skip en CI)
+    "ca-nrcan-laz": (-113.2266, 54.7448),    # Athabasca AB (COPC fenêtré ~40 pts/m² ! --skip en CI)
     "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
     "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),
