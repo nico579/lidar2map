@@ -26,6 +26,9 @@
  <button class="btn" id="btn-help" onclick="afficherAide()" data-i18n="btn.help"
          data-i18n-title="tip.help" title="Aide : modes et paramètres de la ligne de commande"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">❓ Aide</button>
+ <button class="btn" id="btn-usage" onclick="afficherUsage()" data-i18n="btn.usage"
+         data-i18n-title="tip.usage" title="Usage disque : tailles des dossiers cache / production / projets (lecture seule)"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📊 Usage</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
  <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
        title="Langue / Language">
@@ -67,6 +70,25 @@
        font-size:12px;line-height:1.45;white-space:pre;flex:1"></pre>
  </div>
 </div>
+
+<!-- Usage : peuplé au runtime par get_usage(). LECTURE SEULE (pas de bouton
+     supprimer : le ménage est manuel via l'explorateur, cf. open_folder). -->
+<div id="usage-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:16px 20px;width:min(760px,92vw);max-height:88vh;display:flex;
+      flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="display:flex;align-items:center;margin-bottom:8px">
+   <div style="font-weight:600;font-size:1.1em" data-i18n="usage.title">📊 Usage disque</div>
+   <button class="btn" onclick="afficherUsage()" data-i18n="usage.refresh"
+           style="margin-left:12px;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">↻ Rafraîchir</button>
+   <button class="btn" onclick="fermerUsage()" data-i18n="share.close"
+           style="margin-left:auto;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
+  </div>
+  <div id="usage-body" style="margin:0;overflow:auto;font-size:12px;line-height:1.5;flex:1"></div>
+  <div style="margin-top:8px;color:var(--dim);font-size:11px" data-i18n="usage.hint">Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.</div>
+ </div>
+</div>
 <div id="form-inner">
 
   <!-- Projet -->
@@ -90,11 +112,21 @@
       <label style="min-width:auto;margin-left:10px" data-i18n="f.outdir">Dossier sortie</label>
       <input type="text" id="f-dossier" placeholder="(auto)" style="flex:2;min-width:90px"
              onchange="refreshProjets()">
-      <button class="btn btn-sm" onclick="pickDir('f-dossier')">…</button>
+      <button class="btn btn-sm" onclick="ouvrirDossier('f-dossier','output')"
+              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
       <label style="min-width:auto;margin-left:10px" data-i18n="f.cachedir">Dossier cache</label>
       <input type="text" id="f-cache-dir" placeholder="(auto)"
              data-i18n-placeholder="ph.cachedir" style="flex:2;min-width:90px">
-      <button class="btn btn-sm" onclick="pickDir('f-cache-dir')">…</button>
+      <button class="btn btn-sm" onclick="ouvrirDossier('f-cache-dir','cache')"
+              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
+      <!-- Dossier production (--production-dir) : racine du .tif LAZ/DFM (produit,
+           calculé du nuage). N'a d'effet qu'en mode LAZ, mais placé ici avec les
+           autres racines (sortie/cache) : ce sont les 3 tiers de l'onglet Usage. -->
+      <label style="min-width:auto;margin-left:10px" data-i18n="f.proddir">Dossier production</label>
+      <input type="text" id="f-production-dir" placeholder="(auto)"
+             data-i18n-placeholder="ph.proddir" style="flex:2;min-width:90px">
+      <button class="btn btn-sm" onclick="ouvrirDossier('f-production-dir','production')"
+              title="Ouvrir le dossier" data-i18n-title="tip.opendir">…</button>
      </div>
    </div>
   </div>

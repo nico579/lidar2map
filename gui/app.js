@@ -29,11 +29,14 @@ const I18N = {
     "btn.run":"▶ Lancer", "btn.stop":"■ Arrêter", "btn.hist":"⏱ Historique", "btn.log":"📋 Logs",
     "btn.share":"📲 Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Scanne un fichier, télécharge, puis « Ouvrir avec » OsmAnd ou Locus.", "share.close":"Fermer",
     "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
+    "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
     "proj.pick":"↻ projet existant…",
     // Projet
     "sec.projet":"Projet", "f.name":"Nom *", "f.outdir":"Dossier sortie",
     "f.cachedir":"Dossier cache", "ph.cachedir":"(auto)",
+    "f.proddir":"Dossier production", "ph.proddir":"(auto)",
+    "tip.opendir":"Ouvrir le dossier dans l'explorateur",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
     "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
@@ -160,10 +163,13 @@ const I18N = {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
     "btn.share":"📲 Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Tap a file, download, then \"Open with\" OsmAnd or Locus.", "share.close":"Close",
     "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
+    "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
     "f.cachedir":"Cache folder", "ph.cachedir":"(auto)",
+    "f.proddir":"Production folder", "ph.proddir":"(auto)",
+    "tip.opendir":"Open the folder in the file explorer",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
     "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
@@ -1630,6 +1636,81 @@ function fermerAide() {
   if (modal) modal.style.display = 'none';
 }
 
+// ── Usage disque (lecture seule) ────────────────────────────────────────────────
+function _fmtOctets(n) {
+  n = n || 0;
+  if (n < 1024) return n + ' o';
+  const u = ['Ko', 'Mo', 'Go', 'To'];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
+}
+function _usageOpen(path) {
+  if (window.pywebview && pywebview.api && pywebview.api.open_folder)
+    pywebview.api.open_folder(path);
+}
+function afficherUsage() {
+  const modal = document.getElementById('usage-modal');
+  const body = document.getElementById('usage-body');
+  if (!modal || !body) return;
+  body.textContent = t('loading');
+  modal.style.display = 'flex';
+  if (!(window.pywebview && pywebview.api && pywebview.api.get_usage)) {
+    body.textContent = t('apiunavail');
+    return;
+  }
+  // Racines custom du formulaire (cache/production) → refléter où sont vraiment
+  // les fichiers, pas seulement les défauts.
+  const cfg = { cache_dir: document.getElementById('f-cache-dir')?.value.trim(),
+                production_dir: document.getElementById('f-production-dir')?.value.trim() };
+  pywebview.api.get_usage(cfg)
+    .then(d => renderUsage(d))
+    .catch(() => { body.textContent = t('usage.empty'); });
+}
+function renderUsage(d) {
+  const body = document.getElementById('usage-body');
+  if (!body) return;
+  body.innerHTML = '';
+  const tiers = (d && d.tiers) || [];
+  if (!tiers.length) { body.textContent = t('usage.empty'); return; }
+  for (const tier of tiers) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--bd,#333)';
+    const name = document.createElement('div');
+    name.style.cssText = 'font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    name.textContent = tier.label + (tier.exists ? '' : '  ' + t('usage.absent'));
+    name.title = tier.path;
+    const sz = document.createElement('div');
+    sz.style.cssText = 'font-variant-numeric:tabular-nums;color:var(--ac);min-width:70px;text-align:right';
+    sz.textContent = _fmtOctets(tier.bytes);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm'; btn.textContent = t('usage.open');
+    btn.disabled = !tier.exists;
+    btn.onclick = () => _usageOpen(tier.path);
+    row.append(name, sz, btn);
+    body.appendChild(row);
+    for (const c of (tier.children || [])) {
+      const sub = document.createElement('div');
+      sub.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 0 3px 18px;color:var(--dim)';
+      const cn = document.createElement('div');
+      cn.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+      cn.textContent = c.label; cn.title = c.path;
+      const cs = document.createElement('div');
+      cs.style.cssText = 'font-variant-numeric:tabular-nums;min-width:70px;text-align:right';
+      cs.textContent = _fmtOctets(c.bytes);
+      const cb = document.createElement('button');
+      cb.className = 'btn btn-sm'; cb.textContent = t('usage.open');
+      cb.onclick = () => _usageOpen(c.path);
+      sub.append(cn, cs, cb);
+      body.appendChild(sub);
+    }
+  }
+}
+function fermerUsage() {
+  const modal = document.getElementById('usage-modal');
+  if (modal) modal.style.display = 'none';
+}
+
 // ── Config ────────────────────────────────────────────────────────────────────
 function getConfig() {
   const g = id => document.getElementById(id);
@@ -1648,6 +1729,9 @@ function getConfig() {
     pays:     g('f-pays')?.value ?? '',
     // Dossier cache global (--cache-dir) : propriété d'installation, dans Projet.
     cache_dir: g('f-cache-dir')?.value.trim(),
+    // Dossier production (--production-dir) : racine du .tif LAZ/DFM (produit).
+    // Saisi dans Projet, à côté du cache ; n'a d'effet qu'en mode LAZ.
+    production_dir: g('f-production-dir')?.value.trim(),
     lidar_apikey: g('f-lidar-apikey')?.value.trim(),
     // Surface LAZ (structures debout) + réglages ≠ défauts uniquement (les
     // défauts vivent côté Python, dataset.def posé par applyProviderDfm).
@@ -1823,6 +1907,7 @@ function loadConfig(cfg) {
   s('f-nom',     cfg.nom);
   s('f-dossier', cfg.dossier);
   s('f-cache-dir', cfg.cache_dir);
+  s('f-production-dir', cfg.production_dir);
 
   // Zone géo
   s('f-ville',   cfg.ville);
@@ -2200,6 +2285,15 @@ async function pickDir(fieldId) {
     // l'événement comme le ferait une saisie (ex. f-dossier → refreshProjets).
     el.dispatchEvent(new Event('change'));
   }
+}
+// Bouton « … » d'un champ dossier : ouvre le dossier correspondant dans
+// l'explorateur (comme les boutons « ouvrir » de l'onglet Usage). Champ vide /
+// « (auto) » → le backend ouvre la racine par défaut du tier (kind).
+function ouvrirDossier(fieldId, kind) {
+  const v = (document.getElementById(fieldId)?.value || '').trim();
+  const path = (v && v !== '(auto)') ? v : '';
+  if (window.pywebview && pywebview.api && pywebview.api.open_dir)
+    pywebview.api.open_dir(path, kind);
 }
 async function pickFile(fieldId, multiple, exts) {
   const p = await pywebview.api.pick_file(multiple, false, exts);

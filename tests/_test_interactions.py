@@ -1228,6 +1228,70 @@ check("bouton Aide : source unique get_help() (docstring module)",
       and "def get_help(self):" in _src
       and "__name__].__doc__" in _src)
 
+print("== 9i. Séparation cache/production + onglet Usage ==")
+_common = (_ROOT / "providers" / "common.py").read_text(encoding="utf-8")
+# Règle Nico : le .tif LAZ/DFM est un PRODUIT (calculé du nuage) → production ;
+# le .tif MNT et le nuage .laz sont des downloads → cache. Le routage du dossier
+# des .tif vit dans _dossier_dalles_actif.
+check("dalles : MNT→cache, LAZ/DFM→production (routage par nature)",
+      "def _dossier_dalles_actif" in _src
+      and 'PROVIDER.CODE.endswith("-dfm")' in _src
+      and "DOSSIER_PRODUCTION / LIDAR_SUBDIR" in _src
+      and "DOSSIER_CACHE / LIDAR_SUBDIR" in _src)
+# Le nuage .laz reste au cache même quand le .tif descend en production.
+check("nuage .laz : reste au cache indépendamment du .tif produit",
+      "def set_cloud_cache_dir" in _common
+      and "def _cloud_path" in _common
+      and "self.cloud_cache_dir" in _common
+      and all("set_cloud_cache_dir = _P.set_cloud_cache_dir"
+              in (_ROOT / "providers" / f"{p}.py").read_text(encoding="utf-8")
+              for p in ("fr_ign_dfm", "ch_swisstopo_dfm", "fr_craig_dfm")))
+check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles forcé",
+      "def _configurer_cloud_cache" in _src
+      and "_configurer_cloud_cache(args)" in _src
+      and "None if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR" in _src)
+check("--production-dir : flag + défaut + émission GUI + relecture argv",
+      'DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"' in _src
+      and '"--production-dir", "--dossier-production"' in _src
+      and 'cmd += ["--production-dir"' in _src
+      and '"production_dir": _arg("--production-dir"' in _src)
+# cache et production peuvent être sur des volumes différents (--production-dir) :
+# le déplacement du nuage tombe en cross-device (EXDEV), fallback shutil.move.
+check("relocation nuage : fallback cross-device (shutil.move)",
+      "shutil.move(str(chemin), str(cloud))" in _common)
+# GUI : champ production dans Projet, sur la ligne des racines (sortie/cache/
+# production = les 3 tiers de l'onglet Usage). Placé juste après le dossier cache.
+check("GUI : champ production (Projet, à côté du cache), sauvé/restauré",
+      'id="f-production-dir"' in _html
+      and "ouvrirDossier('f-production-dir','production')" in _html
+      and "production_dir: g('f-production-dir')" in _appjs
+      and "s('f-production-dir'" in _appjs
+      # dans le cadre Projet : après le cache, avant la section Zone
+      and _html.find('id="f-cache-dir"') < _html.find('id="f-production-dir"')
+                                         < _html.find('data-i18n="sec.zone"'))
+# Bouton « … » des 3 dossiers : ouvre le dossier correspondant dans l'explorateur
+# (champ vide → racine par défaut du tier), réutilise open_folder.
+check("bouton « … » : ouvre le dossier correspondant (explorateur)",
+      "ouvrirDossier('f-dossier','output')" in _html
+      and "ouvrirDossier('f-cache-dir','cache')" in _html
+      and "ouvrirDossier('f-production-dir','production')" in _html
+      and "function ouvrirDossier(" in _appjs
+      and "pywebview.api.open_dir(" in _appjs
+      and "def open_dir(self" in _src
+      and "self.open_folder(p)" in _src)
+# CORRECTION à la note : --cleanup-keep-tiles est GARDÉ. La séparation le rend
+# inutile en mode LAZ (le .laz reconvertit sans re-download) mais PAS en MNT, où
+# le .tif téléchargé est évincé par --cleanup → une tâche +file re-téléchargerait.
+check("--cleanup-keep-tiles conservé (nécessaire en mode MNT)",
+      '"--cleanup-keep-tiles"' in _src)
+# Onglet Usage : LECTURE SEULE. get_usage marche les 3 tiers ; open_folder réutilisé.
+check("onglet Usage : lecture seule, 3 tiers, open_folder",
+      'id="btn-usage"' in _html and 'id="usage-modal"' in _html
+      and "function afficherUsage()" in _appjs
+      and "pywebview.api.get_usage(" in _appjs
+      and "def get_usage(self" in _src
+      and "pywebview.api.open_folder" in _appjs)
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")
 sys.exit(0 if ok_all else 1)

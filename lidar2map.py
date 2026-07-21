@@ -233,9 +233,14 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
         <nom>_multi_ombrage_z13-18.mbtiles
         <nom>_multi_ombrage_z13-18.rmap
         <nom>_multi_ombrage_z13-18.sqlitedb
-    <cache>/ign_lidar/              cache dalles permanent, partagé entre projets
-                                    (<cache> = cache/ sous le dossier de travail
-                                     par défaut, déplaçable par --cache-dir)
+    <cache>/lidar/<pays>/           cache dalles permanent, partagé entre projets :
+                                     .tif MNT (download) + nuage .laz du mode LAZ
+                                     (<cache> = cache/ sous le dossier de travail
+                                      par défaut, déplaçable par --cache-dir)
+    <production>/lidar/<pays>/       mode LAZ/DFM : le .tif est un PRODUIT (calculé
+                                     du nuage avec tes réglages) → il descend ici,
+                                     hors du cache (déplaçable par --production-dir).
+                                     Le nuage .laz, lui, reste au cache ci-dessus.
 
   Temps indicatifs (zone 4 km², i3-8130U) :
     Téléchargement (9-12 dalles)       : ~30 s
@@ -375,6 +380,12 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                           WMTS, PBF OSM, index de découverte (alias --cache-dir).
                           Défaut : cache/ sous le dossier de travail. Permet de
                           poser cache et sorties sur des disques différents.
+  --dossier-production CHEMIN  Racine des artefacts CALCULÉS mais partagés entre
+                          projets (alias --production-dir). Aujourd'hui = le .tif
+                          du mode LAZ/DFM, produit du nuage avec tes réglages (le
+                          .tif MNT, lui, vient du serveur → reste au cache ; le
+                          nuage .laz aussi). Défaut : production/ sous le dossier
+                          de travail. LiDAR uniquement.
   --nettoyage           Supprimer les fichiers intermédiaires après chaque
                           morceau (dalles, TIF ombrages, TIF warpé).
                           Conserve les sorties finales (.mbtiles .rmap .sqlitedb).
@@ -2104,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.20.0"
+VERSION      = "1.21.0"
 VERSION_DATE = "2026-07"
 
 
@@ -2450,6 +2461,25 @@ def _appliquer_cache_dir(args):
     if _cd:
         DOSSIER_CACHE = Path(_cd).resolve()
         DOSSIER_CACHE.mkdir(parents=True, exist_ok=True)
+
+
+# 3e tier : la PRODUCTION. Règle Nico : cache = ce qu'on TÉLÉCHARGE des serveurs
+# (.laz, tuiles, PBF) ; production = ce qu'on PRODUIT à partir des réglages mais
+# qui reste PARTAGÉ entre projets (indexé par provider+méthode+réglages+dalle,
+# pas par zone). Aujourd'hui seul le .tif du mode LAZ/DFM est concerné : calculé
+# du nuage avec tes réglages, il n'a rien à faire au cache (cf. le .tif MNT qui,
+# lui, vient tel quel du WMS et RESTE au cache). Défaut : frère de cache/.
+DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"
+
+
+def _appliquer_production_dir(args):
+    """Repointe la racine de production si --production-dir est passé. Miroir de
+    _appliquer_cache_dir. À appeler tôt dans main (LiDAR uniquement l'utilise)."""
+    global DOSSIER_PRODUCTION
+    _pd = getattr(args, "production_dir", None)
+    if _pd:
+        DOSSIER_PRODUCTION = Path(_pd).resolve()
+        DOSSIER_PRODUCTION.mkdir(parents=True, exist_ok=True)
 
 # ── Provider LiDAR (par défaut : France IGN HD) ──────────────────────────────
 # POC d'abstraction : tout ce qui est spécifique à une source nationale
@@ -3514,6 +3544,31 @@ def chemin_dalle(dossier_dalles, nom):
     if sub:
         return dossier_dalles / sub / nom
     return chemin_racine  # fallback si nom non reconnu
+
+
+def _dossier_dalles_actif(args):
+    """Racine des dalles LiDAR, selon la NATURE du .tif :
+      - MNT : le .tif vient du serveur (WMS) = DOWNLOAD → cache ;
+      - LAZ/DFM : le .tif est CALCULÉ du nuage avec tes réglages = PRODUIT →
+        production (partagé entre projets, hors du cache). Le nuage .laz, lui,
+        RESTE au cache (posé par _configurer_cloud_cache → set_cloud_cache_dir).
+    --dossier-dalles force la racine (prioritaire, tous modes)."""
+    if args.dossier_dalles:
+        return Path(args.dossier_dalles).resolve()
+    if PROVIDER.CODE.endswith("-dfm"):
+        return DOSSIER_PRODUCTION / LIDAR_SUBDIR
+    return DOSSIER_CACHE / LIDAR_SUBDIR
+
+
+def _configurer_cloud_cache(args):
+    """Mode LAZ/DFM : le .tif descend en production (cf. _dossier_dalles_actif),
+    mais le nuage .laz est un download → il RESTE au cache. On indique au
+    DfmProvider où garder le nuage. Si --dossier-dalles force la racine des .tif,
+    le nuage la suit (co-localisé, sémantique historique du flag « tout le LiDAR
+    de cette dalle ici »). No-op pour un provider sans mode LAZ."""
+    _set = getattr(PROVIDER, "set_cloud_cache_dir", None)
+    if _set:
+        _set(None if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR)
 
 
 def _download_to_tmp(url, chemin_tmp, timeout=60):
@@ -9871,6 +9926,8 @@ Examples:
     args = parser.parse_args()
     _valider_zooms(args, parser)
     _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
+    _appliquer_production_dir(args)   # racine des .tif LAZ/DFM (produits)
+    _configurer_cloud_cache(args)     # nuage .laz au cache, .tif en production
 
     # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
     # reflétés dans args.ombrages pour que les gates existants (qui testent
@@ -10013,7 +10070,7 @@ Examples:
     if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps and not getattr(args, "zone_region", None):
         # Mode migration pure : on n'a besoin que de dossier_dalles
         racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
-        dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR
+        dossier_dalles = _dossier_dalles_actif(args)
         dossier_dalles.mkdir(parents=True, exist_ok=True)
         _migrer_dalles_colonnes(dossier_dalles)
         sys.exit(0)
@@ -10249,7 +10306,7 @@ Examples:
         print(f"  -> {'Compression enabled' if compresser else 'Raw storage'}")
 
     racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
-    dossier_dalles = Path(args.dossier_dalles).resolve() if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR
+    dossier_dalles = _dossier_dalles_actif(args)
     dossier_ville  = racine
     _sans_telechargement = not getattr(args, "telechargement", False)
     _sans_ombrages = not getattr(args, "ombrages", None)
@@ -10265,7 +10322,11 @@ Examples:
         dossier_ville.mkdir(parents=True, exist_ok=True)
     print(f"\n  Root    : {racine}")
     if not _osm_seul:
-        print(f"  Tiles   : {dossier_dalles}")
+        _est_laz = PROVIDER.CODE.endswith("-dfm")
+        print(f"  Tiles   : {dossier_dalles}"
+              + ("  (produced .tif -> production)" if _est_laz else ""))
+        if _est_laz and not args.dossier_dalles:
+            print(f"  Cloud   : {DOSSIER_CACHE / LIDAR_SUBDIR}  (downloaded .laz kept in cache)")
         print(f"  Zone    : {dossier_ville}")
 
     # -------------------------------------------------------
@@ -11703,9 +11764,8 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
                     # tâche ultérieure de la même file va relire (cf. GUI, qui
                     # ne pose ce flag que sur les tâches non-finales d'un groupe
                     # provider×surface×zone).
-                    _keep = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                             else DOSSIER_CACHE / LIDAR_SUBDIR) \
-                            if getattr(args, "nettoyage_garder_dalles", False) else None
+                    _keep = (_dossier_dalles_actif(args)
+                             if getattr(args, "nettoyage_garder_dalles", False) else None)
                     _supprimer_fichiers(manifeste.fichiers_morceau(cle), _keep)
         except ZoneHorsCouvertureWMTS:
             # Chunk auto-généré entièrement hors couverture (mer, hors frontière) :
@@ -11752,8 +11812,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             racine_base = (Path(args.dossier).resolve() if args.dossier
                            else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
             racine = racine_base
-            dossier_dalles = (Path(args.dossier_dalles).resolve() if args.dossier_dalles
-                              else DOSSIER_CACHE / LIDAR_SUBDIR)
+            dossier_dalles = _dossier_dalles_actif(args)
             dossier_ville = racine / nom_z
             dossier_ville.mkdir(parents=True, exist_ok=True)
             dossier_dalles.mkdir(parents=True, exist_ok=True)
@@ -12213,6 +12272,14 @@ def _ajouter_args_zone(parser, *, rayon_default, bbox_metavar, bbox_help=None,
                         help="Root folder for ALL persistent caches (tiles, WMTS, "
                              "OSM PBF, discovery index). Default: <work-dir>/cache. "
                              "Handy to put a large cache on another drive.")
+    # Racine de PRODUCTION : les artefacts CALCULES mais partages entre projets.
+    # Aujourd'hui = le .tif du mode LAZ/DFM (calcule du nuage avec tes reglages ;
+    # le .tif MNT, lui, vient du serveur et reste au cache). LiDAR uniquement.
+    parser.add_argument("--production-dir", "--dossier-production", metavar="PATH",
+                        default=None, dest="production_dir",
+                        help="Root folder for COMPUTED-but-shared artifacts "
+                             "(LAZ/DFM .tif). Default: <work-dir>/production. The "
+                             "downloaded point cloud (.laz) stays in the cache.")
     return loc
 
 
@@ -15503,6 +15570,7 @@ def _cfg_depuis_argv() -> dict:
         "nom":     _arg("--zone-name", "--zone-nom"),
         "dossier": _arg("--output-dir", "--dossier"),
         "cache_dir": _arg("--cache-dir", "--dossier-cache"),
+        "production_dir": _arg("--production-dir", "--dossier-production"),
         "dep":     _arg("--zone-department", "--zone-departement"),
         "region":  _arg("--zone-region"),
         "ville":   _arg("--zone-city", "--zone-ville"),
@@ -16128,6 +16196,55 @@ def lancer_gui():
             import sys as _sys
             return (_sys.modules[__name__].__doc__ or "").strip()
 
+        def get_usage(self, cfg=None):
+            """Onglet Usage (LECTURE SEULE) : tailles des 3 tiers (cache /
+            production / projets) + leurs sous-dossiers, pour un ménage MANUEL
+            via l'explorateur (bouton open_folder). Ne supprime rien — le cache
+            est partagé entre projets, une purge auto risquerait de jeter des
+            dalles qu'un autre projet réutilise (règle Nico : nettoyage manuel).
+            Prend les racines custom du formulaire (cache_dir/production_dir) si
+            posées, sinon les défauts."""
+            cfg = cfg or {}
+            def _walk(p):
+                total = 0
+                try:
+                    for r, _dirs, files in os.walk(p):
+                        for f in files:
+                            try:
+                                total += (Path(r) / f).stat().st_size
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+                return total
+            def _children(root):
+                out = []
+                try:
+                    for d in sorted(root.iterdir()):
+                        if d.is_dir():
+                            out.append({"label": d.name, "path": str(d),
+                                        "bytes": _walk(d)})
+                except OSError:
+                    pass
+                return out
+            def _tier(key, label, root):
+                root = Path(root)
+                ok = root.exists()
+                return {"key": key, "label": label, "path": str(root),
+                        "exists": ok,
+                        "bytes": _walk(root) if ok else 0,
+                        "children": _children(root) if ok else []}
+            cache = (Path(cfg["cache_dir"]).expanduser()
+                     if cfg.get("cache_dir") else DOSSIER_CACHE)
+            prod = (Path(cfg["production_dir"]).expanduser()
+                    if cfg.get("production_dir") else DOSSIER_PRODUCTION)
+            projets = DOSSIER_TRAVAIL / "Projets"
+            return {"tiers": [
+                _tier("cache", "Cache", cache),
+                _tier("production", "Production", prod),
+                _tier("projets", "Projets", projets),
+            ]}
+
         # ── Partage LAN vers le téléphone (QR) ────────────────────────────
         def start_share(self, cfg=None):
             """Sert les livrables du dernier run (ou de `cfg`) sur le LAN.
@@ -16333,6 +16450,11 @@ def lancer_gui():
                 # comme --output-dir. Propriété d'installation, saisi dans Projet.
                 if cfg.get("cache_dir"):
                     cmd += ["--cache-dir", cfg["cache_dir"]]
+                # Dossier production (--production-dir) : racine des .tif LAZ/DFM
+                # (produits). Saisi dans Projet (ligne des racines), n'a d'effet
+                # qu'en mode LAZ, mais émis inconditionnellement comme --cache-dir.
+                if cfg.get("production_dir"):
+                    cmd += ["--production-dir", cfg["production_dir"]]
 
             # ── LiDAR ────────────────────────────────────────────────────
             if t == "lidar":
@@ -16888,6 +17010,24 @@ def lancer_gui():
                     subprocess.Popen(["xdg-open", path])
             except Exception:
                 pass
+
+        def open_dir(self, path="", kind=""):
+            """Bouton « … » d'un champ dossier : ouvre le dossier CORRESPONDANT
+            dans l'explorateur. Champ vide (« (auto) ») → racine par défaut du
+            tier (sortie/cache/production). Créé s'il manque (production/ n'existe
+            pas avant le 1er run LAZ) pour que l'explorateur ait quelque chose à
+            ouvrir. Réutilise open_folder (la même que l'onglet Usage)."""
+            p = (path or "").strip()
+            if not p:
+                p = {"cache": DOSSIER_CACHE,
+                     "production": DOSSIER_PRODUCTION,
+                     "output": DOSSIER_TRAVAIL / "Projets"}.get(kind, DOSSIER_TRAVAIL)
+            p = Path(p)
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+            self.open_folder(p)
 
         def get_last_error(self):
             """Retourne le message d'erreur du dernier run (ou chaîne vide).

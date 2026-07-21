@@ -795,6 +795,11 @@ class DfmProvider:
         self.csf_threshold = self.def_csf_threshold
         self.csf_resolution = self.def_csf_resolution
         self.csf_rigidness = self.def_csf_rigidness
+        # Racine (hors du dossier des .tif) où le nuage .laz est GARDÉ. Posée par
+        # le cœur en mode LAZ : le .tif descend en production (produit), le nuage
+        # reste au cache (download). None (défaut) = nuage co-localisé avec le
+        # .tif (ancien comportement, gardé pour les tests unitaires).
+        self.cloud_cache_dir = None
         # Toute dalle .tif porte le token de méthode (dfm_ = réinjection classes,
         # csf_ = tissu) ; le nuage caché .laz n'en a pas (partagé entre méthodes).
         self.nom_re = re.compile(
@@ -975,8 +980,7 @@ class DfmProvider:
         dessus (pas de collision, pas de fichier résiduel au nom du membre)."""
         import shutil
         import zipfile
-        cloud = (chemin.parent / self.laz_filename(m.group(1), m.group(2)) if m
-                 else chemin.with_suffix(".laz"))
+        cloud = self._cloud_path(chemin, m)
         with zipfile.ZipFile(chemin) as z:
             membres = [n for n in z.namelist()
                        if n.lower().endswith((".las", ".laz"))]
@@ -997,6 +1001,23 @@ class DfmProvider:
         chemin.unlink(missing_ok=True)
         return cloud
 
+    def set_cloud_cache_dir(self, path):
+        """Le cœur indique où GARDER le nuage .laz (le cache), distinct du dossier
+        des .tif produits (la production). None = co-localisé avec le .tif."""
+        self.cloud_cache_dir = Path(path) if path is not None else None
+
+    def _cloud_path(self, chemin, m):
+        """Chemin du nuage .laz. Avec cloud_cache_dir posé, il vit sous
+        <cache>/<colonne>/ indépendamment du dossier du .tif (produit → production) ;
+        sinon co-localisé avec le .tif (parent), comme avant."""
+        if m is None:
+            return chemin.with_suffix(".laz")
+        if self.cloud_cache_dir is not None:
+            d = self.cloud_cache_dir / self.dalle_subdir(m.group(1))
+            d.mkdir(parents=True, exist_ok=True)
+            return d / self.laz_filename(m.group(1), m.group(2))
+        return chemin.parent / self.laz_filename(m.group(1), m.group(2))
+
     def pre_download(self, chemin):
         """Hook cœur (avant réseau) : si le nuage de cette dalle est déjà en
         cache (gardé par post_fetch), reconvertir au lieu de retélécharger.
@@ -1005,7 +1026,7 @@ class DfmProvider:
         m = self.nom_re.match(chemin.name)
         if not m:
             return False
-        cloud = chemin.parent / self.laz_filename(m.group(1), m.group(2))
+        cloud = self._cloud_path(chemin, m)
         if not cloud.exists() or cloud.stat().st_size < 1_000_000:
             return False
         print(f"  {self.method_label()} {chemin.name}: rebuilding from cached "
@@ -1031,9 +1052,14 @@ class DfmProvider:
                 return  # ZIP inattendu pour ce provider
             cloud = self._extract_cloud(chemin, m)
         elif magic == b"LASF":
-            cloud = (chemin.parent / self.laz_filename(m.group(1), m.group(2))
-                     if m else chemin.with_suffix(".laz"))
-            chemin.replace(cloud)
+            cloud = self._cloud_path(chemin, m)
+            try:
+                chemin.replace(cloud)          # atomique si même volume
+            except OSError:
+                # cache et production sur des volumes différents (--production-dir) :
+                # os.rename échoue cross-device (EXDEV), shutil.move copie+supprime.
+                import shutil
+                shutil.move(str(chemin), str(cloud))
         else:
             return  # déjà un GeoTIFF (ou erreur → validateur)
         print(f"  {self.method_label()} {chemin.name}: converting point cloud "
