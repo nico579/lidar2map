@@ -289,15 +289,29 @@ suivante, pas encore faite.
   si NLS ouvre un accès national programmatique sans Suomi.fi.
 
 ### Suite de la chasse
-- **Pologne + Estonie + Flandre + Canada + USA + Québec LIVRÉES** (jumeaux LAZ
-  3 → 9 ; Québec = source de plus sous 'ca', pas un nouveau pays). Reste à valider
-  TERRAIN la densité 4 pts/m² estonienne.
-- Non encore sondés : Danemark (compte Datafordeler, + risque dépréciation
-  Prædefineret LAZ). Finlande = DÉCLASSÉE (mur Suomi.fi sans eID FR + national
-  restreint + public samples-only, ci-dessus).
+- **Pologne + Estonie + Flandre + Canada + USA + Québec + Danemark LIVRÉES**
+  (jumeaux LAZ 3 → 10 ; Québec = source de plus sous 'ca'). Reste à valider
+  TERRAIN la densité 4 pts/m² estonienne + le rendu danois (choix DFM vs CSF).
+- **Danemark = LIVRÉ (dk-datafordeler-laz)** : nuage DHM/Punktsky
+  (Klimadatastyrelsen) via l'API REST Datafordeler
+  `FileDownloads/GetPointCloudFile?Register=DHM&Version=1&DataSetName=Punktsky&filename=…`.
+  Clé API sur un compte **EMAIL sans MitID** (accessible depuis la France,
+  contrairement à la Finlande ; le mur MitID ne vise que la donnée protégée, or
+  le Punktsky est libre). Nuage classifié ASPRS **~12 pts/m²** (millésime récent,
+  pas les 4,5 de la doc), EPSG:25832, tuiles 1 km ~82 Mo. Nom DÉTERMINISTE
+  `DHM_PUNKTSKY_1km_<Nkm>_<Ekm>.laz` (grille DDKN par FORMULE, pas d'index).
+  Jumeau du raster `dk-datafordeler` (WCS DHM 0,4 m, COVERAGE=dhm_terraen, MÊME
+  clé ; le raster existait mais n'avait jamais été validé). Validé bout-en-bout :
+  DFM classes ~19 s, CSF ~6,4 min/tuile (12M pts, lent). Propagation clé ~15 min
+  après création (message serveur explicite). DÉPRÉCIATION : REST Datafordeler
+  « udfases ultimo 2026 » (migration GraphQL) ; FileDownloads = brique récente
+  liée au modèle IT-system/API-key, devrait survivre, à re-vérifier avant fin 2026.
+- Finlande = DÉCLASSÉE (mur Suomi.fi sans eID FR + national restreint +
+  public samples-only, ci-dessus).
   Patterns dispo : `sign_url` (COPC authentifié), `set_crs` (multi-zones), STAC +
   signature (USA), WFS PlusRecent + LAZ direct (Québec), index caché+millésime
-  (Estonie), COG/COPC fenêtré + /vsicurl (Canada/Québec MNT).
+  (Estonie), COG/COPC fenêtré + /vsicurl (Canada/Québec MNT), grille DDKN par
+  formule + API key REST FileDownloads (Danemark).
 
 ## A mesurer sur la VM Scaleway (Apple Silicon M-series, macOS ARM)
 - `[?]` `--laz-parallel 2 / 3 / 4` : débit réel. Dépend de combien de coeurs UNE

@@ -775,6 +775,48 @@ _qcl.set_laz_params(ground="csf")   # reset défaut QC
 check("common.quebec_wfs_features partagé par les deux jumeaux QC",
       callable(getattr(_common, "quebec_wfs_features", None)))
 
+print("== 9b-sexies. dk-datafordeler (DHM WCS) + dk-datafordeler-laz (Punktsky REST) ==")
+_dk  = _il2.import_module("providers.dk_datafordeler")
+_dkl = _il2.import_module("providers.dk_datafordeler_laz")
+# Parent raster : WCS DHM terrain 0,4 m, EPSG:25832, clé Datafordeler. COVERAGE
+# = 'dhm_terraen' (validé : le service refuse tout autre nom → garde anti-typo).
+check("dk parent : CRS_NATIF 25832 + COVERAGE dhm_terraen + APIKEY_REQUISE",
+      _dk.CRS_NATIF == "EPSG:25832" and _dk.COVERAGE == "dhm_terraen"
+      and getattr(_dk, "APIKEY_REQUISE", False) and _dk.CODE == "dk-datafordeler")
+# Jumeau LAZ : nuage Punktsky par tuile DDKN (FORMULE, pas d'index), défaut csf,
+# MÊME clé Datafordeler que le raster (deux services, une clé).
+check("dk-laz défaut ground=csf (classes ASPRS ≠ IGN, source nationale)",
+      _dkl.LAZ_GROUND == "csf")
+check("dk-laz défauts → nom dk_laz05_csf_",
+      _dkl.dalle_filename(575, 6223) == "dk_laz05_csf_575_6223.tif",
+      detail=_dkl.dalle_filename(575, 6223))
+check("dk-laz variant_tag défaut = laz_csf", _dkl.variant_tag() == "laz_csf")
+check("dk-laz APIKEY_REQUISE + set_apikey (env DATAFORDELER_API_KEY, comme le raster)",
+      getattr(_dkl, "APIKEY_REQUISE", False)
+      and callable(getattr(_dkl, "set_apikey", None)))
+check("dk-laz mode classes : socle ASPRS (2), réinjectées (3,4,5,6)",
+      (_dkl.set_laz_params(ground="classes") or True)
+      and _dkl._socle() == (2,) and _dkl._reinjectees() == (3, 4, 5, 6))
+_dkl.set_laz_params(ground="csf")   # reset défaut DK
+# Tuiles DDKN alignées au km : bounds nominaux (coin SW) → anti-couture VRT.
+check("dk-laz bounds nominaux km-alignés (coin SW, tuile 1 km)",
+      _dkl._bounds_nominaux(575, 6223) == (575000, 6223000, 576000, 6224000))
+# La découverte construit une URL REST FileDownloads portant la clé (apikey=).
+check("dk-laz URL = GetPointCloudFile + apikey (REST FileDownloads)",
+      "GetPointCloudFile" in _dkl._tile_url(6223, 575, "K")
+      and "apikey=K" in _dkl._tile_url(6223, 575, "K"))
+check("dk parent dk-datafordeler présent → jumeau LAZ-capable (case Mode LAZ)",
+      _dk.CODE == "dk-datafordeler")
+# Garde-fou du bug transversal 2026-07-22 : le cœur re-exporte DALLE_KM/
+# PX_PAR_DALLE via getattr+défaut, car les jumeaux LAZ à tuilage DYNAMIQUE (dk,
+# us-3dep, ca-*) ne définissent PAS de grille fixe (seuls fr-ign/ch-swisstopo
+# le font). En dur, ces jumeaux crashaient (AttributeError) au chargement d'un
+# run CLI --laz — invisible au smoke (déjà tolérant) et aux scripts directs.
+check("cœur : re-export DALLE_KM/PX_PAR_DALLE tolérant (getattr) pour les jumeaux "
+      "LAZ à tuilage dynamique (dk/us n'ont pas de grille fixe)",
+      'getattr(PROVIDER, "DALLE_KM"' in _APP.read_text(encoding="utf-8")
+      and not hasattr(_dkl, "DALLE_KM") and not hasattr(_us, "DALLE_KM"))
+
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;
 # _build_cmd les traduit en flags ; le dropdown n'expose PAS le jumeau et porte

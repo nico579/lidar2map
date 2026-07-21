@@ -53,6 +53,7 @@ TEST_POINTS = {
     "ca-nrcan-laz": (-113.2266, 54.7448),    # Athabasca AB (COPC fenêtré ~40 pts/m² ! --skip en CI)
     "us-3dep-laz": (-105.0, 39.735),         # Colorado SoPlatteRiver (COPC signé PC ~5 pts/m² ! --skip en CI)
     "ca-quebec-laz": (-71.275, 46.82),       # Québec (WFS RGQ, MTM 7, ~10 pts/m² ! --skip en CI)
+    "dk-datafordeler-laz": (12.568, 55.676), # Copenhague (Punktsky REST ~12 pts/m² ~82 Mo, clé → auto-SKIP CI)
     "ch-swisstopo": (7.447, 46.948), "no-kartverket": (10.746, 59.913),
     "de-bayern": (11.576, 48.137), "de-nrw": (6.960, 50.938),
     "de-niedersachsen": (9.732, 52.375), "de-thueringen": (11.029, 50.979),
@@ -92,7 +93,8 @@ TEST_POINTS = {
     "pt-dgt": (-9.19, 38.73),               # Monsanto, Lisbonne (MDT 50 cm)
 }
 APIKEY_ENV = {"us-3dep": "OPENTOPOGRAPHY_API_KEY",
-              "dk-datafordeler": "DATAFORDELER_TOKEN",
+              "dk-datafordeler": "DATAFORDELER_API_KEY",
+              "dk-datafordeler-laz": "DATAFORDELER_API_KEY",
               "fi-maanmittauslaitos": "FI_NLS_API_KEY"}
 # Providers à compte (user/pass en env, pas une clé unique) : SKIP si absents.
 CRED_ENV = {"pt-dgt": ("DGT_USER", "DGT_PASS"),

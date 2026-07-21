@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.25.0"
+VERSION      = "1.26.0"
 VERSION_DATE = "2026-07"
 
 
@@ -2732,8 +2732,14 @@ LIDAR_SUBDIR = f"lidar/{PROVIDER.COUNTRY}"
 # Re-exports pour compat avec le code existant — éviter de toucher des
 # centaines de call sites en aval pendant ce POC.
 RESOLUTION_M       = PROVIDER.RESOLUTION_M
-DALLE_KM           = PROVIDER.DALLE_KM
-PX_PAR_DALLE       = PROVIDER.PX_PAR_DALLE
+# Les jumeaux LAZ à tuilage DYNAMIQUE (discover_dalles + bounds_fn : us-3dep-laz,
+# ca-*-laz, pl/ee/be/fr-craig/dk-*-laz) ne définissent PAS de grille fixe
+# DALLE_KM/PX_PAR_DALLE — seuls fr-ign-laz et ch-swisstopo-laz (1 km régulier) le
+# font. getattr + défaut 1 km (le smoke _select le faisait déjà ; le chemin main
+# lisait en dur → AttributeError sur un run CLI réel de ces jumeaux).
+DALLE_KM           = getattr(PROVIDER, "DALLE_KM", 1)
+PX_PAR_DALLE       = getattr(PROVIDER, "PX_PAR_DALLE",
+                             int(round(DALLE_KM * 1000 / RESOLUTION_M)))
 SEUIL_DALLE_VALIDE = PROVIDER.SEUIL_DALLE_VALIDE
 
 # ── Réseau — tentatives et délais ─────────────────────────────────────────────
