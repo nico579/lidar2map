@@ -5,9 +5,12 @@ Point de mutualisation (cf. audit providers 2026-07) : extraction ZIP sûre
 quand un 3e provider LAZ est arrivé : cz + lv + uy ; avant, DIFFÉRÉE à raison).
 Vocation à accueillir aussi le HTTP / pagination / retry communs.
 """
+import concurrent.futures
 import json
+import math
 import re
 import ssl
+import struct
 import threading
 import time
 import urllib.request
@@ -408,6 +411,119 @@ def ee_maaamet_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
     except Exception as e:
         print(f"  ERROR EE index: {type(e).__name__}: {e}")
         return None
+    return dalles
+
+
+# === Lettonie LĢIA (nuage LAS classifié national, index S3 statique) ==========
+# LĢIA publie ~66 000 nuages LAS 1 km² classifiés sur un S3 public + une LISTE
+# statique des URLs. Les LAS sont nommés en TKS-93 « <feuille50k>-<QQ>-<CC> » ;
+# l'origine (Ax,Ay) d'une feuille n'est PAS dérivable proprement du numéro
+# (nomenclature entrelacée) → on la MESURE une fois par feuille (en-tête LAS,
+# HTTP Range 260 octets, bornes min X/Y), en parallèle. Index {nom: [x_km,y_km]}
+# caché. Partagé par lv-lgia (raster → binning classe 2) et lv-lgia-laz (jumeau
+# DFM/CSF sur le nuage complet). CRS EPSG:3059 (LKS-92 / Latvia TM), projeté.
+_LGIA_S3    = "https://s3.storage.pub.lvdc.gov.lv/lgia-opendata/las"
+_LGIA_INDEX = f"{_LGIA_S3}/LGIA_OpenData_las_saites.txt"
+
+
+def _lgia_las_url(name):
+    return f"{_LGIA_S3}/{name.split('-')[0]}/{name}.las"
+
+
+def _lgia_parse(name):
+    """'2434-15-25' → (feuille, q1, q2, row, col)."""
+    s, q, c = name.split("-")
+    return s, int(q[0]), int(q[1]), int(c[0]), int(c[1])
+
+
+def _lgia_base_feuille(name, ua):
+    """(Ax, Ay) en km de la feuille de `name`, lus dans l'en-tête LAS (min X/Y).
+    None si échec."""
+    try:
+        req = urllib.request.Request(_lgia_las_url(name),
+                                     headers={"User-Agent": ua, "Range": "bytes=0-260"})
+        with urllib.request.urlopen(req, timeout=30, context=_CTX) as r:
+            hdr = r.read()
+    except Exception:
+        return None
+    if len(hdr) < 227 or hdr[:4] != b"LASF":
+        return None
+    minx = struct.unpack("<d", hdr[187:195])[0]
+    miny = struct.unpack("<d", hdr[203:211])[0]
+    _, q1, q2, row, col = _lgia_parse(name)
+    ax = math.floor(minx / 1000) - q2 * 5 - (col - 1)
+    ay = math.floor(miny / 1000) - q1 * 5 - (row - 1)
+    return ax, ay
+
+
+def _lgia_index(cache_path, workers, ua):
+    cache_path = Path(cache_path)
+    if cache_path.exists():
+        try:
+            idx = json.loads(cache_path.read_text(encoding="utf-8"))
+            if idx:
+                return idx
+        except Exception:
+            pass
+    print("  LV LĢIA: downloading the LAS index (once)...", flush=True)
+    try:
+        req = urllib.request.Request(_LGIA_INDEX, headers={"User-Agent": ua})
+        with urllib.request.urlopen(req, timeout=120, context=_CTX) as r:
+            texte = r.read().decode("utf-8", "replace")
+    except Exception as e:
+        print(f"  ERROR LV index: {type(e).__name__}: {e}")
+        return None
+    noms = re.findall(r"/las/\d+/(\d+-\d+-\d+)\.las", texte)
+    if not noms:
+        return None
+    par_feuille = {}
+    for nm in noms:
+        par_feuille.setdefault(nm.split("-")[0], nm)
+    print(f"  LV LĢIA: {len(noms)} tiles, measuring {len(par_feuille)} sheet "
+          f"origins (LAS headers)...", flush=True)
+    bases = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for sheet, base in zip(par_feuille,
+                               ex.map(lambda n: _lgia_base_feuille(n, ua),
+                                      par_feuille.values())):
+            if base:
+                bases[sheet] = base
+    index = {}
+    for nm in noms:
+        s, q1, q2, row, col = _lgia_parse(nm)
+        base = bases.get(s)
+        if not base:
+            continue
+        ax, ay = base
+        index[nm] = [ax + q2 * 5 + (col - 1), ay + q1 * 5 + (row - 1)]
+    if not index:
+        return None
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(index), encoding="utf-8")
+    except Exception:
+        pass
+    print(f"  LV LĢIA: {len(index)} tiles indexed ({len(bases)} sheets)")
+    return index
+
+
+def lgia_dalles(bbox_natif, filename_fn, cache_path, workers=8,
+                ua="lidar2map/1.0 (LV LGIA)"):
+    """Découverte LĢIA (EPSG:3059) : {filename_fn(x_km,y_km): url_las} pour les
+    tuiles 1 km intersectant bbox_natif. None sur échec réseau, {} si hors bbox.
+    Partagé lv-lgia (raster) / lv-lgia-laz (jumeau)."""
+    if bbox_natif is None:
+        return {}
+    index = _lgia_index(cache_path, workers, ua)
+    if index is None:
+        return None
+    x1, y1, x2, y2 = bbox_natif
+    dalles = {}
+    for nm, (x_km, y_km) in index.items():
+        tx1, ty1 = x_km * 1000, y_km * 1000
+        if tx1 + 1000 <= x1 or tx1 >= x2 or ty1 + 1000 <= y1 or ty1 >= y2:
+            continue
+        dalles[filename_fn(x_km, y_km)] = _lgia_las_url(nm)
     return dalles
 
 

@@ -807,6 +807,27 @@ check("dk-laz URL = GetPointCloudFile + apikey (REST FileDownloads)",
       and "apikey=K" in _dkl._tile_url(6223, 575, "K"))
 check("dk parent dk-datafordeler présent → jumeau LAZ-capable (case Mode LAZ)",
       _dk.CODE == "dk-datafordeler")
+
+print("== 9b-septies. lv-lgia (raster) + lv-lgia-laz (jumeau, index LĢIA partagé) ==")
+_lv  = _il2.import_module("providers.lv_lgia")
+_lvl = _il2.import_module("providers.lv_lgia_laz")
+# Découverte MUTUALISÉE : l'index S3 + mesure TKS-93 vit dans common.lgia_dalles,
+# partagé par le raster (binning classe 2) et le jumeau (DFM/CSF). CRS 3059 unique.
+check("common.lgia_dalles partagé raster + jumeau (index S3 mutualisé)",
+      callable(getattr(_common, "lgia_dalles", None)))
+check("lv-lgia-laz : CRS 3059 + défaut csf + nom lv_laz05_csf_",
+      _lvl.CRS_NATIF == "EPSG:3059" and _lvl.LAZ_GROUND == "csf"
+      and _lvl.dalle_filename(649, 176) == "lv_laz05_csf_649_176.tif",
+      detail=_lvl.dalle_filename(649, 176))
+check("lv-lgia-laz mode classes : socle ASPRS (2), réinjectées (3,4,5,6)",
+      (_lvl.set_laz_params(ground="classes") or True)
+      and _lvl._socle() == (2,) and _lvl._reinjectees() == (3, 4, 5, 6))
+_lvl.set_laz_params(ground="csf")   # reset défaut LV
+check("lv-lgia-laz bounds km-alignés (coin SW, tuile 1 km)",
+      _lvl._bounds_nominaux(649, 176) == (649000, 176000, 650000, 177000))
+check("lv-lgia parent présent → jumeau LAZ-capable",
+      _lv.CODE == "lv-lgia")
+
 # Garde-fou du bug transversal 2026-07-22 : le cœur re-exporte DALLE_KM/
 # PX_PAR_DALLE via getattr+défaut, car les jumeaux LAZ à tuilage DYNAMIQUE (dk,
 # us-3dep, ca-*) ne définissent PAS de grille fixe (seuls fr-ign/ch-swisstopo
