@@ -83,10 +83,6 @@ def dalle_filename(x_km, y_km):
         "Utiliser discover_dalles().")
 
 
-def dalle_subdir(x_km):
-    return ""
-
-
 def subdir_from_name(nom):
     # Sous-dossier par UTM zone (10, 11, 12, ...)
     m = _re.match(r"usgs_1m_(\d+)_", nom)

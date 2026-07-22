@@ -54,11 +54,6 @@ def dalle_filename(code):
     return f"nz_dem1m_{code}.tif"
 
 
-def dalle_subdir(code):
-    m = re.match(r"([A-Za-z]{2}\d{2})", str(code))
-    return m.group(1).upper() if m else str(code)[:4]
-
-
 def subdir_from_name(nom):
     m = re.match(r"nz_dem1m_([A-Za-z]{2}\d{2})", nom)
     return m.group(1).upper() if m else None

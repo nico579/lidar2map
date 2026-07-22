@@ -106,7 +106,6 @@ LAZ_CSF_RIGIDNESS  = _P.def_csf_rigidness
 # Contrat provider : delegators vers l'instance partagée
 set_laz_params   = _P.set_params
 dalle_filename   = _P.dalle_filename
-dalle_subdir     = _P.dalle_subdir
 subdir_from_name = _P.subdir_from_name
 variant_tag      = _P.variant_tag
 method_label     = _P.method_label
@@ -114,7 +113,6 @@ discover_dalles  = _P.discover_dalles
 pre_download     = _P.pre_download
 post_fetch       = _P.post_fetch
 set_cloud_cache_dir = _P.set_cloud_cache_dir
-laz_defaults     = _P.defaults_dict
 # Internes exposés pour les tests
 _socle           = _P.socle
 _reinjectees     = _P.reinjectees

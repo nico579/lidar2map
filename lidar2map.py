@@ -2693,11 +2693,6 @@ def _load_provider():
             WMS_LAYER          = None,
             WFS_URL            = None,
         )
-        # dalles_pour_bbox : lever NotImplementedError → calculer_grille_bbox
-        # attrape cette exception et retourne une liste vide (comportement attendu
-        # pour les providers sans grille régulière).
-        def _dalles_pour_bbox(x1, y1, x2, y2): raise NotImplementedError
-        _p.dalles_pour_bbox = _dalles_pour_bbox
         # dalle_filename / dalle_url : ne devraient pas être appelées en mode --osm
         def _not_available(msg):
             raise RuntimeError(f"Provider fr-ign (fallback) : {msg} — "
@@ -2754,12 +2749,9 @@ BATCH_MBTILES_INSERT  = 2000 # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
-# ── URLs IGN (re-exports du provider) ────────────────────────────────────────
-# getattr avec fallback : tous les providers n'ont pas forcément ces attributs.
-# Ex: AHN expose WCS_URL au lieu de WFS_URL — les chemins de code qui utilisent
-# WFS_URL retomberont sur None et devront être adaptés (BDTOPO, etc.).
-WMS_URL   = getattr(PROVIDER, "WMS_URL",   None)
-WMS_LAYER = getattr(PROVIDER, "WMS_LAYER", None)
+# ── URL WFS IGN (re-export du provider) ──────────────────────────────────────
+# getattr avec fallback None. AHN expose WCS_URL au lieu de WFS_URL : les chemins
+# qui utilisent WFS_URL (BDTOPO, etc.) retombent alors sur None (à adapter).
 WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 
 # ── Geofabrik : département → région (URL slug) ──────────────────────────────
@@ -3491,17 +3483,15 @@ def _parser_departements(valeur: str) -> list:
 # ============================================================
 
 def calculer_grille_bbox(x1, y1, x2, y2):
-    """Retourne (dalles, bbox) depuis une BBox dans le CRS natif du provider.
-
-    Si le provider n'utilise pas de grille régulière (système kaartblad
-    alphanumérique pour NL AHN, etc.), retourne une liste vide — le
-    pipeline downstream utilise alors PROVIDER.discover_dalles() qui ne
-    suppose pas de grille."""
-    try:
-        dalles = PROVIDER.dalles_pour_bbox(x1, y1, x2, y2)
-    except NotImplementedError:
-        dalles = []
-    return dalles, (x1, y1, x2, y2)
+    """Retourne la bbox (x1, y1, x2, y2) telle quelle, dans le CRS natif du
+    provider. Le NOMBRE de dalles et l'estimation disque ne sont PLUS calculés
+    ici par un appel provider dalles_pour_bbox (l'ancien point d'interface grille, encore
+    exécuté par le cœur) : le compte fiable vient de PROVIDER.discover_dalles()
+    en aval, uniforme pour les providers-grille ET dynamiques (avant, ces
+    derniers annonçaient « 0 dalle » puis découvraient plus tard). Revue code
+    mort 2026-07-22, point 5. dalles_pour_bbox reste un helper INTERNE des
+    discover_dalles à grille (de_mv, etc.), plus une interface cœur→provider."""
+    return (x1, y1, x2, y2)
 
 
 def _crs_natif_geographique():
@@ -3515,7 +3505,7 @@ def _crs_natif_geographique():
 
 
 def calculer_grille(cx, cy, rayon_km):
-    """Retourne (dalles, bbox) depuis un centre CRS natif et un rayon en km.
+    """Retourne la bbox (x1, y1, x2, y2) depuis un centre CRS natif et un rayon en km.
     Le rayon (km) est converti dans l'UNITÉ du CRS_NATIF : mètres si le CRS est
     PROJETÉ, DEGRÉS s'il est GÉOGRAPHIQUE (ca-nrcan/us-3dep/ca-quebec cadrent en
     lon/lat). Sans ça, r=km·1000 était traité comme des DEGRÉS → bbox hors domaine
@@ -3527,10 +3517,6 @@ def calculer_grille(cx, cy, rayon_km):
     else:
         dx = dy = rayon_km * 1000
     return calculer_grille_bbox(cx - dx, cy - dy, cx + dx, cy + dy)
-
-
-def nom_dalle(x_km, y_km):
-    return PROVIDER.dalle_filename(x_km, y_km)
 
 
 def _rglob_tif_robuste(dossier):
@@ -10165,7 +10151,6 @@ Examples:
         sys.exit(0)
 
     cx = cy = 0.0
-    dalles = []
     if getattr(args, "zone_region", None):
         slug = args.zone_region.strip().lower()
         # Nom automatique : le slug région ex "provence_alpes_cote_d_azur"
@@ -10175,20 +10160,24 @@ Examples:
             # OSM-seul : le PBF Geofabrik EST déjà la région — on le traite en
             # entier (skip_bbox). Inutile de géocoder ses 6 départements pour une
             # bbox de découpe dont on ne se sert pas → zéro appel Overpass.
-            # La section OSM utilisera une bbox "monde" ; ce sentinel n'est jamais lu.
+            # La section OSM utilisera une bbox "monde". ATTENTION : ce sentinel
+            # (0,0,0,0) arrive quand même jusqu'au bloc de maintenance
+            # dalles_zone.txt plus bas ; ce bloc est donc court-circuité en
+            # _osm_seul (sinon l'en-tête stocké ne matcherait jamais et le
+            # manifeste serait supprimé). cf. revue code mort 2026-07-22, #21.
             if slug not in _regions_disponibles():
                 print(f"  ERROR: region '{slug}' unknown.")
                 print(f"  Available regions: {', '.join(_regions_disponibles())}")
                 sys.exit(1)
-            dalles, bbox = [], (0.0, 0.0, 0.0, 0.0)
+            bbox = (0.0, 0.0, 0.0, 0.0)
             print(f"  Folder : {nom_zone}")
         else:
             # raster / vecteur / lidar : bbox = union des bbox des départements.
             nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
             if nom_reg is None:
                 sys.exit(1)
-            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-            print(f"  Folder : {nom_zone}  |  {len(dalles)} tiles")
+            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+            print(f"  Folder : {nom_zone}")
 
     elif args.zone_departement:
         num_dep = args.zone_departement.strip().upper()
@@ -10196,13 +10185,13 @@ Examples:
         if nom_dep is None:
             sys.exit(1)
         if _osm_seul:
-            dalles, bbox = [], (bx1, by1, bx2, by2)
+            bbox = (bx1, by1, bx2, by2)
         else:
-            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         # Nom automatique : ex "var_83"
         nom_auto = normaliser_nom(nom_dep) + "_" + num_dep.lower()
         nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
-        print(f"  Folder : {nom_zone}" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
+        print(f"  Folder : {nom_zone}")
 
     elif args.zone_bbox:
         # --zone-bbox est en WGS84 (W,S,E,N en degrés), comme TOUS les autres
@@ -10239,13 +10228,13 @@ Examples:
         # 0,0 en mode bbox, ce qui la faisait échouer). cx/cy sont natifs partout.
         cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2
         if _osm_seul:
-            dalles, bbox = [], (bx1, by1, bx2, by2)
+            bbox = (bx1, by1, bx2, by2)
         else:
-            dalles, bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
+            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
         surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
         print(f"  BBox WGS84 : {lon1:.4f},{lat1:.4f} → {lon2:.4f},{lat2:.4f}")
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Area: ~{surface_km2:.0f} km²" + ("" if _osm_seul else f"  |  {len(dalles)} tiles"))
+        print(f"  Area: ~{surface_km2:.0f} km²")
         if not args.zone_nom:
             print("  ERROR: --zone-name required with --zone-bbox")
             sys.exit(1)
@@ -10307,7 +10296,7 @@ Examples:
     # Rayon par defaut 10 km si --zone-radius absent (aucun prompt).
     if not args.zone_bbox and not args.zone_departement and not getattr(args, "zone_region", None):
         rayon = args.zone_rayon or 10.0
-        dalles, bbox = calculer_grille(cx, cy, rayon)
+        bbox = calculer_grille(cx, cy, rayon)
 
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
     _cols_pr  = getattr(args, "cols_decoupe", 0) or 0
@@ -10336,11 +10325,6 @@ Examples:
             return
         print("  A-priori splitting: zone too small -> single pass")
 
-    nb = len(dalles)
-    octets_par_dalle = (PX_PAR_DALLE * PX_PAR_DALLE * 4) + 513
-    taille_brut = nb * octets_par_dalle // (1024 * 1024)
-    taille_comp = taille_brut // 5
-
     etapes_total = sum([bool(args.telechargement),
                         bool(args.ombrages),
                         # rmap/sqlitedb passent aussi par l'étape MBTiles
@@ -10366,9 +10350,6 @@ Examples:
 
     if args.telechargement:
         print_etape("Downloading tiles")
-    if not _osm_seul and not (not args.telechargement and not args.ombrages):
-        print(f"\n  Grid: {nb} tile(s) of {DALLE_KM}x{DALLE_KM} km  (~{nb} km²)")
-        print(f"  Space: ~{taille_brut} MB raw  /  ~{taille_comp} MB compressed")
     if args.telechargement_forcer:
         print("  Update: existing tiles re-downloaded")
     if args.workers != NB_WORKERS:
@@ -10635,7 +10616,11 @@ Examples:
     # 2. Seulement les fichiers valides (≥ 50 MB)
     # Le dossier dalles est global — sans filtrage par zone, le VRT couvrirait
     # tous les départements présents et le hillshade serait énorme ou en erreur.
-    if dossier_dalles.exists():
+    if dossier_dalles.exists() and not _osm_seul:
+        # _osm_seul court-circuité ici : sa bbox vaut le sentinel (0,0,0,0), qui ne
+        # matcherait jamais l'en-tête d'un dalles_zone.txt existant et déclencherait
+        # sa suppression (revue code mort 2026-07-22, #21). L'OSM-seul n'a de toute
+        # façon aucun ombrage LiDAR à assembler → dalles_ombrages = [] (branche else).
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
         noms_zone = set()  # initialisé ici — peut rester vide en mode OSM seul
         if dalles_zone_txt.exists():
@@ -13233,26 +13218,6 @@ def _tags_pour_layer(layer_short: str) -> dict:
     return {"note": layer_short}
 
 
-def _coords_flat(geom):
-    """Retourne un itérateur de coordonnées [lon, lat, ?] pour tout type GeoJSON."""
-    gtype = geom.get("type", "")
-    coords = geom.get("coordinates", [])
-    if gtype == "Point":
-        if coords: yield coords
-    elif gtype in ("MultiPoint", "LineString"):
-        yield from coords
-    elif gtype in ("MultiLineString", "Polygon"):
-        for ring in coords:
-            yield from ring
-    elif gtype == "MultiPolygon":
-        for poly in coords:
-            for ring in poly:
-                yield from ring
-    elif gtype == "GeometryCollection":
-        for sub in geom.get("geometries", []):
-            yield from _coords_flat(sub)
-
-
 # ── Overlay raster transparent (--file-formats transparent-raster) ───────────
 # Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent, ecrites dans un
 # .sqlitedb OsmAnd/Locus. Sert a superposer un vecteur (chemins, cours d'eau,
@@ -14367,7 +14332,7 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
     du GeoJSON en RAM. Critique pour les couches BD TOPO dept-scale qui
     peuvent dépasser 1 Go en JSON (= 3-4 Go en RAM Python sans streaming).
 
-    Le format de sortie est identique à celui produit par _ecrire_geojson_gz :
+    Le format de sortie est le format historique du pipeline de fusion :
     JSON compact (separators=(",", ":")), gzip niveau 6, CRS84.
 
     Retourne le nombre de features écrites (0 si fichier source vide).
@@ -15242,35 +15207,6 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 # PIPELINE FUSION GEOJSON
 # ============================================================
 
-def _ecrire_geojson_gz(data_dict, chemin, compresser=True):
-    """
-    Écrit un dict GeoJSON sur disque.
-    - compresser=True (défaut)  : produit `<chemin>.geojson.gz` (gzip niveau 6)
-    - compresser=False           : produit `<chemin>.geojson` (texte brut)
-    Le paramètre `chemin` peut se terminer par .geojson ou .geojson.gz —
-    la sortie respectera le mode demandé indépendamment du suffixe d'entrée.
-    Retourne le Path du fichier créé.
-    """
-    p = Path(chemin)
-    # Normaliser le chemin selon le mode
-    if compresser:
-        if not str(p).endswith(".gz"):
-            p = Path(str(p) + ".gz")
-    else:
-        # Mode non compressed : retirer le .gz éventuel
-        if str(p).endswith(".gz"):
-            p = Path(str(p)[:-3])
-    p.parent.mkdir(parents=True, exist_ok=True)
-    data_bytes = json.dumps(data_dict, ensure_ascii=False,
-                             separators=(",", ":")).encode("utf-8")
-    if compresser:
-        with gzip.open(p, "wb", compresslevel=6) as f:
-            f.write(data_bytes)
-    else:
-        p.write_bytes(data_bytes)
-    return p
-
-
 def _lire_geojson(chemin):
     """Lit un .geojson ou .geojson.gz — retourne le dict."""
     p = Path(chemin)
@@ -15301,8 +15237,8 @@ def fusionner_geojson(fichiers, sortie):
         _has_ijson = False
 
     sortie = Path(sortie)
-    # Sortie .gz si l'extension dit .gz, sinon raw. _ecrire_geojson_gz
-    # respectait déjà cette convention ; on la conserve ici.
+    # Sortie .gz si l'extension dit .gz, sinon raw (convention historique du
+    # pipeline de fusion, conservée ici).
     compresser = str(sortie).endswith(".gz")
     if compresser and not str(sortie).endswith(".geojson.gz"):
         # Cas .gz pur : rajouter .geojson au-dessus
@@ -16486,16 +16422,13 @@ def lancer_gui():
                 print(f"  pick_dir erreur : {e}")
                 return ""
 
-        def pick_file(self, multiple=False, save=False, exts=None):
+        def pick_file(self, multiple=False, exts=None):
             w = self._get_window()
             if not w: return [] if multiple else ""
             types = tuple(exts) if exts else ()
             try:
-                if save:
-                    r = w.create_file_dialog(webview.SAVE_DIALOG, file_types=types)
-                else:
-                    r = w.create_file_dialog(
-                        webview.OPEN_DIALOG, allow_multiple=multiple, file_types=types)
+                r = w.create_file_dialog(
+                    webview.OPEN_DIALOG, allow_multiple=multiple, file_types=types)
                 if not r: return [] if multiple else ""
                 return list(r) if multiple else r[0]
             except Exception as e:

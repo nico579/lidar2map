@@ -49,13 +49,8 @@ SEUIL_DALLE_VALIDE = 5_000_000     # AHN COG plus volumineux qu'IGN — ajuster 
 # URL canonique : actueel-hoogtebestand-nederland. Le shorthand `/rws/ahn/`
 # fonctionne aussi (redirection PDOK).
 BASE_URL    = "https://service.pdok.nl/rws/actueel-hoogtebestand-nederland"
-WMS_URL     = "https://service.pdok.nl/rws/ahn/wms/v1_0"
 WCS_URL     = "https://service.pdok.nl/rws/ahn/wcs/v1_0"
-ATOM_URL    = f"{BASE_URL}/atom/index.xml"
 DOWNLOAD_BASE = f"{BASE_URL}/atom/downloads"
-# Layers WMS : le service PDOK "actueel" sert le dernier AHN disponible par
-# région (AHN4 sur les zones ingérées 2020-2022, AHN5 là où c'est mis à jour)
-WMS_LAYER   = "ahn_05m_dtm"
 # Produit pour téléchargement direct (chemin URL) :
 PRODUIT     = "dtm_05m"   # alternatives : dsm_05m, dtm_5m, dsm_5m
 
@@ -73,14 +68,8 @@ def dalle_filename(x_km, y_km):
         "AHN n'utilise pas une grille (x_km, y_km) — utiliser discover_dalles()")
 
 
-def dalle_subdir(x_km):
-    """Pas de sous-dossier par colonne — toutes les dalles AHN dans un seul
-    dossier (~1200 tuiles, gérable)."""
-    return ""
-
-
 def subdir_from_name(nom):
-    """Pas de sous-dossier (cf. dalle_subdir)."""
+    """Pas de sous-dossier : toutes les dalles AHN à plat (~1200 tuiles)."""
     return None
 
 

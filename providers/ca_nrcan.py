@@ -62,10 +62,6 @@ def dalle_filename(stac_id):
     return f"ca_hrdem1m_{_safe_id(stac_id)}.tif"
 
 
-def dalle_subdir(stac_id):
-    return _safe_id(stac_id)[:2].lower() or "xx"
-
-
 def subdir_from_name(nom):
     m = re.match(r"ca_hrdem1m_(.+)\.tif$", nom)
     return m.group(1)[:2].lower() if m else None

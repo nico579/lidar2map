@@ -57,10 +57,6 @@ def _nom_fenetre(x1, y1, x2, y2):
     return f"cnmi_dtm1_{int(x1)}_{int(y1)}_{int(x2)}_{int(y2)}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     m = re.match(r"cnmi_dtm1_(\d+)_", nom)
     return f"{int(m.group(1)) // 10000}" if m else None

@@ -58,10 +58,6 @@ def dalle_filename(x_km, y_km):
     return f"cz_dmr5g_{int(x_km):+07d}_{int(y_km):+08d}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{int(x_km):+07d}"
-
-
 def subdir_from_name(nom):
     # Tuiles nommées par code feuille (cz_dmr5g_BENE09.tif) → sous-dossier =
     # préfixe alpha (regroupe les feuilles voisines, évite 16k fichiers à plat).

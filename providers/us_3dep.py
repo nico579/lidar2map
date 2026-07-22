@@ -94,10 +94,6 @@ def dalle_filename(x_km, y_km):
     return f"us3dep_{DATASET}_{x_km:+06d}_{y_km:+06d}_3857.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km:+06d}"
-
-
 import re as _re
 _SUBDIR_FROM_NAME = _re.compile(r"us3dep_[^_]+_([+-]?\d+)_")
 

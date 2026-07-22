@@ -20,7 +20,6 @@
 # Self-contained : stdlib uniquement.
 
 
-
 # ── Identification ───────────────────────────────────────────────────────────
 NAME       = "Royaume-Uni (Angleterre) — LIDAR Composite DTM (EA)"
 CODE       = "gb-england"
@@ -49,10 +48,6 @@ COVERAGE_EXTENT = (80000, 4000, 656000, 665000)   # (E_min, N_min, E_max, N_max)
 def dalle_filename(x_km, y_km):
     """Nom synthétique de la dalle (coin SW (E_km, N_km) en km EPSG:27700)."""
     return f"dtm_england_{x_km}_{y_km}.tif"
-
-
-def dalle_subdir(x_km):
-    return f"{x_km}"
 
 
 def subdir_from_name(nom):

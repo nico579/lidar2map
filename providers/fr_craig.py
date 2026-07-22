@@ -35,10 +35,6 @@ def dalle_filename(x, y):
     return f"fr_craig_dtm05_{int(x)}_{int(y)}.tif"
 
 
-def dalle_subdir(x):
-    return f"{int(x)}"
-
-
 def subdir_from_name(nom):
     m = re.match(r"fr_craig_dtm05_(\d+)_", nom)
     return m.group(1) if m else None

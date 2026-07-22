@@ -42,11 +42,6 @@ def dalle_filename(x_km, y_km):
     return f"nhm_dtm_{x_km:04d}_{y_km:05d}_25833_1m.tif"
 
 
-def dalle_subdir(x_km):
-    """Sous-dossier par colonne X (km) — convention identique à FR."""
-    return f"{x_km:04d}"
-
-
 import re as _re
 _SUBDIR_FROM_NAME = _re.compile(r"nhm_dtm_(\d+)_\d+_")
 

@@ -63,10 +63,6 @@ def dalle_filename(x_km, y_km):
         "NRW : nom dépendant de l'année → utiliser discover_dalles()")
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     """Sous-dossier (colonne Est) déduit du nom, ou None.
 

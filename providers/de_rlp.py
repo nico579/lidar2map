@@ -53,10 +53,6 @@ def dalle_filename(x_km, y_km):
     return f"rp_dgm1_{int(x_km)}_{int(y_km)}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{int(x_km)}"
-
-
 def subdir_from_name(nom):
     m = re.match(r"rp_dgm1_(\d+)_", nom)
     return m.group(1) if m else None

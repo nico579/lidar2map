@@ -47,7 +47,6 @@ HTTP_UA = "lidar2map/1.0 (DataMapWales WFS)"
 
 # ── Nommage : non synthétisable (chemin Azure par projet) → WFS requis ───────
 import re as _re
-_GR_RE = _re.compile(r"^([A-Z]{2}\d{4})")
 # Exemple réel pour le test de disjonction intra-pays (nommage non-formule).
 SAMPLE_DALLE = "dtm_wales_SH61.tif"
 
@@ -55,10 +54,6 @@ SAMPLE_DALLE = "dtm_wales_SH61.tif"
 def dalle_filename(x_km, y_km):
     raise NotImplementedError(
         "Pays de Galles : URL via catalogue WFS (chemin projet) → discover_dalles()")
-
-
-def dalle_subdir(x_km):
-    return ""
 
 
 def subdir_from_name(nom):

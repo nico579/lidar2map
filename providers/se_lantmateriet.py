@@ -76,11 +76,6 @@ def dalle_filename(tile_id):
     return f"se_dtm1m_{safe}.tif"
 
 
-def dalle_subdir(tile_id):
-    m = re.match(r"(\d+)", str(tile_id))
-    return m.group(1) if m else "xx"
-
-
 def subdir_from_name(nom):
     m = re.match(r"se_dtm1m_(\d+)", nom)
     return m.group(1) if m else None

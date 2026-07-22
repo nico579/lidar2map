@@ -57,10 +57,6 @@ def dalle_filename(x_km, y_km):
         "Basse-Saxe : nom dépendant de l'année de levé → utiliser discover_dalles()")
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     """Sous-dossier (colonne Est) déduit du nom, ou None.
 

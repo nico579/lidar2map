@@ -80,7 +80,6 @@ except Exception:
 
 _IGN_WFS = "https://data.geopf.fr/wfs/ows"
 _IGN_TN = "IGNF_MNT-LIDAR-HD:dalle"
-_IGN_TN_LAZ = "IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle"
 _IGN_NAME_RE = re.compile(r"LHD_[A-Z0-9]+_(\d+)_(\d+)_")
 
 
@@ -1332,17 +1331,6 @@ class LazProvider:
     def subdir_from_name(self, nom):
         m = self.nom_re.match(nom)
         return m.group(1) if m else None
-
-    def defaults_dict(self):
-        """Défauts pour préremplir la GUI (source de vérité unique)."""
-        return {
-            "hmin": float(self.def_hmin), "hmax": float(self.def_hmax),
-            "classes": ",".join(str(c) for c in self.def_classes),
-            "ground": str(self.def_ground),
-            "csf_threshold": float(self.def_csf_threshold),
-            "csf_resolution": float(self.def_csf_resolution),
-            "csf_rigidness": int(self.def_csf_rigidness),
-        }
 
     # ── découverte / conversion / hooks ──────────────────────────────────────
     def _check_deps(self):

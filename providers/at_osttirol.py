@@ -46,11 +46,6 @@ def dalle_filename(x_km, y_km):
     return f"dgm_osttirol_{x_km}_{y_km}.tif"
 
 
-def dalle_subdir(x_km):
-    """Sous-dossier par colonne Est."""
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     """Sous-dossier (colonne Est) déduit du nom, ou None."""
     import re

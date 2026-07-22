@@ -44,10 +44,6 @@ def dalle_filename(x_km, y_km):
     return f"nsw_dem5m_{x_km:08d}_{y_km:+09d}_3857.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km:08d}"
-
-
 import re as _re
 _SUBDIR_FROM_NAME = _re.compile(r"nsw_dem5m_(\d+)_")
 

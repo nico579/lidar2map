@@ -60,10 +60,6 @@ def dalle_filename(x_km, y_km):
     return f"ie_dtm1m_{x_km:04d}_{y_km:05d}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km:04d}"
-
-
 def subdir_from_name(nom):
     m = re.match(r"ie_dtm1m_(\d+)_", nom)
     return m.group(1) if m else None

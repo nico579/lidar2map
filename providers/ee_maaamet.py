@@ -67,10 +67,6 @@ def dalle_filename(x_km, y_km):
     return f"ee_dtm1m_{_ruut_depuis_sw(int(x_km) * 5000, int(y_km) * 5000)}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     # ee_dtm1m_63544.tif → regrouper par bloc 1:20000 (4 premiers chiffres)
     m = re.match(r"ee_dtm1m_(\d{4})\d", nom)

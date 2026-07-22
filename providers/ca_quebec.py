@@ -59,10 +59,6 @@ def dalle_filename(gx, gy):
     return f"qc_mnt1m_{int(gx)}_{int(gy)}.tif"
 
 
-def dalle_subdir(gx):
-    return f"{int(gx)}"
-
-
 _SUBDIR_FROM_NAME = re.compile(r"qc_mnt1m_(\d+)_\d+\.tif$")
 
 

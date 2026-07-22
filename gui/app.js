@@ -2297,15 +2297,11 @@ async function pickDir(fieldId, kind) {
   }
 }
 async function pickFile(fieldId, multiple, exts) {
-  const p = await pywebview.api.pick_file(multiple, false, exts);
+  const p = await pywebview.api.pick_file(multiple, exts);
   if (p) document.getElementById(fieldId).value = Array.isArray(p) ? p.join(';') : p;
 }
-async function pickFileSave(fieldId) {
-  const p = await pywebview.api.pick_file(false, true, []);
-  if (p) document.getElementById(fieldId).value = p;
-}
 async function fusionAjouter() {
-  const files = await pywebview.api.pick_file(true, false, []);
+  const files = await pywebview.api.pick_file(true, []);
   if (!files) return;
   const all = Array.isArray(files) ? files : [files];
   // .geojson.gz strict (pas tout .gz) : aligne le filtre sur le message

@@ -81,10 +81,6 @@ def dalle_filename(x_km, y_km):
     return f"fi_dem2m_{x_km}_{y_km}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     import re
     m = re.match(r"fi_dem2m_(\d+)_", nom)

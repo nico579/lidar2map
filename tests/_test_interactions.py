@@ -844,6 +844,19 @@ check("Flandre : dédup LOCAL à l'appel (bounds_sink persistant ne saute plus u
       "vus = set()" in _comsrc and "if (bx, by) in vus" in _comsrc)
 check("mode LAZ : backend de décompression LAZ (lazrs) vérifié AVANT le download",
       "LazBackend.detect_available()" in _comsrc)
+# Garde-fou #21 (revue code mort 2026-07-22) : en OSM-seul région, la bbox vaut le
+# sentinel (0,0,0,0). Le bloc de maintenance dalles_zone.txt DOIT être court-circuité
+# (`and not _osm_seul`), sinon l'en-tête stocké ne matche jamais et le manifeste de
+# zone est supprimé en silence (unlink).
+check("OSM-seul : maintenance dalles_zone.txt court-circuitée (pas de suppression du "
+      "manifeste sur bbox sentinelle 0,0,0,0)",
+      "dossier_dalles.exists() and not _osm_seul" in _APP.read_text(encoding="utf-8"))
+# Garde-fou point 5 (revue code mort 2026-07-22) : le cœur ne dépend plus de
+# l'ancien point d'interface grille PROVIDER.dalles_pour_bbox ; le compte de
+# dalles vient de discover_dalles (uniforme grille+dynamique). dalles_pour_bbox
+# reste un helper INTERNE des discover_dalles à grille, plus une interface cœur.
+check("cœur : plus d'appel PROVIDER.dalles_pour_bbox (compte/estimation via discover_dalles)",
+      "PROVIDER.dalles_pour_bbox" not in _APP.read_text(encoding="utf-8"))
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;

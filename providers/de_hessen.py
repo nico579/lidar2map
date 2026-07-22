@@ -48,10 +48,6 @@ def dalle_filename(x_km, y_km):
     return f"he_dgm1_{x_km}_{y_km}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     import re
     m = re.match(r"he_dgm1_(\d+)_", nom)

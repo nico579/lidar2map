@@ -72,10 +72,6 @@ def dalle_filename(feuille):
     return f"pt_mdt50_{feuille}.tif"
 
 
-def dalle_subdir(feuille):
-    return str(feuille)[:3]
-
-
 def subdir_from_name(nom):
     m = re.match(r"pt_mdt50_(\d+)\.tif$", nom)
     return m.group(1)[:3] if m else None

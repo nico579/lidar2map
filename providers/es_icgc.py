@@ -59,10 +59,6 @@ def _nom_fenetre(x1, y1, x2, y2):
     return f"icgc_met50cm_{int(x1)}_{int(y1)}_{int(x2)}_{int(y2)}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{x_km}"
-
-
 def subdir_from_name(nom):
     # Regrouper par bande 10 km de l'easting de la zone.
     m = re.match(r"icgc_met50cm_(\d+)_", nom)

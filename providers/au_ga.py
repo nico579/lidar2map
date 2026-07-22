@@ -56,10 +56,6 @@ def dalle_filename(x_km, y_km):
     return f"au_ga5m_{int(x_km):+06d}_{int(y_km):+06d}.tif"
 
 
-def dalle_subdir(x_km):
-    return f"{int(x_km):+06d}"
-
-
 def subdir_from_name(nom):
     import re
     m = re.match(r"au_ga5m_([+-]?\d+)_", nom)

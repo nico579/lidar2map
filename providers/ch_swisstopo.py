@@ -36,7 +36,6 @@ SEUIL_DALLE_VALIDE = 2_000_000         # COG 0.5m ~2-10 Mo (terrain Swiss)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
-STAC_BASE   = "https://data.geo.admin.ch/api/stac/v1"
 COLLECTION  = "ch.swisstopo.swissalti3d"
 
 
@@ -50,22 +49,12 @@ def dalle_filename(x_km, y_km):
         "— l'élévation n'est connue que via STAC API. Utiliser discover_dalles().")
 
 
-def dalle_subdir(x_km):
-    return ""   # COG cachés à plat
-
-
 def subdir_from_name(nom):
     return None
 
 
 def dalle_url(x_km, y_km):
     raise NotImplementedError("Voir dalle_filename : STAC requis.")
-
-
-def dalle_url_by_name(nom):
-    """URL conventionnelle. NB : STAC retourne déjà l'URL exacte signée
-    dans assets[].href, c'est préférable d'utiliser celle-là."""
-    return f"https://data.geo.admin.ch/{COLLECTION}/{nom.rsplit('_', 3)[0]}/{nom}"
 
 
 def dalles_pour_bbox(x1, y1, x2, y2):

@@ -61,10 +61,6 @@ def dalle_filename(n, e):
     return f"at_bev_dtm_{int(n)}_{int(e)}.tif"
 
 
-def dalle_subdir(n):
-    return f"{int(n)}"
-
-
 def subdir_from_name(nom):
     m = re.match(r"at_bev_dtm_(\d+)_", nom)
     return m.group(1) if m else None

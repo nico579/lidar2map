@@ -64,13 +64,6 @@ def dalle_filename(x_km, y_km):
     return f"LHD_FXX_{x_km:04d}_{(y_km + 1):04d}_MNT_O_0M50_LAMB93_IGN69.tif"
 
 
-def dalle_subdir(x_km):
-    """Sous-dossier où ranger une dalle dans le cache (organisation par
-    colonne X pour éviter d'avoir 10000+ fichiers dans un seul dossier).
-    Retourne une string vide si on stocke à la racine."""
-    return f"{x_km:04d}"
-
-
 # Pattern pour extraire le sous-dossier depuis un nom de dalle déjà connu
 # (utilisé par chemin_dalle pour retrouver l'emplacement d'une dalle quand
 # on n'a que son nom, pas ses coordonnées).

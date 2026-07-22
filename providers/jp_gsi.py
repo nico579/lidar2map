@@ -43,7 +43,6 @@ ZOOM       = 15                            # niveau XYZ de DEM5A
 LAYER      = "dem5a"
 TUILE_PX   = 256                           # côté d'une tuile XYZ (px)
 URL_TMPL   = "https://cyberjapandata.gsi.go.jp/xyz/{layer}/{z}/{x}/{y}.txt"
-HTTP_UA    = "lidar2map/1.0 (GSI dem5a)"
 
 # Constantes web-mercator
 _R    = 20037508.342789244                 # demi-circonférence (m)
@@ -67,10 +66,6 @@ COVERAGE_EXTENT = (13_580_000, 2_750_000, 17_150_000, 5_790_000)
 # ── Nommage ──────────────────────────────────────────────────────────────────
 def dalle_filename(z, x, y):
     return f"jp_dem5a_{z}_{x}_{y}.tif"
-
-
-def dalle_subdir(x_km):
-    return f"{int(x_km)}"
 
 
 def subdir_from_name(nom):

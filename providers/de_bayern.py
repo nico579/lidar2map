@@ -68,12 +68,6 @@ def dalle_filename(x_km, y_km):
     return f"{x_km}_{y_km}.tif"
 
 
-def dalle_subdir(x_km):
-    """Sous-dossier par colonne Est (évite ~70 000 fichiers dans un seul
-    dossier sur un run à l'échelle du Land)."""
-    return f"{x_km}"
-
-
 _SUBDIR_FROM_NAME = re.compile(r"^(\d+)_\d+")
 
 
