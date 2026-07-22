@@ -110,9 +110,12 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   > standard CSF surface (`--laz-csf-threshold`, `--laz-csf-resolution`,
   > `--laz-csf-rigidness` 1 steep / 2 / 3 flat; same fields in the GUI).
   > DFM mode is not France-only: it also runs on Switzerland's swissSURFACE3D
-  > point cloud (`--provider ch-swisstopo --laz`, CSF ground base by default).
-  > Any provider that publishes a full, dense, classified point cloud can get a
-  > DFM twin; a bare-earth DTM raster or a ground-only cloud cannot.
+  > (`--provider ch-swisstopo --laz`, CSF ground base by default) and on Poland,
+  > Estonia, Flanders, Canada (NRCan + Quebec), the USA, Denmark and CRAIG
+  > (Auvergne), each via `--laz` on the parent (see the provider table and
+  > `docs/lidar_providers_roadmap.md`). Any provider that publishes a full, dense,
+  > classified point cloud can get a `_laz` twin; a bare-earth DTM raster or a
+  > ground-only cloud cannot.
 
   A roofless house ruin (walls ~1.5 m, dép. 83, France), under scrub. The
   aerial photo barely hints at the walls; the classic LRM (from the DTM) shows
@@ -353,6 +356,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
 | `ch-swisstopo` + **DFM mode** | Switzerland (**standing-structures mode**, experimental) | DFM from classified swissSURFACE3D point cloud | 0.5 m | EPSG:2056 (CH1903+/LV95) | GUI checkbox "DFM mode" (or CLI `--laz`) on the Swiss provider: downloads the **swissSURFACE3D `.las.zip`** tiles (~125 MB/km²) via the same STAC API, unzips the point cloud and rebuilds the standing-structures model. Default ground base is **CSF** (`--laz-ground csf`, Cloth Simulation Filter) since swisstopo's class codes are not guaranteed IGN-compatible; the `classes` mode is also available. Same per-site tuning and cache-then-retune behaviour as the France DFM (~6 min/tile). Targeted prospection, field validation recommended |
+| **+ LAZ mode (other providers)** | Poland, Estonia, Flanders, Canada (NRCan + Quebec), USA, Denmark, France (CRAIG) | DFM/CSF from the national classified point cloud | 0.5 m | *(each provider's CRS)* | **LAZ mode** (`--laz`) also runs on providers whose country publishes the full classified point cloud: `pl-gugik-laz`, `ee-maaamet-laz`, `be-flanders-laz`, `ca-nrcan-laz` (windowed COPC), `us-3dep-laz` (windowed COPC, no account), `ca-quebec-laz`, `dk-datafordeler-laz` (API key), `fr-craig-laz`. Same DFM/CSF machinery as fr/ch; density, classes and CRS vary. Details: `docs/lidar_providers_roadmap.md`. Experimental, targeted prospection |
 | `no-kartverket` | Norway | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, national coverage |
 | `se-lantmateriet` | Sweden | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + 10 km mosaic COG (windowed read), national coverage; **free GeoTorget account** (env `LANTMATERIET_USER`/`LANTMATERIET_PASS`) for the download |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` · `de-rlp` | Germany (4 Länder: Bavaria, NRW, Lower Saxony, Rhineland-Palatinate) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, open data (de-rlp: Metalink index of ~21k GeoTIFF tiles, post_fetch strips the compound vertical CRS to 25832) |

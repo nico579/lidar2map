@@ -3,7 +3,7 @@
 The public mirror of the internal notes on which national bare-earth LiDAR
 sources are wired into lidar2map, which were evaluated and set aside, and why.
 Kept by hand so we do not re-dig the same dead ends every few months. Last
-reviewed 2026-07-15.
+reviewed 2026-07-22.
 
 For the integrated providers and their exact access mechanism, see the
 [provider table](../README.md#lidar-providers--adding-a-country) in the README.
@@ -120,7 +120,7 @@ By access paradigm:
   wall, the cleaner it vanishes; IGN spec documents it). ~205 MB/km², targeted
   prospection only. Exposed as a **mode**, not a source: GUI checkbox "DFM mode"
   on the parent provider / CLI `--laz` (+ `--laz-hmin/hmax/classes` per-site
-  tuning; the twin module `<code>_dfm.py` is hidden from the provider dropdown).
+  tuning; the twin module `<code>_laz.py` is hidden from the provider dropdown).
   Classes are ONE user-visible set (default `1,2,3,4,9,66`: 2/9/66 = terrain
   base as in the official DTM, the rest re-injected into ground gaps within the
   height band); removing class 2 yields a slice (band objects on transparent
@@ -149,7 +149,9 @@ By access paradigm:
   ever "demonstrate the need", per Nico). Canopy
   pre-filter before the cloth (5 m min-z grid, keep z ≤ min+3.5 m, ~57% kept);
   `setPointCloud` takes the numpy array directly (no `.tolist()`, RAM ~1.7 GB);
-  measured ~3 min per 34M-pt tile vs ~25 s for "classes". A STRICT cloth
+  measured ~3 min per 34M-pt IGN tile vs ~25 s for "classes"; the CSF cost scales
+  with density, so a denser cloud is slower (~6 min on Denmark's ~12 pts/m² tiles).
+  A STRICT cloth
   (rigidness 3) as bare-earth and the soft-minus-strict delta were prototyped
   and REJECTED (strict ≈ IGN DTM, erases the walls too; the delta is noise).
   Companion analysis tool:
@@ -172,9 +174,13 @@ By access paradigm:
   cz-cuzk DMR5G). lv-lgia is a full classified cloud but ~1.5 pt/m² ground
   (marginal for 1.5 m walls). Endpoint probe 2026-07-17 for widening: **CH
   swissSURFACE3D = clean** (STAC `.las.zip` ~125 MB/km², high density, done);
-  **NL AHN = deferred** (dense classified cloud exists but no clean tile
-  endpoint: PDOK serves raster only, GeoTiles is a JS SPA, official is now the
-  Ellipsis-Drive platform API — wireable only with real reverse-engineering).
+  **NL AHN = viable LAZ-twin lead (re-evaluated 2026-07-22, was "no endpoint")**:
+  the earlier "no clean tile endpoint" was stale. AHN publishes a national COPC
+  point cloud with a public per-1 km GeoJSON index (e.g. `AHN6_KM_PC_COPC.json`),
+  each COPC range-readable (HTTP 206), no account, compound CRS EPSG:7415
+  (RD New + NAP). Best remaining COPC candidate; wire as an `nl-ahn-laz` twin of
+  the existing `nl-ahn` raster (pass 7415 through the COPC reader, output the
+  horizontal 28992). PDOK-raster-only / GeoTiles-JS-SPA were red herrings.
   **FR CRAIG / LiDARAURA = VALIDATED 2026-07-18, viable, high value** (regional
   Auvergne-Rhône-Alpes program; found via data.europa/data.gouv → CRAIG Nextcloud
   public share `drive.opendata.craig.fr/s/opendata`, path
@@ -199,6 +205,33 @@ By access paradigm:
   Download is the public no-auth share URL (`/s/<token>/download?path=&files=`).
   2016_lidarcheo (the archaeology campaign) is raster-only in the probe (no
   classified cloud index) → deferred.
+- **More LAZ twins of existing raster providers (2026-07-21/22)**: same
+  `common.LazProvider` DFM/CSF machinery, each `<parent>_laz.py`, exposed via
+  `--laz` on the parent, discovered per its own paradigm. Two reusable core hooks
+  were added: `PROVIDER.sign_url(url)` (default identity, signs a blob URL at
+  download time, used by us-3dep for anonymous Planetary Computer SAS) and
+  `COPC_WINDOWED` (range-request read of a remote COPC via `common.copc_window_to_las`,
+  no full-tile download). Multi-zone CRS is set per run from the header via
+  `LazProvider.set_crs`.
+  - **pl-gugik-laz** (Poland, ISOK): WFS skorowidze index, ~28 pts/m², PL-2000
+    zone set per bbox.
+  - **ee-maaamet-laz** (Estonia): cached 1:2000 epk2T index, ~4 pts/m² (marginal
+    for 0.5 m), scan year per sheet, EPSG:3301.
+  - **be-flanders-laz** (Flanders, DHMV II): WFS OpenLidar index, ~11 pts/m²,
+    EPSG:31370.
+  - **ca-nrcan-laz** (Canada, CanElevation): remote GeoPackage index over
+    `/vsicurl`, ~40 pts/m², windowed COPC, UTM zone from the header.
+  - **us-3dep-laz** (USA, 3DEP COPC on Planetary Computer): STAC search, anonymous
+    SAS signing via `sign_url`, ~5 pts/m², windowed COPC, no account (the raster
+    twin needs an OpenTopography key, the point cloud does not).
+  - **ca-quebec-laz** (Quebec, MRNF): WFS `IndexTelechargementLidarPlusRecent`
+    (server-side latest-survey dedup) with a direct LAZ URL, MTM per-zone CRS.
+    First LAZ twin that had to create its own raster parent (`ca-quebec`, MNT 1 m
+    windowed COG, EPSG:6622).
+  - **dk-datafordeler-laz** (Denmark, DHM Punktsky): REST Datafordeler
+    `FileDownloads/GetPointCloudFile` by deterministic DDKN tile name, API key on
+    a free email account (no Danish MitID, so reachable from abroad), ~12 pts/m²,
+    EPSG:25832. Parent `dk-datafordeler` is a DHM WCS (0.4 m), same key.
 - **Static tile grid → direct GeoTIFF**: de-bayern (metalink coverage),
   ph-taal (GeoJSON grid on GitHub Pages → per-tile GeoTIFF on S3, GRIDREF-derived).
 
