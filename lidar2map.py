@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.27.0"
+VERSION      = "1.28.0"
 VERSION_DATE = "2026-07"
 
 
@@ -3504,10 +3504,29 @@ def calculer_grille_bbox(x1, y1, x2, y2):
     return dalles, (x1, y1, x2, y2)
 
 
+def _crs_natif_geographique():
+    """True si CRS_NATIF est GÉOGRAPHIQUE (lon/lat en degrés, ex. ca-nrcan/
+    ca-quebec 4617, us-3dep 4269) plutôt que projeté (mètres)."""
+    try:
+        from pyproj import CRS
+        return CRS.from_user_input(PROVIDER.CRS_NATIF).is_geographic
+    except Exception:
+        return False
+
+
 def calculer_grille(cx, cy, rayon_km):
-    """Retourne (dalles, bbox) depuis un centre CRS natif et un rayon en km."""
-    r = rayon_km * 1000
-    return calculer_grille_bbox(cx - r, cy - r, cx + r, cy + r)
+    """Retourne (dalles, bbox) depuis un centre CRS natif et un rayon en km.
+    Le rayon (km) est converti dans l'UNITÉ du CRS_NATIF : mètres si le CRS est
+    PROJETÉ, DEGRÉS s'il est GÉOGRAPHIQUE (ca-nrcan/us-3dep/ca-quebec cadrent en
+    lon/lat). Sans ça, r=km·1000 était traité comme des DEGRÉS → bbox hors domaine
+    → transform WGS84 = inf → découverte cassée (les 3 providers géographiques,
+    jamais testés en CLI complet ; revue 2026-07-22). Projetés : inchangés."""
+    if _crs_natif_geographique():
+        dy = rayon_km / 111.0
+        dx = rayon_km / (111.0 * max(0.01, math.cos(math.radians(cy))))
+    else:
+        dx = dy = rayon_km * 1000
+    return calculer_grille_bbox(cx - dx, cy - dy, cx + dx, cy + dy)
 
 
 def nom_dalle(x_km, y_km):

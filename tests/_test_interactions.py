@@ -1390,6 +1390,13 @@ check("#1 cache fenêtré : COPC/COG → dossier_ville (projet), pas cache/produ
       "def _dossier_dalles_actif(args, dossier_ville=None)" in _src
       and "COG_WINDOWED" in _src and "COPC_WINDOWED" in _src
       and "return Path(dossier_ville)" in _src)
+# calculer_grille : rayon converti dans l'UNITÉ du CRS_NATIF (mètres si projeté,
+# DEGRÉS si géographique). Sans ça, ca-nrcan/us-3dep/ca-quebec (CRS 4617/4269)
+# calculaient une bbox hors domaine → transform WGS84 = inf → découverte cassée.
+check("cœur : rayon zone converti en DEGRÉS pour un CRS_NATIF géographique "
+      "(ca-nrcan/us-3dep/ca-quebec, sinon bbox inf)",
+      "def _crs_natif_geographique" in _src and "is_geographic" in _src
+      and "rayon_km / 111.0" in _src)
 check("--production-dir : flag + défaut + émission GUI + relecture argv",
       'DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"' in _src
       and '"--production-dir", "--dossier-production"' in _src
