@@ -2115,7 +2115,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.26.0"
+VERSION      = "1.27.0"
 VERSION_DATE = "2026-07"
 
 
@@ -3552,15 +3552,24 @@ def chemin_dalle(dossier_dalles, nom):
     return chemin_racine  # fallback si nom non reconnu
 
 
-def _dossier_dalles_actif(args):
+def _dossier_dalles_actif(args, dossier_ville=None):
     """Racine des dalles LiDAR, selon la NATURE du .tif :
       - MNT : le .tif vient du serveur (WMS) = DOWNLOAD → cache ;
       - LAZ : le .tif est CALCULÉ du nuage avec tes réglages = PRODUIT →
         production (partagé entre projets, hors du cache). Le nuage .laz, lui,
         RESTE au cache (posé par _configurer_cloud_cache → set_cloud_cache_dir).
+      - FENÊTRÉ (COPC/COG) : le .tif est une FENÊTRE propre à la zone mais nommée
+        par l'ASSET distant. Cache/production PARTAGÉS le feraient réutiliser
+        entre zones DIFFÉRENTES du même asset → relief d'une autre zone servi en
+        silence (#1, revue 2026-07-22). On le range DANS LE PROJET (dossier_ville)
+        → isolation par zone ; le skip par nom redevient correct (même zone =
+        même dossier). Prioritaire sur cache/production.
     --dossier-dalles force la racine (prioritaire, tous modes)."""
     if args.dossier_dalles:
         return Path(args.dossier_dalles).resolve()
+    if dossier_ville is not None and (getattr(PROVIDER, "COG_WINDOWED", False)
+                                      or getattr(PROVIDER, "COPC_WINDOWED", False)):
+        return Path(dossier_ville)
     if PROVIDER.CODE.endswith("-laz"):
         return DOSSIER_PRODUCTION / LIDAR_SUBDIR
     return DOSSIER_CACHE / LIDAR_SUBDIR
@@ -3571,10 +3580,16 @@ def _configurer_cloud_cache(args):
     mais le nuage .laz est un download → il RESTE au cache. On indique au
     LazProvider où garder le nuage. Si --dossier-dalles force la racine des .tif,
     le nuage la suit (co-localisé, sémantique historique du flag « tout le LiDAR
-    de cette dalle ici »). No-op pour un provider sans mode LAZ."""
+    de cette dalle ici »). Idem pour un provider FENÊTRÉ (COPC) : le nuage .laz
+    est une fenêtre propre à la zone → il suit le .tif EN PROJET (co-localisé),
+    pas le cache partagé (même collision cross-zone que le .tif sinon, #1).
+    No-op pour un provider sans mode LAZ."""
     _set = getattr(PROVIDER, "set_cloud_cache_dir", None)
     if _set:
-        _set(None if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR)
+        _windowed = (getattr(PROVIDER, "COG_WINDOWED", False)
+                     or getattr(PROVIDER, "COPC_WINDOWED", False))
+        _set(None if (args.dossier_dalles or _windowed)
+             else DOSSIER_CACHE / LIDAR_SUBDIR)
 
 
 def _download_to_tmp(url, chemin_tmp, timeout=60):
@@ -10361,8 +10376,8 @@ Examples:
         print(f"  -> {'Compression enabled' if compresser else 'Raw storage'}")
 
     racine        = Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR
-    dossier_dalles = _dossier_dalles_actif(args)
     dossier_ville  = racine
+    dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
     _sans_telechargement = not getattr(args, "telechargement", False)
     _sans_ombrages = not getattr(args, "ombrages", None)
     if not _osm_seul and not (_sans_telechargement and _sans_ombrages):
@@ -11873,8 +11888,8 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             racine_base = (Path(args.dossier).resolve() if args.dossier
                            else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
             racine = racine_base
-            dossier_dalles = _dossier_dalles_actif(args)
             dossier_ville = racine / nom_z
+            dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
             dossier_ville.mkdir(parents=True, exist_ok=True)
             dossier_dalles.mkdir(parents=True, exist_ok=True)
 

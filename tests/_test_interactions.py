@@ -816,6 +816,13 @@ check("cœur : re-export DALLE_KM/PX_PAR_DALLE tolérant (getattr) pour les jume
       "LAZ à tuilage dynamique (dk/us n'ont pas de grille fixe)",
       'getattr(PROVIDER, "DALLE_KM"' in _APP.read_text(encoding="utf-8")
       and not hasattr(_dkl, "DALLE_KM") and not hasattr(_us, "DALLE_KM"))
+# Garde-fous des invariants LAZ durcis (revue externe 2026-07-22).
+_comsrc = (_ROOT / "providers" / "common.py").read_text(encoding="utf-8")
+check("Flandre : dédup LOCAL à l'appel (bounds_sink persistant ne saute plus une "
+      "tuile vue à une découverte antérieure → plus de tuiles perdues)",
+      "vus = set()" in _comsrc and "if (bx, by) in vus" in _comsrc)
+check("mode LAZ : backend de décompression LAZ (lazrs) vérifié AVANT le download",
+      "LazBackend.detect_available()" in _comsrc)
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;
@@ -1370,10 +1377,19 @@ check("nuage .laz : reste au cache indépendamment du .tif produit",
       and all("set_cloud_cache_dir = _P.set_cloud_cache_dir"
               in (_ROOT / "providers" / f"{p}.py").read_text(encoding="utf-8")
               for p in ("fr_ign_laz", "ch_swisstopo_laz", "fr_craig_laz")))
-check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles forcé",
+check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles OU provider "
+      "fenêtré (le nuage suit le .tif en projet)",
       "def _configurer_cloud_cache" in _src
       and "_configurer_cloud_cache(args)" in _src
-      and "None if args.dossier_dalles else DOSSIER_CACHE / LIDAR_SUBDIR" in _src)
+      and "None if (args.dossier_dalles or _windowed)" in _src)
+# #1 (revue 2026-07-22) : un provider FENÊTRÉ (COPC/COG) range son .tif EN PROJET
+# (dossier_ville), pas dans le cache/production partagés — sinon deux zones du
+# même asset réutilisent la fenêtre l'une de l'autre (relief faux silencieux).
+check("#1 cache fenêtré : COPC/COG → dossier_ville (projet), pas cache/production "
+      "partagés (isolation par zone)",
+      "def _dossier_dalles_actif(args, dossier_ville=None)" in _src
+      and "COG_WINDOWED" in _src and "COPC_WINDOWED" in _src
+      and "return Path(dossier_ville)" in _src)
 check("--production-dir : flag + défaut + émission GUI + relecture argv",
       'DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"' in _src
       and '"--production-dir", "--dossier-production"' in _src

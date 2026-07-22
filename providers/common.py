@@ -211,6 +211,12 @@ def be_flanders_dalles(bbox_natif, filename_fn, bounds_sink, ua="lidar2map/1.0")
         print(f"  ERROR BE Flanders WFS: {type(e).__name__}: {e}")
         return None
     dalles = {}
+    # Dédup LOCAL à cet appel (bandes de vol superposées → même bloc plusieurs
+    # fois). `bounds_sink` (_TILE_BOUNDS) PERSISTE entre appels car bounds_fn le
+    # relit plus tard ; s'en servir pour dédupliquer sautait une tuile déjà vue à
+    # une découverte ANTÉRIEURE → deux emprises successives/recoupantes perdaient
+    # des tuiles (mord surtout la GUI, process persistant ; revue 2026-07-22).
+    vus = set()
     for feat in gj.get("features", []):
         p = feat.get("properties", {})
         loc = p.get("tile_location")
@@ -219,8 +225,9 @@ def be_flanders_dalles(bbox_natif, filename_fn, bounds_sink, ua="lidar2map/1.0")
             continue
         bx = int(bbox[0] // 500) * 500                    # bloc 500 m (coin SW)
         by = int(bbox[1] // 500) * 500
-        if (bx, by) in bounds_sink:
+        if (bx, by) in vus:
             continue
+        vus.add((bx, by))
         bounds_sink[(bx, by)] = (float(bx), float(by), float(bx + 500), float(by + 500))
         dalles[filename_fn(bx, by)] = _BE_DL + loc
     return dalles
@@ -1230,6 +1237,15 @@ class LazProvider:
             import laspy  # noqa: F401
         except ImportError:
             raise RuntimeError("le mode LAZ requiert laspy (pip install laspy lazrs)")
+        # laspy s'IMPORTE sans backend de décompression LAZ : sans ce probe, on
+        # tirait ~80-200 Mo de nuage COMPRESSÉ puis la LECTURE échouait faute de
+        # lazrs (revue 2026-07-22). detect_available() = () si aucun backend.
+        try:
+            if not laspy.LazBackend.detect_available():
+                raise RuntimeError("le mode LAZ requiert un backend de décompression "
+                                   "LAZ : pip install lazrs")
+        except AttributeError:
+            pass   # laspy trop ancien pour LazBackend : ne pas bloquer
         if self.ground == "csf":
             try:
                 import CSF  # noqa: F401
