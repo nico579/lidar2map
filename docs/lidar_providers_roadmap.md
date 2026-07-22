@@ -174,13 +174,16 @@ By access paradigm:
   cz-cuzk DMR5G). lv-lgia is a full classified cloud but ~1.5 pt/m² ground
   (marginal for 1.5 m walls). Endpoint probe 2026-07-17 for widening: **CH
   swissSURFACE3D = clean** (STAC `.las.zip` ~125 MB/km², high density, done);
-  **NL AHN = viable LAZ-twin lead (re-evaluated 2026-07-22, was "no endpoint")**:
-  the earlier "no clean tile endpoint" was stale. AHN publishes a national COPC
-  point cloud with a public per-1 km GeoJSON index (e.g. `AHN6_KM_PC_COPC.json`),
-  each COPC range-readable (HTTP 206), no account, compound CRS EPSG:7415
-  (RD New + NAP). Best remaining COPC candidate; wire as an `nl-ahn-laz` twin of
-  the existing `nl-ahn` raster (pass 7415 through the COPC reader, output the
-  horizontal 28992). PDOK-raster-only / GeoTiles-JS-SPA were red herrings.
+  **NL AHN = still no clean endpoint (external review OVERCLAIMED; verified
+  2026-07-22)**. The review said "COPC index + direct asset + range 206 validated";
+  probing it directly does NOT reproduce that: the `AHN6_KM_PC_COPC.json` it cited
+  lives on a dated `basisdata.nl/hwh-portal/20230609_tmp/...` path (a temp export,
+  stability doubtful) and, once fetched (6.4 MB geo+json), carries tile geometry
+  but **zero direct `.copc.laz` URLs** (the COPC download link is not in the index);
+  GeoTiles is still a JS SPA (its guessed index JSONs 404). So the dense AHN cloud
+  is real but the per-tile COPC download is NOT a reproducible programmable endpoint
+  without reverse-engineering the SPA / the URL scheme. The original "wireable only
+  with real reverse-engineering" assessment stands. `[WATCH ~2027]`
   **FR CRAIG / LiDARAURA = VALIDATED 2026-07-18, viable, high value** (regional
   Auvergne-Rhône-Alpes program; found via data.europa/data.gouv → CRAIG Nextcloud
   public share `drive.opendata.craig.fr/s/opendata`, path
