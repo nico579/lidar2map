@@ -60,10 +60,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("SH : URL via index GeoJSON → discover_dalles()")
-
-
 def dalles_pour_bbox(x1, y1, x2, y2):
     step = DALLE_KM * 1000
     x_start, x_end = int(x1 // step), int(x2 // step)

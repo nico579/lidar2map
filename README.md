@@ -143,7 +143,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*. Both can also render as **`transparent-raster`**: the selected layers (paths, roads, rivers...) drawn on transparent tiles (.sqlitedb), to float above the LiDAR relief as an OsmAnd overlay (OsmAnd cannot overlay vector data natively)
 
-- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (RMaps schema, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map), transparent overlay `.sqlitedb` (`transparent-raster`)
+- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd; for Locus use MBTiles), Mapsforge `.map` (Locus Map), transparent overlay `.sqlitedb` (`transparent-raster`)
 
 - **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan with the phone, download, then "Open with" OsmAnd or Locus: no cable, no cloud, nothing leaves your network. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
 

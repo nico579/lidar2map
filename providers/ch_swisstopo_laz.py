@@ -118,10 +118,3 @@ _socle           = _P.socle
 _reinjectees     = _P.reinjectees
 _laz_filename    = _P.laz_filename
 
-
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("ch-swisstopo-laz : URL via STAC → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ch-swisstopo-laz : index STAC → discover_dalles()")

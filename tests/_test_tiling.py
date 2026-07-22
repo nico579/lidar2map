@@ -84,7 +84,7 @@ timg = Image.open(io.BytesIO(data[t_off + 8: t_off + 8 + tlen]))
 timg.verify()
 print(f"RMAP OK ({n_zooms} zooms, map info {mlen} o)")
 
-# ── SQLiteDB (Locus/RMaps) : schéma + conversion TMS→XYZ ─────────────────────
+# ── SQLiteDB (cible OsmAnd) : schéma + conversion TMS→XYZ ─────────────────────
 sdb = l2m.generer_sqlitedb_depuis_mbtiles(mbt)
 assert sdb is not None and sdb.exists(), "SQLiteDB non genere"
 con_s = sqlite3.connect(str(sdb))

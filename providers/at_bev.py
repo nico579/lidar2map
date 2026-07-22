@@ -66,14 +66,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("AT-BEV : URL via index ATOM → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("AT-BEV : utiliser discover_dalles()")
-
-
 # ── Index ATOM (service feed → {(N,E): dataset_feed_url}) ─────────────────────
 # Chaque tuile CRS3035 apparaît une fois PAR millésime (Stichtag 2019..2025) ;
 # on ne garde que le plus récent par (N,E), comme ca-nrcan garde la dernière
@@ -165,13 +157,19 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     (1-4 requêtes pour une zone normale), en cachant les URLs résolues."""
     if bbox_natif is None:
         return {}
+    # Garde fail-fast hors couverture : bbox entièrement hors de l'Autriche (3035)
+    # → {} sans interroger le feed ATOM (emprise lâche, ne rejette pas un bord).
+    x1, y1, x2, y2 = bbox_natif
+    cx0, cy0, cx1, cy1 = COVERAGE_EXTENT
+    if max(x1, cx0) >= min(x2, cx1) or max(y1, cy0) >= min(y2, cy1):
+        print("  AT BEV: bbox outside Austria (EPSG:3035) coverage")
+        return {}
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     service = _charger_index(cache_path)
     if service is None:
         return None
 
-    x1, y1, x2, y2 = bbox_natif
     e0 = (int(x1) // GRID_M) * GRID_M
     e1 = (int(x2) // GRID_M) * GRID_M
     n0 = (int(y1) // GRID_M) * GRID_M

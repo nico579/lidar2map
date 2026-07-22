@@ -93,10 +93,3 @@ _socle           = _P.socle
 _reinjectees     = _P.reinjectees
 _laz_filename    = _P.laz_filename
 
-
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("lv-lgia-laz : URL via index LAS S3 → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("lv-lgia-laz : index LAS S3 → discover_dalles()")

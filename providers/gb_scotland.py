@@ -170,10 +170,6 @@ def subdir_from_name(nom):
     return m.group(1).upper() if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("GB-Scotland : URL via listing S3 → discover_dalles()")
-
-
 def dalles_pour_bbox(x1, y1, x2, y2):
     """Grille 1 km EPSG:27700, borne haute demi-ouverte (cf. gb_england)."""
     step = DALLE_KM * 1000

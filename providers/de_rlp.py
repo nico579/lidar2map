@@ -58,10 +58,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("RP : URL via Metalink (année variable) → discover_dalles()")
-
-
 def dalles_pour_bbox(x1, y1, x2, y2):
     """Grille 1 km EPSG:25832 — borne haute demi-ouverte (cf. de_bayern)."""
     step = DALLE_KM * 1000

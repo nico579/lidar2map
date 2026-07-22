@@ -70,14 +70,6 @@ def dalle_filename(x_km, y_km):
     raise NotImplementedError("US-CNMI : VRT fenêtré → discover_dalles()")
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("US-CNMI : VRT fenêtré → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("US-CNMI : VRT fenêtré → discover_dalles()")
-
-
 # ── Hook GDAL : autoriser le VRT (et ses .tif) à /vsicurl ─────────────────────
 def gdal_env_options():
     """Options GDAL (scopées) injectées dans l'Env de lecture du cœur : autoriser

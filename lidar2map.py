@@ -2693,12 +2693,6 @@ def _load_provider():
             WMS_LAYER          = None,
             WFS_URL            = None,
         )
-        # dalle_filename / dalle_url : ne devraient pas être appelées en mode --osm
-        def _not_available(msg):
-            raise RuntimeError(f"Provider fr-ign (fallback) : {msg} — "
-                               "dossier providers/ absent.")
-        _p.dalle_filename  = lambda x_km, y_km:            _not_available("dalle_filename")
-        _p.dalle_url       = lambda x_km, y_km:            _not_available("téléchargement LiDAR")
         # discover_dalles : retourne {} — les call sites font déjà `or {}`
         # et le téléchargement est sauté si dalles_dict est vide.
         _p.discover_dalles = lambda bbox, bbox_l93, cache: {}
@@ -9166,9 +9160,9 @@ def _sqlitedb_schema_courant(path):
 
 def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     """
-    Génère un fichier .sqlitedb (format natif Locus Map) depuis un .mbtiles.
+    Génère un fichier .sqlitedb (cible OsmAnd) depuis un .mbtiles.
 
-    Schéma SQLiteDB (format interne Locus / RMaps Android) :
+    Schéma SQLiteDB (variante OsmAnd : schéma RMaps + colonne tilenumbering) :
       CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB)
       CREATE TABLE android_metadata (locale TEXT)
       CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT)
@@ -9176,14 +9170,14 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     Coordonnées : x=col, y=row XYZ (y=0 en haut/Nord), z=zoom, s=0 (inutilisé).
     Conversion TMS→XYZ : y_xyz = (2^z - 1) - tile_row_tms.
 
-    C'est le format que Locus utilise en interne pour son cache de cartes en ligne.
-    Zéro risque de compatibilité, auto-load et Quick map switch fonctionnent.
+    CIBLE OsmAnd, pas Locus. Locus attend la numérotation RMaps et refuse ce
+    fichier (entrée grisée dans le gestionnaire de cartes) : pour Locus on livre
+    le MBTiles (universel, lu nativement).
 
     tilenumbering='simple' : indispensable pour OsmAnd. Quand la colonne est
     absente, OsmAnd (SQLiteTileSource) suppose le schéma BigPlanet à zoom
     INVERSÉ (z' = 17 - z) et ne trouve donc jamais nos tuiles (couche
-    sélectionnable mais vide). 'simple' = numérotation XYZ normale. Locus
-    ignore la colonne supplémentaire (lecture par nom, minzoom/maxzoom).
+    sélectionnable mais vide). 'simple' = numérotation XYZ normale.
     """
 
     sqlitedb = mbtiles_path.with_suffix(".sqlitedb")

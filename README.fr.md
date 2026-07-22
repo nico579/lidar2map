@@ -142,7 +142,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*. Les deux se rendent aussi en **`transparent-raster`** : les couches choisies (chemins, routes, cours d'eau...) dessinées sur tuiles transparentes (.sqlitedb), à superposer au relief LiDAR dans OsmAnd (qui ne sait pas superposer du vectoriel nativement)
 
-- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (format RMaps, Locus Map / OsmAnd), Mapsforge `.map` (Locus Map), `.sqlitedb` transparent en superposition (`transparent-raster`)
+- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd ; pour Locus, utiliser MBTiles), Mapsforge `.map` (Locus Map), `.sqlitedb` transparent en superposition (`transparent-raster`)
 
 - **Envoi vers le téléphone** : après génération, le bouton 📲 de la GUI (ou `--serve --zone-name X` en CLI) sert les cartes sur le WiFi local et affiche un QR code. On scanne avec le téléphone, on télécharge, puis « Ouvrir avec » OsmAnd ou Locus : pas de câble, pas de cloud, rien ne sort du réseau. (Android peut avertir que le téléchargement n'est pas sécurisé : choisir Enregistrer, c'est un simple transfert local.)
 

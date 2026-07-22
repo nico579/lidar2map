@@ -62,14 +62,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("Voir discover_dalles().")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("Voir discover_dalles().")
-
-
 # ── Découverte via le catalogue WFS ──────────────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """Interroge le catalogue WFS pour les tuiles intersectant bbox_natif

@@ -73,14 +73,6 @@ def subdir_from_name(nom):
     return f"{int(m.group(1)) // 64}" if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("JP : tuiles XYZ → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("JP : tuiles XYZ → discover_dalles()")
-
-
 # ── Découverte : tuiles XYZ z=15 couvrant la bbox web-mercator ───────────────
 def _tile_bounds(z, x, y):
     """Bornes web-mercator (left, bottom, right, top) de la tuile z/x/y."""

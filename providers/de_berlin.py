@@ -60,10 +60,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("BE : URL via flux ATOM → discover_dalles()")
-
-
 def dalles_pour_bbox(x1, y1, x2, y2):
     """Grille 2 km EPSG:25833 → coins SW en km (multiples de 2). Borne haute
     demi-ouverte (cf. de_thueringen). step=2000 m, coin SW km = (m // 2000) * 2."""

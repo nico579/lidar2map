@@ -67,14 +67,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(gx, gy):
-    raise NotImplementedError("ca-quebec : URL via WFS index → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ca-quebec : WFS index → discover_dalles()")
-
-
 # ── Options GDAL : autoriser l'extension .TIF (majuscule) à /vsicurl ──────────
 def gdal_env_options():
     return {"CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff,.TIF"}

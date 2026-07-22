@@ -43,14 +43,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("fr-guadeloupe : URL via WFS dalle → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("fr-guadeloupe : index WFS → discover_dalles()")
-
-
 # ── Découverte (WFS IGN LiDAR HD, mutualisée) ────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     from providers import common

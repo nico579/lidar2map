@@ -128,10 +128,3 @@ _socle           = _P.socle
 _reinjectees     = _P.reinjectees
 _laz_filename    = _P.laz_filename
 
-
-def dalle_url(x, y):
-    raise NotImplementedError("ca-quebec-laz : URL via WFS PlusRecent → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ca-quebec-laz : index WFS → discover_dalles()")

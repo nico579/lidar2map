@@ -65,14 +65,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("IE : URL via FeatureServer → utiliser discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("IE : utiliser discover_dalles()")
-
-
 # ── Découverte via FeatureServer ──────────────────────────────────────────────
 def _query_feature_service(service_name, bbox_natif, max_records=500):
     """Interroge le FeatureServer (ou MapServer) d'un service Coverage GSI.

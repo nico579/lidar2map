@@ -40,14 +40,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x, y):
-    raise NotImplementedError("fr-craig : URL via index TA → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("fr-craig : index shapefile → discover_dalles()")
-
-
 # ── Découverte (index shapefile CRAIG, mutualisée) ───────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     # Le raster n'a pas besoin des bornes par tuile (le .asc est auto-géoréférencé) :

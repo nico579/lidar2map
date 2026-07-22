@@ -68,16 +68,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError(
-        "Basse-Saxe : URL dépendante de l'année → utiliser discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError(
-        "Basse-Saxe : pas de grille dérivable (URL via STAC) — discover_dalles()")
-
-
 # ── Découverte via STAC API (calqué sur ch_swisstopo) ────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """Interroge la STAC API LGLN pour les tuiles DGM1 dans la bbox WGS84, filtre

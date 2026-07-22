@@ -77,14 +77,6 @@ def subdir_from_name(nom):
     return m.group(1)[:3] if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("PT : URL via POST /search → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("PT : utiliser discover_dalles()")
-
-
 # ── Session (login Keycloak, opener global à cookies) ────────────────────────
 _session_prete = False
 
@@ -143,6 +135,14 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     (session download) est fait ICI : chaque chunk re-discover → session fraîche."""
     if bbox_wgs84 is None:
         return {}
+    # Garde fail-fast hors couverture : bbox entièrement hors du Portugal (3763)
+    # → {} sans login ni /search (emprise lâche, ne rejette pas un bord).
+    if bbox_natif is not None:
+        cx0, cy0, cx1, cy1 = COVERAGE_EXTENT
+        nx1, ny1, nx2, ny2 = bbox_natif
+        if max(nx1, cx0) >= min(nx2, cx1) or max(ny1, cy0) >= min(ny2, cy1):
+            print("  PT DGT: bbox outside Portugal (EPSG:3763) coverage")
+            return {}
     lon1, lat1, lon2, lat2 = bbox_wgs84
     poly = {"type": "Polygon", "coordinates": [[
         [lon1, lat1], [lon2, lat1], [lon2, lat2], [lon1, lat2], [lon1, lat1]]]}

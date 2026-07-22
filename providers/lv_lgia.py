@@ -56,14 +56,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("LV : URL via index LAS S3 → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("LV : intersection via l'index LAS → discover_dalles()")
-
-
 # ── Découverte (index S3 + mesure TKS-93, mutualisée common.lgia_dalles) ──────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=8):
     """{lv_dtm1_<x>_<y>.tif: url_las} pour les tuiles 1 km intersectant bbox_natif

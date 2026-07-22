@@ -53,15 +53,6 @@ def subdir_from_name(nom):
     return None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("Voir dalle_filename : STAC requis.")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError(
-        "swissALTI3D : utiliser discover_dalles() — pas de grille dérivable.")
-
-
 # ── Découverte via STAC API ──────────────────────────────────────────────────
 def _asset_cog_05m(nom, ass):
     """Sélectionne le COG 0.5 m EPSG:2056 (asset *_0.5_2056_*.tif)."""

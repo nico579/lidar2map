@@ -120,10 +120,3 @@ _socle           = _P.socle
 _reinjectees     = _P.reinjectees
 _laz_filename    = _P.laz_filename
 
-
-def dalle_url(x, y):
-    raise NotImplementedError("pl-gugik-laz : URL via WFS skorowidze → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("pl-gugik-laz : index WFS → discover_dalles()")

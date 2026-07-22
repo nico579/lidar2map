@@ -89,14 +89,6 @@ def subdir_from_name(nom):
     return f"utm{m.group(1)}" if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("Voir discover_dalles().")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("Voir discover_dalles().")
-
-
 # ── Découverte via TNM API ───────────────────────────────────────────────────
 HTTP_UA = "lidar2map/1.0 (TNMAccess)"
 

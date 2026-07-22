@@ -73,14 +73,6 @@ def dalle_filename(x_km, y_km):
     raise NotImplementedError("ES-ICGC : COG unique fenêtré → discover_dalles()")
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("ES-ICGC : COG unique fenêtré → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("ES-ICGC : COG unique fenêtré → discover_dalles()")
-
-
 # ── Découverte ───────────────────────────────────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """UNE entrée {nom_fenetre: COG_URL} si la bbox intersecte la Catalogne.

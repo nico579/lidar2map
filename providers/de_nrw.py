@@ -75,12 +75,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    """Non applicable (cf. dalle_filename) — l'URL exacte vient de index.json."""
-    raise NotImplementedError(
-        "NRW : URL dépendante de l'année → utiliser discover_dalles()")
-
-
 # ── Calcul de la liste des dalles couvrant une bbox ──────────────────────────
 def dalles_pour_bbox(x1, y1, x2, y2):
     """Liste (x_km, y_km) des coins SW couvrant la bbox EPSG:25832.

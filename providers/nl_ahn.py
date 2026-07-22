@@ -83,20 +83,6 @@ def dalle_url_by_name(nom):
     return f"{DOWNLOAD_BASE}/{PRODUIT}/{nom}"
 
 
-def dalle_url(x_km, y_km):
-    """Non applicable pour AHN — voir dalle_filename()."""
-    raise NotImplementedError(
-        "AHN n'utilise pas une grille (x_km, y_km) — utiliser discover_dalles()")
-
-
-# ── Calcul de la liste des dalles couvrant une bbox ──────────────────────────
-def dalles_pour_bbox(x1, y1, x2, y2):
-    """Non applicable pour AHN — l'index des tuiles n'est pas dérivable
-    d'une grille géométrique. Appeler discover_dalles() à la place."""
-    raise NotImplementedError(
-        "AHN n'a pas de grille régulière — utiliser discover_dalles((lon,lat,...))")
-
-
 # ── Découverte des dalles via l'index JSON de l'ATOM feed ────────────────────
 HTTP_UA = "lidar2map/1.0 (PDOK AHN)"
 # Vrai endpoint d'index JSON (vérifié 2026-05) : ~1.1 Mo, 1373 features,

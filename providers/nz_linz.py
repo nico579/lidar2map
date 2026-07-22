@@ -59,14 +59,6 @@ def subdir_from_name(nom):
     return m.group(1).upper() if m else None
 
 
-def dalle_url(code):
-    raise NotImplementedError("NZ : URL via STAC COG → utiliser discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("NZ : utiliser discover_dalles()")
-
-
 # ── Helpers STAC ─────────────────────────────────────────────────────────────
 def _get_json(url):
     try:

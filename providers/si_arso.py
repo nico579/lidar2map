@@ -60,12 +60,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    # L'URL exige le BLOK (répertoire de distribution), connu seulement via
-    # l'index fishnet → passer par discover_dalles().
-    raise NotImplementedError("SI : URL via index fishnet → discover_dalles()")
-
-
 def dalles_pour_bbox(x1, y1, x2, y2):
     """Grille 1 km D96/TM — sert au comptage à priori ; les URLs réelles
     viennent de discover_dalles (qui filtre aussi les dalles inexistantes)."""

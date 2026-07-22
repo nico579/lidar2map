@@ -58,14 +58,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("PH-Taal : URL via GRIDREF de la grille → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("PH-Taal : intersection via la grille → discover_dalles()")
-
-
 # ── Index (grille GeoJSON, téléchargée une fois, cachée) ─────────────────────
 def _construire_index(cache_path):
     """{'<E_km>_<N_km>': gridref} pour les tuiles ayant un DTM. La grille est un

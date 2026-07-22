@@ -81,14 +81,6 @@ def subdir_from_name(nom):
     return m.group(1) if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("SE : URL via STAC → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("SE : utiliser discover_dalles()")
-
-
 # ── Découverte STAC (cache PAR bbox, calque ca-nrcan) ────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """{se_dtm1m_<tile>.tif: url_cog} des tuiles DTM 1 m intersectant bbox_wgs84.
@@ -98,6 +90,14 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     tôt et clairement s'ils manquent."""
     if bbox_wgs84 is None:
         return {}
+    # Garde fail-fast hors couverture : bbox entièrement hors de la Suède (3006)
+    # → {} sans exiger les identifiants ni interroger STAC (emprise lâche).
+    if bbox_natif is not None:
+        cx0, cy0, cx1, cy1 = COVERAGE_EXTENT
+        nx1, ny1, nx2, ny2 = bbox_natif
+        if max(nx1, cx0) >= min(nx2, cx1) or max(ny1, cy0) >= min(ny2, cy1):
+            print("  SE Lantmateriet: bbox outside Sweden (EPSG:3006) coverage")
+            return {}
     if _credentials() == (None, None):
         print("  ERROR se-lantmateriet: set LANTMATERIET_USER and "
               "LANTMATERIET_PASS (free GeoTorget account, order "

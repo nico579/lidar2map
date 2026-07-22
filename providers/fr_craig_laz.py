@@ -91,10 +91,3 @@ _socle           = _P.socle
 _reinjectees     = _P.reinjectees
 _laz_filename    = _P.laz_filename
 
-
-def dalle_url(x, y):
-    raise NotImplementedError("fr-craig-laz : URL via index TA → discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("fr-craig-laz : index shapefile → discover_dalles()")

@@ -67,14 +67,6 @@ def subdir_from_name(nom):
     return m.group(1)[:2].lower() if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("Canada : URL via STAC → utiliser discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("Canada : utiliser discover_dalles()")
-
-
 # ── Découverte STAC ──────────────────────────────────────────────────────────
 def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """Requête STAC NRCan → COG DTM 1 m (HRDEM) intersectant bbox_wgs84.
@@ -85,6 +77,14 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     """
     if bbox_wgs84 is None:
         return {}
+    # Garde fail-fast hors couverture : bbox entièrement hors du Canada (3979)
+    # → {} sans requête STAC (emprise lâche, ne rejette pas un bord).
+    if bbox_natif is not None:
+        cx0, cy0, cx1, cy1 = COVERAGE_EXTENT
+        nx1, ny1, nx2, ny2 = bbox_natif
+        if max(nx1, cx0) >= min(nx2, cx1) or max(ny1, cy0) >= min(ny2, cy1):
+            print("  NRCan: bbox outside Canada (EPSG:3979) coverage")
+            return {}
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)

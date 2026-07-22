@@ -351,6 +351,18 @@ check("gb-scotland auto-reconnaît ses 3 formats OS (NR5807/HY20/NS16NE)",
       and sc.subdir_from_name("HY20.tif") == "HY"
       and sc.subdir_from_name("NS16NE.tif") == "NS"
       and sc.subdir_from_name("dtm_england_500_4500.tif") is None)
+# Garde-fou point 3 (revue code mort 2026-07-22) : les 4 providers index/COG qui
+# définissaient COVERAGE_EXTENT sans le consommer ont désormais une garde fail-fast.
+# Une bbox_natif hors emprise nationale → {} SANS requête réseau (ni feed, ni STAC,
+# ni login/credentials). bbox lointaine (10 Mm) hors de TOUS les extents projetés.
+_cov_far = (10_000_000, 10_000_000, 10_000_001, 10_000_001)
+for _cov_c in ("at-bev", "ca-nrcan", "pt-dgt", "se-lantmateriet"):
+    _cov_m = provs.get(_cov_c)
+    if _cov_m is not None:
+        _cov_r = _cov_m.discover_dalles((1.0, 1.0, 1.001, 1.001), _cov_far,
+                                        tmp / f"cov_{_cov_c}.json")
+        check(f"{_cov_c} : garde COVERAGE_EXTENT hors couverture (bbox lointaine)",
+              _cov_r == {})
 
 print("== 7c. jp-gsi : géométrie tuile alignée sur le VRT (résolution z15) ==")
 jp = provs.get("jp-gsi")

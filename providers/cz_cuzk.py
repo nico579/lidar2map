@@ -65,14 +65,6 @@ def subdir_from_name(nom):
     return m.group(1)[:4].upper() if m else None
 
 
-def dalle_url(x_km, y_km):
-    raise NotImplementedError("CZ : URL via Atom feed → utiliser discover_dalles()")
-
-
-def dalles_pour_bbox(x1, y1, x2, y2):
-    raise NotImplementedError("CZ : utiliser discover_dalles()")
-
-
 # ── Découverte via Atom INSPIRE (2 niveaux) ──────────────────────────────────
 def _bbox_from_polygon(text):
     """georss:polygon 'lat lon lat lon ...' → (lat_min, lon_min, lat_max, lon_max)."""
