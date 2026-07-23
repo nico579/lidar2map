@@ -735,6 +735,8 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     parallèle). Écriture ATOMIQUE (.tmp → replace) : un crash en cours de
     conversion ne laisse pas de GeoTIFF partiel pris pour valide.
     """
+    import os
+    import time
     import laspy
     import numpy as np
     import rasterio
@@ -753,6 +755,15 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                          "(attendu 'classes' ou 'csf')")
 
     with _CONV_SEM:
+        # Profil par phase (opt-in) : env LIDAR2MAP_LAZ_PROFILE=1 → une ligne de
+        # temps par phase et par dalle. Diagnostic dev, hors surface CLI/GUI ;
+        # no-op quand la variable est absente.
+        _prof_on = bool(os.environ.get("LIDAR2MAP_LAZ_PROFILE"))
+        _prof = []
+        def _mark(_lbl):
+            if _prof_on:
+                _prof.append((_lbl, time.perf_counter()))
+        _mark("start")
         las = laspy.read(str(src_las))
         _verifie_crs_las(Path(src_las).name, las, crs_epsg)
         xs = np.asarray(las.x); ys = np.asarray(las.y)
@@ -768,6 +779,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         except Exception:
             wh = None
         del las
+        _mark("read")
         if xs.size == 0:
             raise ValueError(f"{Path(src_las).name}: nuage vide")
 
@@ -832,6 +844,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                                smoothing_iterations=0)
             return G
 
+        _mark("prep")
         if ground_method == "csf":
             # Pré-filtre canopée : grille 5 m de min-z, garde z ≤ min+3,5 m
             # (marge au-dessus de la tranche murs ~2,5 m). Indépendant des
@@ -846,6 +859,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             np.minimum.at(g5, f5, zs)
             keep = zs <= (g5[f5] + 3.5)
             del c5, r5, f5, g5
+            _mark("prefilter")
             # Tissu MOU par défaut : rigidness 1 + seuil 0,5 m → les
             # structures basses continues sont absorbées dans le « sol », la
             # canopée résiduelle est rejetée (défauts calibrés Var 2026-07-16,
@@ -861,6 +875,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             # ABSOLUES float64 : ne PAS décaler/arrondir (le CSF y est sensible,
             # cf. commentaire clip).
             csf.setPointCloud(np.column_stack([xs[keep], ys[keep], zs[keep]]))
+            _mark("csf_ingest")
             g_idx, ng_idx = CSF.VecInt(), CSF.VecInt()
             # exportCloth=False (revue perf 2026-07-18) : le wrapper CSF.py met le
             # défaut à True, ce qui écrit le tissu dans un cloth_nodes.txt (~188 Mo
@@ -870,6 +885,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             # de CSF, pas l'export) : -40,6 s/dalle et plus de fichier parasite,
             # sortie inchangée. (cloth_nodes.txt n'est PAS une sortie de lidar2map.)
             csf.do_filtering(g_idx, ng_idx, False)
+            _mark("csf_sim")
             sol_csf = np.zeros(xs.size, dtype=bool)
             sol_csf[np.flatnonzero(keep)[np.asarray(g_idx, dtype=np.int64)]] = True
             del csf, g_idx, ng_idx, keep
@@ -902,6 +918,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                 # inventerait un fond.
                 grid = dfm.reshape(ny, nx).astype(np.float32)
         grid = np.where(np.isfinite(grid), grid, nodata).astype(np.float32)
+        _mark("binfill")
 
         transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)
         tmp = Path(str(tif_path) + ".conv.tmp")
@@ -913,6 +930,12 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
                            compress="deflate", predictor=3, tiled=True) as dst:
             dst.write(grid, 1)
         tmp.replace(tif_path)
+        _mark("write")
+        if _prof_on:
+            _ph = " ".join(f"{_prof[i][0]}={_prof[i][1] - _prof[i-1][1]:.2f}s"
+                           for i in range(1, len(_prof)))
+            print(f"  [laz-profile] {Path(src_las).name} ({ground_method}): "
+                  f"{_ph} | total={_prof[-1][1] - _prof[0][1]:.2f}s", flush=True)
 
 
 def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,
