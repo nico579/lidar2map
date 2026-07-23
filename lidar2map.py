@@ -121,10 +121,10 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   l'étape 1, via STAC ou tuiles LAZ, et sur le CRS natif, mais la suite est commune) :
     1. Dalles LiDAR (fr-ign : HD par WMS ; cache permanent dans --dossier-dalles)
        → dalles_zone.txt (liste bbox-versionnée, reconstruite si zone change)
-    2. gdalbuildvrt → VRT global temporaire (CRS natif du provider, ex. EPSG:2154, < 1 s)
-    3. gdaldem / numpy/scipy → TIF ombrages (étape "ombrage")
+    2. rasterio.merge → mosaïque globale des dalles (CRS natif du provider, ex. EPSG:2154, < 1 s)
+    3. numpy/scipy → TIF ombrages (étape "ombrage")
        → <nom>_multi_ombrage.tif, <nom>_slope_ombrage.tif…
-    4. gdalwarp + gdaladdo + tuilage Pillow → MBTiles/RMAP/SQLiteDB
+    4. rasterio.warp + build_overviews + tuilage Pillow → MBTiles/RMAP/SQLiteDB
        → <nom>_multi_ombrage_tuilage_z18.tif (cache Mercator, réutilisable)
        → <nom>_multi_ombrage_z13-18.mbtiles   (plage --zoom-min/--zoom-max ;
        → <nom>_multi_ombrage_z13-18.rmap       z18 ≈ 0,43 m/px en métropole,
@@ -244,7 +244,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   Temps indicatifs (zone 4 km², i3-8130U) :
     Téléchargement (9-12 dalles)       : ~30 s
-    Ombrage multi (gdaldem)            : ~5-10 s
+    Ombrage multi (numpy)              : ~5-10 s
     Ombrage SVF (numpy, 4 km²)         : ~5 min
     Ombrage LRM (scipy)                : ~2 min
     Ombrage RRIM (slope + LRM)         : ~8 min
@@ -6966,8 +6966,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # Au lieu de produire un VRT puis de le convertir en GeoTIFF avec
     # gdal_translate, on fait un merge direct rasterio en GeoTIFF compressed.
     # Avantages : un seul passage, plus de dépendance à GDAL CLI, sortie
-    # immédiatement utilisable par numpy (gdaldem reste pour les hillshades —
-    # voir étape 4 du refactor).
+    # immédiatement utilisable par numpy (les hillshades sont calculés ensuite
+    # en numpy, cf. étape ombrage).
     if len(cogs) > 1:
         _vrt_tmpdir = dossier_ville / "_tmp"
         _vrt_tmpdir.mkdir(parents=True, exist_ok=True)
@@ -7507,13 +7507,13 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     source_already_warped=False, ecraser_tuiles=False,
                     tile_workers=8):
     """
-    Pipeline MBTiles — source unique, pyramide GDAL, tuilage par bandes.
+    Pipeline MBTiles : source unique, pyramide rasterio, tuilage par bandes.
 
-    1. gdalwarp  : tif_source (EPSG:2154) → warped_3857.tif (EPSG:3857)
-                   à la résolution native de zoom_max, DEFLATE+TILED.
-    2. gdaladdo  : overviews gauss pour zoom_min..zoom_max-1.
-    3. Tiling    : rangées de tuiles via gdal_translate + Pillow
-                   → INSERT OR REPLACE SQLite.
+    1. rasterio.warp : tif_source (EPSG:2154) → warped_3857.tif (EPSG:3857)
+                       à la résolution native de zoom_max, DEFLATE+TILED.
+    2. build_overviews : overviews gauss pour zoom_min..zoom_max-1.
+    3. Tiling : rangées de tuiles via lecture fenêtrée rasterio + Pillow
+                → INSERT OR REPLACE SQLite.
 
     format_tuiles : 'auto' (JPEG pour hillshades, PNG pour SVF/LRM/RRIM),
                     'jpeg' ou 'png'.
