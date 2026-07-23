@@ -10292,6 +10292,23 @@ Examples:
         rayon = args.zone_rayon or 10.0
         bbox = calculer_grille(cx, cy, rayon)
 
+    # --laz-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
+    # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
+    # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
+    # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
+    # OMP=tous, sur une VM multi-coeurs. HISSÉ ICI, avant le branchement découpé :
+    # sinon le return du mode --split-* saute cette config et sérialise TOUT un run
+    # découpé (le pool de download est bien dimensionné L11208, mais _CONV_SEM reste
+    # à 1). Un département SE traite en découpé : c'est là que le bug mordait.
+    if getattr(args, "laz_parallel", 1) and args.laz_parallel > 1:
+        _cores = os.cpu_count() or 1
+        _omp = max(1, _cores // args.laz_parallel)
+        os.environ["OMP_NUM_THREADS"] = str(_omp)
+        from providers import common as _common_par
+        _common_par.set_laz_parallelism(args.laz_parallel)
+        print(f"  LAZ parallel : {args.laz_parallel} conversions simultanees "
+              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.laz_parallel} Go RAM")
+
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
     _cols_pr  = getattr(args, "cols_decoupe", 0) or 0
     _rows_pr  = getattr(args, "rows_decoupe", 0) or 0
@@ -10348,19 +10365,6 @@ Examples:
         print("  Update: existing tiles re-downloaded")
     if args.workers != NB_WORKERS:
         print(f"  Workers : {args.workers}")
-    # --laz-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
-    # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
-    # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
-    # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
-    # OMP=tous, sur une VM multi-coeurs.
-    if getattr(args, "laz_parallel", 1) and args.laz_parallel > 1:
-        _cores = os.cpu_count() or 1
-        _omp = max(1, _cores // args.laz_parallel)
-        os.environ["OMP_NUM_THREADS"] = str(_omp)
-        from providers import common as _common_par
-        _common_par.set_laz_parallelism(args.laz_parallel)
-        print(f"  LAZ parallel : {args.laz_parallel} conversions simultanees "
-              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.laz_parallel} Go RAM")
 
     # Compression cache : ON par defaut depuis v1.14 (16→7 Mo par dalle FR,
     # ~90→40 Go par departement) ; --no-download-compress pour du brut.

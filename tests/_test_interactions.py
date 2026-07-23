@@ -869,6 +869,15 @@ check("OSM-seul : maintenance dalles_zone.txt court-circuitée (pas de suppressi
 # reste un helper INTERNE des discover_dalles à grille, plus une interface cœur.
 check("cœur : plus d'appel PROVIDER.dalles_pour_bbox (compte/estimation via discover_dalles)",
       "PROVIDER.dalles_pour_bbox" not in _APP.read_text(encoding="utf-8"))
+# Bug --laz-parallel mort en découpé (corrigé 2026-07-23) : la config parallèle
+# (set_laz_parallelism) DOIT être posée AVANT le return du mode --split-*, sinon un
+# run départemental (découpé) sérialise toutes les conversions LAZ. Pin d'ordre source.
+_lp_src = _APP.read_text(encoding="utf-8")
+check("--laz-parallel : set_laz_parallelism posé AVANT le return du découpé (sinon sérialisé en dept)",
+      "_common_par.set_laz_parallelism(args.laz_parallel)" in _lp_src
+      and "_run_split_priori(args, sous_zones" in _lp_src
+      and _lp_src.index("_common_par.set_laz_parallelism(args.laz_parallel)")
+          < _lp_src.index("_run_split_priori(args, sous_zones"))
 
 print("== 9c. DFM : jumeaux GUI × pipeline ==")
 # Le sélecteur de surface + réglages existent dans le HTML ; app.js les câble ;
