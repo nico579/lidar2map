@@ -727,8 +727,13 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     Le maquis dense revient AUSSI (mouchetis en "classes", résidus ponctuels en
     "csf") : la discrimination finale est visuelle (murs = lignes continues).
     RAM : pic ~2,9 Go/dalle 45 M pts (mesuré 3,2 Go avant optim ; pic dominé par
-    les copies float64 de PRÉPA, pas par la sim). On saute la copie du clip si
-    tout est déjà dans les bornes, sinon dim par dim (del progressif). Le passage
+    les copies float64 de PRÉPA, pas par la sim). En mode "classes" un pré-filtre
+    aux seules classes utiles (sol/référence/candidates) précède les index : la
+    végétation haute (souvent la moitié des points sous forêt) ne compte dans
+    aucun binmin, on la jette avant de matérialiser xs/ys/zs/index → moins de RAM
+    et de CPU, résultat inchangé. L'indexation raster tient dans un unique `flat`
+    int32 (col/row jetés aussitôt). On saute la copie du clip si tout est déjà
+    dans les bornes, sinon dim par dim (del progressif). Le passage
     en float32 relatif a été ESSAYÉ puis rejeté : il fait basculer la classif CSF
     (8k cellules, jusqu'à 3,3 m) pour un gain RAM dérisoire. Conversions
     SÉRIALISÉES par _CONV_SEM (anti-OOM : sur 8 Go on ne tient pas 2 en
@@ -823,9 +828,36 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             nx = int(np.floor((x1 - x0) / res)) + 1
             ny = int(np.floor((y1 - y0) / res)) + 1
             y1 = y0 + ny * res      # bord haut du raster = grille, pas max(ys)
-        col = np.clip(((xs - x0) / res).astype(np.int64), 0, nx - 1)
-        row = np.clip(((y1 - ys) / res).astype(np.int64), 0, ny - 1)
-        flat = row * nx + col
+        # Mode classes : seules les classes qui entrent dans un binmin (sol
+        # `classes_ground`, référence `ref_ground`, candidates `classes_low`)
+        # comptent. Les autres — surtout la végétation haute (classe 5), souvent
+        # la moitié des points sous forêt — ne contribuent à AUCUN calcul en
+        # classes ; les jeter avant les index compacte à la fois les index ET
+        # les copies float64 de prépa (le pic RAM). Pixel-identique (aucune
+        # classe jetée n'alimentait un binmin). Le CSF a besoin de TOUS les
+        # points (le tissu ignore le producteur) → filtre STRICTEMENT classes-only.
+        if ground_method == "classes":
+            _lut_u = np.zeros(256, dtype=bool)
+            _lut_u[list(set(classes_ground) | set(ref_ground) | set(classes_low))] = True
+            _um = _lut_u[cls]
+            if not _um.all():
+                xs, ys, zs, cls = xs[_um], ys[_um], zs[_um], cls[_um]
+            del _um, _lut_u
+        # Index raster COMPACT : un seul `flat` int32 (ny*nx ≤ ~4 M sur une dalle
+        # km, très en deçà de 2^31 → pas d'overflow), col/row jetés aussitôt (seul
+        # flat sert ensuite ; l'ancien sol_ref[row,col] devient sol_ref.ravel()[flat]).
+        # Avant : trois int64 de N points vivants en parallèle = ~1,08 Go / 45 M pts.
+        col = np.clip(((xs - x0) / res).astype(np.int32), 0, nx - 1)
+        row = np.clip(((y1 - ys) / res).astype(np.int32), 0, ny - 1)
+        flat = row * np.int32(nx) + col
+        del col, row
+
+        def _cls_mask(vals):
+            # LUT booléenne 256 (cls = uint8 ASPRS) : O(N) direct, remplace les
+            # np.isin répétés. Résultat identique à np.isin(cls, vals).
+            lut = np.zeros(256, dtype=bool)
+            lut[list(vals)] = True
+            return lut[cls]
 
         def _binmin(mask):
             g = np.full(ny * nx, np.inf)
@@ -896,15 +928,22 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             # exige de connaître le sol même s'il n'apparaît pas dans le
             # raster produit.
             if tuple(ref_ground) == tuple(classes_ground):
-                sol_ref_raw = _binmin(np.isin(cls, ref_ground))
+                sol_ref_raw = _binmin(_cls_mask(ref_ground))
                 sol_raw = sol_ref_raw
             else:
-                sol_ref_raw = _binmin(np.isin(cls, ref_ground))
-                sol_raw = (_binmin(np.isin(cls, classes_ground))
+                sol_ref_raw = _binmin(_cls_mask(ref_ground))
+                sol_raw = (_binmin(_cls_mask(classes_ground))
                            if classes_ground else np.full(ny * nx, np.inf))
             sol_ref = _fill(sol_ref_raw)
-            h = zs - np.where(np.isfinite(sol_ref), sol_ref, np.inf)[row, col]
-            low = np.isin(cls, classes_low) & (h >= hmin) & (h <= hmax)
+            # h SEULEMENT pour les candidats (classes basses) : le tableau h
+            # global (N float64) ne servait qu'à eux. On indexe le sol comblé
+            # aplati par flat[cand] (≡ l'ancien sol_ref[row,col] restreint aux
+            # candidats), puis on reconstruit le masque `low` complet. Identique.
+            sol_ref_flat = np.where(np.isfinite(sol_ref), sol_ref, np.inf).ravel()
+            cand = _cls_mask(classes_low)
+            h_cand = zs[cand] - sol_ref_flat[flat[cand]]
+            low = np.zeros(cls.size, dtype=bool)
+            low[np.flatnonzero(cand)[(h_cand >= hmin) & (h_cand <= hmax)]] = True
             low_min = _binmin(low)
 
             dfm = sol_raw.copy()
