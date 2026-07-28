@@ -664,6 +664,96 @@ check("R2#14 matrice format de sortie (split == passe simple)",
       detail=str([(_l, _f(imf, ff, 85)) for imf, ff, exp, _l in _matrice
                   if _f(imf, ff, 85) != exp]))
 
+print("== 20. R2#12 : découpage zooms lus + bbox N/S non inversée ==")
+def _meta(path):
+    _cc = _sq.connect(str(path))
+    try:
+        return dict(_cc.execute("SELECT name, value FROM metadata").fetchall())
+    finally:
+        _cc.close()
+
+_Z = 12; _N = 2 ** _Z
+with tempfile.TemporaryDirectory() as _td:
+    _src = Path(_td) / "base.mbtiles"
+    _c = _sq.connect(str(_src))
+    # PAS de minzoom/maxzoom/bounds → force la lecture depuis les tuiles (R2#12)
+    _c.executescript("CREATE TABLE metadata(name TEXT,value TEXT);"
+                     "CREATE TABLE tiles(zoom_level INT,tile_column INT,"
+                     "tile_row INT,tile_data BLOB);")
+    _c.execute("INSERT INTO metadata VALUES('format','jpg')")
+    for _col in range(2000, 2002):
+        for _r in range(1000, 1006):          # 1000=sud ... 1005=nord (TMS)
+            _c.execute("INSERT INTO tiles VALUES(?,?,?,?)", (_Z, _col, _r, _jpg()))
+    _c.commit(); _c.close()
+
+    _outs = l2m.decouper_mbtiles(_src, n_cols=1, n_rows=2,
+                                 dossier=Path(_td) / "out", ecraser=True)
+    check("R2#12 découpe 2 morceaux", len(_outs) == 2)
+    def _lat(y, n):
+        return math.degrees(math.atan(math.sinh(math.pi * (1 - 2*y/n))))
+    _nord_att = _lat(_N - 1 - 1005, _N)          # bord nord de la tuile la plus nord
+    _sud_att  = _lat((_N - 1 - 1000) + 1, _N)    # bord sud de la tuile la plus sud
+    _zmin = set(); _zmax = set(); _uN = -1e9; _uS = 1e9; _non_inv = True
+    for _o in _outs:
+        _m = _meta(_o)
+        _zmin.add(int(_m["minzoom"])); _zmax.add(int(_m["maxzoom"]))
+        _lo0, _la0, _lo1, _la1 = [float(v) for v in _m["bounds"].split(",")]
+        _non_inv = _non_inv and (_la1 > _la0)
+        _uN = max(_uN, _la1); _uS = min(_uS, _la0)
+    check("R2#12 zooms LUS des tuiles (12/12, pas 0/17)", _zmin == {_Z} and _zmax == {_Z})
+    check("R2#12 bounds NON inversée (lat_max > lat_min sur chaque morceau)", _non_inv)
+    check("R2#12 union lat_max = bord nord réel (tuile nord, pas sud)",
+          abs(_uN - _nord_att) < 1e-6, detail=f"{_uN:.5f}~{_nord_att:.5f}")
+    check("R2#12 union lat_min = bord sud réel", abs(_uS - _sud_att) < 1e-6)
+
+print("== 21. P1 formats : R2#10 nom non-ASCII, R2#16 magic, R2#19 dtype/alpha ==")
+
+# R2#10 : nom MBTiles accentué/non-latin ne doit plus crasher la calibration RMAP.
+_txt = l2m._build_map_info("forêt_Ardèche_Ⅶ.mbtiles", 512, 512,
+                           2.0, 43.0, 3.0, 44.0)
+check("R2#10 _build_map_info encode ASCII sans lever",
+      isinstance(_txt, str) and _txt.encode("ascii") is not None)
+check("R2#10 nom translittéré (accents retirés, ASCII pur)",
+      "Bitmap=foret_Ardeche" in _txt)
+# CJK pur : NFKD ne décompose PAS vers de l'ASCII (contrairement à Ⅶ→VII),
+# donc ascii-ignore laisse une chaîne vide → repli 'map'.
+_txt_vide = l2m._build_map_info("油混固", 256, 256, 0, 0, 1, 1)
+check("R2#10 nom 100% non-ASCII -> repli 'map' non vide", "Bitmap=map" in _txt_vide)
+
+# R2#16 : validation d'une tuile WMTS par MAGIE, pas par taille.
+_petit_png = _io.BytesIO()
+_PImg.new("RGB", (256, 256), (128, 128, 128)).save(_petit_png, "PNG", optimize=True)
+_petit_png = _petit_png.getvalue()
+check("R2#16 PNG uniforme accepté même si petit",
+      l2m._est_image_valide(_petit_png))
+check("R2#16 JPEG accepté", l2m._est_image_valide(_jpg()))
+check("R2#16 HTML volumineux rejeté (page d'erreur servie en 200)",
+      not l2m._est_image_valide(b"<html><body>Error 500 " + b"x" * 2000 + b"</body>"))
+check("R2#16 JSON d'erreur rejeté",
+      not l2m._est_image_valide(b'{"error":{"code":400,"message":"bad"}}'))
+check("R2#16 corps vide rejeté", not l2m._est_image_valide(b""))
+check("R2#16 GIF/WebP/TIFF reconnus",
+      l2m._est_image_valide(b"GIF89a" + b"\0" * 10)
+      and l2m._est_image_valide(b"RIFF\0\0\0\0WEBP" + b"\0" * 4)
+      and l2m._est_image_valide(b"II\x2a\x00" + b"\0" * 8))
+
+# R2#19 : source non-uint8 -> fail-fast (pas de tuiles tronquées en silence).
+with tempfile.TemporaryDirectory() as _td19:
+    _f32 = Path(_td19) / "dem_float.tif"
+    _tr = from_origin(650000, 6300000, 1.0, 1.0)
+    _arr32 = (np.random.rand(64, 64) * 5000).astype(np.float32)   # MNT brut
+    with rasterio.open(str(_f32), "w", driver="GTiff", height=64, width=64,
+                       count=1, dtype="float32", crs="EPSG:2154",
+                       transform=_tr) as _d:
+        _d.write(_arr32, 1)
+    _res = l2m.generer_mbtiles_lidar(_f32, Path(_td19), "dem_float",
+                                     zoom_min=14, zoom_max=14,
+                                     bbox_l93=(650000, 6299936, 650064, 6300000))
+    check("R2#19 source float32 refusée (return None, pas de mbtiles tronqué)",
+          _res is None)
+    check("R2#19 aucun .mbtiles produit depuis la source float",
+          not list(Path(_td19).glob("*.mbtiles")))
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

@@ -7677,6 +7677,26 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     Image.MAX_IMAGE_PIXELS = None
 
+    # Contrôle dtype AVANT le warp (fail-fast, R2#19) : le tuileur écrit chaque
+    # fenêtre dans un canvas uint8 (`_np.zeros(..., uint8)`). Une source 16 bits
+    # ou flottante (MNT brut passé via --source) y serait COULÉE sans
+    # normalisation — valeurs 0-65535 ou flottantes tronquées mod 256 = tuiles
+    # aberrantes, publiées en silence. gdal2tiles refuse pareillement une source
+    # non-Byte. Les ombrages produits par lidar2map sont déjà uint8 : ce garde
+    # ne vise que les rasters --source bruts. On échoue tôt avec le remède.
+    try:
+        import rasterio as _rio_dt
+        with _rio_dt.open(str(tif_source)) as _dsrc:
+            _src_dtypes = set(_dsrc.dtypes)
+    except Exception:
+        _src_dtypes = set()   # illisible ici : le warp échouera avec son message
+    if _src_dtypes and _src_dtypes != {"uint8"}:
+        print(f"  ERROR: source dtype {sorted(_src_dtypes)} - the tiler needs "
+              f"8-bit (Byte); values would be truncated silently.")
+        print(f"  Rescale first, e.g.:  gdal_translate -ot Byte -scale "
+              f"{tif_source.name} scaled_8bit.tif")
+        return None
+
     # Déterminer le format de tuile effectif
     _nom_lower = tif_source.stem.lower()
     _types_png = ("svf", "opos", "oneg", "lrm", "rrim")   # gradients fins → PNG sans perte
@@ -7820,7 +7840,9 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             # Locus/OsmAnd/TwoNav. compress_level=6 (défaut zlib) : artefact
             # final écrit une fois, lu mille fois — le niveau 1 économisait
             # quelques secondes d'encodage contre ~20-30 % de taille.
-            _img = _tile if _tile.mode in ("L", "RGB") else _tile.convert("RGB")
+            # RGBA gardé pour PNG : préserver l'alpha d'une source --source RGBA
+            # (R2#19) ; L/RGB inchangés ; autres modes (P, LA…) → RGB.
+            _img = _tile if _tile.mode in ("L", "RGB", "RGBA") else _tile.convert("RGB")
             _img.save(_buf, "PNG", optimize=False, compress_level=6)
         _y_tms = (2 ** _z - 1) - _ty
         return (_z, _tx, _y_tms, _buf.getvalue())
@@ -8119,11 +8141,23 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                       dst_x:dst_x+arr.shape[2]] = arr
                             # Monobande conservée en "L" (PNG grayscale 2-3× plus
                             # petit) ; JPEG converti RGB à l'encodage.
-                            if _w_count >= 3:
+                            if _w_count >= 4:
+                                # RGBA : préserver l'alpha (nodata transparent,
+                                # R2#19). PNG garde le canal ; JPEG (sans alpha)
+                                # compose sur le gris de fond des tuiles vides.
+                                rgba = _np.moveaxis(canvas[:4], 0, 2)
+                                if _use_jpeg:
+                                    _im = Image.fromarray(rgba, "RGBA")
+                                    _fond = Image.new("RGB", _im.size, (180, 180, 180))
+                                    _fond.paste(_im, mask=_im.split()[-1])
+                                    band_img = _fond
+                                else:
+                                    band_img = Image.fromarray(rgba, "RGBA")
+                            elif _w_count == 3:
                                 img_arr = _np.moveaxis(canvas[:3], 0, 2)
+                                band_img = Image.fromarray(img_arr.astype(_np.uint8))
                             else:
-                                img_arr = canvas[0]
-                            band_img = Image.fromarray(img_arr.astype(_np.uint8))
+                                band_img = Image.fromarray(canvas[0].astype(_np.uint8))
                         except Exception as _e_read:
                             nb_echecs_tr += 1
                             if nb_echecs_tr <= 3:
@@ -8581,6 +8615,32 @@ def _wmts_fetch(url):
     raise IOError(f"WMTS fetch: too many redirects ({url})")
 
 
+def _est_image_valide(data):
+    """True si `data` commence par une signature d'image raster connue.
+
+    Validation par MAGIE, pas par taille (R2#16) : le jumeau des dalles valide
+    déjà son contenu (`_valider_tif_dalle`, magic TIFF), mais `telecharger_tuile`
+    ne se fiait qu'à un seuil `len < 500` → une tuile PNG uniforme valide (zone
+    de relief plat) tombait sous le seuil et était jetée = TROU de couverture,
+    tandis qu'une page d'erreur HTML/JSON >500 o servie en `image/png` passait
+    pour une tuile. Couvre JPEG/PNG/GIF/WebP/TIFF (tout ce qu'un WMTS raster
+    peut servir)."""
+    if not data or len(data) < 4:
+        return False
+    if data[:3] == b'\xff\xd8\xff':                       # JPEG
+        return True
+    if data[:8] == b'\x89PNG\r\n\x1a\n':                  # PNG
+        return True
+    if data[:6] in (b'GIF87a', b'GIF89a'):               # GIF
+        return True
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':     # WebP
+        return True
+    if data[:4] in (b'II\x2a\x00', b'MM\x00\x2a',         # TIFF / BigTIFF
+                    b'II\x2b\x00', b'MM\x00\x2b'):
+        return True
+    return False
+
+
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
     """
     Télécharge une tuile et retourne les bytes, ou None si absente/erreur.
@@ -8606,8 +8666,15 @@ def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
             # telecharger_dalle_directe) : IOError → retry, pas "absente".
             if data and data.lstrip()[:1] == b"{" and b'"error"' in data[:200]:
                 raise IOError(f"server error payload: {data[:120]!r}")
-            if len(data) < 500:
-                return None   # tuile vide / 204 (mer, hors couverture)
+            if not data:
+                return None   # 204 / corps vide = tuile absente (mer, hors couv.)
+            # Validation par magie (R2#16) : ni le seuil de taille (jetait un
+            # petit PNG valide) ni le content-type (parfois image/png sur une
+            # erreur). Un corps non-image = panne serveur → IOError → retry →
+            # 'erreurs' (jamais 'absent' : un trou marqué complet est pire).
+            if not _est_image_valide(data):
+                raise IOError(f"non-image WMTS response ({len(data)} B): "
+                              f"{bytes(data[:80])!r}")
             return data
         except KeyboardInterrupt:
             # Propagation au handler top-level (sys.exit(130)) qui sait
@@ -8813,6 +8880,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                 # (ancien fallback silencieux) mentait sur le format. On le
                 # rejette pour re-télécharger+convertir proprement (R2#15).
                 if _convert_png and data[:3] != b'\xff\xd8\xff':
+                    data = None
+                # Cache antérieur au garde magic : un blob non-image (HTML/JSON
+                # d'erreur mis en cache par un vieux run) serait inséré tel quel
+                # → re-télécharger au lieu de le lire (R2#16).
+                elif not _est_image_valide(data):
                     data = None
         if data is None:
             data = telecharger_tuile(z, x, y, layer, style, img_fmt,
@@ -9338,7 +9410,9 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
                 map_text = _build_map_info(
                     mbtiles_path.name, w_max, h_max,
                     lon_min, lat_min, lon_max, lat_max)
-                map_bytes = map_text.encode('ascii')
+                # 'replace' en défense : _build_map_info translittère déjà le
+                # nom (R2#10), le bloc restant est 100 % ASCII littéral + chiffres.
+                map_bytes = map_text.encode('ascii', 'replace')
                 f.write(_wi(1))
                 f.write(_wi(len(map_bytes)))
                 f.write(map_bytes)
@@ -9534,6 +9608,13 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
 
 def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_max):
     """Génère le bloc texte CompeGPS MAP (calibration géographique)."""
+    # Le bloc MAP est écrit en ASCII (map_text.encode('ascii') côté appelant).
+    # Un nom de MBTiles accentué ou non-latin (ex. "forêt", nom cyrillique) fait
+    # crasher toute la génération RMAP par UnicodeEncodeError (R2#10). Le champ
+    # Bitmap= n'est qu'une référence d'affichage : on le translittère en ASCII
+    # (é→e via NFKD, le reste éliminé) plutôt que de perdre le livrable.
+    bitmap_name = (unicodedata.normalize("NFKD", str(bitmap_name))
+                   .encode("ascii", "ignore").decode("ascii")) or "map"
     lines = [
         "CompeGPS MAP File\r\n",
         "<Header>\r\n",
@@ -12398,8 +12479,15 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
     con = _sq.connect(str(src_mbtiles))
     meta = dict(con.execute("SELECT name, value FROM metadata").fetchall())
     fmt      = meta.get("format", "jpeg")
-    zoom_min = int(meta.get("minzoom", 0))
-    zoom_max = int(meta.get("maxzoom", 17))
+    # Zooms : LIRE les tuiles si les métadonnées manquent, au lieu d'un 0/17
+    # arbitraire (R2#12). Un mbtiles z18-seul sans metadata donnait minzoom=0/
+    # maxzoom=17 → la boucle range(0,18) ratait z18 → morceaux vides, et les
+    # métadonnées des sorties mentaient. Miroir du fix zooms sqlitedb (R2#11).
+    _zr = con.execute("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").fetchone()
+    _z_reel_min = _zr[0] if _zr and _zr[0] is not None else 0
+    _z_reel_max = _zr[1] if _zr and _zr[1] is not None else 17
+    zoom_min = int(meta["minzoom"]) if "minzoom" in meta else _z_reel_min
+    zoom_max = int(meta["maxzoom"]) if "maxzoom" in meta else _z_reel_max
 
     # Lire la bbox globale depuis metadata ou calculer depuis les tuiles
     if "bounds" in meta:
@@ -12413,14 +12501,20 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
             con.close()
             return []
         n = 2 ** zoom_max
-        lon0 = rows[0] / n * 360.0 - 180.0
-        lon1 = (rows[1] + 1) / n * 360.0 - 180.0
-        y_n = n - 1 - rows[2]
-        y_s = n - 1 - rows[3]
+        lon0 = rows[0] / n * 360.0 - 180.0          # MIN(col) → ouest
+        lon1 = (rows[1] + 1) / n * 360.0 - 180.0    # MAX(col)+1 → est
+        # tile_row est en TMS (y=0 au SUD) ; XYZ y = n-1-tms (y=0 au NORD).
+        # Nord = plus PETIT y XYZ = n-1-MAX(tms) ; Sud = plus GRAND y XYZ =
+        # n-1-MIN(tms). L'ancien code prenait MIN(tms) pour le nord : correct
+        # par accident sur UNE tuile (bords de la seule tuile), mais dès ≥2
+        # lignes lat1 recevait le bord nord de la tuile SUD → bbox retournée
+        # ET rétrécie (R2#12).
+        y_nord_xyz = n - 1 - rows[3]   # MAX(tms) → tuile la plus au NORD
+        y_sud_xyz  = n - 1 - rows[2]   # MIN(tms) → tuile la plus au SUD
         def _tile_to_lat(y, n):
             return math.degrees(math.atan(math.sinh(math.pi * (1 - 2*y/n))))
-        lat1 = _tile_to_lat(y_n,     n)
-        lat0 = _tile_to_lat(y_s + 1, n)
+        lat1 = _tile_to_lat(y_nord_xyz,     n)   # lat_max = bord nord (haut tuile nord)
+        lat0 = _tile_to_lat(y_sud_xyz + 1,  n)   # lat_min = bord sud (bas tuile sud)
 
     lat_c = (lat0 + lat1) / 2
 
