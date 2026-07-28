@@ -2223,6 +2223,27 @@ class Manifeste:
     def deja_traite(self, cle: str) -> bool:
         return self._data["morceaux"].get(cle, {}).get("termine", False)
 
+    def verifier_signature(self, sig: str) -> bool:
+        """Compare la signature de config du run courant à celle stockée (R1#4).
+
+        Retourne True si elle a CHANGÉ (les 'termine' précédents portent sur une
+        autre géométrie/contenu de sortie → périmés) après avoir réinitialisé la
+        progression ; False si identique ou première pose (rien à invalider).
+        Sans ce garde, changer --split-width/--zoom-max/--image-format/--shading
+        en gardant le même projet sautait les chunks calculés sous l'ancienne
+        config = sortie fausse en silence."""
+        ancienne = self._data.get("config_sig")
+        self._data["config_sig"] = sig
+        if ancienne is None or ancienne == sig:
+            if ancienne is None:      # première pose : mémoriser sans reset
+                self._sauver()
+            return False
+        # Config changée : la reprise porte sur une autre sortie → repartir clean.
+        self._data["morceaux"] = {}
+        self._data["fichiers"] = {}
+        self._sauver()
+        return True
+
     def debut_morceau(self, cle: str, nom: str):
         # termine=False remis EXPLICITEMENT : une relance avec écrasement qui
         # démarre un morceau puis échoue avant fin_morceau laissait sinon
@@ -12178,6 +12199,39 @@ def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
         print(f"  (index sheet skipped: {type(_e_pl).__name__}: {_e_pl})", flush=True)
 
 
+def _signature_config(args, sous_zones):
+    """Signature des paramètres qui déterminent la GÉOMÉTRIE et le CONTENU des
+    chunks (R1#4). Stockée au manifeste : un changement entre deux runs du MÊME
+    projet invalide la reprise (cf. Manifeste.verifier_signature). Modèle
+    make-like : la 'recette' change → on refait.
+
+    - Grille = origine (x1,y1) + pas de cellule (dx,dy). En split-width le pas est
+      FIXE (cote_km) : étendre la bbox garde la même grille → les chunks déjà
+      faits restent valides (pas de re-calcul). En grille explicite le pas =
+      largeur/n_cols : étendre la bbox rescale les cellules → signature change →
+      invalidation correcte. dx/dy = plus grande cellule (les cellules de BORD
+      sont rognées à la bbox, seule une cellule pleine donne le vrai pas).
+    - Contenu = allowlist des params qui changent les tuiles produites. getattr
+      avec défaut : un champ absent d'un pipeline (LiDAR vs WMTS) reste stable.
+      Sur-inclure est SÛR (au pire un re-calcul inutile) ; oublier un param = faux
+      silencieux → on ratisse large."""
+    import hashlib as _hl
+    x1 = min(z[2] for z in sous_zones)
+    y1 = min(z[3] for z in sous_zones)
+    dx = max(z[4] - z[2] for z in sous_zones)
+    dy = max(z[5] - z[3] for z in sous_zones)
+    grille = [round(x1, 3), round(y1, 3), round(dx, 3), round(dy, 3)]
+    _champs = ("zoom_min", "zoom_max", "formats_image", "qualite_image",
+               "shading_specs", "shading_preset", "svf_gamma", "svf_conv",
+               "svf_dist", "sweep_horizon", "layer", "style", "source",
+               "dfm", "dfm_ground", "elevation_soleil")
+    contenu = {k: getattr(args, k, None) for k in _champs}
+    _prov = getattr(PROVIDER, "CODE", None) or getattr(PROVIDER, "__name__", None)
+    payload = {"grille": grille, "contenu": contenu, "provider": str(_prov)}
+    _js = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+    return _hl.md5(_js.encode("utf-8")).hexdigest()[:16]
+
+
 def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
                       overwrite_actif, entete_chunk, traiter_chunk, t_debut):
     """Boucle de découpage a-priori commune aux pipelines LiDAR et WMTS.
@@ -12201,6 +12255,21 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     exception (il gère le vide dans son chunk), le catch lui est inoffensif.
     Toute autre exception remonte (fail-fast + reprise via le manifeste)."""
     manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
+    # R1#4 : invalider la reprise si la config de SORTIE a changé depuis le
+    # dernier run du même projet. En plus de vider les 'termine' (fait via
+    # verifier_signature), on FORCE l'overwrite des artefacts dépendant de la
+    # config : le gate de fraîcheur interne (_mbtiles_a_regenerer) recyclerait
+    # sinon un mbtiles/ombrage plus récent que sa source ("already present")
+    # malgré le changement de zoom/format/ombrage. La SOURCE (dalles/nuage) ne
+    # dépend PAS de ces params → on ne force pas son re-download.
+    if manifeste.verifier_signature(_signature_config(args, sous_zones)):
+        print("  ⚠ Output config changed since last run "
+              "(bbox/split/zoom/format/shading): reprocessing all chunks.")
+        if hasattr(args, "tuiles_ecraser"):
+            args.tuiles_ecraser = True
+        if hasattr(args, "ombrages_ecraser"):
+            args.ombrages_ecraser = True
+        overwrite_actif = True
     n_total   = len(sous_zones)
     nb_done   = sum(1 for z in sous_zones
                     if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
@@ -13766,7 +13835,10 @@ def _overlay_sequences(geom):
 def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
                                    ecraser=False, supersample=2, bbox_wgs84=None):
     """Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent -> .sqlitedb
-    OsmAnd/Locus (schema RMaps, tilenumbering='simple', cf. generer_sqlitedb...).
+    OsmAnd (schema RMaps, tilenumbering='simple', cf. generer_sqlitedb_...).
+    CIBLE OsmAnd, PAS Locus : 'simple' fait refuser le fichier par Locus (entree
+    grisee), qui attend la numerotation BigPlanet ; pour Locus on livre le MBTiles
+    (lu nativement). L'ancienne docstring "OsmAnd/Locus" ici etait fausse (R2#36).
 
     Chaque feature est stylee par sa cle de tag OSM (_OVERLAY_STYLE) : trait pour
     les LineString, contour (+ remplissage leger) pour les polygones. Seules les
@@ -14258,7 +14330,8 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
              "lon_min":  float("inf"),  "lon_max": float("-inf"),
              "lat_min":  float("inf"),  "lat_max": float("-inf"),
              "bounds_valid": False,
-             "nb_inner_skipped": 0}   # rings intérieurs (trous) non émis
+             "nb_inner_skipped": 0,   # rings intérieurs (trous) non émis
+             "nb_rings_degen": 0}     # contours dégénérés (<3 sommets, R2#33)
 
     def _track_bounds(lon, lat):
         if lon < state["lon_min"]: state["lon_min"] = lon
@@ -14291,11 +14364,23 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     def _emit_ring(out_nodes, out_ways, raw_coords, osm_tags):
         coords = [(_f(c[0]), _f(c[1])) for c in raw_coords]
         coords = _douglas_peucker(coords, _eps)
-        if len(coords) < 2:
+        # Un anneau valide (aire non nulle) exige >=3 sommets DISTINCTS. Un
+        # contour dégénéré — 2 sommets, ou points colinéaires réduits à 2 par la
+        # simplification — donnait un "polygone" a->b->a d'aire nulle (nœud
+        # dupliqué, segment nul) : mapsforge/osmosis le rejette ou le rend en
+        # trait parasite (R2#33). On déduplique les sommets consécutifs, on
+        # retire la fermeture pour compter, et on saute si < 3 distincts.
+        dd = []
+        for c in coords:
+            if not dd or c != dd[-1]:
+                dd.append(c)
+        if len(dd) >= 2 and dd[0] == dd[-1]:
+            dd.pop()                       # retirer la fermeture avant le compte
+        if len(dd) < 3:
+            state["nb_rings_degen"] += 1
             return
-        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in coords]
-        if nd_refs[0] != nd_refs[-1]:
-            nd_refs.append(nd_refs[0])
+        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in dd]
+        nd_refs.append(nd_refs[0])         # fermeture explicite du contour
         wid = state["way_id"]
         _emit_way(out_ways, wid, nd_refs, osm_tags)
         state["nb_ways"] += 1
@@ -14439,6 +14524,9 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
         # On documente la perte plutôt que de la cacher.
         print(f"  ⚠ {state['nb_inner_skipped']} inner ring(s) skipped "
               f"(polygon holes, not supported in .map output)")
+    if state["nb_rings_degen"]:
+        print(f"  ⚠ {state['nb_rings_degen']} degenerate ring(s) skipped "
+              f"(< 3 distinct vertices, zero-area)")
     return True
 
 def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,

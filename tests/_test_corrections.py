@@ -754,6 +754,84 @@ with tempfile.TemporaryDirectory() as _td19:
     check("R2#19 aucun .mbtiles produit depuis la source float",
           not list(Path(_td19).glob("*.mbtiles")))
 
+print("== 22. R2#33 : mapsforge, anneau dégénéré (<3 sommets) écarté ==")
+import json as _json, xml.etree.ElementTree as _ET
+with tempfile.TemporaryDirectory() as _td33:
+    _gj = Path(_td33) / "in.geojson"
+    _fc = {"type": "FeatureCollection", "features": [
+        # anneau dégénéré : 2 sommets distincts (a,b,a) → aire nulle → à écarter
+        {"type": "Feature", "properties": {"source": "x_ign_cours_d_eau"},
+         "geometry": {"type": "Polygon",
+                      "coordinates": [[[2.0, 43.0], [2.001, 43.001], [2.0, 43.0]]]}},
+        # triangle valide : 3 sommets distincts → 1 way fermé
+        {"type": "Feature", "properties": {"source": "x_ign_cours_d_eau"},
+         "geometry": {"type": "Polygon",
+                      "coordinates": [[[2.01, 43.0], [2.012, 43.0],
+                                       [2.011, 43.002], [2.01, 43.0]]]}},
+    ]}
+    _gj.write_text(_json.dumps(_fc), encoding="utf-8")
+    _xml = Path(_td33) / "out.osm"
+    _ok = l2m.geojson_ign_vers_osm_xml(_gj, _xml, epsilon=1e-9)
+    check("R2#33 conversion OSM XML réussie", _ok is True and _xml.exists())
+    if _xml.exists():
+        _root = _ET.parse(str(_xml)).getroot()
+        _ways = _root.findall("way")
+        check("R2#33 un seul way émis (triangle valide ; dégénéré écarté)",
+              len(_ways) == 1, detail=f"{len(_ways)} ways")
+        if _ways:
+            _nds = _ways[0].findall("nd")
+            _refs = [n.get("ref") for n in _nds]
+            check("R2#33 way fermé à >=4 nœuds (contour d'aire non nulle)",
+                  len(_refs) >= 4 and _refs[0] == _refs[-1],
+                  detail=f"{len(_refs)} nd, fermé={_refs[0]==_refs[-1]}")
+
+print("== 23. R1#4 : signature de config au manifeste (cache/fraîcheur) ==")
+import types as _types
+def _args4(**kw):
+    _d = dict(zoom_min=13, zoom_max=18, formats_image="auto", qualite_image=85,
+              shading_specs=None, shading_preset=None, svf_gamma=1.0,
+              svf_conv=None, svf_dist=None, sweep_horizon=True, layer=None,
+              style=None, source=None, dfm=False, dfm_ground=None,
+              elevation_soleil=45)
+    _d.update(kw)
+    return _types.SimpleNamespace(**_d)
+
+def _sz(x1, y1, n, step):    # n×n cellules de côté `step`, origine (x1,y1)
+    return [(i, j, x1+j*step, y1+i*step, x1+(j+1)*step, y1+(i+1)*step)
+            for i in range(n) for j in range(n)]
+
+_szA = _sz(650000, 6300000, 2, 1000)
+_sigA = l2m._signature_config(_args4(), _szA)
+check("R1#4 signature déterministe", _sigA == l2m._signature_config(_args4(), _szA))
+check("R1#4 zoom_max ≠ → signature ≠", _sigA != l2m._signature_config(_args4(zoom_max=17), _szA))
+check("R1#4 format ≠ → signature ≠", _sigA != l2m._signature_config(_args4(formats_image="png"), _szA))
+check("R1#4 shading ≠ → signature ≠", _sigA != l2m._signature_config(_args4(shading_specs=["svf"]), _szA))
+# split-width extend : même origine + même pas, +1 rangée → signature INCHANGÉE
+check("R1#4 split-width extend (même origine+pas) → signature INCHANGÉE",
+      _sigA == l2m._signature_config(_args4(), _sz(650000, 6300000, 3, 1000)))
+check("R1#4 origine décalée → signature ≠",
+      _sigA != l2m._signature_config(_args4(), _sz(651000, 6300000, 2, 1000)))
+check("R1#4 pas de cellule ≠ (grille rescale) → signature ≠",
+      _sigA != l2m._signature_config(_args4(), _sz(650000, 6300000, 2, 2000)))
+
+with tempfile.TemporaryDirectory() as _td4:
+    _mp = Path(_td4) / "manifeste.json"
+    _m = l2m.Manifeste(_mp)
+    _first = _m.verifier_signature("sigA")            # première pose
+    _m._data["morceaux"]["001x001"] = {"termine": True}
+    _m._data["fichiers"]["001x001"] = ["/x.tif"]
+    _m._sauver()
+    check("R1#4 première pose → False (rien à invalider)", _first is False)
+    _m2 = l2m.Manifeste(_mp)
+    check("R1#4 même signature → False + chunk conservé",
+          l2m.Manifeste(_mp).verifier_signature("sigA") is False
+          and _m2.deja_traite("001x001"))
+    _m3 = l2m.Manifeste(_mp)
+    _chg = _m3.verifier_signature("sigB")             # config changée
+    check("R1#4 signature changée → True + morceaux/fichiers vidés",
+          _chg is True and not _m3.deja_traite("001x001")
+          and _m3._data["fichiers"] == {})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
