@@ -168,6 +168,7 @@ def post_fetch(chemin):
     if magic[:2] != b"PK":
         return  # déjà un GeoTIFF (ou réponse non-ZIP → le validateur tranchera)
 
+    import io
     import zipfile
     import numpy as np
     import rasterio
@@ -183,10 +184,14 @@ def post_fetch(chemin):
     # « X Y Z » espacé (Berlin) ; tolère aussi la virgule si un jour CSV.
     if b"," in data[:200]:
         data = data.replace(b",", b" ")
-    vals = np.array(data.split(), dtype=np.float64)
-    if vals.size % 3:
-        raise ValueError(f"XYZ BE malformé : {vals.size} valeurs (≠ 3n)")
-    pts = vals.reshape(-1, 3)
+    # R2#44 — np.loadtxt (parseur C) au lieu de np.array(data.split()) :
+    # .split() matérialisait une liste Python de millions de tokens bytes
+    # (une tuile DGM1 1 m = plusieurs M points × 3 valeurs → >1 Go d'objets
+    # Python AVANT conversion numpy). loadtxt lit le flux et produit
+    # directement le tableau (n, 3). ndmin=2 garde la forme 2D même à 1 point.
+    pts = np.loadtxt(io.BytesIO(data), ndmin=2)
+    if pts.shape[1] != 3:
+        raise ValueError(f"XYZ BE malformé : {pts.shape[1]} colonne(s) (≠ 3)")
     xs, ys, zs = pts[:, 0], pts[:, 1], pts[:, 2]
 
     ux = np.unique(xs)

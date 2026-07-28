@@ -2807,6 +2807,7 @@ SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne sys
 SEUIL_HORS_COUVERTURE = 300  # tuiles toutes en 204 avec 0 succès → bbox hors couche
 BATCH_MBTILES_INSERT  = 2000 # tuiles par INSERT executemany dans MBTiles WMTS
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
+SEUIL_RMAP_PADDING    = 1_000_000  # tuiles vides de remplissage max avant refus RMAP
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
 
 # ── URL WFS IGN (re-export du provider) ──────────────────────────────────────
@@ -6501,28 +6502,84 @@ def _extraire_tiff_multipart(chemin):
     fichier en GeoTIFF pur. No-op si le fichier est déjà un TIFF brut ou n'est
     pas du multipart. Réponse OGC standard, pas un cas spécifique provider.
     """
+    # R2#43 — extraction en mémoire bornée. L'ancienne version chargeait TOUT
+    # le fichier (read_bytes) PUIS tranchait data[i:fin] = deux copies plein
+    # cadre en RAM. Sur un GeoTIFF départemental multipart (centaines de Mo)
+    # → OOM. Ici : on lit une petite fenêtre d'en-tête pour le boundary, on
+    # balaye en flux (avec chevauchement) pour l'offset du magic TIFF, on lit
+    # une fenêtre de QUEUE pour la frontière de clôture, puis on recopie la
+    # tranche [i, fin) chunk par chunk vers un temporaire (RAM ~ HTTP_CHUNK_SIZE).
+    tmp = Path(chemin).with_suffix(Path(chemin).suffix + ".mp.part")
     try:
         with open(chemin, "rb") as _f:
             entete = _f.read(2)
-        if entete in (b'II', b'MM'):
-            return  # déjà un TIFF brut
-        if entete != b'--':
-            return  # pas une frontière multipart
-        data = Path(chemin).read_bytes()
-        nl = data.find(b'\n')
-        if nl < 0:
-            return
-        boundary = data[2:nl].strip()                # ex. b'wcs'
-        for magic in _TIFF_MAGICS:
-            i = data.find(magic)
+            if entete in (b'II', b'MM'):
+                return  # déjà un TIFF brut
+            if entete != b'--':
+                return  # pas une frontière multipart
+
+            # Boundary = 1re ligne (--<boundary>). Lecture bornée.
+            _f.seek(0)
+            tete = _f.read(8192)
+            nl = tete.find(b'\n')
+            if nl < 0:
+                return
+            boundary = tete[2:nl].strip()            # ex. b'wcs'
+
+            taille = Path(chemin).stat().st_size
+            _overlap = max(len(m) for m in _TIFF_MAGICS) - 1
+
+            # Offset du GeoTIFF : 1re occurrence d'un magic TIFF. La partie GML
+            # (text/xml) précède et ne contient pas ces octets binaires. Balayage
+            # en flux, chevauchement de (len(magic)-1) pour ne pas rater un magic
+            # à cheval sur deux chunks.
+            i = -1
+            pos = 0
+            reste = b''
+            _f.seek(0)
+            while True:
+                bloc = _f.read(HTTP_CHUNK_SIZE)
+                if not bloc:
+                    break
+                fenetre = reste + bloc
+                base = pos - len(reste)
+                trouve = min((fenetre.find(m) for m in _TIFF_MAGICS
+                              if m in fenetre), default=-1)
+                if trouve >= 0:
+                    i = base + trouve
+                    break
+                pos += len(bloc)
+                reste = fenetre[-_overlap:]
             if i < 0:
-                continue
-            fin = data.find(b'--' + boundary, i)     # frontière de clôture
-            tiff = data[i:fin] if fin > i else data[i:]
-            tiff = tiff.rstrip(b'\r\n')               # CRLF avant la frontière
-            Path(chemin).write_bytes(tiff)
-            return
+                return  # pas de magic → fichier laissé tel quel
+
+            # Frontière de clôture : le TIFF est la DERNIÈRE partie, donc
+            # --<boundary> se trouve en toute fin de réponse. Fenêtre de queue
+            # bornée (jamais tout le fichier). Repli sur EOF si introuvable.
+            _TAIL = 65536
+            debut_tail = max(i, taille - _TAIL)
+            _f.seek(debut_tail)
+            queue = _f.read()
+            j = queue.find(b'--' + boundary)
+            fin = (debut_tail + j) if j >= 0 else taille
+
+            # Recopie en flux de [i, fin) vers le temporaire ; rstrip du CRLF
+            # (avant la frontière) sur le dernier bloc écrit.
+            with open(tmp, "wb") as _out:
+                _f.seek(i)
+                restant = fin - i
+                while restant > 0:
+                    bloc = _f.read(min(HTTP_CHUNK_SIZE, restant))
+                    if not bloc:
+                        break
+                    restant -= len(bloc)
+                    if restant <= 0:
+                        bloc = bloc.rstrip(b'\r\n')
+                    _out.write(bloc)
+        os.replace(tmp, chemin)
     except Exception as _e_mp:
+        try: tmp.unlink(missing_ok=True)
+        except Exception: pass
         print(f"  multipart {Path(chemin).name} : {type(_e_mp).__name__}: {_e_mp}",
               flush=True)
 
@@ -6596,9 +6653,18 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
             try:
                 ssl_ctx = getattr(PROVIDER, "_SSL_CTX", None)
                 req = _urlreq.Request(url, headers={"User-Agent":"lidar2map/1.0"})
+                # R2#43 — écriture en flux par chunks : une réponse WCS
+                # GetCoverage sur un gros département (GeoTIFF plein cadre) peut
+                # peser des centaines de Mo. r.read() la chargeait ENTIÈRE en
+                # RAM avant d'écrire → OOM. On copie chunk par chunk (RAM bornée
+                # à HTTP_CHUNK_SIZE), comme le téléchargement de dalles.
                 with _urlreq.urlopen(req, timeout=180, context=ssl_ctx) as r:
-                    data = r.read()
-                chemin_out.write_bytes(data)
+                    with open(chemin_out, "wb") as _out:
+                        while True:
+                            _chunk = r.read(HTTP_CHUNK_SIZE)
+                            if not _chunk:
+                                break
+                            _out.write(_chunk)
                 # WCS 2.0 multipart/related → extraire le GeoTIFF binaire
                 _extraire_tiff_multipart(chemin_out)
                 with open(chemin_out, "rb") as _fv:
@@ -9326,6 +9392,28 @@ def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
         lat_max = _tile_to_geo(zd['x0'], zd['y0'], z_max)[3]
 
         total_tiles = sum(zm[z]['nx'] * zm[z]['ny'] for z in zooms)
+
+        # R2#9 — garde-fou couverture clairsemée : le format RMAP impose une
+        # grille rectangulaire DENSE (chaque position du rectangle min-max
+        # existe, remplie par EMPTY_JPEG). Sur une couverture clairsemée
+        # (département en diagonale, bande côtière, couche historique), nx*ny
+        # explose en positions quasi-vides : l'array d'offsets et le header
+        # sont alloués en 8*nx*ny octets (pic RAM), et des millions de tuiles
+        # vides sont écrites (disque + temps mur). Ce n'est PAS rendable
+        # clairsemé sans casser le format. On refuse quand le remplissage est
+        # pathologique (beaucoup de vide ET moins de la moitié réelle) et on
+        # renvoie vers .mbtiles / .sqlitedb qui, eux, ne stockent que le réel.
+        n_reel = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        n_vide = total_tiles - n_reel
+        if n_vide >= SEUIL_RMAP_PADDING and n_reel * 2 < total_tiles:
+            _go = n_vide * (len(EMPTY_JPEG) + 8) / 1e9
+            print(f"\n  ✗ RMAP refused: coverage too sparse ({n_reel:,} real "
+                  f"tiles for {total_tiles:,} rectangle positions). RMAP needs a "
+                  f"dense grid: it would pad {n_vide:,} empty tiles "
+                  f"(~{_go:.1f} GB). Use .mbtiles or .sqlitedb (they store only "
+                  f"real tiles), or tighten --zone-bbox.", flush=True)
+            return None
+
         print(f"  {n_zooms} zoom(s), {total_tiles:,} tile positions", flush=True)
 
         # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──
@@ -11657,6 +11745,19 @@ def _dalles_zone_hdr_ok(lignes, bbox):
     return True
 
 
+def _dl_workers_effectif(workers, dl_cap, lp):
+    """Workers de download effectifs (R1#6). dl_cap = plafond provider (None ou
+    0 = aucun). --laz-parallel (lp) peut monter les workers pour paralléliser les
+    conversions (post_fetch CSF/DFM), mais JAMAIS au-delà du plafond quand il
+    existe : au-delà, IGN/swisstopo throttlent et tronquent le transfert (run
+    avorté). Sans plafond, lp monte librement. La conversion tourne DANS la tâche
+    de download (pool partagé) : sur un provider plafonné elle reste donc bornée
+    au plafond tant que les pools ne sont pas découplés (travail futur)."""
+    if isinstance(dl_cap, int) and dl_cap > 0:
+        return min(dl_cap, max(min(workers, dl_cap), lp))
+    return max(workers, lp)
+
+
 def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args):
     """Télécharge en parallèle les dalles d'un dict {nom: url} (issu de
     PROVIDER.discover_dalles). Pure orchestration : la découverte et le
@@ -11715,18 +11816,20 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     # connexion en silence (transfert tronqué, retry qui repart de zéro → tuile
     # en erreur → run avorté). DOWNLOAD_WORKERS_MAX borne la SEULE phase de
     # download ; le tuilage/ombrage garde args.workers. Défaut providers = pas
-    # de plafond (getattr → args.workers).
-    _dl_workers = min(args.workers,
-                      getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", args.workers))
-    # --laz-parallel N : il faut >= N workers pour que N conversions (dans le
-    # post_fetch) tournent EN PARALLÈLE (le sémaphore de conversion les autorise).
-    # Le download reste auto-limité : les conversions dominant le temps, peu de
-    # workers téléchargent simultanément (donc pas de throttle serveur K-wide).
-    _dl_workers = max(_dl_workers, getattr(args, "laz_parallel", 1))
+    # de plafond (attr absent → args.workers).
+    # R1#6 — --laz-parallel ne doit jamais ouvrir plus de connexions que le
+    # plafond du provider (avant, max(cap, laz_parallel) laissait --laz-parallel 6
+    # ouvrir 6 connexions sur un plafond de 3 → transfert tronqué → run avorté).
+    _dl_cap = getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", None)
+    _lp     = getattr(args, "laz_parallel", 1)
+    _dl_workers = _dl_workers_effectif(args.workers, _dl_cap, _lp)
     if a_telecharger:
         if _dl_workers < args.workers:
             print(f"  Note: capping downloads to {_dl_workers} parallel "
                   f"(large point-cloud tiles, avoids server throttling)")
+        if _lp > _dl_workers:
+            print(f"  Note: --laz-parallel {_lp} limited to {_dl_workers} here "
+                  f"(provider download cap; conversion shares the download pool)")
         with ThreadPoolExecutor(max_workers=_dl_workers) as ex:
             if _cog_windowed:
                 futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
@@ -13942,6 +14045,37 @@ def _overlay_sequences(geom):
     return lignes, anneaux
 
 
+def _seg_inter_box(ax, ay, bx, by, x0, y0, x1, y1):
+    """Liang-Barsky : le segment (ax,ay)->(bx,by) coupe-t-il la box axis-aligned
+    [x0,x1]×[y0,y1] ? Sert à ne binner un segment QUE dans les tuiles qu'il
+    traverse réellement, au lieu de tout son rectangle englobant. Un long segment
+    diagonal touche O(N) tuiles mais son rectangle en fait O(N²) : rivières, GR,
+    limites administratives, courbes de niveau (R2#35). Algorithme de clipping de
+    segment standard (1978), ici détourné en simple test booléen d'intersection."""
+    dx = bx - ax
+    dy = by - ay
+    if dx == 0 and dy == 0:                      # segment dégénéré (point)
+        return x0 <= ax <= x1 and y0 <= ay <= y1
+    t0, t1 = 0.0, 1.0
+    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
+        if p == 0:
+            if q < 0:
+                return False                     # parallèle à ce bord, hors tranche
+        else:
+            r = q / p
+            if p < 0:
+                if r > t1:
+                    return False
+                if r > t0:
+                    t0 = r
+            else:
+                if r < t0:
+                    return False
+                if r < t1:
+                    t1 = r
+    return True
+
+
 def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
                                    ecraser=False, supersample=2, bbox_wgs84=None):
     """Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent -> .sqlitedb
@@ -14158,9 +14292,20 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
                     itm = ("lin", color, wpx, p0, p1)
                     for tx in range(int((min(p0[0], p1[0]) - mg) // SCALE),
                                     int((max(p0[0], p1[0]) + mg) // SCALE) + 1):
+                        _bx0 = tx * SCALE - mg
+                        _bx1 = tx * SCALE + SCALE + mg
                         for ty in range(int((min(p0[1], p1[1]) - mg) // SCALE),
                                         int((max(p0[1], p1[1]) + mg) // SCALE) + 1):
-                            _add(tx, ty, itm)
+                            # R2#35 : ne binner que les tuiles réellement
+                            # traversées par le segment (box tuile élargie de mg,
+                            # marge = footprint du liseré + pastilles), pas tout
+                            # le rectangle englobant (quadratique sur les
+                            # diagonales). mg > demi-largeur → conservateur, sortie
+                            # identique, buckets et rendus effondrés.
+                            if _seg_inter_box(p0[0], p0[1], p1[0], p1[1],
+                                              _bx0, ty * SCALE - mg,
+                                              _bx1, ty * SCALE + SCALE + mg):
+                                _add(tx, ty, itm)
             for ring in anneaux:
                 gp = [_proj_pt(lon, lat, z) for lon, lat in ring]
                 if len(gp) < 2:

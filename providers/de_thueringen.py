@@ -176,6 +176,7 @@ def post_fetch(chemin):
     if magic[:2] != b"PK":
         return  # déjà un GeoTIFF (ou réponse non-ZIP → le validateur tranchera)
 
+    import io
     import zipfile
     import numpy as np
     import rasterio
@@ -187,10 +188,13 @@ def post_fetch(chemin):
             raise ValueError(f"Aucun .xyz dans {chemin.name}")
         data = z.read(xyz[0])
 
-    vals = np.array(data.split(), dtype=np.float64)
-    if vals.size % 3:
-        raise ValueError(f"XYZ TH malformé : {vals.size} valeurs (≠ 3n)")
-    pts = vals.reshape(-1, 3)
+    # R2#44 — cf. de_berlin : np.loadtxt (parseur C) au lieu de
+    # np.array(data.split()) qui matérialisait des millions de tokens bytes
+    # (>1 Go RAM sur une tuile DGM 1 m). loadtxt → tableau (n, 3) direct ;
+    # ndmin=2 pour garder la forme 2D même à un seul point.
+    pts = np.loadtxt(io.BytesIO(data), ndmin=2)
+    if pts.shape[1] != 3:
+        raise ValueError(f"XYZ TH malformé : {pts.shape[1]} colonne(s) (≠ 3)")
     xs, ys, zs = pts[:, 0], pts[:, 1], pts[:, 2]
 
     # Pas réel de la grille (1 m ou 2 m selon la campagne) = plus petit écart

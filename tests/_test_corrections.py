@@ -906,6 +906,91 @@ with tempfile.TemporaryDirectory() as _td30:
     check("R2#30 sidecar identique → pas périmé", not l2m._sig_sidecar_stale(_dl, "sigA"))
     check("R2#30 sidecar différent → périmé (régénérer)", l2m._sig_sidecar_stale(_dl, "sigB"))
 
+print("== 25. Lot ressources/OOM : R2#9 RMAP clairsemé, R2#43 multipart, "
+      "R2#35 intersection segment, R1#6 workers plafond ==")
+
+# R1#6 : _dl_workers_effectif ne dépasse JAMAIS le plafond, mais --laz-parallel
+# peut monter jusqu'au plafond ; sans plafond, il monte librement.
+_dwe = l2m._dl_workers_effectif
+check("R1#6 cap=3 lp=1 → 3", _dwe(8, 3, 1) == 3, detail=str(_dwe(8, 3, 1)))
+check("R1#6 cap=3 lp=6 → 3 (jamais > plafond : LE bug)", _dwe(8, 3, 6) == 3,
+      detail=str(_dwe(8, 3, 6)))
+check("R1#6 cap=3 workers=2 lp=3 → 3 (lp monte jusqu'au plafond)",
+      _dwe(2, 3, 3) == 3, detail=str(_dwe(2, 3, 3)))
+check("R1#6 cap=3 workers=2 lp=1 → 2", _dwe(2, 3, 1) == 2, detail=str(_dwe(2, 3, 1)))
+check("R1#6 sans plafond (None) lp=8 → 8 (monte librement)", _dwe(4, None, 8) == 8)
+check("R1#6 cap=0 traité comme aucun plafond", _dwe(4, 0, 1) == 4)
+
+# R2#35 : _seg_inter_box — un segment n'est binné que dans les tuiles traversées.
+_sib = l2m._seg_inter_box
+check("R2#35 diagonale coupe box sur le trajet", _sib(0, 0, 100, 100, 40, 40, 60, 60))
+check("R2#35 diagonale ne coupe PAS box hors trajet (bas-droit)",
+      not _sib(0, 0, 100, 100, 40, 0, 60, 20))
+check("R2#35 diagonale ne coupe PAS box hors trajet (haut-gauche)",
+      not _sib(0, 0, 100, 100, 0, 40, 20, 60))
+check("R2#35 box contenant une extrémité → True", _sib(0, 0, 100, 100, 95, 95, 105, 105))
+check("R2#35 horizontale coupe box à sa hauteur", _sib(0, 50, 100, 50, 40, 45, 60, 55))
+check("R2#35 horizontale ne coupe pas box au-dessus",
+      not _sib(0, 50, 100, 50, 40, 0, 60, 10))
+check("R2#35 point (segment dégénéré) dans la box", _sib(50, 50, 50, 50, 40, 40, 60, 60))
+check("R2#35 point hors box", not _sib(50, 50, 50, 50, 0, 0, 10, 10))
+
+# R2#43 : _extraire_tiff_multipart désencapsule le GeoTIFF en mémoire bornée.
+# Corps multipart/related synthétique avec un TIFF > HTTP_CHUNK_SIZE pour
+# exercer le balayage en flux (magic à cheval sur chunks) + la fenêtre de queue.
+_bnd = b"wcsBoundary"
+_gml = b"<?xml version='1.0'?><gml:coverage>meta</gml:coverage>"
+_tiff = b"II\x2a\x00" + bytes([0xAB]) * 200000 + b"REALTIFFTAIL"   # magic II*\0
+_body = (b"--" + _bnd + b"\r\nContent-Type: application/gml+xml\r\n\r\n" + _gml +
+         b"\r\n--" + _bnd + b"\r\nContent-Type: image/tiff\r\n\r\n" + _tiff +
+         b"\r\n--" + _bnd + b"--\r\n")
+with tempfile.TemporaryDirectory() as _td43:
+    _f43 = Path(_td43) / "cov.tif"
+    _f43.write_bytes(_body)
+    l2m._extraire_tiff_multipart(_f43)
+    _got = _f43.read_bytes()
+    check("R2#43 multipart → TIFF pur extrait (byte-exact)", _got == _tiff,
+          detail=f"len {len(_got)} vs {len(_tiff)}, head {_got[:4]!r}")
+    # No-op sur un TIFF déjà brut.
+    _f43b = Path(_td43) / "raw.tif"; _f43b.write_bytes(_tiff)
+    l2m._extraire_tiff_multipart(_f43b)
+    check("R2#43 TIFF brut inchangé (no-op)", _f43b.read_bytes() == _tiff)
+    # No-op sur une réponse non-multipart non-TIFF (JSON d'erreur).
+    _f43c = Path(_td43) / "err.json"; _f43c.write_bytes(b'{"error":"nope"}')
+    l2m._extraire_tiff_multipart(_f43c)
+    check("R2#43 non-multipart inchangé (no-op)", _f43c.read_bytes() == b'{"error":"nope"}')
+
+# R2#9 : RMAP refuse une couverture clairsemée (rectangle min-max énorme, quasi
+# vide) au lieu de matérialiser des millions de tuiles vides.
+with tempfile.TemporaryDirectory() as _td9:
+    _mb9 = Path(_td9) / "sparse.mbtiles"
+    _c9 = _sq.connect(str(_mb9))
+    _c9.executescript("CREATE TABLE metadata(name TEXT,value TEXT);"
+                      "CREATE TABLE tiles(zoom_level INT,tile_column INT,"
+                      "tile_row INT,tile_data BLOB);")
+    _c9.execute("INSERT INTO metadata VALUES('format','jpg')")
+    # 4 coins écartés à z11 → rectangle ≈ 1501×1501 ≈ 2,25 M positions, 4 réelles.
+    for _col in (0, 1500):
+        for _row in (0, 1500):
+            _c9.execute("INSERT INTO tiles VALUES(?,?,?,?)", (11, _col, _row, _jpg()))
+    _c9.commit(); _c9.close()
+    _r9 = l2m.generer_rmap_depuis_mbtiles(_mb9, ecraser=True)
+    check("R2#9 couverture clairsemée → refus (None)", _r9 is None)
+    check("R2#9 aucun .rmap créé sur refus",
+          not (_mb9.with_suffix(".rmap")).exists())
+    # Contrôle : une couverture dense (1 tuile, rectangle plein) n'est PAS refusée.
+    _mb9d = Path(_td9) / "dense.mbtiles"
+    _c9d = _sq.connect(str(_mb9d))
+    _c9d.executescript("CREATE TABLE metadata(name TEXT,value TEXT);"
+                       "CREATE TABLE tiles(zoom_level INT,tile_column INT,"
+                       "tile_row INT,tile_data BLOB);")
+    _c9d.execute("INSERT INTO metadata VALUES('format','jpg')")
+    _c9d.execute("INSERT INTO tiles VALUES(?,?,?,?)", (10, 500, 300, _jpg()))
+    _c9d.commit(); _c9d.close()
+    _r9d = l2m.generer_rmap_depuis_mbtiles(_mb9d, ecraser=True)
+    check("R2#9 couverture dense NON refusée (contrôle)",
+          _r9d is not None and _r9d.exists())
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
