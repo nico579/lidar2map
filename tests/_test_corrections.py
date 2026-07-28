@@ -832,6 +832,80 @@ with tempfile.TemporaryDirectory() as _td4:
           _chg is True and not _m3.deja_traite("001x001")
           and _m3._data["fichiers"] == {})
 
+print("== 24. Lot cache/fraîcheur : R2#13 méta, R2#22 fraîcheur, R2#30 signature OSM ==")
+import os as _os24, time as _time24
+
+# R2#13 : le découpage conserve TOUTES les métadonnées source (pas 9 clés).
+with tempfile.TemporaryDirectory() as _td13:
+    _src13 = Path(_td13) / "base.mbtiles"
+    _c13 = _sq.connect(str(_src13))
+    _c13.executescript("CREATE TABLE metadata(name TEXT,value TEXT);"
+                       "CREATE TABLE tiles(zoom_level INT,tile_column INT,"
+                       "tile_row INT,tile_data BLOB);")
+    # Pas de 'bounds' : la bbox est calculée depuis les tuiles (cf. §20). Les
+    # clés attribution/json/scheme/licence sont celles dont on teste le report.
+    for _k, _v in [("name", "base"), ("format", "jpg"), ("minzoom", "12"),
+                   ("maxzoom", "12"),
+                   ("attribution", "© IGN"), ("json", '{"vector_layers":[]}'),
+                   ("scheme", "xyz"), ("licence", "etalab-2.0")]:
+        _c13.execute("INSERT INTO metadata VALUES(?,?)", (_k, _v))
+    for _col in range(2000, 2004):
+        for _r in range(1000, 1004):
+            _c13.execute("INSERT INTO tiles VALUES(?,?,?,?)", (12, _col, _r, _jpg()))
+    _c13.commit(); _c13.close()
+    _o13 = l2m.decouper_mbtiles(_src13, n_cols=2, n_rows=1,
+                                dossier=Path(_td13) / "out", ecraser=True)
+    check("R2#13 découpe produit des morceaux", len(_o13) >= 1)
+    _m13 = _meta(_o13[0])
+    check("R2#13 attribution conservée", _m13.get("attribution") == "© IGN")
+    check("R2#13 json (vector_layers) conservé", _m13.get("json") == '{"vector_layers":[]}')
+    check("R2#13 scheme+licence conservés",
+          _m13.get("scheme") == "xyz" and _m13.get("licence") == "etalab-2.0")
+    check("R2#13 name surchargé (propre au morceau)", _m13.get("name") != "base")
+
+# R2#22 : _mbtiles_a_regenerer compare la fraîcheur vs source (mécanisme forcé
+# à source=tif_source y compris already-warped).
+# ignore_cleanup_errors : _mbtiles_a_regenerer ouvre une connexion sqlite ro que
+# le `with` ne ferme pas → sur Windows le fichier reste brièvement verrouillé au
+# rmtree du tempdir (course inoffensive, hors sujet du test).
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as _td22:
+    _mbt22 = Path(_td22) / "x.mbtiles"
+    _c22 = _sq.connect(str(_mbt22))
+    _c22.executescript("CREATE TABLE tiles(zoom_level INT,tile_column INT,"
+                       "tile_row INT,tile_data BLOB);")
+    _c22.execute("INSERT INTO tiles VALUES(0,0,0,?)", (_jpg(),))
+    _c22.commit(); _c22.close()
+    _src22 = Path(_td22) / "src.tif"; _src22.write_bytes(b"x")
+    _os24.utime(_src22, (_time24.time() - 100, _time24.time() - 100))
+    check("R2#22 source plus vieille → réutilise (False)",
+          not l2m._mbtiles_a_regenerer(_mbt22, False, source=_src22))
+    _os24.utime(_src22, (_time24.time() + 100, _time24.time() + 100))
+    check("R2#22 source plus récente → régénère (True)",
+          l2m._mbtiles_a_regenerer(_mbt22, False, source=_src22))
+
+# R2#30 : signature OSM + sidecar de config.
+_so = l2m._signature_osm((2.0, 43.0, 3.0, 44.0), ["highway", "waterway"],
+                         "paca-latest.osm.pbf", False)
+check("R2#30 signature OSM déterministe (ordre tags indifférent)",
+      _so == l2m._signature_osm((2.0, 43.0, 3.0, 44.0), ["waterway", "highway"],
+                                "paca-latest.osm.pbf", False))
+check("R2#30 tags ≠ → signature ≠",
+      _so != l2m._signature_osm((2.0, 43.0, 3.0, 44.0), ["highway"],
+                                "paca-latest.osm.pbf", False))
+check("R2#30 bbox ≠ → signature ≠",
+      _so != l2m._signature_osm((2.0, 43.0, 3.5, 44.0), ["highway", "waterway"],
+                                "paca-latest.osm.pbf", False))
+check("R2#30 skip_bbox ignore la bbox (mode région)",
+      l2m._signature_osm((2.0, 43.0, 3.0, 44.0), ["h"], "x.pbf", True)
+      == l2m._signature_osm((9.0, 9.0, 9.9, 9.9), ["h"], "x.pbf", True))
+with tempfile.TemporaryDirectory() as _td30:
+    _dl = Path(_td30) / "z.map"; _dl.write_text("fake")
+    check("R2#30 sidecar absent → PAS périmé (migration douce)",
+          not l2m._sig_sidecar_stale(_dl, "sigA"))
+    l2m._sig_sidecar_ecrire(_dl, "sigA")
+    check("R2#30 sidecar identique → pas périmé", not l2m._sig_sidecar_stale(_dl, "sigA"))
+    check("R2#30 sidecar différent → périmé (régénérer)", l2m._sig_sidecar_stale(_dl, "sigB"))
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

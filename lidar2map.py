@@ -2376,9 +2376,16 @@ def _supprimer_fichiers(fichiers: list, dossiers_garder=None):
     But : permettre le traitement d'une grande BBox sans saturer le disque —
     chaque morceau libère son espace avant que le suivant démarre.
 
-    Seuls les fichiers créés/téléchargés PAR ce morceau (enregistrés dans le
-    manifest via _creer_fichier) sont removeds. Les fichiers déjà
-    présents avant le début du morceau ne sont pas touchés.
+    Sont supprimés TOUS les fichiers enregistrés au manifest pour ce morceau via
+    _creer_fichier. ATTENTION (R1#5/#9) : cela inclut désormais une dalle ou un
+    nuage .laz qui PRÉEXISTAIT (run antérieur, ou dalle de bord partagée avec un
+    morceau voisin) — depuis que le cleanup .laz les enregistre pour libérer le
+    disque, la garantie « les fichiers préexistants ne sont pas touchés » ne tient
+    PLUS. Conséquence : un morceau voisin peut re-télécharger une dalle de bord.
+    Compromis assumé (le disque saturé était le vrai problème) ; l'amélioration
+    serait de ne purger une dalle que si plus AUCUN morceau restant n'en a besoin
+    (analyse de dépendances, non faite). --cleanup-keep-tiles épargne le cache
+    entièrement pour contourner.
 
     *dossiers_garder* non nul (--cleanup-keep-tiles) : un dossier OU un itérable
     de dossiers dont les fichiers sont ÉPARGNÉS (le cache de dalles, et en mode
@@ -7744,8 +7751,13 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # TIF source incluse. L'ancien gate `exists and not ecraser` court-circuitait
     # la décision du caller ("older than ... regenerating" suivi d'un
     # "already present" → l'ancien rendu restait servi).
-    if not _mbtiles_a_regenerer(mbtiles, ecraser_tuiles,
-                                source=None if source_already_warped else tif_source):
+    # source=tif_source TOUJOURS, y compris already-warped (R2#22) : dans ce cas
+    # le tuilage lit tif_source DIRECTEMENT (warped = tif_source, cf. plus bas),
+    # donc c'est la bonne référence de fraîcheur. L'ancien `None if
+    # source_already_warped` désactivait la comparaison → un mbtiles plus vieux
+    # qu'un TIF source ré-exporté passait pour "already present" (l'appelant
+    # décidait pourtant regen, mais ce check interne l'annulait).
+    if not _mbtiles_a_regenerer(mbtiles, ecraser_tuiles, source=tif_source):
         print(f"  {mbtiles.name} → already present")
         return mbtiles
     if mbtiles.exists():
@@ -9849,6 +9861,46 @@ def _valider_osm_tags(osm_tags):
     return osm_tags
 
 
+def _hash_config(payload):
+    """Hash md5 court d'un payload JSON-sérialisable (signature de cache)."""
+    import hashlib as _hl
+    _js = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
+    return _hl.md5(_js.encode("utf-8")).hexdigest()[:16]
+
+
+def _sig_sidecar_stale(chemin, sig):
+    """True si un fichier <chemin>.sig existe ET diffère de `sig` (config de
+    sortie changée → le livrable est périmé, régénérer). Sidecar ABSENT =
+    livrable d'avant ce mécanisme → PAS périmé (migration douce : on le pose
+    sans régénérer). R2#30, analogue pour les livrables OSM/.map de la signature
+    de config du pipeline split (R1#4)."""
+    sc = Path(str(chemin) + ".sig")
+    try:
+        return sc.read_text(encoding="utf-8").strip() != sig
+    except OSError:
+        return False   # absent/illisible → pas de régénération forcée
+
+
+def _sig_sidecar_ecrire(chemin, sig):
+    """Écrit la signature de config à côté du livrable (best-effort)."""
+    try:
+        Path(str(chemin) + ".sig").write_text(sig, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox):
+    """Signature des entrées qui déterminent le contenu d'une carte OSM/.map :
+    emprise (sauf mode région où on traite tout le PBF), tags de filtrage, et
+    PBF source. Un changement de --layer (tags) ou de bbox en gardant le même
+    nom de zone réutilisait sinon un .map périmé (R2#30)."""
+    return _hash_config({
+        "bbox": None if skip_bbox else [round(float(c), 6) for c in bbox_wgs84],
+        "tags": sorted(osm_tags) if osm_tags else None,
+        "pbf":  Path(osm_pbf).name if osm_pbf else None,
+    })
+
+
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                       osm_tags=None, export_geojson=True, ecraser_tuiles=False,
                       skip_bbox=False, geojson_formats=None):
@@ -9885,13 +9937,28 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     geojson_present = ((not _need_gz  or chemin_geojson_gz.exists())
                        and (not _need_raw or chemin_geojson_raw.exists()))
 
+    # R2#30 : signature des entrées (bbox/tags/PBF). Un .map présent sous le même
+    # nom de zone mais généré avec d'autres tags/emprise était réutilisé tel quel
+    # (sortie fausse en silence). Sidecar absent = migration douce (pas de regen).
+    _sig_osm  = _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)
+    _sig_perime = chemin_map.exists() and _sig_sidecar_stale(chemin_map, _sig_osm)
+
     if chemin_map.exists() and ecraser_tuiles:
-        chemin_map.unlink()
+        # Pas d'unlink du .map ici : chemin_map_tmp.replace(chemin_map) écrase
+        # atomiquement en fin de génération (R2#49). Le supprimer maintenant
+        # perdrait le .map précédent si osmosis échoue (rc != 0 → .tmp jeté).
         print(f"  Carte OSM : overwrite {chemin_map.name}")
-        # Supprimer aussi les geojson pour les recalculer
+        # Supprimer les geojson pour forcer leur recalcul (artefacts secondaires
+        # régénérables ; ils ont leur propre écriture atomique .tmp+rename).
         for _gf in [chemin_geojson_gz, chemin_geojson_raw]:
             if _gf.exists(): _gf.unlink()
-    if chemin_map.exists() and not ecraser_tuiles:
+    elif _sig_perime:
+        print(f"  {chemin_map.name} → OSM config changed (bbox/tags/PBF), regenerating")
+        for _gf in [chemin_geojson_gz, chemin_geojson_raw]:
+            if _gf.exists(): _gf.unlink()
+    elif chemin_map.exists():   # not ecraser, signature OK ou absente (migration)
+        if not Path(str(chemin_map) + ".sig").exists():
+            _sig_sidecar_ecrire(chemin_map, _sig_osm)   # poser la sig sur un vieux .map
         if not export_geojson or geojson_present:
             print(f"  OSM map already present: {chemin_map.name} - skipped")
             return chemin_map
@@ -9989,6 +10056,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
         chemin_map_tmp.replace(chemin_map)
+        _sig_sidecar_ecrire(chemin_map, _sig_osm)   # R2#30 : mémoriser la config
         taille_b = chemin_map.stat().st_size
         if taille_b < 1_000_000:
             print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
@@ -10741,6 +10809,14 @@ Examples:
             return
         print("  A-priori splitting: zone too small -> single pass")
 
+    # R2#38 : --min-free-gb doit aussi garder le mode MONOLITHIQUE. Sans split,
+    # _run_split_priori (et son _garde_disque par chunk) n'est jamais appelé →
+    # le seuil était silencieusement ignoré. Couvre les deux entrées mono :
+    # split non demandé, ou zone trop petite pour être découpée. Vérif AVANT de
+    # démarrer (un run mono sur grande zone sature un petit volume comme un chunk).
+    _garde_disque(Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL,
+                  getattr(args, "min_free_gb", 0.0) or 0.0, "single-pass", 0, 1)
+
     etapes_total = sum([bool(args.telechargement),
                         bool(args.ombrages),
                         # rmap/sqlitedb passent aussi par l'étape MBTiles
@@ -11308,11 +11384,30 @@ Examples:
 
             # Téléchargement PBF commun (national ou régional)
             _SEUIL_PBF = 1_000_000  # 1 MB minimum — PBF vide ou tronqué → re-télécharger
-            if pbf.exists() and pbf.stat().st_size >= _SEUIL_PBF:
+            # R2#30 : le PBF Geofabrik est un extrait « -latest » rafraîchi
+            # QUOTIDIENNEMENT. L'ancien code le réutilisait indéfiniment dès qu'il
+            # dépassait le seuil de taille (données OSM figées à la 1re exécution)
+            # et --download-overwrite ne le refaisait pas. On respecte l'overwrite
+            # (re-download forcé) et on affiche l'âge du cache (pas de re-download
+            # AUTO sur l'âge : un PBF départemental fait 100 Mo-4 Go, ce serait
+            # coûteux et surprenant — on avertit et on laisse l'utilisateur
+            # décider via --download-overwrite).
+            _force_pbf = bool(getattr(args, "telechargement_ecraser", False))
+            _pbf_age_j = ((time.time() - pbf.stat().st_mtime) / 86400.0
+                          if pbf.exists() else 0.0)
+            if pbf.exists() and pbf.stat().st_size >= _SEUIL_PBF and not _force_pbf:
                 print(f"  Existing PBF: {pbf.name}  "
-                      f"({pbf.stat().st_size/1e9:.1f} GB)")
+                      f"({pbf.stat().st_size/1e9:.1f} GB, {_pbf_age_j:.0f} days old)")
+                if _pbf_age_j > 30:
+                    print(f"  Note: Geofabrik '-latest' is refreshed daily; this "
+                          f"cache is {_pbf_age_j:.0f} days old. Pass "
+                          f"--download-overwrite to refresh the OSM data.")
             else:
-                if pbf.exists():
+                if pbf.exists() and _force_pbf and pbf.stat().st_size >= _SEUIL_PBF:
+                    print(f"  --download-overwrite: refreshing PBF {pbf.name} "
+                          f"({_pbf_age_j:.0f} days old)")
+                    pbf.unlink()
+                elif pbf.exists():
                     print(f"  Truncated PBF ({pbf.stat().st_size} bytes) - re-downloading.")
                     pbf.unlink()
                 _log_req(str(url_pbf), 'Geofabrik')
@@ -12661,18 +12756,27 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
 
         cx = (lon_w + lon_e) / 2
         cy = (lat_s + lat_n) / 2
-        for k, v in [
-            ("name",        nom_z),
-            ("type",        meta.get("type", "overlay")),
-            ("version",     meta.get("version", "1.0")),
-            ("description", meta.get("description", "")),
-            ("format",      fmt),
-            ("minzoom",     str(zoom_min)),
-            ("maxzoom",     str(zoom_max)),
-            ("bounds",      f"{lon_w:.6f},{lat_s:.6f},{lon_e:.6f},{lat_n:.6f}"),
-            ("center",      f"{cx:.6f},{cy:.6f},{zoom_max}"),
-        ]:
-            con_z.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
+        # Reprendre TOUTES les métadonnées source (attribution, json/vector_layers,
+        # scheme, licence...), puis surcharger celles PROPRES au morceau (R2#13).
+        # L'ancien code ne recréait que 9 clés → attribution/json/scheme/licence
+        # étaient perdues à chaque découpe (contrat MBTiles cassé pour un lecteur
+        # qui les attend : couche vecteur sans json = illisible, attribution/
+        # licence effacées). type/version/description viennent maintenant de la
+        # source telle quelle (avec défauts si absentes).
+        _meta_z = dict(meta)
+        _meta_z.setdefault("type", "overlay")
+        _meta_z.setdefault("version", "1.0")
+        _meta_z.setdefault("description", "")
+        _meta_z.update({
+            "name":    nom_z,
+            "format":  fmt,
+            "minzoom": str(zoom_min),
+            "maxzoom": str(zoom_max),
+            "bounds":  f"{lon_w:.6f},{lat_s:.6f},{lon_e:.6f},{lat_n:.6f}",
+            "center":  f"{cx:.6f},{cy:.6f},{zoom_max}",
+        })
+        for k, v in _meta_z.items():
+            con_z.execute("INSERT INTO metadata VALUES (?,?)", (k, str(v)))
         con_z.commit()
 
         # Copier les tuiles de la bbox — itération INCRÉMENTALE (fetchmany) :
@@ -13287,6 +13391,12 @@ Examples:
                               _overwrite_actif, _entete_wmts, _chunk_wmts, t_debut)
             return
         print("  A-priori splitting: zone too small -> single pass")
+
+    # R2#38 : --min-free-gb garde aussi le mode MONOLITHIQUE WMTS (jumeau du
+    # garde LiDAR) : sans split, _run_split_priori / _garde_disque ne tournent
+    # pas → seuil ignoré en silence. Vérif avant de démarrer le tuilage.
+    _garde_disque(Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL,
+                  getattr(args, "min_free_gb", 0.0) or 0.0, "single-pass", 0, 1)
 
     # ── Calcul de la grille ───────────────────────────────────────────────────
     # (zooms déjà normalisés ET capés plus haut, avant le bloc split)
@@ -14007,8 +14117,9 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         return fx * SCALE, fy * SCALE
 
     # ── Ecriture sqlitedb (schema lidar2map + tilenumbering='simple') ────────
-    if sqlitedb_out.exists():
-        sqlitedb_out.unlink()
+    # Pas d'unlink de l'ancien sqlitedb ici : out_part.replace(sqlitedb_out)
+    # l'écrase atomiquement en fin de génération (R2#49). Le supprimer maintenant
+    # ferait perdre le livrable précédent si ce run échoue (le .part est jeté).
     out_part = _chemin_part(sqlitedb_out)
     con = sqlite3.connect(str(out_part))
     con.execute("PRAGMA journal_mode=WAL;")
@@ -14540,16 +14651,35 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     chemin_osm_xml = dossier_ville / f"{nom_zone}_ign.osm"
     chemin_map     = dossier_ville / f"{nom_zone}_ign.map"
 
+    # R2#30 (jumeau OSM) : signature source/bbox/epsilon. Un .map IGN présent
+    # sous le même nom mais issu d'un autre GeoJSON (WFS re-téléchargé), d'une
+    # autre emprise ou d'un autre epsilon était réutilisé tel quel. On inclut le
+    # mtime du GeoJSON : un source rafraîchi ⇒ .map régénéré.
+    _sig_ign = _hash_config({
+        "src":       Path(geojson_src).name,
+        "src_mtime": (round(Path(geojson_src).stat().st_mtime, 1)
+                      if Path(geojson_src).exists() else None),
+        "bbox":      [round(float(c), 6) for c in bbox_wgs84] if bbox_wgs84 else None,
+        "eps":       epsilon,
+    })
+
     if chemin_map.exists() and not ecraser:
         if chemin_map.stat().st_size == 0:
             print("  IGN .map exists but empty - forced regeneration.")
             chemin_map.unlink()
+        elif _sig_sidecar_stale(chemin_map, _sig_ign):
+            print(f"  {chemin_map.name} → IGN config changed (source/bbox/eps), regenerating")
+            # Pas d'unlink : .tmp+replace écrase atomiquement (R2#49).
         else:
+            if not Path(str(chemin_map) + ".sig").exists():
+                _sig_sidecar_ecrire(chemin_map, _sig_ign)   # migration douce
             print(f"  IGN .map already present: {chemin_map.name} - skipped")
             return chemin_map
 
     if chemin_map.exists() and ecraser:
-        chemin_map.unlink()
+        # Pas d'unlink ici : chemin_map_tmp.replace(chemin_map) écrase
+        # atomiquement en fin de génération (R2#49). Le supprimer maintenant
+        # perdrait le .map précédent si osmosis échoue (rc != 0 → .tmp jeté).
         print(f"  Carte IGN .map : overwrite {chemin_map.name}")
 
     # ── Étape 1 : GeoJSON → OSM XML ──────────────────────────────────────────
@@ -14607,6 +14737,7 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     # retour d'osmosis.
     if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
         chemin_map_tmp.replace(chemin_map)
+        _sig_sidecar_ecrire(chemin_map, _sig_ign)   # R2#30 : mémoriser la config
         chemin_osm_xml.unlink(missing_ok=True)  # succès seulement
         taille_b = chemin_map.stat().st_size
         if taille_b < 1_000_000:
