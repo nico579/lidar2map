@@ -7980,8 +7980,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     else:
         _use_jpeg = False
     _tile_fmt  = "JPEG" if _use_jpeg else "PNG"
-    _tile_ext  = "jpg"  if _use_jpeg else "png"
-    print(f"  Tile format: {_tile_fmt}"
+    print(f"  Base tile format: {_tile_fmt}"
           f"{'  Q=' + str(jpeg_quality) if _use_jpeg else '  lossless'}", flush=True)
 
     EARTH_CIRC = 20037508.3427892
@@ -8064,8 +8063,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                               tile_row   INTEGER, tile_data   BLOB);
         CREATE UNIQUE INDEX idx_tiles ON tiles (zoom_level, tile_column, tile_row);
     """)
+    # NB : la métadonnée "format" est insérée APRÈS le tuilage (R1#7), une fois
+    # connu si le run a émis des tuiles PNG-alpha (bas zoom / bord) en plus des
+    # JPEG intérieures — le format déclaré doit refléter le contenu réel.
     for k, v in [("name", mbtiles.stem), ("type", "overlay"), ("version", "1.0"),
-                 ("description", nom_ville), ("format", _tile_ext),
+                 ("description", nom_ville),
                  ("minzoom", str(zoom_min)), ("maxzoom", str(zoom_max))]:
         cur.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
 
@@ -8097,6 +8099,16 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # qui le décrémente puis affiche un récapitulatif).
     nb_echecs_tr = 0
 
+    # R1#7 : le format de tuile est décidé PAR TUILE. Une tuile qui déborde de
+    # l'emprise couverte (bas zoom : tuile >> chunk ; frange de bord) porte du
+    # padding hors-source. En JPEG ce padding est NOIR OPAQUE → tuile bas zoom
+    # noire, et en découpé/sharding (1 mbtiles par chunk que Locus empile) la
+    # tuile opaque d'un bloc MASQUE la pastille du bloc voisin au même (z,x,y).
+    # Fix : les tuiles à padding sortent en PNG alpha=0 (composables entre
+    # blocs) ; les tuiles PLEINES gardent le format de base (JPEG = gain taille
+    # là où le padding est absent, càd la masse des hauts zooms intérieurs).
+    _emitted_partial = False   # ≥1 tuile PNG-alpha émise dans un run base-JPEG
+
     # ── Pool d'encodage des tuiles ────────────────────────────────────────
     # Pillow libère le GIL pendant JPEG/PNG save, donc un ThreadPool donne du vrai
     # parallélisme. Le pool est créé une fois pour toute la pyramide et fermé
@@ -8106,9 +8118,16 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     _pool = ThreadPoolExecutor(max_workers=tile_workers) if tile_workers > 1 else None
 
     def _encode_tile(args):
-        _tile, _z, _tx, _ty = args
+        _tile, _alpha, _z, _tx, _ty = args
         _buf = io.BytesIO()
-        if _use_jpeg:
+        if _alpha is not None:
+            # R1#7 : tuile partielle → PNG avec canal alpha (0 hors emprise) pour
+            # composer entre chunks/blocs empilés dans Locus/OsmAnd. RGBA (et non
+            # LA) pour la compat maximale des décodeurs Android.
+            _rgba = _tile.convert("RGBA")
+            _rgba.putalpha(_alpha)
+            _rgba.save(_buf, "PNG", optimize=False, compress_level=6)
+        elif _use_jpeg:
             _tile.convert("RGB").save(_buf, "JPEG",
                                        quality=jpeg_quality, optimize=False)
         else:
@@ -8131,7 +8150,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         # bbox introuvable (remplace l'ancienne boucle banding à tranche
         # unique et ses `continue` ; le banding a été retiré car il créait
         # des artefacts de jointure Lambert93/Mercator).
-        nonlocal total_insere, nb_echecs_tr
+        nonlocal total_insere, nb_echecs_tr, _emitted_partial
         # Fichier warped persistant dans dossier_ville — préfixe _ pour
         # être ignoré par le glob MBTiles (not t.name.startswith("_")).
         # Nom déterministe : source + zoom_max → réutilisable si on relance
@@ -8417,25 +8436,31 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 (_w_count, TILE_SIZE, cw_band_w), dtype=_np.uint8)
                             canvas[:, dst_y:dst_y+arr.shape[1],
                                       dst_x:dst_x+arr.shape[2]] = arr
-                            # Monobande conservée en "L" (PNG grayscale 2-3× plus
-                            # petit) ; JPEG converti RGB à l'encodage.
+                            # R1#7 : masque de couverture (255 = pixel issu de la
+                            # source, 0 = padding hors emprise). Il décide par
+                            # tuile JPEG plein vs PNG transparent, et fournit le
+                            # canal alpha des tuiles partielles.
                             if _w_count >= 4:
-                                # RGBA : préserver l'alpha (nodata transparent,
-                                # R2#19). PNG garde le canal ; JPEG (sans alpha)
-                                # compose sur le gris de fond des tuiles vides.
-                                rgba = _np.moveaxis(canvas[:4], 0, 2)
-                                if _use_jpeg:
-                                    _im = Image.fromarray(rgba, "RGBA")
-                                    _fond = Image.new("RGB", _im.size, (180, 180, 180))
-                                    _fond.paste(_im, mask=_im.split()[-1])
-                                    band_img = _fond
-                                else:
-                                    band_img = Image.fromarray(rgba, "RGBA")
-                            elif _w_count == 3:
-                                img_arr = _np.moveaxis(canvas[:3], 0, 2)
-                                band_img = Image.fromarray(img_arr.astype(_np.uint8))
+                                # Source RGBA : son propre alpha porte DÉJÀ la
+                                # géométrie (canvas parti de zéros → padding = 0),
+                                # inutile de le recombiner avec le masque.
+                                alpha_band = canvas[3]
                             else:
-                                band_img = Image.fromarray(canvas[0].astype(_np.uint8))
+                                alpha_band = _np.zeros(
+                                    (TILE_SIZE, cw_band_w), dtype=_np.uint8)
+                                alpha_band[dst_y:dst_y+arr.shape[1],
+                                           dst_x:dst_x+arr.shape[2]] = 255
+                            # Contenu SANS alpha : monobande conservée en "L" (PNG
+                            # grayscale 2-3× plus petit), sinon RGB. Plus de
+                            # composite gris JPEG pour la source RGBA : une tuile
+                            # partielle sort désormais en PNG alpha, une tuile
+                            # pleine est opaque (rien à composer).
+                            if _w_count >= 3:
+                                band_img = Image.fromarray(
+                                    _np.moveaxis(canvas[:3], 0, 2))
+                            else:
+                                band_img = Image.fromarray(canvas[0])
+                            alpha_img = Image.fromarray(alpha_band, "L")
                         except Exception as _e_read:
                             nb_echecs_tr += 1
                             if nb_echecs_tr <= 3:
@@ -8444,14 +8469,25 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                             continue
 
                         # Découpe + encodage (Pillow libère le GIL → ThreadPool ;
-                        # séquentiel sous _MIN_PAR_TILES tuiles).
+                        # séquentiel sous _MIN_PAR_TILES tuiles). R1#7 : une tuile
+                        # dont la couverture ne remplit pas les 256×256 sort en
+                        # PNG alpha (padding transparent) ; une tuile pleine garde
+                        # le format de base. Le cull getbbox (tuile entièrement
+                        # vide) est inchangé.
                         _tiles_args = []
                         for i, tx in enumerate(range(cwx0, cwx1 + 1)):
                             left = i * TILE_SIZE
                             tile = band_img.crop((left, 0, left + TILE_SIZE, TILE_SIZE))
                             if tile.getbbox() is None:
                                 continue
-                            _tiles_args.append((tile, z, tx, ty))
+                            atile = alpha_img.crop(
+                                (left, 0, left + TILE_SIZE, TILE_SIZE))
+                            if atile.getextrema()[0] < 255:
+                                _tiles_args.append((tile, atile, z, tx, ty))
+                                if _use_jpeg:
+                                    _emitted_partial = True
+                            else:
+                                _tiles_args.append((tile, None, z, tx, ty))
 
                         if _pool is not None and len(_tiles_args) >= _MIN_PAR_TILES:
                             for _res in _pool.map(_encode_tile, _tiles_args):
@@ -8462,6 +8498,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 batch.append(_encode_tile(_args))
                                 total_insere += 1
                         band_img.close()
+                        alpha_img.close()
 
                         if len(batch) >= BATCH:
                             cur.executemany(
@@ -8497,6 +8534,19 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             _pool.shutdown(wait=True)
         mbtiles_part.unlink(missing_ok=True)
         raise
+
+    # R1#7 : métadonnée "format" décidée APRÈS coup. Base PNG → 'png'. Base JPEG
+    # sans tuile partielle → 'jpg'. Base JPEG AVEC tuiles PNG-alpha (bas zoom /
+    # bord) → 'png' : le fichier est mixte, on déclare le format alpha-capable.
+    # Les lecteurs reconnaissent chaque tuile à ses octets magiques (Locus via
+    # BitmapFactory, OsmAnd) ; la conversion RMAP ré-encode par sniff et
+    # SQLiteDB recopie tel quel — le champ n'est qu'un indice de contenu.
+    _fmt_final = "png" if (not _use_jpeg or _emitted_partial) else "jpg"
+    try:
+        cur.execute("INSERT INTO metadata VALUES ('format', ?)", (_fmt_final,))
+        con.commit()
+    except Exception:
+        pass
 
     # Journal DELETE avant fermeture : le header WAL persistant peut bloquer
     # les lecteurs strictement lecture seule (fichier livré = SQLite classique).

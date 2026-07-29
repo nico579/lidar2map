@@ -1,4 +1,6 @@
-# Test tuilage MBTiles : PNG grayscale pour source monobande, metadata bounds.
+# Test tuilage MBTiles : format par tuile (R1#7), metadata bounds/format.
+# Le format de BASE (JPEG/PNG) dépend du mode 'auto' (nom) ou d'un forçage
+# explicite, PAS de la nature de l'analyse — un SVF peut sortir en JPEG.
 # Usage : python Tests/_test_tiling.py  (depuis n'importe quel cwd)
 import os, sys, sqlite3, tempfile, importlib.util, io
 from pathlib import Path
@@ -30,23 +32,70 @@ mbt = l2m.generer_mbtiles_lidar(src, tmp, "zone_svf_ombrage",
                                 zoom_min=15, zoom_max=17,
                                 format_tuiles="auto", bbox_l93=bbox,
                                 tile_workers=2)
-ok = True
 con = sqlite3.connect(str(mbt))
 n = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
 fmt = dict(con.execute("SELECT name, value FROM metadata"))["format"]
-blob = con.execute("SELECT tile_data FROM tiles LIMIT 1").fetchone()[0]
-img = Image.open(io.BytesIO(blob))
-print(f"tiles={n} format_meta={fmt} png_mode={img.mode} taille_blob={len(blob)}")
+# Ici format_tuiles="auto" + nom "svf" → base PNG (choix du mode auto, PAS une
+# propriété du SVF : "jpeg" forcerait le JPEG, cf. bloc mixte plus bas).
+# R1#7 : sur cette mini-zone (256 m) toutes les tuiles z15-17 débordent de
+# l'emprise → PNG RGBA à padding transparent. On vérifie qu'AU MOINS une tuile
+# porte de l'alpha 0 (padding hors-source rendu transparent, plus noir opaque).
+modes = []
+found_transparent = False
+for (blob,) in con.execute("SELECT tile_data FROM tiles"):
+    im = Image.open(io.BytesIO(blob))
+    assert im.format == "PNG", im.format          # base PNG (auto + nom "svf")
+    modes.append(im.mode)
+    if im.mode == "RGBA" and im.getchannel("A").getextrema()[0] == 0:
+        found_transparent = True
 bounds = dict(con.execute("SELECT name, value FROM metadata")).get("bounds")
+print(f"tiles={n} format_meta={fmt} modes={sorted(set(modes))} "
+      f"transparent={found_transparent}")
 print(f"bounds={bounds}")
 con.close()
 assert n > 0, "0 tuiles"
 assert fmt == "png", fmt
-assert img.format == "PNG" and img.mode == "L", (img.format, img.mode)
+assert found_transparent, "aucune tuile partielle transparente (R1#7 KO)"
 # bounds doit contenir la zone (~5.6E, 43.9N en gros pour ce coin L93)
 b = [float(v) for v in bounds.split(",")]
 assert b[0] < b[2] and b[1] < b[3]
-print("TILING OK")
+print("TILING OK (SVF PNG, padding transparent)")
+
+# ── R1#7 : format mixte JPEG intérieur / PNG-alpha bord ─────────────────────
+# Zone plus large (2 km) avec un nom "hillshade" → base JPEG. Les tuiles
+# INTÉRIEURES pleines restent JPEG (gain taille) ; les tuiles de bord / bas
+# zoom, partiellement couvertes, sortent en PNG alpha (composables entre blocs
+# empilés dans Locus). Le mbtiles est donc mixte et déclare format='png'.
+# Valeurs 1..255 (pas de 0) pour que l'intérieur ne soit pas cullé comme nodata.
+Hj = Wj = 4096
+yj, xj = np.mgrid[0:Hj, 0:Wj]
+arrj = ((np.sin(xj / 40.0) * np.sin(yj / 40.0) * 0.5 + 0.5) * 254 + 1).astype(np.uint8)
+srcj = tmp / "zone_hillshade_multi.tif"
+bboxj = (900000.0, 6250000.0 - Hj * 0.5, 900000.0 + Wj * 0.5, 6250000.0)
+profj = dict(driver="GTiff", dtype="uint8", count=1, height=Hj, width=Wj,
+             crs="EPSG:2154", transform=from_origin(bboxj[0], bboxj[3], 0.5, 0.5))
+with rasterio.open(str(srcj), "w", **profj) as ds:
+    ds.write(arrj, 1)
+mbt_j = l2m.generer_mbtiles_lidar(srcj, tmp, "zone_hillshade_multi",
+                                  zoom_min=14, zoom_max=17,
+                                  format_tuiles="auto", bbox_l93=bboxj,
+                                  tile_workers=2)
+con_j = sqlite3.connect(str(mbt_j))
+fmt_j = dict(con_j.execute("SELECT name, value FROM metadata"))["format"]
+n_jpeg = n_png_alpha = 0
+for (blob,) in con_j.execute("SELECT tile_data FROM tiles"):
+    if blob[:3] == b"\xff\xd8\xff":               # JPEG magic
+        n_jpeg += 1
+    elif blob[:8] == b"\x89PNG\r\n\x1a\n":         # PNG magic
+        im = Image.open(io.BytesIO(blob))
+        if im.mode == "RGBA" and im.getchannel("A").getextrema()[0] == 0:
+            n_png_alpha += 1
+con_j.close()
+print(f"mixed: format_meta={fmt_j} jpeg_tiles={n_jpeg} png_alpha_tiles={n_png_alpha}")
+assert fmt_j == "png", f"format mixte doit etre 'png', recu {fmt_j}"
+assert n_jpeg > 0, "aucune tuile JPEG interieure (gain taille perdu)"
+assert n_png_alpha > 0, "aucune tuile PNG-alpha de bord (R1#7 KO)"
+print("MIXED-FORMAT OK (JPEG interieur + PNG-alpha bord)")
 
 # ── RMAP (CompeGPS/TwoNav) : structure binaire écrite à la main ──────────────
 # Header : magic + 9×int32 (10, 7, 0, w, -h, 24, 1, 256, 256), offset map info
