@@ -10288,16 +10288,32 @@ def _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox):
 
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                       osm_tags=None, export_geojson=True, ecraser_tuiles=False,
-                      skip_bbox=False, geojson_formats=None):
+                      skip_bbox=False, geojson_formats=None, want_map=True):
     """
     Génère une carte Mapsforge (.map) via osmosis — format natif Locus Map.
     Nécessite osmosis + tagmapping-min.xml dans le même dossier que le script.
 
     geojson_formats : liste des formats à produire pour l'export GeoJSON.
                       ["gz"] (défaut), ["geojson"], ou ["gz", "geojson"].
+    want_map        : False = ne PAS construire le .map (osmosis/mapwriter), ne
+                      produire que le GeoJSON demandé. Voir R2#26 ci-dessous.
     """
     if geojson_formats is None:
         geojson_formats = ["gz"]
+
+    # R2#26 : le .map n'est pas toujours demandé, et il ne doit pas prendre en
+    # otage un GeoJSON demandé en parallèle. Quand seul le GeoJSON/gz est voulu
+    # (--file-formats gz, sans "map"), on court-circuite osmosis+mapwriter :
+    # generer_geojson_osm lit le PBF (ou .osm) directement via osmium, sans
+    # osmosis ni plugin mapwriter. Avant, le .map était TOUJOURS construit (donc
+    # échec dur si le plugin manquait, gz compris).
+    if not want_map:
+        if not export_geojson:
+            print("  OSM: neither .map nor GeoJSON requested - nothing to do.")
+            return None
+        return generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
+                                   osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
+                                   formats=geojson_formats)
 
     # Nettoyage des fichiers d'index osmosis orphelins (< 5 min ignorés pour
     # ne pas tirer dans le pied d'un osmosis concurrent). Best-effort, ne
@@ -10361,7 +10377,14 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             return chemin_map
 
     if not _verifier_mapwriter():
-        print("  ERROR: mapwriter plugin missing - .map map impossible.")
+        # R2#26 : mapwriter absent → le .map est impossible, mais on ne fait plus
+        # échouer un GeoJSON demandé en parallèle. On dégrade vers l'export
+        # GeoJSON seul (osmium, sans osmosis) plutôt que d'abandonner tout.
+        print("  WARNING: mapwriter plugin missing - .map skipped.")
+        if export_geojson:
+            return generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
+                                       osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
+                                       formats=geojson_formats)
         return None
 
     _osmosis_exe, _java_home = _preparer_osmosis()
@@ -10403,7 +10426,12 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
 
-    cmd = [_osmosis_exe, "--read-pbf", f"file={osm_pbf}"]
+    # R2#27 : une source .osm est du XML — osmosis exige --read-xml. Avant, tout
+    # passait par --read-pbf, qui plantait au parsing sur un .osm (accepté en
+    # entrée pourtant). Le PBF filtré réutilisé reste toujours .pbf → --read-pbf.
+    _osm_reader = ("--read-xml" if str(osm_pbf).lower().endswith(".osm")
+                   else "--read-pbf")
+    cmd = [_osmosis_exe, _osm_reader, f"file={osm_pbf}"]
     if not skip_bbox:
         cmd += [
             "--bounding-box",
@@ -10952,7 +10980,7 @@ Examples:
                 args._source_already_warped = False
         else:
             print(f"  ERROR: unrecognised extension for --source: {ext}")
-            print("  Accepted extensions: .tif .tiff .mbtiles .pbf")
+            print("  Accepted extensions: .tif .tiff .mbtiles .pbf .osm")
             sys.exit(1)
 
     # -------------------------------------------------------
@@ -11889,6 +11917,14 @@ Examples:
                 _want_overlay = getattr(args, "transparent_raster", False)
                 if _want_overlay and not _gj_formats:
                     _gj_formats = ["gz"]
+                # R2#26 : le .map n'est produit que s'il est (implicitement ou
+                # explicitement) demandé. "map" explicite → oui ; AUCUN format
+                # vectoriel explicite → oui (défaut de convenance de --osm seul) ;
+                # mais --file-formats gz (ou transparent-raster) sans "map" → non.
+                _ff = args.formats_fichier
+                _vect_demande = any(f in _ff for f in
+                                    ("map", "gz", "geojson", "transparent-raster"))
+                _want_map = ("map" in _ff) or (not _vect_demande)
                 # Mode région : traiter tout le PBF régional sans re-clip
                 # (le PBF EST déjà la région — c'est le gain vs boucle départements).
                 generer_carte_osm(bbox_wgs, dossier_osm, nom_zone, pbf,
@@ -11898,7 +11934,8 @@ Examples:
                                   export_geojson=bool(_gj_formats),
                                   ecraser_tuiles=args.tuiles_ecraser,
                                   skip_bbox=_region_mode,
-                                  geojson_formats=_gj_formats or ["gz"])
+                                  geojson_formats=_gj_formats or ["gz"],
+                                  want_map=_want_map)
                 if _want_overlay:
                     _gj = (dossier_osm / f"{nom_zone}_osm.geojson.gz")
                     if not _gj.exists():
@@ -15000,6 +15037,13 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
 
     out_nodes = None
     out_ways  = None
+    # R2#32 : repli sur le nom de fichier. Une couche WFS mono-couche téléchargée
+    # par telecharger_wfs n'a PAS de propriété 'source' sur ses features (seule
+    # fusionner_geojson l'ajoute). Sans repli, layer_short restait "" → tags
+    # {"note": ""} → mapwriter ignorait la couche (carte vide). Le nom du fichier
+    # (`<zone>_ign_<layer>.geojson[.gz]`) porte la clé de couche, comme la
+    # convention de fusion et comme le repli déjà présent dans _overlay_style_key.
+    _src_fallback = geojson_path.name
     try:
         out_nodes = open(nodes_tmp, "w", encoding="utf-8")
         out_ways  = open(ways_tmp,  "w", encoding="utf-8")
@@ -15012,7 +15056,7 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
                 continue
 
             # Déduire le layer depuis la propriété 'source' (ex: "gareoult_ign_cours_d_eau")
-            src = props.get("source", "")
+            src = props.get("source", "") or _src_fallback
             layer_short = ""
             for k in _IGN_LAYER_TAGS:
                 if k in src:

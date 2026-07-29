@@ -792,6 +792,67 @@ with tempfile.TemporaryDirectory() as _td33:
                   len(_refs) >= 4 and _refs[0] == _refs[-1],
                   detail=f"{len(_refs)} nd, fermé={_refs[0]==_refs[-1]}")
 
+print("== 22b. R2#32 : couche WFS sans 'source' → repli sur le nom de fichier ==")
+with tempfile.TemporaryDirectory() as _td32:
+    # Feature SANS propriété 'source' (cas mono-couche telecharger_wfs). Le nom
+    # de fichier porte la clé de couche 'cours_d_eau' → tags waterway=river.
+    _gj32 = Path(_td32) / "zone_ign_cours_d_eau.geojson"
+    _fc32 = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"nom": "Le Caramy"},
+         "geometry": {"type": "LineString",
+                      "coordinates": [[6.00, 43.36], [6.002, 43.361],
+                                      [6.004, 43.362]]}},
+    ]}
+    _gj32.write_text(_json.dumps(_fc32), encoding="utf-8")
+    _xml32 = Path(_td32) / "out.osm"
+    _ok32 = l2m.geojson_ign_vers_osm_xml(_gj32, _xml32, epsilon=1e-9)
+    check("R2#32 conversion OSM XML réussie sans 'source'",
+          _ok32 is True and _xml32.exists())
+    if _xml32.exists():
+        _root32 = _ET.parse(str(_xml32)).getroot()
+        _tags32 = {t.get("k"): t.get("v")
+                   for w in _root32.findall("way") for t in w.findall("tag")}
+        check("R2#32 tag waterway=river déduit du nom de fichier (pas {'note':''})",
+              _tags32.get("waterway") == "river",
+              detail=str(_tags32))
+
+print("== 22c. R2#26 : .map non demandé / mapwriter absent → GeoJSON quand même ==")
+_orig_verif26 = l2m._verifier_mapwriter
+_orig_gj26    = l2m.generer_geojson_osm
+try:
+    _calls26 = {"verif": 0, "gj": 0}
+    def _fake_verif26():
+        _calls26["verif"] += 1
+        return False   # simule mapwriter absent
+    def _fake_gj26(bbox, dossier, nom, pbf, **kw):
+        _calls26["gj"] += 1
+        return Path(str(dossier)) / f"{nom}_osm.geojson.gz"
+    l2m._verifier_mapwriter = _fake_verif26
+    l2m.generer_geojson_osm = _fake_gj26
+    with tempfile.TemporaryDirectory() as _td26:
+        _bb26 = (6.00, 43.36, 6.01, 43.37)
+        # want_map=False → osmosis/mapwriter court-circuités, GeoJSON produit
+        _r1 = l2m.generer_carte_osm(_bb26, Path(_td26), "z", Path("x.pbf"),
+                                    export_geojson=True, want_map=False,
+                                    geojson_formats=["gz"])
+        check("R2#26 want_map=False → GeoJSON produit sans toucher mapwriter",
+              _r1 is not None and _calls26["gj"] == 1 and _calls26["verif"] == 0,
+              detail=str(_calls26))
+        # want_map=True mais mapwriter absent + gz demandé → dégrade (pas None)
+        _r2 = l2m.generer_carte_osm(_bb26, Path(_td26), "z", Path("x.pbf"),
+                                    export_geojson=True, want_map=True,
+                                    geojson_formats=["gz"])
+        check("R2#26 mapwriter absent + gz demandé → dégrade vers GeoJSON",
+              _r2 is not None and _calls26["gj"] == 2,
+              detail=str(_calls26))
+        # want_map=False + rien demandé → None (rien à faire)
+        _r3 = l2m.generer_carte_osm(_bb26, Path(_td26), "z", Path("x.pbf"),
+                                    export_geojson=False, want_map=False)
+        check("R2#26 want_map=False + export_geojson=False → None", _r3 is None)
+finally:
+    l2m._verifier_mapwriter = _orig_verif26
+    l2m.generer_geojson_osm = _orig_gj26
+
 print("== 23. R1#4 : signature de config au manifeste (cache/fraîcheur) ==")
 import types as _types
 def _args4(**kw):
