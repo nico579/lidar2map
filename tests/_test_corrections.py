@@ -1181,6 +1181,49 @@ check("R2#24 vrai doublon -> pas de warning (silencieux)",
 check("R2#24 vrai doublon -> un seul fichier",
       {f.name for f in _dd.glob("zd_*.tif")} == {"zd_svf_flux_40m_g1p0_ombrage.tif"})
 
+print("== 31. R2#18 nom WMTS versionné qualité + R2#48 install transactionnelle ==")
+# R2#18 #3 : le nom du MBTiles WMTS doit encoder la qualité quand une conversion
+# PNG->JPEG a lieu, sinon relancer avec --image-quality différent réutilise un
+# fichier obsolète de même nom.
+_n_native = l2m._nom_mbtiles_wmts("zz", "ortho", 10, 16, None)
+check("R2#18 natif (jpeg_q None) -> pas de segment qualité",
+      _n_native == "zz_ortho_z10-16", _n_native)
+_n_q75 = l2m._nom_mbtiles_wmts("zz", "planign", 10, 16, 75)
+_n_q50 = l2m._nom_mbtiles_wmts("zz", "planign", 10, 16, 50)
+check("R2#18 conversion -> segment _q<Q> dans le nom", _n_q75 == "zz_planign_z10-16_q75", _n_q75)
+check("R2#18 qualités distinctes -> noms distincts (régénère)", _n_q75 != _n_q50)
+check("R2#18 float qualité tronqué en int", l2m._nom_mbtiles_wmts("z", "c", 1, 2, 84.0)
+      == "z_c_z1-2_q84")
+
+# R2#48 : _bin_outil ne valide que si le binaire est dans un dossier bin/ ;
+# _promouvoir_dossier remplace une install partielle antérieure de façon atomique.
+_root = tmp / "r48"; _root.mkdir()
+(_root / "lib").mkdir(); (_root / "lib" / "osmosis.jar").write_text("x")
+check("R2#48 _bin_outil : binaire hors bin/ -> None (install incomplète)",
+      l2m._bin_outil(_root, "osmosis") is None)
+(_root / "bin").mkdir(); (_root / "bin" / "osmosis").write_text("#!/bin/sh")
+_found = l2m._bin_outil(_root, "osmosis")
+check("R2#48 _bin_outil : binaire dans bin/ -> trouvé",
+      _found is not None and _found.name == "osmosis")
+
+# Promotion : dest partiel (contenu obsolète) remplacé par le temp complet.
+_dest48 = tmp / "dest48"; _dest48.mkdir()
+(_dest48 / "vieux.txt").write_text("stale")     # install partielle antérieure
+_tmp48 = tmp / "dest48.tmp-123"; _tmp48.mkdir()
+(_tmp48 / "bin").mkdir(); (_tmp48 / "bin" / "java").write_text("ok")
+l2m._promouvoir_dossier(_tmp48, _dest48)
+check("R2#48 promotion : partiel antérieur retiré",
+      not (_dest48 / "vieux.txt").exists())
+check("R2#48 promotion : contenu temp en place",
+      (_dest48 / "bin" / "java").exists())
+check("R2#48 promotion : dossier temp consommé (renommé)", not _tmp48.exists())
+# Cible inexistante : simple rename.
+_dest48b = tmp / "dest48b"       # n'existe pas
+_tmp48b = tmp / "dest48b.tmp-9"; _tmp48b.mkdir()
+(_tmp48b / "f").write_text("y")
+l2m._promouvoir_dossier(_tmp48b, _dest48b)
+check("R2#48 promotion vers cible neuve", (_dest48b / "f").exists() and not _tmp48b.exists())
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

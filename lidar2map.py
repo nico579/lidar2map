@@ -4337,6 +4337,31 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
 # ============================================================
 
 
+def _promouvoir_dossier(tmp_dir, dest_dir):
+    """Promotion atomique d'un dossier temporaire vers sa cible finale : retire
+    une install partielle antérieure éventuelle dans dest_dir, puis renomme
+    tmp_dir -> dest_dir (rename atomique, même système de fichiers car voisins
+    sous LIDAR2MAP_HOME). Complète l'idiome « télécharger dans .part puis
+    renommer » pour les DOSSIERS (osmosis/JRE) : une extraction interrompue ne
+    laisse qu'un `.tmp-<pid>` inerte, jamais une install partielle prise pour
+    valide par le rglob du binaire (R2#48)."""
+    dest_dir = Path(dest_dir)
+    tmp_dir = Path(tmp_dir)
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir, ignore_errors=True)
+    tmp_dir.replace(dest_dir)
+
+
+def _bin_outil(racine, pattern):
+    """Retourne le 1er binaire `pattern` sous `racine` situé dans un dossier
+    `bin/` (osmosis/java sont extraits dans un sous-dossier versionné variable),
+    ou None si absent — sert de validateur d'install complète."""
+    for candidate in sorted(Path(racine).rglob(pattern)):
+        if candidate.is_file() and "bin" in candidate.parts:
+            return candidate
+    return None
+
+
 def _telecharger_osmosis_local():
     """
     Télécharge osmosis dans ./osmosis/ depuis GitHub releases.
@@ -4346,15 +4371,22 @@ def _telecharger_osmosis_local():
 
     OSMOSIS_DIR = LIDAR2MAP_HOME / "osmosis"
     pattern = "osmosis.bat" if WINDOWS else "osmosis"
-    if OSMOSIS_DIR.exists():
-        for candidate in sorted(OSMOSIS_DIR.rglob(pattern)):
-            if candidate.is_file() and "bin" in candidate.parts:
-                return str(candidate)
+    _deja = _bin_outil(OSMOSIS_DIR, pattern) if OSMOSIS_DIR.exists() else None
+    if _deja is not None:
+        return str(_deja)
 
     # URL stable osmosis 0.49.2
     URL = "https://github.com/openstreetmap/osmosis/releases/download/0.49.2/osmosis-0.49.2.zip"
-    zip_path = OSMOSIS_DIR / "osmosis.zip"
-    OSMOSIS_DIR.mkdir(parents=True, exist_ok=True)
+    # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin,
+    # on valide la présence du binaire, PUIS on promeut atomiquement. Un Ctrl+C
+    # ou un disque plein pendant l'extraction laisse un `.tmp-<pid>` inerte au
+    # lieu d'un OSMOSIS_DIR à moitié peuplé que le check ci-dessus prendrait à
+    # tort pour une install valide (échec Java cryptique au lieu d'un re-dl).
+    tmp_dir = LIDAR2MAP_HOME / f"osmosis.tmp-{os.getpid()}"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = tmp_dir / "osmosis.zip"
 
     print(f"  URL  : {URL}")
     print("  Downloading osmosis (~35 MB)...", flush=True)
@@ -4365,25 +4397,31 @@ def _telecharger_osmosis_local():
                       end="\r", flush=True)
         urllib.request.urlretrieve(URL, zip_path, reporthook=_prog)
         print("  100%")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+        print("  Extraction osmosis...", flush=True)
+        with zipfile.ZipFile(zip_path, "r") as z:
+            _safe_zip_extractall(z, tmp_dir)
+        zip_path.unlink(missing_ok=True)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+            zipfile.BadZipFile, ValueError) as e:
         print(f"  ERROR downloading osmosis: {type(e).__name__}: {e}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return None
 
-    print("  Extraction osmosis...", flush=True)
-    with zipfile.ZipFile(zip_path, "r") as z:
-        _safe_zip_extractall(z, OSMOSIS_DIR)
-    zip_path.unlink(missing_ok=True)
+    # Le ZIP extrait dans un sous-dossier versionné (ex: osmosis-0.49.2/) :
+    # on cherche le binaire par rglob plutôt qu'un chemin fixe.
+    if _bin_outil(tmp_dir, pattern) is None:
+        print("  ERROR: osmosis not found after extraction.")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
+    _promouvoir_dossier(tmp_dir, OSMOSIS_DIR)
 
-    # Le ZIP extrait dans un sous-dossier versionné (ex: osmosis-0.49.2/)
-    # On cherche le binaire par rglob plutôt qu'un chemin fixe
-    pattern = "osmosis.bat" if WINDOWS else "osmosis"
-    for candidate in sorted(OSMOSIS_DIR.rglob(pattern)):
-        if candidate.is_file() and "bin" in candidate.parts:
-            if not WINDOWS:
-                import stat as _stat
-                candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
-            print(f"  osmosis installed: {candidate}")
-            return str(candidate)
+    candidate = _bin_outil(OSMOSIS_DIR, pattern)
+    if candidate is not None:
+        if not WINDOWS:
+            import stat as _stat
+            candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
+        print(f"  osmosis installed: {candidate}")
+        return str(candidate)
     print("  ERROR: osmosis not found after extraction.")
     return None
 
@@ -4397,6 +4435,11 @@ def _telecharger_jre_local():
     import tarfile, zipfile
 
     JRE_DIR = LIDAR2MAP_HOME / "jre"
+    # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin
+    # puis on promeut atomiquement (même logique que _telecharger_osmosis_local).
+    tmp_dir = LIDAR2MAP_HOME / f"jre.tmp-{os.getpid()}"
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # Détection OS
     sys_os = platform.system().lower()
@@ -4415,8 +4458,8 @@ def _telecharger_jre_local():
     URL = (f"https://api.adoptium.net/v3/binary/latest/21/ga"
            f"/{os_str}/{arch_str}/jre/hotspot/normal/eclipse")
 
-    archive = JRE_DIR / f"jre.{ext}"
-    JRE_DIR.mkdir(parents=True, exist_ok=True)
+    archive = tmp_dir / f"jre.{ext}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  URL  : {URL}")
     print(f"  Downloading JRE Temurin 21 ({os_str}/{arch_str}, ~50 MB)...",
@@ -4452,48 +4495,61 @@ def _telecharger_jre_local():
         print("  100%")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         print(f"  ERROR downloading JRE: {type(e).__name__}: {e}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         return None
 
     print("  Extraction JRE...", flush=True)
-    if ext == "zip":
-        with zipfile.ZipFile(archive, "r") as z:
-            _safe_zip_extractall(z, JRE_DIR)
-    else:
-        with tarfile.open(archive, "r:gz") as t:
-            # Python 3.12+ : filter='data' requis pour bloquer les exploits
-            # (chemins absolus, traversée ../, liens symboliques sortants).
-            # Python 3.11- : pas de support du paramètre → validation MANUELLE
-            # équivalente avant extractall (le fallback nu laissait passer
-            # chemins absolus / ../ / liens sortants sur les vieux Python).
-            # Les symlinks INTERNES sont conservés (les JRE mac/linux en ont).
-            try:
-                t.extractall(JRE_DIR, filter='data')
-            except TypeError:
-                _dest = Path(JRE_DIR).resolve()
-                for _m in t.getmembers():
-                    _nm = _m.name
-                    if _nm.startswith(("/", "\\")) or ".." in Path(_nm).parts \
-                            or (len(_nm) > 1 and _nm[1] == ":"):
-                        raise ValueError(f"Archive JRE suspecte : {_nm!r}")
-                    if _m.isdev():
-                        # device/FIFO : jamais légitime dans un JRE
-                        raise ValueError(f"Fichier spécial dans le JRE : {_nm!r}")
-                    if _m.issym() or _m.islnk():
-                        _lnk = _m.linkname
-                        if _lnk.startswith(("/", "\\")) \
-                                or (len(_lnk) > 1 and _lnk[1] == ":"):
-                            raise ValueError(f"Lien absolu dans le JRE : {_nm!r}")
-                        # symlink : cible relative au dossier du membre ;
-                        # hardlink : cible relative à la racine de l'archive.
-                        _base = (_dest / Path(_nm).parent) if _m.issym() else _dest
-                        _tgt = (_base / _lnk).resolve()
-                        if _tgt != _dest and _dest not in _tgt.parents:
-                            raise ValueError(f"Lien sortant dans le JRE : {_nm!r}")
-                t.extractall(JRE_DIR)
-    archive.unlink(missing_ok=True)
+    try:
+        if ext == "zip":
+            with zipfile.ZipFile(archive, "r") as z:
+                _safe_zip_extractall(z, tmp_dir)
+        else:
+            with tarfile.open(archive, "r:gz") as t:
+                # Python 3.12+ : filter='data' requis pour bloquer les exploits
+                # (chemins absolus, traversée ../, liens symboliques sortants).
+                # Python 3.11- : pas de support du paramètre → validation MANUELLE
+                # équivalente avant extractall (le fallback nu laissait passer
+                # chemins absolus / ../ / liens sortants sur les vieux Python).
+                # Les symlinks INTERNES sont conservés (les JRE mac/linux en ont).
+                try:
+                    t.extractall(tmp_dir, filter='data')
+                except TypeError:
+                    _dest = Path(tmp_dir).resolve()
+                    for _m in t.getmembers():
+                        _nm = _m.name
+                        if _nm.startswith(("/", "\\")) or ".." in Path(_nm).parts \
+                                or (len(_nm) > 1 and _nm[1] == ":"):
+                            raise ValueError(f"Archive JRE suspecte : {_nm!r}")
+                        if _m.isdev():
+                            # device/FIFO : jamais légitime dans un JRE
+                            raise ValueError(f"Fichier spécial dans le JRE : {_nm!r}")
+                        if _m.issym() or _m.islnk():
+                            _lnk = _m.linkname
+                            if _lnk.startswith(("/", "\\")) \
+                                    or (len(_lnk) > 1 and _lnk[1] == ":"):
+                                raise ValueError(f"Lien absolu dans le JRE : {_nm!r}")
+                            # symlink : cible relative au dossier du membre ;
+                            # hardlink : cible relative à la racine de l'archive.
+                            _base = (_dest / Path(_nm).parent) if _m.issym() else _dest
+                            _tgt = (_base / _lnk).resolve()
+                            if _tgt != _dest and _dest not in _tgt.parents:
+                                raise ValueError(f"Lien sortant dans le JRE : {_nm!r}")
+                    t.extractall(tmp_dir)
+        archive.unlink(missing_ok=True)
+    except (zipfile.BadZipFile, tarfile.TarError, ValueError, OSError) as e:
+        print(f"  ERROR extracting JRE: {type(e).__name__}: {e}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
 
-    # Le JRE est extrait dans un sous-dossier au nom variable (ex: jdk-21+35-jre)
-    # On cherche le binaire java dans n'importe quel sous-dossier
+    # Le JRE est extrait dans un sous-dossier au nom variable (ex: jdk-21+35-jre) :
+    # valider la présence du binaire java DANS le temp AVANT de promouvoir, pour
+    # ne jamais publier une extraction incomplète (R2#48).
+    if next((c for c in sorted(tmp_dir.rglob(java_bin)) if c.exists()), None) is None:
+        print("  ERROR: java binary not found after extraction.")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return None
+    _promouvoir_dossier(tmp_dir, JRE_DIR)
+
     for candidate in sorted(JRE_DIR.rglob(java_bin)):
         if candidate.exists():
             if not WINDOWS:
@@ -4595,6 +4651,11 @@ def _verifier_mapwriter():
     print(f"  URL  : {_MAPWRITER_URL}")
     print(f"  mapwriter plugin missing - downloading ({_MAPWRITER_JAR})...",
           flush=True)
+    # Download vers un .part voisin puis rename atomique (R2#48) : un Ctrl+C ou
+    # une coupure réseau laissait un JAR tronqué à jar_path que le check
+    # `jar_path.exists()` prenait pour valide, et osmosis échouait ensuite sur
+    # un plugin corrompu au lieu de le re-télécharger.
+    tmp_jar = plugins_dir / f"{_MAPWRITER_JAR}.part-{os.getpid()}"
     try:
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4603,12 +4664,17 @@ def _verifier_mapwriter():
                 print("  " + str(min(n * bs * 100 // total, 100)).rjust(3) + "%",
                       end="\r", flush=True)
 
-        urllib.request.urlretrieve(_MAPWRITER_URL, jar_path, reporthook=_prog)
+        urllib.request.urlretrieve(_MAPWRITER_URL, tmp_jar, reporthook=_prog)
         print("  100%")
+        os.replace(tmp_jar, jar_path)
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         print(f"  ERROR downloading mapwriter: {type(e).__name__}: {e}")
         print(f"  Download manually:\n    {_MAPWRITER_URL}")
         print(f"  and copy it into:\n    {plugins_dir}")
+        try:
+            tmp_jar.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False
 
     print(f"  Plugin installed: {jar_path}")
@@ -8913,6 +8979,22 @@ def _jpeg_quality_sortie(img_fmt, formats_image, qualite_image):
     return qualite_image if (_native_png and formats_image != "png") else None
 
 
+def _nom_mbtiles_wmts(nom, couche, zoom_min, zoom_max, jpeg_q):
+    """Nom de base du MBTiles WMTS (sans extension). SOURCE DE VÉRITÉ UNIQUE
+    partagée par la passe simple (main_wmts) et le split (_traiter_bbox_wmts),
+    pour que les deux jumeaux nomment identiquement (cf. R2#14).
+
+    Encode un segment qualité `_q<Q>` quand une conversion PNG→JPEG a lieu
+    (jpeg_q non None), sinon rien. Sans ce segment, relancer avec un
+    --image-quality/--image-format différent réutilisait le MBTiles obsolète :
+    le fichier existait, `_mbtiles_a_regenerer` le validait, la nouvelle qualité
+    était ignorée en silence (R2#18). couche/zoom sont déjà dans le nom ; le
+    natif (jpeg_q None) est pleinement déterminé par la couche → pas de segment,
+    donc aucun MBTiles déjà en cache n'est orphelin pour les couches JPEG."""
+    _q = f"_q{int(jpeg_q)}" if jpeg_q is not None else ""
+    return f"{nom}_{couche}_z{zoom_min}-{zoom_max}{_q}"
+
+
 def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     zoom_min, zoom_max, layer, style, img_fmt,
                     apikey, apikey_requis, workers,
@@ -12826,14 +12908,16 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
                            else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "raster")
             dossier = racine_base / nom_z
             dossier.mkdir(parents=True, exist_ok=True)
-            nom_fichier    = f"{nom_z}_{args.couche}_z{zoom_min}-{zoom_max}"
+            # Source de vérité UNIQUE (fin du drift jumeau R2#14) : le split
+            # honore --image-format png comme la passe simple, et encode la
+            # qualité dans le nom (R2#18) via le même helper.
+            _jpeg_q = _jpeg_quality_sortie(img_fmt, args.formats_image,
+                                           args.qualite_image)
+            nom_fichier    = _nom_mbtiles_wmts(nom_z, args.couche,
+                                               zoom_min, zoom_max, _jpeg_q)
             chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
             dossier_cache  = DOSSIER_CACHE / "ign_raster"
             dossier_cache.mkdir(parents=True, exist_ok=True)
-            # Source de vérité UNIQUE (fin du drift jumeau R2#14) : le split
-            # honore --image-format png comme la passe simple.
-            _jpeg_q = _jpeg_quality_sortie(img_fmt, args.formats_image,
-                                           args.qualite_image)
             _mbt_neuf = _mbtiles_a_regenerer(chemin_mbtiles, args.tuiles_ecraser)
             if _mbt_neuf:
                 generer_mbtiles_wmts(
@@ -13464,11 +13548,18 @@ Examples:
     )
 
     # Couche + clé
+    # Pas de choices=COUCHES.keys() : le résolveur (plus bas) accepte AUSSI un
+    # identifiant WMTS complet (ex. GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2), ce que
+    # la doc annonce ; `choices` transformait cette branche en code mort et
+    # rejetait tout id complet avant le résolveur (R2#18). Un alias/id inconnu
+    # échoue proprement en 404 au fetch.
     parser.add_argument("--layer", "--couche",  default="planign", dest="couche",
-                        choices=list(COUCHES.keys()),
-                        help="WMTS layer (default: planign, public, no key). "
-                             "Restricted pro layers: scan25 scan25tour scan100 scanoaci.")
-    parser.add_argument("--api-key", "--apikey",  default="", metavar="KEY", dest="apikey",
+                        metavar="LAYER",
+                        help="WMTS layer alias (planign, ortho, scan25…) or full "
+                             "id (GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2). Default: "
+                             "planign (public, no key). Restricted pro layers: "
+                             "scan25 scan25tour scan100 scanoaci.")
+    parser.add_argument("--api-key", "--apikey",  default=APIKEY_DEFAUT, metavar="KEY", dest="apikey",
                         help="IGN API key for restricted layers (scan25, scan100…). "
                              "⚠ Professional access only (cartes.gouv.fr account + SIRET). "
                              "Individuals must use the public layers (planign, ortho…). "
@@ -13678,8 +13769,6 @@ Examples:
     dossier = racine
     dossier.mkdir(parents=True, exist_ok=True)
 
-    nom_fichier = f"{nom_zone}_{args.couche}_z{zoom_min}-{zoom_max}"
-    chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
     # Cache tuiles : cache/ign_raster/<z>/<x>/<y>.<ext>. Le dossier de SORTIE est
     # provider-neutre (raster/), mais le cache garde le nom legacy "ign_raster"
     # pour ne pas orpheliner les tuiles WMTS déjà téléchargées des users FR.
@@ -13698,6 +13787,12 @@ Examples:
     #     → conversion PNG → JPEG (gain ~3-5× sur la taille MBTiles)
     # Source de vérité UNIQUE partagée avec le split _traiter_bbox_wmts (R2#14).
     _jpeg_q = _jpeg_quality_sortie(img_fmt, args.formats_image, args.qualite_image)
+
+    # Nom encodant la qualité (R2#18) : même helper que le split, pour que
+    # changer --image-quality/--image-format régénère au lieu de réutiliser un
+    # MBTiles obsolète de même nom.
+    nom_fichier = _nom_mbtiles_wmts(nom_zone, args.couche, zoom_min, zoom_max, _jpeg_q)
+    chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
 
     # Le MBTiles source doit être (re)généré si :
     #   - il n'existe pas encore
