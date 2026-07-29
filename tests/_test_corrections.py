@@ -1148,6 +1148,39 @@ check("R2#39 valeur manquante en fin d'argv",
 check("R2#39 nombre négatif reste une valeur (--laz-hmin -0.5)",
       l2m._pre_valeur_suivante(["--laz-hmin", "-0.5"], 0) == "-0.5")
 
+print("== 30. R2#24 : collision de noms d'ombrages (warn au lieu d'abandon muet) ==")
+# Le suffixe encode dist en mètres entiers et gamma à une décimale : deux
+# réglages distincts peuvent retomber sur le même nom. Avant : le 2e était
+# abandonné en silence (« doublon exact » mensonger). Après : warning explicite,
+# et un vrai doublon (mêmes params) reste silencieux.
+import io, contextlib
+_dc = tmp / "collide"; _dc.mkdir()
+# dist 30.4 et 30.1 -> tous deux 30 m ; gamma 0.92 et 0.88 -> tous deux 0.9.
+_inst_col = [l2m.parser_shading_spec(s) for s in
+             ("svf:dist=30.4,gamma=0.92", "svf:dist=30.1,gamma=0.88")]
+_buf = io.StringIO()
+with contextlib.redirect_stdout(_buf):
+    l2m.generer_ombrages([src_i], _dc, choix=[], nom_zone="zc",
+                         instances=_inst_col, bbox_natif=None)
+_out = _buf.getvalue()
+_files_col = {f.name for f in _dc.glob("zc_*.tif")}
+check("R2#24 collision distincte -> un seul fichier produit",
+      _files_col == {"zc_svf_flux_30m_g0p9_ombrage.tif"},
+      f"fichiers : {_files_col}")
+check("R2#24 collision distincte -> warning émis", "collapses to the same name" in _out,
+      _out.strip().splitlines()[-3:] if _out else "(vide)")
+# Vrai doublon (spec identique deux fois) : silencieux, un seul fichier.
+_dd = tmp / "dup"; _dd.mkdir()
+_inst_dup = [l2m.parser_shading_spec("svf:dist=40,gamma=1.0")] * 2
+_buf2 = io.StringIO()
+with contextlib.redirect_stdout(_buf2):
+    l2m.generer_ombrages([src_i], _dd, choix=[], nom_zone="zd",
+                         instances=_inst_dup, bbox_natif=None)
+check("R2#24 vrai doublon -> pas de warning (silencieux)",
+      "collapses to the same name" not in _buf2.getvalue())
+check("R2#24 vrai doublon -> un seul fichier",
+      {f.name for f in _dd.glob("zd_*.tif")} == {"zd_svf_flux_40m_g1p0_ombrage.tif"})
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

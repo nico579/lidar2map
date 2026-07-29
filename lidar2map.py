@@ -7252,7 +7252,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             return f"{typ}_s{_tag(p['sigma'])}m_ombrage"
         return f"{typ}_ombrage"
 
-    insts, _vus = [], set()
+    insts, _vus = [], {}
     for typ, prm in ([(t, {}) for t in choix] + list(instances or [])):
         if typ not in _SHADING_TYPES:
             print(f"  ⚠ unknown shading type ignored: {typ}")
@@ -7260,8 +7260,17 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         p = _resoudre_params(typ, prm)
         sfx = _suffixe_instance(typ, prm, p)
         if sfx in _vus:
-            continue   # doublon exact (même type, mêmes params)
-        _vus.add(sfx)
+            # Le nom encodé est volontairement grossier (mètres entiers, gamma
+            # à une décimale) : deux réglages distincts peuvent retomber sur le
+            # même suffixe. Si les params diffèrent réellement, on prévient au
+            # lieu d'abandonner en silence (le second serait un fichier écrasant
+            # le premier). Sinon c'est un vrai doublon → silencieux.
+            if _vus[sfx] != (typ, p):
+                print(f"  ⚠ shading '{typ}' {prm} collapses to the same name "
+                      f"'{sfx}' as an earlier setting; keeping the first, "
+                      f"ignoring this one")
+            continue
+        _vus[sfx] = (typ, p)
         insts.append((typ, p, sfx))
 
     horn_insts  = [i for i in insts if i[0] in HORN_TYPES]
