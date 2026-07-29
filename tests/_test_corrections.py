@@ -1224,6 +1224,47 @@ _tmp48b = tmp / "dest48b.tmp-9"; _tmp48b.mkdir()
 l2m._promouvoir_dossier(_tmp48b, _dest48b)
 check("R2#48 promotion vers cible neuve", (_dest48b / "f").exists() and not _tmp48b.exists())
 
+print("== 32. R1#10 : complétude chunk quand mbtiles intermédiaire supprimé ==")
+# _chunk_livrable_complet : quand seuls rmap/sqlitedb sont demandés, le mbtiles
+# intermédiaire est supprimé après conversion. La complétude doit se mesurer sur
+# les livrables survivants (.rmap/.sqlitedb), pas sur le mbtiles absent, sinon un
+# chunk réussi est marqué INCOMPLETE et rejoué en boucle (cleanup refusé).
+def _args(**k):
+    _d = {"mbtiles": False, "rmap": False, "sqlitedb": False}
+    _d.update(k)
+    return SimpleNamespace(**_d)
+_dc = tmp / "chunk_r110"; _dc.mkdir()
+# rmap-only, mbtiles ABSENT (supprimé), .rmap présent -> complet (le bug : False)
+(_dc / "z_svf.rmap").write_text("rmap")
+check("R1#10 rmap-only + .rmap présent (mbtiles absent) -> complet",
+      l2m._chunk_livrable_complet(_dc, _args(rmap=True)) is True)
+# rmap-only sans .rmap -> incomplet
+_dc2 = tmp / "chunk_r110b"; _dc2.mkdir()
+check("R1#10 rmap-only sans livrable -> incomplet",
+      l2m._chunk_livrable_complet(_dc2, _args(rmap=True)) is False)
+# sqlitedb-only + .sqlitedb présent -> complet
+_dc3 = tmp / "chunk_r110c"; _dc3.mkdir()
+(_dc3 / "z_svf.sqlitedb").write_text("db")
+check("R1#10 sqlitedb-only + .sqlitedb présent -> complet",
+      l2m._chunk_livrable_complet(_dc3, _args(sqlitedb=True)) is True)
+# mbtiles demandé : on valide le CONTENU (monkeypatch _mbtiles_est_complete).
+_dc4 = tmp / "chunk_r110d"; _dc4.mkdir()
+(_dc4 / "z_svf.mbtiles").write_text("mbt")
+_orig_est = l2m._mbtiles_est_complete
+try:
+    l2m._mbtiles_est_complete = lambda m: True
+    check("R1#10 mbtiles demandé + contenu complet -> complet",
+          l2m._chunk_livrable_complet(_dc4, _args(mbtiles=True, rmap=True)) is True)
+    l2m._mbtiles_est_complete = lambda m: False
+    check("R1#10 mbtiles demandé + contenu vide -> incomplet (contenu, pas présence)",
+          l2m._chunk_livrable_complet(_dc4, _args(mbtiles=True)) is False)
+finally:
+    l2m._mbtiles_est_complete = _orig_est
+# mbtiles absent + mbtiles demandé -> incomplet
+_dc5 = tmp / "chunk_r110e"; _dc5.mkdir()
+check("R1#10 mbtiles demandé mais absent -> incomplet",
+      l2m._chunk_livrable_complet(_dc5, _args(mbtiles=True)) is False)
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

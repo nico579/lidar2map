@@ -11109,8 +11109,14 @@ Examples:
                          else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
             # Overwrite explicite perce la reprise (cf. jumeau WMTS). LiDAR inclut
             # ombrages_ecraser (pas de shadings côté WMTS) : spécialisation gardée.
+            # telechargement_forcer (--download-force) converge avec
+            # telechargement_ecraser côté download (_force_dl) et la doc les dit
+            # équivalents : sans lui ici, --download-force re-tirait la source
+            # mais la reprise sautait la reconstruction du chunk → données
+            # fraîches jamais reconstruites en mode découpé (R1#10).
             _overwrite_actif = (args.tuiles_ecraser or args.ombrages_ecraser
-                                or args.telechargement_ecraser)
+                                or args.telechargement_ecraser
+                                or args.telechargement_forcer)
             def _entete_lidar(c):
                 bx1, by1, bx2, by2 = c
                 surface = (bx2-bx1)/1000 * (by2-by1)/1000
@@ -12151,6 +12157,35 @@ def _mbtiles_est_complete(mbt_path):
         return False
 
 
+def _chunk_livrable_complet(dossier_chunk, args):
+    """True si le chunk a produit ses livrables tuilés attendus (garde-fou de
+    reprise dans _run_split_priori).
+
+    Quand SEULS rmap/sqlitedb sont demandés (pas --mbtiles), le mbtiles
+    intermédiaire est SUPPRIMÉ après conversion réussie (_convertir_un_mbtiles ;
+    gardé si échec). Mesurer alors la complétude sur les .rmap/.sqlitedb
+    survivants — écrits en .part+rename donc présents = complets — au lieu du
+    mbtiles absent : sinon un chunk réussi était marqué INCOMPLETE, rejoué en
+    boucle, et le cleanup refusait de purger le cache (R1#10). Dans tous les
+    autres cas (mbtiles demandé, ou aucun format tuilé) on valide le CONTENU des
+    .mbtiles présents (_mbtiles_est_complete, >0 tuiles)."""
+    dossier_chunk = Path(dossier_chunk)
+    # getattr défensif : _run_split_priori peut être appelé avec un args minimal
+    # (harnais de test) ; absence = format non demandé → repli sur le mbtiles.
+    _veut_mbt = getattr(args, "mbtiles", False)
+    _veut_rmap = getattr(args, "rmap", False)
+    _veut_db = getattr(args, "sqlitedb", False)
+    if not _veut_mbt and (_veut_rmap or _veut_db):
+        _deliv = []
+        if _veut_rmap:
+            _deliv += list(dossier_chunk.glob("*.rmap"))
+        if _veut_db:
+            _deliv += list(dossier_chunk.glob("*.sqlitedb"))
+        return bool(_deliv)
+    _mbts = list(dossier_chunk.glob("*.mbtiles"))
+    return bool(_mbts) and all(_mbtiles_est_complete(m) for m in _mbts)
+
+
 def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
     """Détermine si un mbtiles doit être (re)généré.
 
@@ -12737,8 +12772,7 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
             # jamais). Un chunk SANS couverture (discover {} : mer/hors frontière →
             # aucun .tif au manifeste) reste légitimement vide-et-fait.
             _dossier_chunk = racine_pr / nom_z
-            _mbts = list(_dossier_chunk.glob("*.mbtiles"))
-            _complet    = bool(_mbts) and all(_mbtiles_est_complete(m) for m in _mbts)
+            _complet    = _chunk_livrable_complet(_dossier_chunk, args)
             _avait_couv = any(str(_f).lower().endswith(".tif")
                               for _f in manifeste.fichiers_morceau(cle))
             if _avait_couv and not _complet:
