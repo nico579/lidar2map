@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -229,6 +230,31 @@ def find_python() -> str:
 
 # === PUSH PHASE ==============================================================
 
+def rmtree_force(path, ignore_errors: bool = False):
+    """shutil.rmtree qui survit aux fichiers en lecture seule.
+
+    git marque ses objets (.git/objects/**) en lecture seule. Sous Windows,
+    os.unlink refuse alors de les supprimer et rmtree remonte un
+    PermissionError [WinError 5] — vécu en supprimant un clone temp corrompu.
+    Le handler retire le flag puis retente. Sous POSIX il ne sert jamais :
+    c'est le droit d'écriture du DOSSIER qui gouverne la suppression, pas
+    celui du fichier.
+    """
+    def _retry(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            if not ignore_errors:
+                raise
+    # onexc remplace onerror depuis Python 3.12 (onerror déprécié).
+    kw = {"onexc": _retry} if sys.version_info >= (3, 12) else {"onerror": _retry}
+    try:
+        shutil.rmtree(path, **kw)
+    except OSError:
+        if not ignore_errors:
+            raise
+
 def clone_or_pull():
     if (CLONE / ".git").exists():
         cprint(f"==> Pull du repo existant : {CLONE}", "cyan")
@@ -242,10 +268,10 @@ def clone_or_pull():
             return
         cprint(f"    Clone temp corrompu (fetch code {r.returncode}) — "
                f"suppression + re-clone.", "yellow")
-        shutil.rmtree(CLONE, ignore_errors=True)
+        rmtree_force(CLONE, ignore_errors=True)
     cprint(f"==> Clone {REPO_URL} -> {CLONE}", "cyan")
     if CLONE.exists():
-        shutil.rmtree(CLONE)
+        rmtree_force(CLONE)
     # Clone initial : peut prendre 1-2 min (assets binaires, screenshots).
     run(["git", "clone", REPO_URL, str(CLONE)], timeout=300)
 
@@ -281,7 +307,7 @@ def mirror_folders():
         d = CLONE / dst_name
         if s.exists():
             if d.exists():
-                shutil.rmtree(d)
+                rmtree_force(d)
             shutil.copytree(s, d, ignore=ignore)
             count = sum(1 for p in s.rglob("*") if p.is_file() and not _is_artefact(p))
             print(f"    OK  {src_name:<32} -> {dst_name}  ({count} fichiers)")
