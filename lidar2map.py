@@ -1602,6 +1602,19 @@ def _installer_deps():
                     print("     - numba  : SVF lent (×15 fois plus)")
                     install_ok = True
 
+    # Cas limite : il ne restait QUE des deps optionnelles à installer et elles
+    # ont échoué. Rien de critique ne manque, donc rien ne justifie d'arrêter.
+    # Sans ce garde-fou, le retry ci-dessus est sauté (il exige deps_crit non
+    # vide) et on tombe dans le message d'erreur fatal avec un "Missing
+    # modules:" VIDE. Cas vécu : macOS x86_64, llvmlite n'a plus de wheel donc
+    # numba ne s'installe pas, et tout le build s'arrêtait là.
+    if not install_ok and deps_opt and not deps_crit:
+        print(f"  ⚠ Optional deps not installed: {', '.join(deps_opt)}")
+        print("     Reduced functionality, nothing critical is missing.")
+        print("     - osmium : --osm --file-formats geojson")
+        print("     - numba  : SVF lent (×15 fois plus)")
+        install_ok = True
+
     if install_ok:
         return
 
@@ -2201,7 +2214,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.31.0"
+VERSION      = "1.31.1"
 VERSION_DATE = "2026-07"
 
 
