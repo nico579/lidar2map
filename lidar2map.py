@@ -3227,18 +3227,29 @@ def lamb93_to_wgs84_approx(x, y):
     return math.degrees(lam), math.degrees(phi)
 
 
-def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2):
-    """Enveloppe (min/max) des 4 coins d'une bbox passée par transform_fn.
+def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2, densify=21):
+    """Enveloppe (min/max) d'une bbox reprojetée, bords DENSIFIÉS.
 
     Un rectangle ne reste PAS axis-aligné après reprojection : la convergence
     des méridiens vaut ~2° à 6°E en Lambert 93, soit ~4 km de biais sur un
-    département de 110 km — min/max sur 2 coins opposés rogne des bords
-    entiers (dalles manquantes en bordure). Même règle que l'étendue du warp
-    de generer_mbtiles_lidar, factorisée pour tous les sites bbox↔CRS."""
-    pts = [transform_fn(x1, y1), transform_fn(x1, y2),
-           transform_fn(x2, y1), transform_fn(x2, y2)]
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
+    département de 110 km, et min/max sur 2 coins opposés rogne des bords
+    entiers (dalles manquantes en bordure). Mais les 4 coins ne suffisent pas
+    non plus : un bord reprojeté est COURBE (méridiens/parallèles), donc
+    l'extremum réel (max easting, max northing…) peut tomber AU MILIEU d'un
+    bord, pas à un coin (R2#46). On échantillonne donc `densify` points le long
+    de chaque bord (coins inclus), comme rasterio.warp.transform_bounds
+    (densify_pts). Appelé une fois par zone (pas en boucle tuile) : coût
+    négligeable. Même règle que l'étendue du warp de generer_mbtiles_lidar."""
+    n = max(1, int(densify))
+    xs, ys = [], []
+    for i in range(n + 1):
+        t = i / n
+        xt = x1 + (x2 - x1) * t
+        yt = y1 + (y2 - y1) * t
+        for px, py in ((xt, y1), (xt, y2),   # bords bas / haut : x varie
+                       (x1, yt), (x2, yt)):  # bords gauche / droit : y varie
+            qx, qy = transform_fn(px, py)
+            xs.append(qx); ys.append(qy)
     return min(xs), min(ys), max(xs), max(ys)
 
 
@@ -4645,11 +4656,17 @@ def _nodata_mask(arr, nodata=None):
     """
     import numpy as np
     mask = (arr < -9000) | (arr > 9000)
-    if nodata is not None:
-        if np.isnan(nodata):
-            mask |= np.isnan(arr)
-        else:
-            mask |= (arr == nodata)
+    # NaN est TOUJOURS invalide (bords de reprojection, trous provider), quel que
+    # soit le nodata déclaré (R2#21). Avant, np.isnan(arr) n'était ajouté QUE si
+    # nodata était lui-même NaN : un DEM à NaN bruts mais nodata -9999/None (ou
+    # nodata absent) laissait filer les NaN jusqu'à astype(uint8) → pixels
+    # noirs/garbage dans l'ombrage. NaN échappe aussi aux comparaisons de la
+    # bande sentinelle (NaN < -9000 = False). Garde de dtype : np.isnan lève sur
+    # un array entier (arr peut être un MNT int selon le provider).
+    if np.issubdtype(arr.dtype, np.floating):
+        mask |= np.isnan(arr)
+    if nodata is not None and not np.isnan(nodata):
+        mask |= (arr == nodata)
     return mask
 
 
@@ -9123,12 +9140,19 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                         # 100 tuiles hors couverture entrecoupées masquent une
                         # panne transitoire qui revient).
                         # Garde-fou couverture : si AUCUNE tuile n'est dans la
-                        # couche après un échantillon significatif, la zone est
-                        # hors couverture — typiquement bbox hors zone, ou ordre
-                        # --zone-bbox inversé (W,S,E,N = longitude d'abord). On
-                        # abort tôt au lieu de tenter 100k tuiles vides en silence.
-                        if (absentes >= SEUIL_HORS_COUVERTURE
-                                and ok * 50 < absentes and abort_msg is None):
+                        # couche, la zone est hors couverture — typiquement bbox
+                        # hors zone, ou ordre --zone-bbox inversé (W,S,E,N =
+                        # longitude d'abord). On abort tôt au lieu de tenter 100k
+                        # tuiles vides en silence. R2#17 : critère ok==0 (et non
+                        # ok*50<absentes = couverture <2 %) pour NE PAS abandonner
+                        # une couverture clairsemée mais RÉELLE (île, bande
+                        # côtière, couche historique) ; et on ne fail-fast qu'une
+                        # fois la moitié de la grille balayée (total//2), sinon on
+                        # risquait d'abort avant d'atteindre une couverture tardive
+                        # dans l'ordre de balayage.
+                        if (ok == 0 and abort_msg is None
+                                and absentes >= max(SEUIL_HORS_COUVERTURE,
+                                                    total // 2)):
                             abort_hors_couv = True
                             abort_msg = (
                                 f"{absentes} tuiles hors couverture (204) pour "
@@ -9167,11 +9191,12 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         except Exception: pass
         _wmts_close_all_conns()   # libérer les connexions keep-alive du batch
 
-    # Garde-fou couverture (petites zones sous le seuil mi-parcours) : aucune
-    # tuile dans la couche → même diagnostic. Évite un MBTiles vide "0 tiles"
-    # présenté comme un succès.
+    # Garde-fou couverture (fin de scan) : AUCUNE tuile dans la couche → bbox
+    # hors zone / inversée. R2#17 : critère ok==0 (et non ok*50<absentes) pour ne
+    # pas discarder une couverture clairsemée réelle. Évite aussi un MBTiles vide
+    # "0 tiles" présenté comme un succès.
     if (abort_msg is None and not _stop_event.is_set()
-            and absentes > 0 and ok * 50 < absentes):
+            and absentes > 0 and ok == 0):
         abort_hors_couv = True
         abort_msg = (f"{ok} tuile(s) dans la couverture pour {absentes} hors couche "
                      f"(204). Zone hors de la couche, ou ordre de --zone-bbox inversé "
@@ -11656,7 +11681,7 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, cote_km, unite_m=Tru
         else:
             lat_c = (y1 + y2) / 2
             dy = cote_km / 111.0
-            dx = cote_km / (111.0 * math.cos(math.radians(lat_c)))
+            dx = cote_km / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
         n_rows = max(1, int(math.ceil(hauteur / dy)))
         n_cols = max(1, int(math.ceil(largeur / dx)))
         mode_desc = f"~{cote_km:.0f} km/morceau ({n_rows}×{n_cols})"
@@ -13152,7 +13177,7 @@ def _resoudre_zone_wgs84(args):
             sys.exit(1)
         _demi  = (args.zone_width or 20.0) / 2.0   # côté → demi-étendue
         r     = _demi / 111.0
-        r_lon = _demi / (111.0 * math.cos(math.radians(lat_c)))
+        r_lon = _demi / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
         lat_min, lat_max = lat_c - r,     lat_c + r
         lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
 
@@ -13164,7 +13189,7 @@ def _resoudre_zone_wgs84(args):
             sys.exit(1)
         _demi  = (args.zone_width or 20.0) / 2.0   # côté → demi-étendue
         r     = _demi / 111.0
-        r_lon = _demi / (111.0 * math.cos(math.radians(lat_c)))
+        r_lon = _demi / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
         lat_min, lat_max = lat_c - r,     lat_c + r
         lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
 

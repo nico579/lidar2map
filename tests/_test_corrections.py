@@ -91,12 +91,19 @@ check("hillshade numba == numpy (±1)", d_hs.max() <= 1, f"max diff {d_hs.max()}
 
 print("== 3. _nodata_mask unifié ==")
 a = np.array([1.0, -9999.0, 50000.0, np.nan, 0.0], dtype=np.float32)
+# R2#21 : NaN (index 3) est TOUJOURS masqué, quel que soit le nodata déclaré.
 m = l2m._nodata_mask(a, nodata=None)
-check("magique ±9000", list(m) == [False, True, True, False, False])
+check("magique ±9000 + NaN (nodata None)", list(m) == [False, True, True, True, False])
 m2 = l2m._nodata_mask(a, nodata=0.0)
-check("nodata déclaré 0.0", list(m2) == [False, True, True, False, True])
+check("nodata déclaré 0.0 + NaN toujours masqué",
+      list(m2) == [False, True, True, True, True])
 m3 = l2m._nodata_mask(a, nodata=float("nan"))
 check("nodata déclaré NaN", list(m3) == [False, True, True, True, False])
+# R2#21 : garde de dtype — np.isnan lève sur un array entier, ne doit pas planter.
+ai = np.array([1, -9999, 50000, 0], dtype=np.int32)
+mi = l2m._nodata_mask(ai, nodata=-9999)
+check("array entier : pas de crash, sentinelle + nodata déclaré",
+      list(mi) == [False, True, True, False])
 
 print("== 4. LRM chunked : grille 3x3 + pas de couture ==")
 tmp = Path(tempfile.mkdtemp())
@@ -990,6 +997,34 @@ with tempfile.TemporaryDirectory() as _td9:
     _r9d = l2m.generer_rmap_depuis_mbtiles(_mb9d, ecraser=True)
     check("R2#9 couverture dense NON refusée (contrôle)",
           _r9d is not None and _r9d.exists())
+
+print("== 26. Lot P2 géométrie : R2#46 densification bbox reprojetée ==")
+# R2#46 : un bord reprojeté est courbe → l'extremum peut tomber au MILIEU d'un
+# bord, pas à un coin. Transform à bord haut « bombé » : y_out = y + sin(x/10·π),
+# nul aux coins (x=0,10) et max=1 au milieu (x=5). L'enveloppe 4-coins raterait
+# ce +1 ; la version densifiée doit le capturer.
+def _tf_bombe(x, y):
+    return (x, y + math.sin(x / 10.0 * math.pi))
+
+_bx0, _by0, _bx1, _by1 = l2m._bbox_enveloppe_transform(_tf_bombe, 0.0, 0.0, 10.0, 1.0)
+# densify=21 n'échantillonne pas exactement x=5 → capture ~1.997 (à la résolution
+# d'échantillonnage), TRÈS au-dessus du 1.0 des 4 coins : c'est bien l'extremum.
+check("R2#46 densifié capture l'extremum de bord (max_y≈2, >1.99)",
+      _by1 > 1.99, detail=f"max_y={_by1:.4f}")
+# densify=1 = coins seuls (bornes t=0/t=1) → rate le bombement (max_y≈1).
+_c0, _cy0, _c1, _cy1 = l2m._bbox_enveloppe_transform(_tf_bombe, 0.0, 0.0, 10.0, 1.0,
+                                                     densify=1)
+check("R2#46 contrôle : 4 coins seuls ratent l'extremum (max_y≈1)",
+      abs(_cy1 - 1.0) < 1e-3, detail=f"max_y coins={_cy1:.4f}")
+# Cohérence : l'enveloppe densifiée ⊇ enveloppe coins (min plus bas, max plus haut).
+check("R2#46 densifié est un sur-ensemble des coins",
+      _bx0 <= _c0 + 1e-9 and _by0 <= _cy0 + 1e-9
+      and _bx1 >= _c1 - 1e-9 and _by1 >= _cy1 - 1e-9)
+# Transform identité : bbox inchangée (pas de sur-extension parasite).
+_ix0, _iy0, _ix1, _iy1 = l2m._bbox_enveloppe_transform(lambda x, y: (x, y),
+                                                       2.0, 43.0, 3.0, 44.0)
+check("R2#46 identité : bbox préservée",
+      (_ix0, _iy0, _ix1, _iy1) == (2.0, 43.0, 3.0, 44.0))
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
