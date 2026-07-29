@@ -1026,6 +1026,87 @@ _ix0, _iy0, _ix1, _iy1 = l2m._bbox_enveloppe_transform(lambda x, y: (x, y),
 check("R2#46 identité : bbox préservée",
       (_ix0, _iy0, _ix1, _iy1) == (2.0, 43.0, 3.0, 44.0))
 
+print("== 27. R2#28 filtrage OSM : valeur, ordre déterministe, défauts ==")
+# Volet 1 : "highway=path" doit filtrer SUR LA VALEUR (ne pas garder motorway).
+_c, _v = l2m._osm_filtre_cles(["highway=path"])
+check("R2#28 parse highway=path → clé highway, valeur {path}",
+      _c == ["highway"] and _v == {"highway": {"path"}})
+check("R2#28 highway=path retient highway=path",
+      l2m._osm_cle_match({"highway": "path"}, _c, _v) == ("highway", "path"))
+check("R2#28 highway=path REJETTE highway=motorway (le bug)",
+      l2m._osm_cle_match({"highway": "motorway"}, _c, _v) == (None, None))
+# Clé nue ou '*' = toutes les valeurs.
+for _spec in (["highway"], ["highway=*"]):
+    _c2, _v2 = l2m._osm_filtre_cles(_spec)
+    check(f"R2#28 {_spec[0]} accepte toute valeur",
+          _v2 == {"highway": None}
+          and l2m._osm_cle_match({"highway": "motorway"}, _c2, _v2)
+          == ("highway", "motorway"))
+# Multi-valeur + union sur clé répétée.
+_c3, _v3 = l2m._osm_filtre_cles(["highway=path,track", "highway=steps"])
+check("R2#28 multi-valeur + union clé répétée",
+      _v3 == {"highway": {"path", "track", "steps"}})
+# Clé nue absorbe une valeur spécifique donnée après.
+_c4, _v4 = l2m._osm_filtre_cles(["natural=water", "natural"])
+check("R2#28 clé nue absorbe (natural=water puis natural → toutes)",
+      _v4 == {"natural": None})
+# Volet 2 : l'ORDRE d'apparition fixe la couche gagnante (déterministe), pas un
+# set. Un objet à 2 clés thématiques → la 1re clé listée gagne, invariant sur
+# l'ordre d'entrée.
+_ca, _va = l2m._osm_filtre_cles(["natural=water", "waterway=river"])
+_cb, _vb = l2m._osm_filtre_cles(["waterway=river", "natural=water"])
+_feat2 = {"natural": "water", "waterway": "river"}
+check("R2#28 ordre déterministe : 1re clé listée gagne (natural avant waterway)",
+      l2m._osm_cle_match(_feat2, _ca, _va) == ("natural", "water"))
+check("R2#28 ordre déterministe : entrée inversée → waterway gagne",
+      l2m._osm_cle_match(_feat2, _cb, _vb) == ("waterway", "river"))
+# Une clé de valeur hors filtre n'arrête pas la recherche : on continue.
+_c5, _v5 = l2m._osm_filtre_cles(["highway=path", "natural=water"])
+check("R2#28 clé présente hors-valeur → on continue vers la clé suivante",
+      l2m._osm_cle_match({"highway": "motorway", "natural": "water"}, _c5, _v5)
+      == ("natural", "water"))
+# Volet 4 : les défauts incluent désormais place ET historic.
+_cd, _vd = l2m._osm_filtre_cles(None)
+check("R2#28 défauts incluent place et historic (volet 4)",
+      "place" in _cd and "historic" in _cd
+      and _vd.get("place") is None and _vd.get("historic") is None)
+check("R2#28 défauts : match d'un POI historic=ruins",
+      l2m._osm_cle_match({"historic": "ruins"}, _cd, _vd) == ("historic", "ruins"))
+# Tokens vides/espaces ignorés proprement.
+_ce, _ve = l2m._osm_filtre_cles(["  ", "highway = path "])
+check("R2#28 tokens vides ignorés + espaces tolérés",
+      _ce == ["highway"] and _ve == {"highway": {"path"}})
+
+print("== 28. R2#29 emprise OSM hors métropole : conversion CRS-provider ==")
+# Le chemin OSM convertissait la bbox en WGS84 via la formule Lambert 93 FRANCE
+# en dur ; pour un provider hors métropole (Suisse EPSG:2056, UTM ultramarin…)
+# ça sortait des coords fausses → emprise/découpage OSM décalés. Le fix route
+# par _natif_vers_wgs84 (pyproj, CRS du provider). On vérifie que, PROVIDER
+# suisse, le helper rend des coords en Suisse, là où la formule France dérive.
+from types import SimpleNamespace
+_prov_backup = getattr(l2m, "PROVIDER", None)
+try:
+    l2m.PROVIDER = SimpleNamespace(CRS_NATIF="EPSG:2056")
+    # Berne en LV95 (E=2600000, N=1200000) ≈ (7.44°E, 46.95°N).
+    _lon, _lat = l2m._natif_vers_wgs84(2600000.0, 1200000.0)
+    check("R2#29 _natif_vers_wgs84 (EPSG:2056) → Suisse (lon≈7.4, lat≈47)",
+          6.5 < _lon < 8.5 and 46.0 < _lat < 47.5,
+          detail=f"lon={_lon:.3f} lat={_lat:.3f}")
+    # La formule France en dur sur les MÊMES nombres part ailleurs (le bug).
+    _lonF, _latF = l2m.lamb93_to_wgs84_approx(2600000.0, 1200000.0)
+    check("R2#29 formule France en dur diverge (démontre le bug)",
+          not (6.5 < _lonF < 8.5 and 46.0 < _latF < 47.5),
+          detail=f"lonF={_lonF:.3f} latF={_latF:.3f}")
+    # Enveloppe bbox via le helper provider : reste dans le voisinage suisse.
+    _b = l2m._bbox_enveloppe_transform(l2m._natif_vers_wgs84,
+                                       2590000.0, 1190000.0, 2610000.0, 1210000.0)
+    check("R2#29 enveloppe bbox provider-aware cohérente (Suisse)",
+          6.0 < _b[0] < 8.5 and 45.5 < _b[1] < 47.5
+          and 6.0 < _b[2] < 8.5 and 45.5 < _b[3] < 47.5,
+          detail=f"bbox={tuple(round(v, 2) for v in _b)}")
+finally:
+    l2m.PROVIDER = _prov_backup
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

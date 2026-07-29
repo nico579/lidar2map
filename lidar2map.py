@@ -9974,6 +9974,50 @@ def _valider_osm_tags(osm_tags):
     return osm_tags
 
 
+def _osm_filtre_cles(osm_tags):
+    """Parse les tokens --layer (grammaire osmosis `clé`|`clé=val[,val…]`) en
+    (liste ordonnée de clés thématiques, dict clé->set(valeurs)|None). L'ordre
+    d'apparition fixe la priorité de couche (déterministe, R2#28) ; None ou `*`
+    = toutes les valeurs de la clé. Sans tokens : ensemble outdoor par défaut."""
+    cles = []
+    vals = {}
+    for _t in (osm_tags or []):
+        _tok = str(_t)
+        if "=" in _tok:
+            _k, _v = _tok.split("=", 1)
+            _k = _k.strip()
+            _vset = {x.strip() for x in _v.split(",") if x.strip()}
+        else:
+            _k, _vset = _tok.strip(), None
+        if not _k:
+            continue
+        if _k not in vals:
+            cles.append(_k)
+            vals[_k] = set()
+        # None (clé nue) ou `*` = « toutes valeurs » : absorbant sur la clé.
+        if _vset is None or "*" in _vset:
+            vals[_k] = None
+        elif vals[_k] is not None:
+            vals[_k] |= _vset
+    if not cles:
+        cles = ["highway", "waterway", "natural", "boundary", "landuse",
+                "building", "railway", "leisure", "place", "historic"]
+        vals = {_k: None for _k in cles}
+    return cles, vals
+
+
+def _osm_cle_match(tags, cles, vals_par_cle):
+    """(clé, valeur) du 1er filtre satisfait dans l'ORDRE de `cles` (couche
+    déterministe, R2#28). Une clé présente mais de valeur hors filtre est
+    ignorée : "highway=path" ne retient pas "highway=motorway". None sinon."""
+    for _k in cles:
+        if _k in tags:
+            _accept = vals_par_cle.get(_k)
+            if _accept is None or tags[_k] in _accept:
+                return _k, tags[_k]
+    return None, None
+
+
 def _hash_config(payload):
     """Hash md5 court d'un payload JSON-sérialisable (signature de cache)."""
     import hashlib as _hl
@@ -11587,13 +11631,17 @@ Examples:
                 # ignore la bbox (skip_bbox) et l'export geojson ne découpe rien.
                 bbox_wgs = (-180.0, -90.0, 180.0, 90.0)
             else:
-                # Bbox en WGS84 depuis la bbox Lambert 93 de la zone
-                # (enveloppe 4 coins : à 2 coins, le clip osmosis rognait
-                # des features en bordure de zone)
+                # Bbox WGS84 depuis la bbox dans le CRS NATIF du provider (bords
+                # densifiés : à 2 coins le clip osmosis rognait des features en
+                # bordure). R2#29 : passer par _natif_vers_wgs84 (pyproj, tout
+                # CRS) et non la formule Lambert 93 en dur — sinon un provider
+                # hors métropole (EPSG:2056, UTM ultramarins…) recevait ses
+                # coords via les formules France → emprise OSM fausse, découpage
+                # décalé. Miroir du chemin LiDAR (_get_transformer plus haut).
                 try:
                     bbox_wgs = _bbox_enveloppe_transform(
-                        lamb93_to_wgs84_approx, bbox[0], bbox[1], bbox[2], bbox[3])
-                except (ValueError, TypeError, ImportError) as e:
+                        _natif_vers_wgs84, bbox[0], bbox[1], bbox[2], bbox[3])
+                except (ValueError, TypeError, ImportError, RuntimeError) as e:
                     print(f"  ERROR bbox WGS84 conversion ({type(e).__name__}): {e}")
                     bbox_wgs = None
             if bbox_wgs:
@@ -15816,32 +15864,18 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     chemin_principal = chemin_gz_attendu if ecrire_gz else chemin_raw_attendu
     print(f"  PyOsmium → {chemin_principal.name}...", flush=True)
 
-    # Clés thématiques demandées par l'utilisateur (osm_tags="highway=*,waterway=*"
-    # → ["highway","waterway"]). Si rien : ensemble par défaut adapté outdoor.
-    _cles = []
-    if osm_tags:
-        for _t in osm_tags:
-            _k = _t.split("=")[0].strip()
-            if _k and _k not in _cles:
-                _cles.append(_k)
-    if not _cles:
-        _cles = ["highway", "waterway", "natural", "boundary",
-                 "landuse", "building", "railway", "leisure"]
-
-    cles_set = set(_cles)
+    # Clés thématiques + valeurs demandées (grammaire osmosis, ordre = priorité
+    # de couche déterministe, R2#28). Extrait en helper module pour testabilité.
+    _cles, _vals_par_cle = _osm_filtre_cles(osm_tags)
     _crs = {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
 
     # GeoJSONFactory produit du GeoJSON-string ; on parse en dict pour
     # construire les features avec leurs propriétés.
     fab = _osm.geom.GeoJSONFactory()
 
-    # Helper : retourne la clé thématique d'un objet (la 1ère trouvée dans cles_set)
-    # et la valeur associée. None si aucune clé thématique.
+    # Helper : (clé, valeur) du 1er filtre satisfait (cf. _osm_cle_match, R2#28).
     def _cle_obj(tags):
-        for _k in cles_set:
-            if _k in tags:
-                return _k, tags[_k]
-        return None, None
+        return _osm_cle_match(tags, _cles, _vals_par_cle)
 
     # Helper : test si une géométrie GeoJSON intersecte la bbox demandée.
     # On fait un test simple bounding-box vs bounding-box (rapide). Suffisant
