@@ -757,6 +757,12 @@ if getattr(sys, "frozen", False):
 
             if _need_extract:
                 # Lockfile contre les extractions simultanées (double-clic).
+                # Prise de verrou ATOMIQUE via os.open(O_CREAT|O_EXCL) : une
+                # seule instance peut créer le fichier ; les autres reçoivent
+                # FileExistsError et basculent en attente. Remplace l'ancien
+                # check-then-act (exists() puis touch()) où deux double-clics
+                # voyaient tous deux « pas de lock », le créaient chacun, puis
+                # extrayaient en parallèle (course TOCTOU).
                 # Durci contre les locks ORPHELINS : si le lock est plus vieux
                 # que _LOCK_STALE_S (instance tuée/plantée pendant l'extraction),
                 # on le considère périmé et on le retire au lieu d'attendre 60 s
@@ -764,16 +770,33 @@ if getattr(sys, "frozen", False):
                 # est une borne haute sûre (pas de faux positif en cas de double-clic).
                 import time as _time
                 _LOCK_STALE_S = 300
-                _lock_actif = _lock.exists()
-                if _lock_actif:
+                _app_dir.parent.mkdir(parents=True, exist_ok=True)
+
+                def _prendre_lock():
+                    # True si on crée le verrou (on extrait), False s'il existe
+                    # déjà (une autre instance l'a pris avant nous).
                     try:
-                        _lock_actif = (_time.time() - _lock.stat().st_mtime) < _LOCK_STALE_S
+                        _fd = os.open(str(_lock),
+                                      os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                        os.close(_fd)
+                        return True
+                    except FileExistsError:
+                        return False
+
+                _lock_pris = _prendre_lock()
+                if not _lock_pris:
+                    # Verrou déjà présent : périmé (instance morte) ? Si oui,
+                    # nettoyer puis retenter la prise atomique une fois.
+                    _stale = False
+                    try:
+                        _stale = (_time.time() - _lock.stat().st_mtime) >= _LOCK_STALE_S
                     except Exception:
-                        _lock_actif = False
-                    if not _lock_actif:
+                        _stale = True
+                    if _stale:
                         print("  Stale lockfile detected - cleaning up and resuming.", flush=True)
                         _lock.unlink(missing_ok=True)
-                if _lock_actif:
+                        _lock_pris = _prendre_lock()
+                if not _lock_pris:
                     print("Installation in progress in another instance - waiting...",
                           flush=True)
                     for _ in range(60):
@@ -795,8 +818,6 @@ if getattr(sys, "frozen", False):
                         print(f"    {_lock}", flush=True)
                         sys.exit(1)
                 else:
-                    _app_dir.parent.mkdir(parents=True, exist_ok=True)
-                    _lock.touch()
                     try:
                         if _app_dir.exists():
                             import shutil as _sh
@@ -17397,6 +17418,12 @@ def lancer_gui():
             self._partage         = _PartageServeur()   # transfert LAN vers téléphone
             self._stop_t          = None   # horodatage de la demande d'arrêt (stop)
             self._reader_t        = None   # thread lecteur stdout du run courant
+            # Verrou + drapeau anti-double-lancement : launch() décide sous ce
+            # verrou et pose _launching AVANT de rendre la main. Sans ça, deux
+            # clics rapides lisaient tous deux _process=None (le subprocess
+            # n'étant créé que plus tard) et lançaient deux traitements.
+            self._launch_lock     = threading.Lock()
+            self._launching       = False
 
         # ── Données initiales ─────────────────────────────────────────────
         def get_init_data(self):
@@ -17910,19 +17937,31 @@ def lancer_gui():
                     pass
 
         def launch(self, cfg):
-            proc = self._process
-            if proc and proc.poll() is None:
-                if self._stop_t is None:
+            # Décision de lancement sous verrou : lire l'état, tuer l'ancien run
+            # si « Arrêter puis Lancer », puis poser _launching AVANT de rendre
+            # la main. Le second clic d'un double-clic bloque sur ce verrou, le
+            # relâche, voit _process vivant OU _launching → rejeté. Le Popen
+            # lui-même est fait plus bas, SYNCHRONE (avant de lancer le thread
+            # lecteur), pour que _process soit posé avant tout autre launch().
+            with self._launch_lock:
+                proc = self._process
+                if proc and proc.poll() is None:
+                    if self._stop_t is None:
+                        return {"error": "Un processus est déjà en cours."}
+                    # Arrêter PUIS Lancer = intention sans ambiguïté : ne pas faire
+                    # attendre la grâce de 15 s à l'utilisateur (sinon « Un processus
+                    # est déjà en cours » tant que l'arrêt gracieux n'a pas abouti).
+                    # Escalade immédiate + courte attente de la mort effective.
+                    self._kill_tree(proc)
+                    try:
+                        proc.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        return {"error": "Arrêt encore en cours, réessayez dans quelques secondes."}
+                elif self._launching:
+                    # Un lancement est déjà engagé mais le subprocess n'est pas
+                    # encore créé (course double-clic) : rejeter comme un run actif.
                     return {"error": "Un processus est déjà en cours."}
-                # Arrêter PUIS Lancer = intention sans ambiguïté : ne pas faire
-                # attendre la grâce de 15 s à l'utilisateur (sinon « Un processus
-                # est déjà en cours » tant que l'arrêt gracieux n'a pas abouti).
-                # Escalade immédiate + courte attente de la mort effective.
-                self._kill_tree(proc)
-                try:
-                    proc.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    return {"error": "Arrêt encore en cours, réessayez dans quelques secondes."}
+                self._launching = True
             # Laisser le thread lecteur de l'ANCIEN run se terminer avant de
             # réinitialiser l'état : son finally pose _done=True et écraserait
             # le _done=False du nouveau run (course). Le pipe étant clos par la
@@ -17975,43 +18014,65 @@ def lancer_gui():
                 try: self._log_queue.get_nowait()
                 except queue.Empty: break
 
+            # ── Création SYNCHRONE du subprocess ─────────────────────────────
+            # Faite ici (avant de lancer le thread lecteur) pour que _process
+            # soit posé avant que launch() rende la main : un second clic voit
+            # alors proc.poll() vivant et est rejeté. Tant que Popen n'a pas
+            # retourné, c'est _launching (posé plus haut, sous verrou) qui
+            # fait barrage.
+            self._log_queue.put(
+                {"line": "$ " + _rediger_secrets(
+                    " ".join(str(c) for c in cmd)) + "\n\n",
+                 "tag": "dim"})
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            # Propager le run_id au subprocess pour qu'il sauve 'en cours'
+            # SUR la même entrée que celle finalisée par poll_log côté GUI.
+            env["LIDAR2MAP_HIST_RUN_ID"] = self._hist_run_id
+            # Forcer UTF-8 sur stdout/stderr du child Python.
+            # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
+            # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
+            # arrivent corrompus dans le pipe. Ça casse à la fois le
+            # log lisible côté GUI ET la détection regex de mots-clés
+            # comme "ERREUR" qui contient un É (devient un ? si décodé
+            # en cp850 puis lu en utf-8).
+            env["PYTHONIOENCODING"] = "utf-8"
+            try:
+                # Créer un nouveau groupe de processus pour pouvoir signaler
+                # toute la hiérarchie (arrêt gracieux puis forcé, cf. stop()).
+                if WINDOWS:
+                    # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
+                    # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
+                    # avait été retirée sur un soupçon de blocage du pipe
+                    # stdout avec l'ancien backend WebView2 ; sous Qt
+                    # (backend forcé depuis), le pipe fonctionne :
+                    # revalidé par test dédié le 2026-07-02.
+                    self._process = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        bufsize=0, env=env,
+                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+                else:
+                    self._process = subprocess.Popen(
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        bufsize=0, env=env,
+                        start_new_session=True)
+            except Exception as e:
+                # Échec du spawn (binaire introuvable, argv trop long...) :
+                # remonter l'erreur tout de suite ET lever le drapeau, sinon
+                # _launching resterait True et bloquerait tout lancement futur.
+                self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
+                with self._lock:
+                    self._retcode = -1
+                self._done = True
+                with self._launch_lock:
+                    self._launching = False
+                return {"error": f"Échec du lancement : {e}"}
+            # subprocess vivant → le garde passe de _launching à proc.poll().
+            with self._launch_lock:
+                self._launching = False
+
             def run():
-                self._log_queue.put(
-                    {"line": "$ " + _rediger_secrets(
-                        " ".join(str(c) for c in cmd)) + "\n\n",
-                     "tag": "dim"})
                 try:
-                    env = os.environ.copy()
-                    env["PYTHONUNBUFFERED"] = "1"
-                    # Propager le run_id au subprocess pour qu'il sauve 'en cours'
-                    # SUR la même entrée que celle finalisée par poll_log côté GUI.
-                    env["LIDAR2MAP_HIST_RUN_ID"] = self._hist_run_id
-                    # Forcer UTF-8 sur stdout/stderr du child Python.
-                    # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
-                    # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
-                    # arrivent corrompus dans le pipe. Ça casse à la fois le
-                    # log lisible côté GUI ET la détection regex de mots-clés
-                    # comme "ERREUR" qui contient un É (devient un ? si décodé
-                    # en cp850 puis lu en utf-8).
-                    env["PYTHONIOENCODING"] = "utf-8"
-                    # Créer un nouveau groupe de processus pour pouvoir signaler
-                    # toute la hiérarchie (arrêt gracieux puis forcé, cf. stop()).
-                    if WINDOWS:
-                        # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
-                        # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
-                        # avait été retirée sur un soupçon de blocage du pipe
-                        # stdout avec l'ancien backend WebView2 ; sous Qt
-                        # (backend forcé depuis), le pipe fonctionne :
-                        # revalidé par test dédié le 2026-07-02.
-                        self._process = subprocess.Popen(
-                            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            bufsize=0, env=env,
-                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-                    else:
-                        self._process = subprocess.Popen(
-                            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            bufsize=0, env=env,
-                            start_new_session=True)
                     buf = ""
                     pct_re = re.compile(r"(\d+)%")
                     # Décodeur incrémental : les chunks de 64 octets peuvent
