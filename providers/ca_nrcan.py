@@ -18,6 +18,12 @@ import json
 import re
 import urllib.request
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -123,8 +129,9 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                     url = link.get("href")
                     break
         try:
-            cache_bbox.write_text(json.dumps({"bbox": bbox_str, "items": items_all}),
-                                  encoding="utf-8")
+            atomic_write_json(
+                cache_bbox, {"bbox": bbox_str, "items": items_all}
+            )
         except Exception:
             pass
         print(f"  NRCan : {n_pages} page(s) → {len(items_all)} items")

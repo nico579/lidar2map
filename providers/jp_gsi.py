@@ -25,7 +25,16 @@
 #
 # Self-contained : stdlib uniquement (numpy/rasterio requis au runtime pour post_fetch).
 
+import os
 import re
+import uuid
+
+
+def _part_path(path):
+    """Staging voisin unique, sans dépendre du chargement en package."""
+    return path.with_name(
+        f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    )
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -147,12 +156,15 @@ def post_fetch(chemin):
 
     left, bottom, right, top = _tile_bounds(z, x, y)
     transform = from_bounds(left, bottom, right, top, TUILE_PX, TUILE_PX)
-    tmp = chemin.with_suffix(".tif_tmp")
-    with rasterio.open(str(tmp), "w",
-                       driver="GTiff", height=TUILE_PX, width=TUILE_PX,
-                       count=1, dtype="float32",
-                       crs=rasterio.CRS.from_epsg(3857),
-                       transform=transform, nodata=-9999,
-                       compress="deflate", predictor=2, tiled=True) as dst:
-        dst.write(grid, 1)
-    tmp.replace(chemin)
+    tmp = _part_path(chemin)
+    try:
+        with rasterio.open(str(tmp), "w",
+                           driver="GTiff", height=TUILE_PX, width=TUILE_PX,
+                           count=1, dtype="float32",
+                           crs=rasterio.CRS.from_epsg(3857),
+                           transform=transform, nodata=-9999,
+                           compress="deflate", predictor=2, tiled=True) as dst:
+            dst.write(grid, 1)
+        tmp.replace(chemin)
+    finally:
+        tmp.unlink(missing_ok=True)

@@ -45,6 +45,12 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -288,9 +294,9 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
     if etat["nouveaux"] and etat["reseau_ok"]:
         try:
-            cache_path.write_text(
-                json.dumps({"v": _CACHE_VERSION, "listings": cache}),
-                encoding="utf-8")
+            atomic_write_json(
+                cache_path, {"v": _CACHE_VERSION, "listings": cache}
+            )
         except Exception:
             pass
     if not etat["reseau_ok"] and not dalles:

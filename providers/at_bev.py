@@ -24,6 +24,12 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -143,7 +149,7 @@ def _lire_cache(cache_path):
 
 def _ecrire_cache(cache_path, obj):
     try:
-        Path(cache_path).write_text(json.dumps(obj), encoding="utf-8")
+        atomic_write_json(cache_path, obj)
     except Exception:
         pass
 

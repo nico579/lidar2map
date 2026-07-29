@@ -177,7 +177,7 @@ def _serveur_wfs(total, page_cap, fail_at=None, stop_at=None):
                           "features": [_feat(i) for i in range(start, fin)]})
     return fake_urlopen
 
-def _wfs(nom, typename="BDTOPO_V3:test_couche", **kw):
+def _wfs(nom, typename="BDTOPO_V3:test_couche", ecraser=False, **kw):
     # WFS_URL est un re-export du provider (None pour fr-ign importé hors
     # main) : poser une URL factice, le faux urlopen ne la contacte jamais.
     _saved_wfs_url = l2m.WFS_URL
@@ -185,7 +185,8 @@ def _wfs(nom, typename="BDTOPO_V3:test_couche", **kw):
     l2m.urllib.request.urlopen = _serveur_wfs(**kw)
     try:
         return l2m.telecharger_wfs(typename, 5.0, 43.0, 6.0, 44.0,
-                                   nom, tmp / f"wfs_{nom}")
+                                   nom, tmp / f"wfs_{nom}",
+                                   ecraser_telechargement=ecraser)
     finally:
         l2m.urllib.request.urlopen = _real_urlopen
         l2m.WFS_URL = _saved_wfs_url
@@ -201,11 +202,16 @@ if p and p.exists():
 else:
     check("page plafonnée sous COUNT → complet via numberMatched", False, "None")
 
-# b) panne à la 2e page : sortie JETÉE, pas de fichier final ni de tmp.
-p = _wfs("panne", total=25, page_cap=10, fail_at=10)
+# b) panne à la 2e page pendant un overwrite : l'ancien final reste intact
+#    et le staging du nouveau téléchargement est supprimé.
 d = tmp / "wfs_panne"
-check("panne mi-pagination → None + aucun fichier",
-      p is None and not list(d.glob("*.geojson*")) if d.exists() else p is None,
+d.mkdir(parents=True, exist_ok=True)
+ancien_wfs = d / "panne_ign_test_couche.geojson.gz"
+ancien_wfs.write_bytes(b"ancien-wfs-valide")
+p = _wfs("panne", total=25, page_cap=10, fail_at=10, ecraser=True)
+check("panne mi-pagination → ancien final conservé, aucun .part",
+      p is None and ancien_wfs.read_bytes() == b"ancien-wfs-valide"
+      and not list(d.rglob("*.part")),
       str(p))
 
 # c) troncature silencieuse (serveur s'arrête à 20/25) : sortie JETÉE.
@@ -243,10 +249,15 @@ def _mk_gpkg_bytes(marqueur, taille_min=11_000_000):
     return data
 
 class _FakeUrlopen:
-    """Réponse de téléchargement vide : le .7z n'est pas lu par le faux py7zr."""
-    headers = {"content-length": "0"}
+    """Petit faux .7z : son contenu n'est pas lu par le faux py7zr."""
+    headers = {"content-length": "7"}
+    def __init__(self):
+        self._done = False
     def read(self, n=-1):
-        return b""
+        if self._done:
+            return b""
+        self._done = True
+        return b"fake-7z"
     def __enter__(self):
         return self
     def __exit__(self, *a):
@@ -273,19 +284,22 @@ class _FakePy7zr:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(self.contenu)
 
-def _gpkg(nom_ressource, contenu):
+def _gpkg(nom_ressource, contenu, ecraser=False, urlopen=None):
     _saved_travail = l2m.DOSSIER_TRAVAIL
+    _saved_cache = l2m.DOSSIER_CACHE
     _saved_urlopen = l2m._urlopen
     _saved_mod = sys.modules.get("py7zr")
     l2m.DOSSIER_TRAVAIL = tmp / "travail"
-    l2m._urlopen = lambda url, timeout=None: _FakeUrlopen()
+    l2m.DOSSIER_CACHE = l2m.DOSSIER_TRAVAIL / "cache"
+    l2m._urlopen = urlopen or (lambda url, timeout=None: _FakeUrlopen())
     _FakePy7zr.SevenZipFile.contenu = contenu
     sys.modules["py7zr"] = _FakePy7zr
     try:
         return l2m._telecharger_bdtopo_gpkg("83", "https://fake/archive.7z",
-                                            nom_ressource)
+                                            nom_ressource, ecraser=ecraser)
     finally:
         l2m.DOSSIER_TRAVAIL = _saved_travail
+        l2m.DOSSIER_CACHE = _saved_cache
         l2m._urlopen = _saved_urlopen
         if _saved_mod is not None:
             sys.modules["py7zr"] = _saved_mod
@@ -314,6 +328,17 @@ check("le gpkg de l'autre département est INTACT",
       _decoy.exists() and _decoy.read_bytes() == _decoy_bytes)
 check("dossier d'extraction temporaire nettoyé",
       not list(_cache.glob("_extract_*")))
+check("aucun staging .part résiduel",
+      not list(_cache.rglob("*.part")))
+
+_ancien_gpkg = res.read_bytes()
+def _panne_gpkg(_url, timeout=None):
+    raise urllib.error.URLError("panne simulée")
+res_panne = _gpkg("BDTOPO_TEST_D083", _bon, ecraser=True,
+                  urlopen=_panne_gpkg)
+check("overwrite GPKG en panne → ancien cache conservé, aucun .part",
+      res_panne is None and res.read_bytes() == _ancien_gpkg
+      and not list(_cache.rglob("*.part")))
 
 # Validation taille : un gpkg trop petit ne doit pas entrer au cache.
 res2 = _gpkg("BDTOPO_TEST_D000", b"trop petit")

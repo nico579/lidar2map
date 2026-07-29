@@ -11,7 +11,14 @@ name: Release (build 3 OS)
 # Assets produits (noms attendus par update_app.py) :
 #   lidar2map-windows-x86_64.zip     (dossier : lidar2map.exe + lidar2map_bundle.zip)
 #   lidar2map-linux-x86_64.tar.gz    (dossier : lidar2map   + lidar2map_bundle.zip)
-#   lidar2map-macos-arm64.zip        (LIDAR2MAP.app zippé via ditto)
+#   lidar2map-macos-arm64.zip        (LIDAR2MAP.app zippé via ditto, Apple Silicon)
+#   lidar2map-macos-x86_64.zip       (idem, Mac Intel)
+#
+# Deux runners macOS : macos-latest est Apple Silicon depuis 2024, il ne peut
+# donc plus produire de binaire Intel. macos-15-intel est le dernier runner
+# x86_64 standard (gratuit sur repo public), annoncé jusqu'à août 2027. Après
+# cette date, il faudra soit abandonner l'asset Intel, soit builder sur une
+# machine Intel perso.
 #
 # NB : le build lidar2map est lourd (JRE + osmosis + Qt/QtWebEngine + deps géo) :
 # onedir ~1,2 Go, bundle ~450 Mo. Les setup_build_* téléchargent JRE+osmosis
@@ -35,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest, macos-15-intel]
 
     steps:
       - name: Checkout
@@ -104,14 +111,19 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          shasum -a 256 dist/lidar2map-macos-arm64.zip | awk '{print $1}' \
-            > dist/lidar2map-macos-arm64.zip.sha256
+          set -euo pipefail
+          # Le nom du zip porte l'archi du runner (arm64 ou x86_64) : on le
+          # retrouve au glob plutôt que de le coder en dur.
+          zip=$(ls dist/lidar2map-macos-*.zip)
+          shasum -a 256 "$zip" | awk '{print $1}' > "$zip.sha256"
 
       # ── Upload artefact (asset + .sha256) ────────────────────────────────
       - name: Upload artefact
         uses: actions/upload-artifact@v4
         with:
-          name: asset-${{ runner.os }}
+          # matrix.os et non runner.os : les deux jobs macOS renverraient tous
+          # deux "macOS", et upload-artifact@v4 refuse deux artefacts de même nom.
+          name: asset-${{ matrix.os }}
           if-no-files-found: error
           path: |
             dist/lidar2map-*.zip

@@ -29,6 +29,13 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+try:
+    from providers.common import atomic_write_json, part_path
+except ModuleNotFoundError:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json, part_path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -168,7 +175,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         return {}
 
     try:
-        cache_path.write_text(json.dumps({"items": all_items}), encoding="utf-8")
+        atomic_write_json(cache_path, {"items": all_items})
     except Exception:
         pass
 
@@ -246,14 +253,17 @@ def post_download(path):
         "compress":   "deflate", "predictor": 2, "tiled": True,
         "blockxsize": 512, "blockysize": 512,
     }
-    tmp = path.with_suffix(".reproj.tif")
-    with rasterio.open(str(tmp), "w", **kwargs) as dst:
-        for i in range(src_count):
-            reproject(source=src_data[i],
-                      destination=rasterio.band(dst, i + 1),
-                      src_transform=src_trans, src_crs=src_crs,
-                      dst_transform=target_transform,
-                      dst_crs=rasterio.CRS.from_epsg(3857),
-                      src_nodata=src_nodata, dst_nodata=src_nodata,
-                      resampling=Resampling.bilinear)
-    os.replace(str(tmp), str(path))
+    tmp = part_path(path)
+    try:
+        with rasterio.open(str(tmp), "w", **kwargs) as dst:
+            for i in range(src_count):
+                reproject(source=src_data[i],
+                          destination=rasterio.band(dst, i + 1),
+                          src_transform=src_trans, src_crs=src_crs,
+                          dst_transform=target_transform,
+                          dst_crs=rasterio.CRS.from_epsg(3857),
+                          src_nodata=src_nodata, dst_nodata=src_nodata,
+                          resampling=Resampling.bilinear)
+        os.replace(str(tmp), str(path))
+    finally:
+        tmp.unlink(missing_ok=True)

@@ -1607,10 +1607,12 @@ check("--production-dir : flag + défaut + émission GUI + relecture argv",
       and '"--production-dir", "--dossier-production"' in _src
       and 'cmd += ["--production-dir"' in _src
       and '"production_dir": _arg("--production-dir"' in _src)
-# cache et production peuvent être sur des volumes différents (--production-dir) :
-# le déplacement du nuage tombe en cross-device (EXDEV), fallback shutil.move.
-check("relocation nuage : fallback cross-device (shutil.move)",
-      "shutil.move(str(chemin), str(cloud))" in _common)
+# cache et production peuvent être sur des volumes différents
+# (--production-dir) : la copie cross-device doit rester sous .part, puis être
+# publiée par replace (jamais de shutil.move directement vers le final).
+check("relocation nuage : fallback cross-device atomique (.part + replace)",
+      "shutil.copyfile(chemin, cloud_part)" in _common
+      and "os.replace(cloud_part, cloud)" in _common)
 # GUI : champ production dans Projet, sur la ligne des racines (sortie/cache/
 # production = les 3 tiers de l'onglet Usage). Placé juste après le dossier cache.
 check("GUI : champ production (Projet, à côté du cache), sauvé/restauré",

@@ -27,6 +27,12 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json, part_path
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json, part_path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -115,7 +121,7 @@ def _construire_index(cache_path):
         feuille = sub.rsplit("/", 1)[-1].rsplit(".", 1)[0].rsplit("_", 1)[-1]
         index[feuille] = {"sub": sub, "bbox": list(bb)}
     try:
-        cache_path.write_text(json.dumps(index), encoding="utf-8")
+        atomic_write_json(cache_path, index)
     except Exception:
         pass
     print(f"  ČÚZK: {len(index)} sheets indexed")
@@ -247,26 +253,32 @@ def post_fetch(chemin):
 
 
 def _laz_to_tif_pdal(laz_path, tif_path):
+    import os
     import subprocess, json as _json, tempfile
+    tif_part = part_path(tif_path)
     pipeline = {
         "pipeline": [
             str(laz_path),
             {"type": "filters.range", "limits": "Classification[2:2]"},
-            {"type": "writers.gdal", "filename": str(tif_path),
+            {"type": "writers.gdal", "filename": str(tif_part),
              "resolution": RESOLUTION_LAZ, "output_type": "min",
              "gdaldriver": "GTiff",
              "gdalopts": "COMPRESS=DEFLATE,PREDICTOR=2,TILED=YES",
              "nodata": -9999}
         ]
     }
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".part",
                                      delete=False, encoding="utf-8") as f:
         _json.dump(pipeline, f)
         p = f.name
     try:
-        subprocess.check_call(["pdal", "pipeline", p], timeout=300)
+        env = os.environ.copy()
+        env["GDAL_PAM_ENABLED"] = "NO"
+        subprocess.check_call(["pdal", "pipeline", p], timeout=300, env=env)
+        tif_part.replace(tif_path)
     finally:
         Path(p).unlink(missing_ok=True)
+        tif_part.unlink(missing_ok=True)
 
 
 def _laz_to_tif_laspy(laz_path, tif_path, crs_epsg=5514):
@@ -316,9 +328,14 @@ def _laz_to_tif_laspy(laz_path, tif_path, crs_epsg=5514):
     from rasterio.transform import from_bounds
     transform = from_bounds(x_min, y_min, x_max, y_max, nx, ny)
     crs = rasterio.CRS.from_epsg(crs_epsg)
-    with rasterio.open(str(tif_path), "w",
-                       driver="GTiff", height=ny, width=nx,
-                       count=1, dtype="float32", crs=crs,
-                       transform=transform, nodata=-9999,
-                       compress="deflate", predictor=2, tiled=True) as dst:
-        dst.write(grid_z, 1)
+    tif_part = part_path(tif_path)
+    try:
+        with rasterio.open(str(tif_part), "w",
+                           driver="GTiff", height=ny, width=nx,
+                           count=1, dtype="float32", crs=crs,
+                           transform=transform, nodata=-9999,
+                           compress="deflate", predictor=2, tiled=True) as dst:
+            dst.write(grid_z, 1)
+        tif_part.replace(tif_path)
+    finally:
+        tif_part.unlink(missing_ok=True)

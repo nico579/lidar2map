@@ -22,6 +22,12 @@ import json
 import re
 import urllib.request
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -104,7 +110,7 @@ def _construire_index(cache_path):
         return None
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(index), encoding="utf-8")
+        atomic_write_json(cache_path, index)
     except Exception:
         pass
     print(f"  RP LVermGeo: {len(index)} tiles in the Land coverage")

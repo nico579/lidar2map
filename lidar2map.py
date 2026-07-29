@@ -547,6 +547,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
       --ombrages svf --formats-fichier mbtiles
 """
 import os
+import uuid
 import re
 import sys
 import ssl
@@ -911,9 +912,17 @@ if getattr(sys, "frozen", False):
                             raise RuntimeError(
                                 f"Extraction incomplète : {_inner_exe} not found")
 
-                        _sha_file.write_text(
-                            f"{_expected_sha}\n{_bundle.stat().st_mtime}",
-                            encoding="utf-8")
+                        _sha_part = _sha_file.with_name(
+                            f"{_sha_file.name}.{os.getpid()}."
+                            f"{uuid.uuid4().hex[:12]}.part"
+                        )
+                        try:
+                            _sha_part.write_text(
+                                f"{_expected_sha}\n{_bundle.stat().st_mtime}",
+                                encoding="utf-8")
+                            os.replace(_sha_part, _sha_file)
+                        finally:
+                            _sha_part.unlink(missing_ok=True)
                         print("Installation complete.", flush=True)
                     except Exception as _e_extract:
                         print(f"\n  ⚠ Erreur d'extraction : {_e_extract}", flush=True)
@@ -1968,7 +1977,13 @@ class _TeeLogger:
     """
     def __init__(self, log_path):
         self._terminal = sys.stdout
-        self._log = open(log_path, "w", encoding="utf-8", buffering=1)
+        self._log_path = Path(log_path)
+        self._part_path = self._log_path.with_name(
+            f"{self._log_path.name}.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+        )
+        self._log = open(self._part_path, "w", encoding="utf-8", buffering=1)
+        self._closed = False
+        self._published = False
         self._buf = ""          # buffer jusqu'au prochain \n
         self._cr_buf = ""       # dernier contenu de ligne \r (écrase les précédents)
         # Verrou : write() est appelé par PLUSIEURS threads (pools d'encodage
@@ -2060,6 +2075,9 @@ class _TeeLogger:
             pass
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
         # Flush des buffers résiduels — défensif : pendant le shutdown
         # Python, sys.stdout/sys.stderr peuvent être dans un état partiel,
         # et toute exception ici peut polluer le code retour du process
@@ -2074,6 +2092,26 @@ class _TeeLogger:
             self._log.close()
         except Exception:
             pass
+        # Le log suit le même contrat que les livrables : tant qu'il est
+        # ouvert il porte le suffixe .part. Après fermeture du handle, sa
+        # publication est un rename atomique. Un kill brutal laisse donc un
+        # .part identifiable au lieu d'un faux log final.
+        try:
+            os.replace(self._part_path, self._log_path)
+            self._published = True
+        except FileNotFoundError:
+            # close() peut être rappelé par atexit après le finally principal.
+            self._published = self._log_path.exists()
+        except Exception as exc:
+            try:
+                self._terminal.write(
+                    f"\n  WARNING: log publication failed "
+                    f"({type(exc).__name__}: {exc}); partial log: "
+                    f"{self._part_path}\n"
+                )
+                self._terminal.flush()
+            except Exception:
+                pass
 
 # Flags portant un secret : leur valeur est masquée dans tout ce qu'on écrit
 # (log fichier, historique, log GUI). La clé scan25 (IGN pro) ou us-3dep
@@ -2109,7 +2147,9 @@ def _activer_log():
     log_dir = _base / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        _probe = log_dir / ".write_test"
+        _probe = log_dir / (
+            f".write_test.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+        )
         _probe.touch()
         _probe.unlink()
     except OSError:
@@ -2150,7 +2190,7 @@ def _activer_log():
     tee._log.write(f"  lidar2map.py — démarrage {ts}\n")
     tee._log.write(f"  Commande : {cmd}\n")
     tee._log.write("=" * 60 + "\n")
-    print(f"  Log : {log_path}")
+    print(f"  Log : {log_path} (publication atomique à la fin)")
 
 _activer_log()
 
@@ -2161,7 +2201,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.30.1"
+VERSION      = "1.31.0"
 VERSION_DATE = "2026-07"
 
 
@@ -3115,7 +3155,7 @@ def _get_transformer(src_crs, dst_crs, always_xy=True):
 def _ecrire_json_atomique(path, data, indent=None):
     """Écrit data en JSON dans path de façon atomique.
 
-    Pattern : sérialiser en RAM, écrire dans path.tmp, fsync, replace path.
+    Pattern : sérialiser en RAM, écrire dans path.part, fsync, replace path.
     Garantit que path est soit l'ancienne version, soit la nouvelle complète,
     jamais une troncature. Critique pour les caches (manifeste, dep_bbox,
     TMS) où une corruption silencieuse fait perdre l'état entre runs.
@@ -3126,7 +3166,7 @@ def _ecrire_json_atomique(path, data, indent=None):
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = _chemin_part(path)
     try:
         # Sérialisation en RAM d'abord (un seul write atomique sur le tmp)
         if indent is not None:
@@ -3140,25 +3180,110 @@ def _ecrire_json_atomique(path, data, indent=None):
                 os.fsync(f.fileno())  # garantit que le contenu est sur disque
             except (OSError, AttributeError):
                 pass  # fsync indisponible (ramdisk, certains FS) — non critique
-        tmp.replace(path)
-    except OSError:
+        os.replace(tmp, path)
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 
 
+def _ecrire_texte_atomique(path, texte, encoding="utf-8"):
+    """Ã‰crit un petit fichier texte via un ``.part`` voisin puis replace.
+
+    L'ancien fichier reste intact si l'Ã©criture, le fsync ou la publication
+    Ã©choue. Ce helper couvre notamment les listes de dalles et signatures,
+    qui servent de source de vÃ©ritÃ© aux reprises suivantes.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = _chemin_part(path)
+    try:
+        with open(part, "w", encoding=encoding) as f:
+            f.write(str(texte))
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError):
+                pass
+        os.replace(part, path)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+
+
 def _chemin_part(path):
-    """Chemin d'écriture temporaire `<nom>.part` pour publication atomique.
+    """Chemin temporaire unique `<nom>.<pid>.<token>.part`.
 
     Pattern .part + rename : le fichier final n'existe jamais à l'état
     partiel. Un kill mi-écriture (Ctrl+C, taskkill du stop GUI, crash) ne
-    laisse qu'un .part, purgé ici au run suivant, au lieu d'un artefact
-    tronqué que les checks "already present" prendraient pour un fichier
-    complet. Purge aussi les -wal/-shm SQLite orphelins d'un run tué.
+    laisse qu'un .part ignoré par les consommateurs, au lieu d'un artefact
+    tronqué que les checks "already present" prendraient pour complet.
+    Le nom unique empêche deux processus visant le même cache partagé de
+    supprimer ou d'écraser le staging l'un de l'autre.
     """
-    part = path.parent / (path.name + ".part")
-    for suf in ("", "-wal", "-shm"):
+    path = Path(path)
+    token = uuid.uuid4().hex[:12]
+    part = path.parent / (
+        f"{path.name}.{os.getpid()}.{token}.part"
+    )
+    for suf in ("", "-wal", "-shm", "-journal"):
         Path(str(part) + suf).unlink(missing_ok=True)
     return part
+
+
+def _nettoyer_sqlite_part(path):
+    """Supprime un chantier SQLite et ses sidecars, sans toucher au final.
+
+    Les bases de sortie sont construites sous un nom ``*.part``. SQLite peut
+    toutefois créer ``-wal``, ``-shm`` ou ``-journal`` à côté. Centraliser leur
+    nettoyage évite qu'un Ctrl+C ou une erreur laisse un handle/sidecar pris
+    pour une sortie autonome par un outil de synchronisation.
+    """
+    path = Path(path)
+    for suffixe in ("", "-wal", "-shm", "-journal"):
+        try:
+            Path(str(path) + suffixe).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _valider_sqlite_part(path, tables_attendues):
+    """Valide une base staging fermée avant son ``replace`` final.
+
+    ``tables_attendues`` associe chaque table à son nombre de lignes attendu.
+    La réouverture explicite en lecture seule prouve aussi que le fichier
+    principal se suffit à lui-même après fermeture (aucun WAL requis).
+    """
+    path = Path(path)
+    if not path.is_file() or path.stat().st_size <= 0:
+        raise OSError(f"staging SQLite absent ou vide : {path}")
+    for suffixe in ("-wal", "-shm", "-journal"):
+        if Path(str(path) + suffixe).exists():
+            raise OSError(
+                f"sidecar SQLite encore présent avant publication : "
+                f"{path.name}{suffixe}"
+            )
+    con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        presentes = {
+            row[0] for row in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        manquantes = set(tables_attendues) - presentes
+        if manquantes:
+            raise OSError(
+                "table(s) SQLite manquante(s) : "
+                + ", ".join(sorted(manquantes))
+            )
+        for table, attendu in tables_attendues.items():
+            # Les noms viennent exclusivement des littéraux internes ci-dessous.
+            obtenu = con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+            if attendu is not None and obtenu != attendu:
+                raise OSError(
+                    f"SQLite {table}: {obtenu} ligne(s), {attendu} attendue(s)"
+                )
+    finally:
+        con.close()
 
 
 def _safe_zip_extractall(zf, target):
@@ -3189,18 +3314,18 @@ def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
     fait peser 1-3 Go de RAM Python pour zéro raison ; la version streamée
     travaille avec ~1 MB en pic.
 
-    Écriture atomique via .tmp + replace : si la décompression est interrompue,
+    Écriture atomique via .part + replace : si la décompression est interrompue,
     le fichier final n'est jamais en état partiel.
     """
     src_gz  = Path(src_gz)
     dst_raw = Path(dst_raw)
     dst_raw.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst_raw.with_suffix(dst_raw.suffix + ".tmp")
+    tmp = _chemin_part(dst_raw)
     try:
         with gzip.open(src_gz, "rb") as fin, open(tmp, "wb") as fout:
             shutil.copyfileobj(fin, fout, length=chunk)
-        tmp.replace(dst_raw)
-    except OSError:
+        os.replace(tmp, dst_raw)
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 
@@ -3208,20 +3333,20 @@ def _gunzip_vers_fichier(src_gz, dst_raw, chunk=1 << 20):
 def _gzip_depuis_fichier(src_raw, dst_gz, compresslevel=6, chunk=1 << 20):
     """Compresse src_raw → dst_gz en streaming (1 MB à la fois).
 
-    Pendant écrite, le contenu va dans dst_gz.tmp puis replace : un Ctrl+C
+    Pendant l'écriture, le contenu va dans dst_gz.part puis replace : un Ctrl+C
     en cours de compression ne laisse pas un .gz tronqué à la place de
     l'ancien fichier valide.
     """
     src_raw = Path(src_raw)
     dst_gz  = Path(dst_gz)
     dst_gz.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst_gz.with_suffix(dst_gz.suffix + ".tmp")
+    tmp = _chemin_part(dst_gz)
     try:
         with open(src_raw, "rb") as fin, \
              gzip.open(tmp, "wb", compresslevel=compresslevel) as fout:
             shutil.copyfileobj(fin, fout, length=chunk)
-        tmp.replace(dst_gz)
-    except OSError:
+        os.replace(tmp, dst_gz)
+    except BaseException:
         tmp.unlink(missing_ok=True)
         raise
 
@@ -3236,7 +3361,7 @@ def _on_sigint(sig, frame):
     """Soft cancel : 1er Ctrl+C demande l'arrêt, 2nd force la sortie.
 
     Pattern standard Unix (git, rsync, etc.) : on laisse l'opération en cours
-    finir proprement (cleanup .tmp, fermeture sqlite, etc.) plutôt que de
+    finir proprement (cleanup .part, fermeture sqlite, etc.) plutôt que de
     couper sec. Si l'utilisateur insiste avec un 2nd Ctrl+C, on quitte direct.
 
     Limites connues :
@@ -3943,6 +4068,86 @@ def _valider_tif_dalle(chemin):
     return True
 
 
+@_contextmanager
+def _stage_dalle_part(chemin_final):
+    """Crée un espace de staging voisin dont le nom finit par ``.part``.
+
+    Le fichier qu'il contient conserve le basename/extension de la cible. C'est
+    indispensable aux hooks provider qui reconnaissent les dalles par une regexp
+    ``*.tif$`` ou construisent leurs temporaires avec ``with_suffix()``. Tous ces
+    artefacts restent néanmoins confinés dans un dossier ``*.part`` ignoré par la
+    synchronisation, et la cible finale n'est remplacée qu'après validation.
+    """
+    chemin_final = Path(chemin_final)
+    dossier_part = _chemin_part(chemin_final)
+    dossier_part.mkdir(parents=False, exist_ok=False)
+    chemin_part = dossier_part / chemin_final.name
+    try:
+        yield chemin_part
+    finally:
+        shutil.rmtree(dossier_part, ignore_errors=True)
+
+
+def _chemins_nuage_stage(chemin_final, chemin_part):
+    """Retourne ``(nuage_final, nuage_stage)`` pour un provider LAZ, sinon
+    ``(None, None)``.
+
+    Quand ``cloud_cache_dir`` est désactivé (dossier forcé ou COPC fenêtré), le
+    provider co-localise volontairement le nuage avec le TIF. Le dossier de
+    staging changerait alors son emplacement sans cette correspondance.
+    """
+    _cloud_path = getattr(PROVIDER, "cloud_path", None)
+    if not callable(_cloud_path):
+        return None, None
+    try:
+        _final = _cloud_path(Path(chemin_final))
+        _stage = _cloud_path(Path(chemin_part))
+        return ((Path(_final) if _final is not None else None),
+                (Path(_stage) if _stage is not None else None))
+    except Exception:
+        return None, None
+
+
+def _lier_nuage_existant_au_stage(chemin_final, chemin_part):
+    """Rend un nuage co-localisé existant visible au hook ``pre_download``.
+
+    Un hardlink évite de recopier un LAZ de plusieurs centaines de Mo. Son
+    retrait avec le dossier ``.part`` ne touche pas le cache final.
+    """
+    nuage_final, nuage_stage = _chemins_nuage_stage(chemin_final, chemin_part)
+    if (nuage_final is None or nuage_stage is None
+            or nuage_final == nuage_stage or not nuage_final.exists()
+            or nuage_stage.exists()):
+        return
+    try:
+        nuage_stage.parent.mkdir(parents=True, exist_ok=True)
+        os.link(nuage_final, nuage_stage)
+    except OSError:
+        # Le hook ne trouvera simplement pas le cache et le téléchargement réseau
+        # normal prendra le relais. Ne jamais recopier un énorme nuage ici.
+        pass
+
+
+def _publier_nuage_stage(chemin_final, chemin_part):
+    """Publie atomiquement le nuage co-localisé produit dans le dossier .part.
+
+    Le nuage est un cache indépendant et déjà complet à ce stade. S'il s'agit du
+    hardlink posé pour ``pre_download``, seul le lien de staging est retiré.
+    """
+    nuage_final, nuage_stage = _chemins_nuage_stage(chemin_final, chemin_part)
+    if (nuage_final is None or nuage_stage is None
+            or nuage_final == nuage_stage or not nuage_stage.exists()):
+        return
+    nuage_final.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if nuage_final.exists() and os.path.samefile(nuage_stage, nuage_final):
+            nuage_stage.unlink(missing_ok=True)
+            return
+    except OSError:
+        pass
+    nuage_stage.replace(nuage_final)
+
+
 def _comprimer_dalle_deflate(chemin):
     """Recomprime une dalle GeoTIFF en DEFLATE (tiled) en place, best-effort.
 
@@ -3953,7 +4158,8 @@ def _comprimer_dalle_deflate(chemin):
     - Sur échec, le fichier d'origine est conservé tel quel (warning).
     Appelée en fin de telecharger_dalle_directe quand --download-compress est
     actif, APRÈS post_fetch/post_download (qui peuvent réécrire le fichier)."""
-    tmp = chemin.parent / (chemin.name + ".cmp")
+    chemin = Path(chemin)
+    tmp = _chemin_part(chemin)
     try:
         import rasterio as _rio_c
         with _rio_c.open(str(chemin)) as src:
@@ -3990,119 +4196,82 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
         if not ecraser:
             return "skip"
-        # Mode overwrite : supprimer l'existant pour forcer le retéléchargement.
-        # On évite de tirer dans une dalle valide qui pourrait servir de fallback
-        # en cas d'échec — mais c'est explicitement ce que l'utilisateur demande.
-        chemin.unlink()
-    # Tmp UNIQUE par process : le cache de dalles est partagé, deux process
-    # sur la même dalle s'écrasaient le .tmp fixe (l'un tronque pendant que
-    # l'autre replace). Cf. le .part PID du cache WMTS, même raison.
-    chemin_tmp = chemin.parent / (nom + f".{os.getpid()}.tmp")
-    _publie_par_moi = False   # True dès que CE process a fait replace(chemin)
+        # Même en overwrite, conserver l'ancienne dalle valide jusqu'à la
+        # publication atomique de sa remplaçante.
     for tentative in range(1, MAX_TENTATIVES + 1):
-        try:
-            # Hook pre_download (optionnel) : le provider peut matérialiser la
-            # dalle SANS réseau — ex. fr-ign-laz reconvertit depuis le nuage LAZ
-            # gardé en cache quand seuls les réglages LAZ changent (évite de
-            # retélécharger ~205 Mo). Tentative 1 uniquement : si la dalle
-            # produite échoue la validation, le retry passe par le download.
-            # MAIS un overwrite explicite (ecraser) DOIT re-télécharger la source :
-            # on saute alors le hook, sinon --download-overwrite reconstruisait
-            # depuis le LAZ caché sans jamais re-tirer le nuage (choix Nico).
-            _pre = (getattr(PROVIDER, "pre_download", None)
-                    if (tentative == 1 and not ecraser) else None)
-            _materialise = False
-            if _pre is not None:
-                try:
-                    _materialise = bool(_pre(chemin)) and chemin.exists()
-                except Exception as _e_pre:
-                    print(f"  WARN pre_download {nom}: "
-                          f"{type(_e_pre).__name__}: {_e_pre}", flush=True)
-            if _materialise:
-                _publie_par_moi = True   # produit par CE process (purgé si invalide)
-            else:
-                taille = _download_to_tmp(url_wms, chemin_tmp, timeout=(10, 45))
-                if taille == 0:
-                    chemin_tmp.unlink(missing_ok=True)
-                    # 404 propre. Provider à découverte EXACTE (index WFS/STAC/
-                    # registre : la dalle est PROMISE) → un 404 = index périmé ou
-                    # panne serveur, PAS une absence légitime (R1#8). On lève →
-                    # retry (un 404 sous throttle est parfois transitoire, cf. le
-                    # 400 IGN) → après épuisement, 'erreur' VISIBLE → l'invariant
-                    # erreur>0 stoppe le chunk (plus de trou marqué complet). En
-                    # découverte GRILLE (défaut), une cellule de bord 404 reste
-                    # une absence normale.
-                    if getattr(PROVIDER, "DISCOVER_EXACT", False):
-                        raise IOError("HTTP 404 sur dalle indexée "
-                                      "(provider à découverte exacte)")
-                    return "absent"
-                if taille < SEUIL_DALLE_VALIDE:
-                    with open(chemin_tmp, "rb") as _fh:
-                        _head = _fh.read(200)
-                    chemin_tmp.unlink(missing_ok=True)
-                    # Erreur serveur déguisée en HTTP 200 : les ImageServer ArcGIS
-                    # (au-qld, no-kartverket, us-tnm) renvoient par intermittence
-                    # un JSON {"error": 400 "General function failure"} avec
-                    # content-type image/tiff. Sans cette détection, un échec
-                    # TRANSITOIRE passait pour une dalle "absent", jamais
-                    # retentée. IOError → retry (MAX_TENTATIVES).
-                    if _head.lstrip().startswith(b"{") and b'"error"' in _head:
-                        raise IOError(f"server error payload: {_head[:120]!r}")
-                    return "absent"
-                chemin_tmp.replace(chemin)
-                _publie_par_moi = True
-                _post_fetch_si_besoin(chemin)
-            if not _valider_tif_dalle(chemin):
-                chemin.unlink(missing_ok=True)
-                raise IOError("GeoTIFF invalide après écriture (fichier tronqué ou corrompu)")
-            # Hook post-download : permet à un provider de transformer le tile
-            # (ex: us-3dep reprojette NAD83 -> EPSG:3857 ici).
-            if hasattr(PROVIDER, "post_download"):
-                try:
-                    PROVIDER.post_download(chemin)
-                except Exception as _e_pd:
-                    # #7 : le hook reprojette (us-3dep/us-tnm/au-ga). Un échec
-                    # SILENCIEUX laissait une dalle au mauvais CRS entrer dans
-                    # le VRT. On lève -> retry, puis échec visible en 'erreur'.
-                    raise IOError(f"post_download {nom}: "
-                                  f"{type(_e_pd).__name__}: {_e_pd}")
-                # Re-valider APRÈS transformation (une reproject ratée peut
-                # laisser un GeoTIFF cassé).
-                if not _valider_tif_dalle(chemin):
-                    raise IOError(f"GeoTIFF invalide après post_download ({nom})")
-            if compresser:
-                _comprimer_dalle_deflate(chemin)
-            _creer_fichier(chemin)
-            return "ok"
-        except KeyboardInterrupt:
-            chemin_tmp.unlink(missing_ok=True)
-            # Propagation au handler top-level (sys.exit(130)) qui finalise
-            # le cleanup global (manifeste, lockfiles…). sys.exit(0) ici
-            # masquerait l'interruption derrière un code de succès.
-            raise
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError, IOError) as _e:
-            chemin_tmp.unlink(missing_ok=True)
-            # Ne purger la dalle FINALE que si CE process l'a publiée dans
-            # cette tentative (elle est alors suspecte : post_fetch/validation
-            # a échoué après le replace). L'unlink inconditionnel d'avant
-            # détruisait la dalle valide qu'un AUTRE process venait de publier.
-            if _publie_par_moi:
-                chemin.unlink(missing_ok=True)
-                _publie_par_moi = False
-            if tentative < MAX_TENTATIVES:
-                # Retry silencieux : IGN renvoie 502/400/timeouts en rafale en
-                # journée, chaque retry print bourrait la console. Seul l'échec
-                # final (3/3) reste visible — la progress bar montre l'avancée.
-                # NB : le 400 IGN est TRANSITOIRE (throttle sous forte concurrence),
-                # pas "hors couverture" — vérifié sur un run de département où les
-                # mêmes dalles passent au re-run. On garde donc le retry et l'échec
-                # final reste 'erreur' VISIBLE (le hors-couverture, lui, ne
-                # génère plus de requête depuis que la grille de repli est bornée
-                # aux erreurs TMS, cf. fr_ign.discover_dalles).
-                time.sleep(DELAI_RETRY)
-            else:
-                print(f"\n  ERROR {nom} ({type(_e).__name__}, attempt {tentative}): {_e}")
-                return "erreur"
+        with _stage_dalle_part(chemin) as chemin_part:
+            try:
+                # Hook pre_download (optionnel) : le provider peut matérialiser
+                # la dalle SANS réseau depuis son nuage LAZ en cache. Le basename
+                # reste identique dans le dossier .part, donc ses regexp *.tif$
+                # continuent de fonctionner.
+                _pre = (getattr(PROVIDER, "pre_download", None)
+                        if (tentative == 1 and not ecraser) else None)
+                _materialise = False
+                if _pre is not None:
+                    _lier_nuage_existant_au_stage(chemin, chemin_part)
+                    try:
+                        _materialise = bool(_pre(chemin_part)) and chemin_part.exists()
+                    except Exception as _e_pre:
+                        print(f"  WARN pre_download {nom}: "
+                              f"{type(_e_pre).__name__}: {_e_pre}", flush=True)
+                if not _materialise:
+                    taille = _download_to_tmp(
+                        url_wms, chemin_part, timeout=(10, 45))
+                    if taille == 0:
+                        # 404 propre. Provider à découverte EXACTE (index WFS/
+                        # STAC/registre : dalle promise) → erreur et retry.
+                        if getattr(PROVIDER, "DISCOVER_EXACT", False):
+                            raise IOError("HTTP 404 sur dalle indexée "
+                                          "(provider à découverte exacte)")
+                        return "absent"
+                    if taille < SEUIL_DALLE_VALIDE:
+                        with open(chemin_part, "rb") as _fh:
+                            _head = _fh.read(200)
+                        # Erreur serveur déguisée en HTTP 200 → retry.
+                        if (_head.lstrip().startswith(b"{")
+                                and b'"error"' in _head):
+                            raise IOError(
+                                f"server error payload: {_head[:120]!r}")
+                        return "absent"
+                    _post_fetch_si_besoin(chemin_part)
+                if not _valider_tif_dalle(chemin_part):
+                    raise IOError(
+                        "GeoTIFF invalide après écriture "
+                        "(fichier tronqué ou corrompu)")
+                # Hook post-download (reprojection/réétiquetage) sur le staging.
+                if hasattr(PROVIDER, "post_download"):
+                    try:
+                        PROVIDER.post_download(chemin_part)
+                    except Exception as _e_pd:
+                        raise IOError(f"post_download {nom}: "
+                                      f"{type(_e_pd).__name__}: {_e_pd}")
+                    if not _valider_tif_dalle(chemin_part):
+                        raise IOError(
+                            f"GeoTIFF invalide après post_download ({nom})")
+                if compresser:
+                    _comprimer_dalle_deflate(chemin_part)
+                    if not _valider_tif_dalle(chemin_part):
+                        raise IOError(
+                            f"GeoTIFF invalide après compression ({nom})")
+
+                # Les éventuels caches LAZ co-localisés puis le TIF sont publiés
+                # seulement après le succès de tous les hooks/validateurs.
+                _publier_nuage_stage(chemin, chemin_part)
+                chemin_part.replace(chemin)
+                _creer_fichier(chemin)
+                return "ok"
+            except KeyboardInterrupt:
+                # Le context manager supprime uniquement notre dossier .part.
+                raise
+            except Exception as _e:
+                if tentative < MAX_TENTATIVES:
+                    # Retry silencieux : seul l'échec final reste visible.
+                    time.sleep(DELAI_RETRY)
+                else:
+                    print(f"\n  ERROR {nom} ({type(_e).__name__}, "
+                          f"attempt {tentative}): {_e}")
+                    return "erreur"
     return "erreur"
 
 
@@ -4154,39 +4323,37 @@ def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     _seuil = getattr(PROVIDER, "SEUIL_DALLE_VALIDE", SEUIL_DALLE_VALIDE)
     if chemin.exists() and chemin.stat().st_size > _seuil and not ecraser:
         return "skip"
-    try:
-        # bbox zone (CRS_NATIF) → WGS84 pour le fenêtrage COPC.
-        bx1, by1, bx2, by2 = bbox
-        lo1, la1, lo2, la2 = _bbox_enveloppe_transform(_natif_vers_wgs84,
-                                                       bx1, by1, bx2, by2)
-        chemin.unlink(missing_ok=True)
-        # Signature d'URL propre au provider (ex. us-3dep-laz : SAS Planetary
-        # Computer, validité ~1 h → signée à l'instant du DOWNLOAD, pas à la
-        # découverte, sinon péremption sur un gros run). Défaut = identité
-        # (ca-nrcan : COPC sur S3 public, aucune signature). Mirror du hook
-        # gdal_env_options() côté COG.
-        _sign = getattr(PROVIDER, "sign_url", None)
-        _url = _sign(url) if callable(_sign) else url
-        n, epsg = _common.copc_window_to_las(_url, (lo1, la1, lo2, la2), chemin)
-        if not n or n < 50_000:
-            chemin.unlink(missing_ok=True)
-            return "absent"          # zone hors de ce COPC (ou quasi vide)
-        # CRS du run = la zone UTM du COPC → sortie dans la bonne projection.
-        _set = getattr(PROVIDER, "set_crs", None)
-        if _set and epsg:
-            _set(int(epsg))
-        # chemin porte un fichier LAS (magic LASF) : post_fetch l'isole en .laz
-        # cache et le convertit en GeoTIFF (DFM/CSF) via las_to_dfm.
-        _post_fetch_si_besoin(chemin)
-        if not _valider_tif_dalle(chemin):
-            chemin.unlink(missing_ok=True)
+    with _stage_dalle_part(chemin) as chemin_part:
+        try:
+            # bbox zone (CRS_NATIF) → WGS84 pour le fenêtrage COPC.
+            bx1, by1, bx2, by2 = bbox
+            lo1, la1, lo2, la2 = _bbox_enveloppe_transform(
+                _natif_vers_wgs84, bx1, by1, bx2, by2)
+            # Signature d'URL propre au provider (SAS courte durée, si besoin).
+            _sign = getattr(PROVIDER, "sign_url", None)
+            _url = _sign(url) if callable(_sign) else url
+            n, epsg = _common.copc_window_to_las(
+                _url, (lo1, la1, lo2, la2), chemin_part)
+            if not n or n < 50_000:
+                return "absent"      # zone hors de ce COPC (ou quasi vide)
+            # CRS du run = la zone UTM du COPC.
+            _set = getattr(PROVIDER, "set_crs", None)
+            if _set and epsg:
+                _set(int(epsg))
+            # Le LAS puis sa conversion GeoTIFF restent dans le dossier .part.
+            _post_fetch_si_besoin(chemin_part)
+            if not _valider_tif_dalle(chemin_part):
+                raise IOError(
+                    f"GeoTIFF COPC invalide après post_fetch ({nom})")
+            _publier_nuage_stage(chemin, chemin_part)
+            chemin_part.replace(chemin)
+            _creer_fichier(chemin)
+            return "ok"
+        except KeyboardInterrupt:
+            raise
+        except Exception as _e:
+            print(f"\n  ERROR COPC {nom} ({type(_e).__name__}): {_e}")
             return "erreur"
-        _creer_fichier(chemin)
-        return "ok"
-    except Exception as _e:
-        chemin.unlink(missing_ok=True)
-        print(f"\n  ERROR COPC {nom} ({type(_e).__name__}): {_e}")
-        return "erreur"
 
 
 def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
@@ -4208,142 +4375,124 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     chemin = chemin_dalle(dossier_dalles, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        if ecraser:
-            chemin.unlink(missing_ok=True)
-        elif _cog_cache_couvre(chemin, bbox):
+        if not ecraser and _cog_cache_couvre(chemin, bbox):
             return "skip"
-        else:
-            # Fragment caché d'une AUTRE zone du même COG (#1) : re-télécharger
-            # pour ne pas servir le relief de la 1re zone.
-            chemin.unlink(missing_ok=True)
+        # Overwrite ou fragment d'une autre zone : conserver l'ancien fichier
+        # jusqu'à ce que sa nouvelle fenêtre soit intégralement validée.
 
     bx1, by1, bx2, by2 = bbox
     vsi = "/vsicurl/" + url
-    # Écriture via .tmp + replace atomique, comme telecharger_dalle_directe :
-    # un kill mi-écriture ne laisse pas de dalle tronquée que le run suivant
-    # skiperait comme valide. Tmp UNIQUE par process (cache partagé, cf.
-    # telecharger_dalle_directe : deux process sur la même dalle).
-    chemin_tmp = chemin.parent / (nom + f".{os.getpid()}.tmp")
-    _publie_par_moi = False
     for tentative in range(1, MAX_TENTATIVES + 1):
-        try:
-            # Options GDAL propres au provider (ex. se-lantmateriet :
-            # GDAL_HTTP_USERPWD pour l'auth Basic du COG dl1). SCOPÉES à cet Env
-            # → les identifiants ne fuient pas vers les hosts d'autres providers.
-            _prov_gdal = getattr(PROVIDER, "gdal_env_options", None)
-            _gdal_extra = _prov_gdal() if callable(_prov_gdal) else {}
-            # Défauts fusionnés par update() : un provider PEUT surcharger une clé
-            # (ex. us-cnmi ajoute .vrt à CPL_VSIL_CURL_ALLOWED_EXTENSIONS pour lire
-            # sa mosaïque VRT). Un `**_gdal_extra` direct planterait sur clé dupliquée.
-            _env_gdal = {"GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
-                         "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
-                         "VSI_CACHE": True, "GDAL_HTTP_TIMEOUT": "60"}
-            _env_gdal.update(_gdal_extra)
-            with rasterio.Env(**_env_gdal):
-                with rasterio.open(vsi) as src:
-                    # La bbox arrive dans PROVIDER.CRS_NATIF ; le COG peut être
-                    # dans un AUTRE CRS (ex. 3DEP : tuiles en UTM local alors que
-                    # CRS_NATIF=3857). On reprojette la bbox vers le CRS réel du
-                    # COG avant de fenêtrer (identité si même CRS, ex. ca-nrcan).
-                    rbx1, rby1, rbx2, rby2 = bx1, by1, bx2, by2
-                    try:
-                        _se = src.crs.to_epsg() if src.crs else None
-                        _ne = (int(PROVIDER.CRS_NATIF.split(":")[1])
-                               if ":" in getattr(PROVIDER, "CRS_NATIF", "") else None)
-                        if _se and _ne and _se != _ne:
-                            _tf = _get_transformer(PROVIDER.CRS_NATIF, f"EPSG:{_se}")
-                            _xs = []; _ys = []
-                            for _px, _py in ((bx1, by1), (bx1, by2),
-                                             (bx2, by1), (bx2, by2)):
-                                _tx, _ty = _tf.transform(_px, _py)
-                                _xs.append(_tx); _ys.append(_ty)
-                            rbx1, rby1 = min(_xs), min(_ys)
-                            rbx2, rby2 = max(_xs), max(_ys)
-                    except Exception:
-                        pass
-                    b = src.bounds
-                    # Intersection bbox zone ∩ étendue du COG (dans le CRS du COG)
-                    l = max(rbx1, b.left);   r = min(rbx2, b.right)
-                    bot = max(rby1, b.bottom); t = min(rby2, b.top)
-                    if l >= r or bot >= t:
-                        return "absent"          # le COG ne couvre pas la zone
-                    win = _win_from_bounds(l, bot, r, t, src.transform)
-                    win_i = win.round_offsets(op="floor").round_lengths(op="ceil")
-                    win_h, win_w = int(win_i.height), int(win_i.width)
-                    if win_h <= 0 or win_w <= 0:
-                        return "absent"
-                    if win_h * win_w > _MAX_COG_WINDOW_PX:
-                        # #9 : fenêtre géante (bbox mono-chunk non splittée) →
-                        # copie par bandes de lignes pour borner la RAM. Géoréf =
-                        # window_transform de la fenêtre ENTIÈRE arrondie.
-                        profil = src.profile.copy()
-                        profil.update(
-                            driver="GTiff",
-                            height=win_h, width=win_w,
-                            transform=src.window_transform(win_i),
-                            compress="deflate", predictor=2, tiled=True,
-                            blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
-                        with rasterio.open(chemin_tmp, "w", **profil) as dst:
-                            r0 = 0
-                            while r0 < win_h:
-                                h = min(1024, win_h - r0)
-                                sub = Window(win_i.col_off, win_i.row_off + r0,
-                                             win_w, h)
-                                dst.write(src.read(window=sub),
-                                          window=Window(0, r0, win_w, h))
-                                r0 += h
-                    else:
-                        data = src.read(window=win)
-                        if data.size == 0:
+        with _stage_dalle_part(chemin) as chemin_part:
+            try:
+                # Options GDAL propres au provider (auth Basic, extensions VRT),
+                # limitées à cet environnement.
+                _prov_gdal = getattr(PROVIDER, "gdal_env_options", None)
+                _gdal_extra = _prov_gdal() if callable(_prov_gdal) else {}
+                _env_gdal = {
+                    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
+                    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
+                    "VSI_CACHE": True,
+                    "GDAL_HTTP_TIMEOUT": "60",
+                }
+                _env_gdal.update(_gdal_extra)
+                with rasterio.Env(**_env_gdal):
+                    with rasterio.open(vsi) as src:
+                        # La bbox provider peut devoir être reprojetée vers le
+                        # CRS réel du COG.
+                        rbx1, rby1, rbx2, rby2 = bx1, by1, bx2, by2
+                        try:
+                            _se = src.crs.to_epsg() if src.crs else None
+                            _ne = (int(PROVIDER.CRS_NATIF.split(":")[1])
+                                   if ":" in getattr(
+                                       PROVIDER, "CRS_NATIF", "") else None)
+                            if _se and _ne and _se != _ne:
+                                _tf = _get_transformer(
+                                    PROVIDER.CRS_NATIF, f"EPSG:{_se}")
+                                _xs, _ys = [], []
+                                for _px, _py in (
+                                        (bx1, by1), (bx1, by2),
+                                        (bx2, by1), (bx2, by2)):
+                                    _tx, _ty = _tf.transform(_px, _py)
+                                    _xs.append(_tx)
+                                    _ys.append(_ty)
+                                rbx1, rby1 = min(_xs), min(_ys)
+                                rbx2, rby2 = max(_xs), max(_ys)
+                        except Exception:
+                            pass
+                        b = src.bounds
+                        l = max(rbx1, b.left)
+                        r = min(rbx2, b.right)
+                        bot = max(rby1, b.bottom)
+                        t = min(rby2, b.top)
+                        if l >= r or bot >= t:
                             return "absent"
-                        profil = src.profile.copy()
-                        profil.update(
-                            driver="GTiff",
-                            height=data.shape[1], width=data.shape[2],
-                            transform=src.window_transform(win),
-                            compress="deflate", predictor=2, tiled=True,
-                            blockxsize=256, blockysize=256, bigtiff="IF_SAFER")
-                        with rasterio.open(chemin_tmp, "w", **profil) as dst:
-                            dst.write(data)
-            if not _valider_tif_dalle(chemin_tmp):
-                chemin_tmp.unlink(missing_ok=True)
-                raise IOError("COG fenêtré invalide après écriture")
-            chemin_tmp.replace(chemin)
-            _publie_par_moi = True
-            # Hook post-download (ex. us-tnm : reproject UTM local -> CRS_NATIF),
-            # comme le chemin de download direct.
-            if hasattr(PROVIDER, "post_download"):
-                try:
-                    PROVIDER.post_download(chemin)
-                except Exception as _e_pd:
-                    # #7 : le hook reprojette (us-3dep/us-tnm/au-ga). Un échec
-                    # SILENCIEUX laissait une dalle au mauvais CRS entrer dans
-                    # le VRT. On lève -> retry, puis échec visible en 'erreur'.
-                    raise IOError(f"post_download {nom}: "
-                                  f"{type(_e_pd).__name__}: {_e_pd}")
-                # Re-valider APRÈS transformation (une reproject ratée peut
-                # laisser un GeoTIFF cassé).
-                if not _valider_tif_dalle(chemin):
-                    raise IOError(f"GeoTIFF invalide après post_download ({nom})")
-            _creer_fichier(chemin)
-            return "ok"
-        except KeyboardInterrupt:
-            chemin_tmp.unlink(missing_ok=True)
-            # Propagation au handler top-level (sys.exit(130)), comme les
-            # deux autres chemins de téléchargement.
-            raise
-        except (OSError, IOError, rasterio.errors.RasterioIOError) as _e:
-            chemin_tmp.unlink(missing_ok=True)
-            # Cf. telecharger_dalle_directe : ne purger la dalle finale que si
-            # CE process l'a publiée (sinon on détruit celle d'un autre process).
-            if _publie_par_moi:
-                chemin.unlink(missing_ok=True)
-                _publie_par_moi = False
-            if tentative < MAX_TENTATIVES:
-                time.sleep(DELAI_RETRY)
-            else:
-                print(f"\n  ERROR window {nom} ({type(_e).__name__}): {_e}")
-                return "erreur"
+                        win = _win_from_bounds(l, bot, r, t, src.transform)
+                        win_i = (win.round_offsets(op="floor")
+                                 .round_lengths(op="ceil"))
+                        win_h, win_w = int(win_i.height), int(win_i.width)
+                        if win_h <= 0 or win_w <= 0:
+                            return "absent"
+                        if win_h * win_w > _MAX_COG_WINDOW_PX:
+                            profil = src.profile.copy()
+                            profil.update(
+                                driver="GTiff",
+                                height=win_h, width=win_w,
+                                transform=src.window_transform(win_i),
+                                compress="deflate", predictor=2, tiled=True,
+                                blockxsize=256, blockysize=256,
+                                bigtiff="IF_SAFER")
+                            with rasterio.open(
+                                    chemin_part, "w", **profil) as dst:
+                                r0 = 0
+                                while r0 < win_h:
+                                    h = min(1024, win_h - r0)
+                                    sub = Window(
+                                        win_i.col_off, win_i.row_off + r0,
+                                        win_w, h)
+                                    dst.write(
+                                        src.read(window=sub),
+                                        window=Window(0, r0, win_w, h))
+                                    r0 += h
+                        else:
+                            data = src.read(window=win)
+                            if data.size == 0:
+                                return "absent"
+                            profil = src.profile.copy()
+                            profil.update(
+                                driver="GTiff",
+                                height=data.shape[1], width=data.shape[2],
+                                transform=src.window_transform(win),
+                                compress="deflate", predictor=2, tiled=True,
+                                blockxsize=256, blockysize=256,
+                                bigtiff="IF_SAFER")
+                            with rasterio.open(
+                                    chemin_part, "w", **profil) as dst:
+                                dst.write(data)
+                if not _valider_tif_dalle(chemin_part):
+                    raise IOError("COG fenêtré invalide après écriture")
+                # Reprojection/réétiquetage également confinés dans .part.
+                if hasattr(PROVIDER, "post_download"):
+                    try:
+                        PROVIDER.post_download(chemin_part)
+                    except Exception as _e_pd:
+                        raise IOError(f"post_download {nom}: "
+                                      f"{type(_e_pd).__name__}: {_e_pd}")
+                    if not _valider_tif_dalle(chemin_part):
+                        raise IOError(
+                            f"GeoTIFF invalide après post_download ({nom})")
+                chemin_part.replace(chemin)
+                _creer_fichier(chemin)
+                return "ok"
+            except KeyboardInterrupt:
+                raise
+            except Exception as _e:
+                if tentative < MAX_TENTATIVES:
+                    time.sleep(DELAI_RETRY)
+                else:
+                    print(f"\n  ERROR window {nom} "
+                          f"({type(_e).__name__}): {_e}")
+                    return "erreur"
     return "erreur"
 
 
@@ -4359,18 +4508,32 @@ def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
 
 
 def _promouvoir_dossier(tmp_dir, dest_dir):
-    """Promotion atomique d'un dossier temporaire vers sa cible finale : retire
-    une install partielle antérieure éventuelle dans dest_dir, puis renomme
-    tmp_dir -> dest_dir (rename atomique, même système de fichiers car voisins
-    sous LIDAR2MAP_HOME). Complète l'idiome « télécharger dans .part puis
-    renommer » pour les DOSSIERS (osmosis/JRE) : une extraction interrompue ne
-    laisse qu'un `.tmp-<pid>` inerte, jamais une install partielle prise pour
-    valide par le rglob du binaire (R2#48)."""
+    """Promeut un dossier ``.part`` sans supprimer l'ancien avant succès.
+
+    Un système de fichiers ne sait généralement pas remplacer atomiquement un
+    dossier final non vide. On déplace donc d'abord l'ancien vers un backup
+    voisin ``.part``, on promeut le nouveau, puis seulement on efface le backup.
+    Si la seconde opération échoue, l'ancien est remis à sa place. Ainsi une
+    erreur de rename ne détruit jamais l'installation encore utilisable.
+    """
     dest_dir = Path(dest_dir)
     tmp_dir = Path(tmp_dir)
+    ancien_part = None
     if dest_dir.exists():
-        shutil.rmtree(dest_dir, ignore_errors=True)
-    tmp_dir.replace(dest_dir)
+        ancien_part = dest_dir.parent / (
+            f"{dest_dir.name}.previous.{os.getpid()}."
+            f"{uuid.uuid4().hex[:12]}.part"
+        )
+        dest_dir.replace(ancien_part)
+    try:
+        tmp_dir.replace(dest_dir)
+    except BaseException:
+        if (ancien_part is not None and ancien_part.exists()
+                and not dest_dir.exists()):
+            ancien_part.replace(dest_dir)
+        raise
+    if ancien_part is not None:
+        shutil.rmtree(ancien_part, ignore_errors=True)
 
 
 def _bin_outil(racine, pattern):
@@ -4400,14 +4563,17 @@ def _telecharger_osmosis_local():
     URL = "https://github.com/openstreetmap/osmosis/releases/download/0.49.2/osmosis-0.49.2.zip"
     # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin,
     # on valide la présence du binaire, PUIS on promeut atomiquement. Un Ctrl+C
-    # ou un disque plein pendant l'extraction laisse un `.tmp-<pid>` inerte au
+    # ou un disque plein pendant l'extraction laisse un dossier `.part` inerte au
     # lieu d'un OSMOSIS_DIR à moitié peuplé que le check ci-dessus prendrait à
     # tort pour une install valide (échec Java cryptique au lieu d'un re-dl).
-    tmp_dir = LIDAR2MAP_HOME / f"osmosis.tmp-{os.getpid()}"
+    tmp_dir = LIDAR2MAP_HOME / (
+        f"osmosis.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    )
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     zip_path = tmp_dir / "osmosis.zip"
+    zip_part = _chemin_part(zip_path)
 
     print(f"  URL  : {URL}")
     print("  Downloading osmosis (~35 MB)...", flush=True)
@@ -4416,7 +4582,8 @@ def _telecharger_osmosis_local():
             if total > 0:
                 print("  " + str(min(n*bs*100//total, 100)).rjust(3) + "%",
                       end="\r", flush=True)
-        urllib.request.urlretrieve(URL, zip_path, reporthook=_prog)
+        urllib.request.urlretrieve(URL, zip_part, reporthook=_prog)
+        os.replace(zip_part, zip_path)
         print("  100%")
         print("  Extraction osmosis...", flush=True)
         with zipfile.ZipFile(zip_path, "r") as z:
@@ -4458,7 +4625,9 @@ def _telecharger_jre_local():
     JRE_DIR = LIDAR2MAP_HOME / "jre"
     # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin
     # puis on promeut atomiquement (même logique que _telecharger_osmosis_local).
-    tmp_dir = LIDAR2MAP_HOME / f"jre.tmp-{os.getpid()}"
+    tmp_dir = LIDAR2MAP_HOME / (
+        f"jre.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    )
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -4480,6 +4649,7 @@ def _telecharger_jre_local():
            f"/{os_str}/{arch_str}/jre/hotspot/normal/eclipse")
 
     archive = tmp_dir / f"jre.{ext}"
+    archive_part = _chemin_part(archive)
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"  URL  : {URL}")
@@ -4503,7 +4673,7 @@ def _telecharger_jre_local():
             total = int(_resp2.headers.get("Content-Length", 0))
             downloaded = 0
             chunk = 65536
-            with open(archive, "wb") as _fout:
+            with open(archive_part, "wb") as _fout:
                 while True:
                     buf = _resp2.read(chunk)
                     if not buf:
@@ -4513,6 +4683,7 @@ def _telecharger_jre_local():
                     if total > 0:
                         pct = min(downloaded * 100 // total, 100)
                         print(f"  {pct:3d}%", end="\r", flush=True)
+        os.replace(archive_part, archive)
         print("  100%")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
         print(f"  ERROR downloading JRE: {type(e).__name__}: {e}")
@@ -4676,7 +4847,7 @@ def _verifier_mapwriter():
     # une coupure réseau laissait un JAR tronqué à jar_path que le check
     # `jar_path.exists()` prenait pour valide, et osmosis échouait ensuite sur
     # un plugin corrompu au lieu de le re-télécharger.
-    tmp_jar = plugins_dir / f"{_MAPWRITER_JAR}.part-{os.getpid()}"
+    tmp_jar = _chemin_part(jar_path)
     try:
         plugins_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4747,7 +4918,13 @@ def _sauver_array_georef(arr, src_tif, dst_tif):
     with rasterio.open(str(src_tif)) as src:
         profile = src.profile.copy()
 
+    # La destination peut finir par ``.part`` pendant une publication
+    # atomique : ne pas laisser GDAL déduire le format depuis l'extension, ni
+    # hériter du driver VRT quand ``src_tif`` est la mosaïque virtuelle.
+    for k in ("driver", "BIGTIFF", "bigtiff", "NODATA", "nodata"):
+        profile.pop(k, None)
     profile.update(
+        driver    = "GTiff",
         dtype     = "uint8",
         count     = n_bands,
         compress  = "deflate",
@@ -4756,10 +4933,8 @@ def _sauver_array_georef(arr, src_tif, dst_tif):
         blockxsize = 512,
         blockysize = 512,
         bigtiff   = "IF_SAFER",
+        nodata    = None,
     )
-    # Supprimer les clés incompatibles éventuelles
-    for k in ("nodata",):
-        profile.pop(k, None)
 
     _t0 = time.time()
     with rasterio.open(str(dst_tif), "w", **profile) as dst:
@@ -4769,6 +4944,22 @@ def _sauver_array_georef(arr, src_tif, dst_tif):
             for b in range(n_bands):
                 dst.write(arr[:, :, b].astype(np.uint8), b + 1)
     print(f"  rasterio write OK  ({_hms(time.time()-_t0)})", flush=True)
+
+
+def _publier_tif_atomique(chemin_part, chemin_final):
+    """Valide un GeoTIFF fermé puis le publie par remplacement atomique.
+
+    ``chemin_final`` n'est jamais supprimé au préalable : si l'écriture ou la
+    validation de ``chemin_part`` échoue, l'éventuelle version complète déjà
+    présente reste intacte.
+    """
+    chemin_part = Path(chemin_part)
+    chemin_final = Path(chemin_final)
+    if not _valider_tif_dalle(chemin_part):
+        raise RuntimeError(
+            f"GeoTIFF temporaire invalide ou incomplet: {chemin_part.name}"
+        )
+    os.replace(chemin_part, chemin_final)
 
 
 # ── Helpers lecture DEM ───────────────────────────────────────────────────────
@@ -5838,7 +6029,7 @@ def _build_vrt_xml(cogs, vrt_path, target_res):
     lines.append('  </VRTRasterBand>')
     lines.append('</VRTDataset>')
 
-    Path(vrt_path).write_text("\n".join(lines), encoding="utf-8")
+    _ecrire_texte_atomique(vrt_path, "\n".join(lines))
 
 
 def _lrm_chunked(src_path, dst_path, sigma_px):
@@ -6758,7 +6949,9 @@ def _post_fetch_si_besoin(chemin):
     """Prépare le fichier brut téléchargé avant la validation GeoTIFF :
       1. désencapsulation multipart/related (générique WCS 2.0) ;
       2. PROVIDER.post_fetch(chemin) si défini (LAZ/ZIP → GeoTIFF, reproject…).
-    No-op si rien ne s'applique.
+    No-op si rien ne s'applique. Une erreur du hook est journalisée puis
+    propagée : l'appelant doit abandonner son staging, jamais publier un fichier
+    dont la transformation provider n'est pas allée au bout.
     """
     _extraire_tiff_multipart(chemin)
     pf = getattr(PROVIDER, "post_fetch", None)
@@ -6769,6 +6962,7 @@ def _post_fetch_si_besoin(chemin):
     except Exception as _e_pf:
         print(f"  post_fetch {chemin.name} : {type(_e_pf).__name__}: {_e_pf}",
               flush=True)
+        raise
 
 
 def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
@@ -6780,6 +6974,8 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
     """
     import urllib.request as _urlreq
     import urllib.parse   as _urlparse
+    dossier_ville = Path(dossier_ville)
+    dossier_ville.mkdir(parents=True, exist_ok=True)
     nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
     _SUFFIX = {
         "svf":"svf_ombrage","multi":"multi_ombrage","slope":"slope_ombrage",
@@ -6796,12 +6992,11 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
             continue
         nom_fichier = f"{nom_base}_{_SUFFIX.get(cle, cle+'_ombrage')}.tif"
         chemin_out  = dossier_ville / nom_fichier
-        if chemin_out.exists() and not ecraser_ombrages:
+        if (chemin_out.exists() and not ecraser_ombrages
+                and _valider_tif_dalle(chemin_out)):
             print(f"  {nom_fichier.ljust(56)} -> already present (provider pre-computed)")
             choix.remove(cle)
             continue
-        if chemin_out.exists() and ecraser_ombrages:
-            chemin_out.unlink(missing_ok=True)
         x1, y1, x2, y2 = bbox_natif
         print(f"  {cle} -> provider pre-computed ({coverage_id}, {resolution_m}m)...",
               flush=True)
@@ -6820,6 +7015,7 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
                 "subset":f"{ax1}({x1},{x2})",
             })
             url = f"{wcs_url}?{params}&subset={ax2}({y1},{y2})"
+            chemin_part = _chemin_part(chemin_out)
             try:
                 ssl_ctx = getattr(PROVIDER, "_SSL_CTX", None)
                 req = _urlreq.Request(url, headers={"User-Agent":"lidar2map/1.0"})
@@ -6829,18 +7025,36 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
                 # RAM avant d'écrire → OOM. On copie chunk par chunk (RAM bornée
                 # à HTTP_CHUNK_SIZE), comme le téléchargement de dalles.
                 with _urlreq.urlopen(req, timeout=180, context=ssl_ctx) as r:
-                    with open(chemin_out, "wb") as _out:
+                    _headers = getattr(r, "headers", {})
+                    _ct = _headers.get("content-type", "").lower()
+                    if (not _ct.startswith("multipart")
+                            and ("xml" in _ct or "html" in _ct)):
+                        raise IOError(
+                            f"server error response ({_ct or 'no content-type'})")
+                    try:
+                        _content_length = int(
+                            _headers.get("content-length", 0))
+                    except (TypeError, ValueError):
+                        _content_length = 0
+                    _taille_recue = 0
+                    with open(chemin_part, "wb") as _out:
                         while True:
                             _chunk = r.read(HTTP_CHUNK_SIZE)
                             if not _chunk:
                                 break
                             _out.write(_chunk)
+                            _taille_recue += len(_chunk)
+                if (_content_length > 0
+                        and _taille_recue != _content_length):
+                    raise IOError(
+                        f"Transfert WCS tronqué : reçu {_taille_recue} octets, "
+                        f"attendu {_content_length} (Content-Length)")
                 # WCS 2.0 multipart/related → extraire le GeoTIFF binaire
-                _extraire_tiff_multipart(chemin_out)
-                with open(chemin_out, "rb") as _fv:
-                    if _fv.read(4) not in _TIFF_MAGICS:
-                        chemin_out.unlink(missing_ok=True)
-                        continue
+                _extraire_tiff_multipart(chemin_part)
+                if not _valider_tif_dalle(chemin_part):
+                    chemin_part.unlink(missing_ok=True)
+                    continue
+                chemin_part.replace(chemin_out)
                 _creer_fichier(chemin_out)
                 _taille = chemin_out.stat().st_size
                 print(f"  {nom_fichier} ({_taille/1e6:.1f} Mo,"
@@ -6848,8 +7062,11 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
                 choix.remove(cle)
                 success = True
                 break
+            except KeyboardInterrupt:
+                chemin_part.unlink(missing_ok=True)
+                raise
             except Exception:
-                chemin_out.unlink(missing_ok=True)
+                chemin_part.unlink(missing_ok=True)
                 continue
         if not success:
             print(f"  {cle}: provider pre-computed failed -> normal computation from DEM",
@@ -7364,7 +7581,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     numpy_insts = [i for i in insts if i[0] not in HORN_TYPES]
 
     # ── Construction VRT global (seamless, évite jointures gdaldem) ─────────
-    # VRT dans _tmp/ sous dossier_ville : tous les fichiers restent dans le projet.
+    # VRT dans un dossier de transaction unique finissant par .part sous
+    # dossier_ville : la synchronisation distante ignore tout le chantier.
     import shutil as _shutil_vrt
     _vrt_tmpdir = None
     # ── Merge des dalles via rasterio (remplace gdalbuildvrt + gdal_translate) ──
@@ -7374,7 +7592,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # immédiatement utilisable par numpy (les hillshades sont calculés ensuite
     # en numpy, cf. étape ombrage).
     if len(cogs) > 1:
-        _vrt_tmpdir = dossier_ville / "_tmp"
+        _vrt_tmpdir = _chemin_part(dossier_ville / "_tmp")
         _vrt_tmpdir.mkdir(parents=True, exist_ok=True)
         # VRT XML : vue logique sur les dalles, ~200 o/dalle, construction <1 s.
         # Évite la matérialisation d'une mosaïque physique multi-Go (le merge
@@ -7383,18 +7601,21 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # en aval reçoivent leurs fenêtres comme depuis un raster ordinaire.
         vrt_path      = _vrt_tmpdir / "_mnt_complet.vrt"
         filelist_path = _vrt_tmpdir / "_dalles.txt"
-        filelist_path.write_text(
-            "\n".join(str(c) for c in cogs), encoding="utf-8")
-        _creer_fichier(filelist_path)
-        print(f"  Building VRT ({len(cogs)} tiles)...", flush=True)
-        _t0_vrt = time.time()
         try:
+            filelist_path.write_text(
+                "\n".join(str(c) for c in cogs), encoding="utf-8")
+            _creer_fichier(filelist_path)
+            print(f"  Building VRT ({len(cogs)} tiles)...", flush=True)
+            _t0_vrt = time.time()
             _build_vrt_xml(cogs, vrt_path, RESOLUTION_M)
             _creer_fichier(vrt_path)
             print(f"  VRT OK  ({_hms(time.time()-_t0_vrt)}, "
                   f"{vrt_path.stat().st_size // 1024} Ko)", flush=True)
             sources = [vrt_path]
-        except Exception as e:
+        except BaseException as e:
+            _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
             # Hard-fail au lieu du fallback `sources = cogs` : sources[0] ne
             # garderait que la 1ère dalle, produisant un MBTiles vide.
             raise RuntimeError(
@@ -7421,6 +7642,30 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         horn_insts  = []
         numpy_insts = []
 
+    # Chaque sortie demandée est d'abord écrite dans un nom unique finissant
+    # par .part. Le final éventuellement présent reste lisible pendant tout le
+    # recalcul et n'est remplacé qu'après fermeture + validation.
+    _parts_ombrages_actifs = {}
+    _sorties_a_regenerer = set()
+
+    def _preparer_sortie_ombrage(chemin_final):
+        chemin_part = _chemin_part(chemin_final)
+        _parts_ombrages_actifs[chemin_part] = chemin_final
+        _sorties_a_regenerer.add(chemin_final)
+        return chemin_part
+
+    def _abandonner_sortie_ombrage(chemin_part):
+        chemin_final = _parts_ombrages_actifs.pop(chemin_part, None)
+        if chemin_part.exists():
+            chemin_part.unlink(missing_ok=True)
+            nom_affiche = chemin_final.name if chemin_final else chemin_part.name
+            print(f"  Partial file removed: {nom_affiche}")
+
+    def _publier_sortie_ombrage(chemin_part, chemin_final):
+        _publier_tif_atomique(chemin_part, chemin_final)
+        _parts_ombrages_actifs.pop(chemin_part, None)
+        _sorties_a_regenerer.discard(chemin_final)
+
     try:
         # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked_multi)
         # Traitement par fenêtres 2048×2048 px avec halo 1 px (Horn 3x3).
@@ -7429,25 +7674,26 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # deflate des dalles derrière le VRT, pas les kernels.
         if horn_insts:
             jobs_h = []
+            publications_h = []
             for typ_h, p_h, sfx_h in horn_insts:
                 nom_fichier = nom_base + "_" + sfx_h + ".tif"
                 chemin_out  = dossier_ville / nom_fichier
                 if chemin_out.exists() and not ecraser_ombrages:
                     print("  " + nom_fichier.ljust(56) + " -> already present")
                     continue
-                if chemin_out.exists():
-                    chemin_out.unlink()
+                chemin_part = _preparer_sortie_ombrage(chemin_out)
+                publications_h.append((chemin_part, chemin_out))
                 if typ_h == "multi":
                     jobs_h.append(("hillshade_multi",
                                    {"altitude_deg": float(p_h["elevation"])},
-                                   chemin_out))
+                                   chemin_part))
                 elif typ_h == "slope":
-                    jobs_h.append(("slope", {}, chemin_out))
+                    jobs_h.append(("slope", {}, chemin_part))
                 else:
                     jobs_h.append(("hillshade",
                                    {"azimuth_deg":  float(int(typ_h)),
                                     "altitude_deg": float(p_h["elevation"])},
-                                   chemin_out))
+                                   chemin_part))
 
             if jobs_h:
                 print(f"  Hillshades chunked: {len(jobs_h)} type(s),"
@@ -7459,7 +7705,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         dx=RESOLUTION_M, dy=RESOLUTION_M)
                     if not ok_h:
                         raise RuntimeError("chunked failed (rasterio absent ?)")
-                    for _, _, chemin_out in jobs_h:
+                    for chemin_part, chemin_out in publications_h:
+                        _publier_sortie_ombrage(chemin_part, chemin_out)
                         _creer_fichier(chemin_out)
                         print(f"  {chemin_out.name.ljust(56)}"
                               f"  {_hms(int(time.time() - t0_hill))}"
@@ -7469,10 +7716,8 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     # mais incomplets) → supprimer, sinon ils seraient pris
                     # pour des caches sains au prochain lancement (même
                     # logique que le SVF).
-                    for _, _, chemin_out in jobs_h:
-                        if chemin_out.exists():
-                            chemin_out.unlink()
-                            print(f"  Partial file removed: {chemin_out.name}")
+                    for chemin_part, _chemin_out in publications_h:
+                        _abandonner_sortie_ombrage(chemin_part)
                     if isinstance(e_hill, (KeyboardInterrupt, SystemExit)):
                         raise
                     print(f"\n  ERROR hillshades chunked: {e_hill}")
@@ -7515,10 +7760,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             if chemin_out.exists() and not ecraser_ombrages:
                 print("  " + nom_fichier.ljust(56) + " -> already present")
                 continue
-            # Si on écrase, supprimer l'ancien : évite que rasterio_write
-            # tombe sur un fichier figé (Windows file locking) ou demi-écrit.
-            if chemin_out.exists() and ecraser_ombrages:
-                chemin_out.unlink()
+            chemin_part = _preparer_sortie_ombrage(chemin_out)
 
             t0_numpy = time.time()
 
@@ -7536,7 +7778,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 try:
                     ok = _svf_chunked(
                         src_path     = Path(src_str),
-                        dst_path     = chemin_out,
+                        dst_path     = chemin_part,
                         max_dist_px  = max_dist_px,
                         n_directions = n_directions,
                         resolution   = RESOLUTION_M,
@@ -7589,7 +7831,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                                       * 255).astype(np.uint8)
                         else:
                             arr_u8 = (arr_stretched ** _gamma_i * 255).astype(np.uint8)
-                        _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
+                        _sauver_array_georef(arr_u8, Path(src_str), chemin_part)
                 except Exception as e_svf:
                     import traceback as _tb
                     print(f"  ERROR SVF: {e_svf}")
@@ -7603,9 +7845,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     # Sans suppression, le tuileur l'accepte et produit 0 tuile
                     # silencieusement. Sur le prochain lancement, le fichier
                     # "already present" est réutilisé → bug persistant.
-                    if chemin_out.exists():
-                        chemin_out.unlink()
-                        print(f"  Partial file removed: {chemin_out.name}")
+                    _abandonner_sortie_ombrage(chemin_part)
                     continue
 
             elif cle == "lrm":
@@ -7621,7 +7861,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 # ── Chemin 1 : traitement chunké (RAM bornée) ───────────────
                 _lrm_ok = _lrm_chunked(
                     src_path = Path(src_str),
-                    dst_path = chemin_out,
+                    dst_path = chemin_part,
                     sigma_px = sigma_px,
                 )
 
@@ -7643,7 +7883,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             clip_info = f"±{clip_val:.2f}m (σ fallback)"
                         arr_u8 = arr_f.astype(np.uint8)
                         arr_u8[nodata_mask] = 128
-                        _sauver_array_georef(arr_u8, Path(src_str), chemin_out)
+                        _sauver_array_georef(arr_u8, Path(src_str), chemin_part)
                         _lrm_ok = True
                         print(f"  LRM scipy (full memory): σ={sigma_px} px, {clip_info}")
                     except ImportError:
@@ -7670,7 +7910,9 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
 
                 # Slope temporaire (réutilisé si already present)
                 slope_rrim_path = dossier_ville / (nom_base + "_slope_ombrage.tif")
-                slope_tmp_path  = dossier_ville / (nom_fichier.replace(".tif","_slope_tmp.tif"))
+                slope_tmp_path  = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp")
+                )
                 _slope_src = None
                 try:
                     if slope_rrim_path.exists():
@@ -7694,15 +7936,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                     # ── Chemin 1 : composite chunked (RAM bornée) ───────────
                     try:
                         ok_rrim = _rrim_chunked(
-                            Path(src_str), _slope_src, chemin_out,
+                            Path(src_str), _slope_src, chemin_part,
                             sigma_px=sigma_rrim)
                     except Exception as e_rrim:
                         print(f"  ERROR composite RRIM: {e_rrim}")
                         # Fichier partiellement écrit → supprimer (sinon pris
                         # pour un cache sain au prochain lancement).
-                        if chemin_out.exists():
-                            chemin_out.unlink()
-                            print(f"  Partial file removed: {chemin_out.name}")
+                        _abandonner_sortie_ombrage(chemin_part)
                         continue
 
                     if not ok_rrim:
@@ -7750,7 +7990,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             r_chan[slope_arr == 0] = 0   # nodata du slope
 
                             rgb = np.stack([r_chan, gb_chan, gb_chan], axis=2)
-                            _sauver_array_georef(rgb, Path(src_str), chemin_out)
+                            _sauver_array_georef(rgb, Path(src_str), chemin_part)
                             print(f"  RRIM (full memory): {chemin_out.name}"
                                   f" — RGB 3 canaux")
                         except Exception as e_rrim:
@@ -7772,9 +8012,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 print(f"  VAT: composite SVF + openness + slope"
                       f" (radius {_vat_dist_px * RESOLUTION_M:.0f} m)"
                       f", may take 10-20 min...", flush=True)
-                _svf_t   = dossier_ville / nom_fichier.replace(".tif", "_svf_tmp.tif")
-                _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
-                _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
+                _svf_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_svf_tmp"))
+                _opos_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_opos_tmp"))
+                _slope_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp"))
                 try:
                     # SVF (conv=0) et openness positif (conv=2) en UN seul scan
                     # d'horizon (kernel fusionné) : ~43% plus rapide que deux
@@ -7788,15 +8031,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                         print("  VAT: components unavailable (numba required for"
                               " SVF/openness), shading skipped.", flush=True)
                         continue
-                    if not _vat_compose(_svf_t, _opos_t, _slope_t, chemin_out,
+                    if not _vat_compose(_svf_t, _opos_t, _slope_t, chemin_part,
                                         gamma=_vat_gamma):
-                        if chemin_out.exists():
-                            chemin_out.unlink()
+                        _abandonner_sortie_ombrage(chemin_part)
                         continue
                 except Exception as e_vat:
                     print(f"  ERROR composite VAT: {e_vat}")
-                    if chemin_out.exists():
-                        chemin_out.unlink()
+                    _abandonner_sortie_ombrage(chemin_part)
                     continue
                 finally:
                     for _t in (_svf_t, _opos_t, _slope_t):
@@ -7816,13 +8057,20 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                 print(f"  e4MSTP: composite MSTP + coloured relief + SVF"
                       f" (radius {_e4_dist_px * RESOLUTION_M:.0f} m)"
                       f", may take 15-30 min...", flush=True)
-                _svf_t   = dossier_ville / nom_fichier.replace(".tif", "_svf_tmp.tif")
-                _opos_t  = dossier_ville / nom_fichier.replace(".tif", "_opos_tmp.tif")
-                _oneg_t  = dossier_ville / nom_fichier.replace(".tif", "_oneg_tmp.tif")
-                _slope_t = dossier_ville / nom_fichier.replace(".tif", "_slope_tmp.tif")
-                _mstp_t  = dossier_ville / nom_fichier.replace(".tif", "_mstp_tmp.tif")
-                _slf_t   = dossier_ville / nom_fichier.replace(".tif", "_slf_tmp.tif")
-                _slp_t   = dossier_ville / nom_fichier.replace(".tif", "_slp_tmp.tif")
+                _svf_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_svf_tmp"))
+                _opos_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_opos_tmp"))
+                _oneg_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_oneg_tmp"))
+                _slope_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp"))
+                _mstp_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_mstp_tmp"))
+                _slf_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_slf_tmp"))
+                _slp_t = _chemin_part(
+                    dossier_ville / nom_fichier.replace(".tif", "_slp_tmp"))
                 _e4_tmps = (_svf_t, _opos_t, _oneg_t, _slope_t, _mstp_t, _slf_t, _slp_t)
                 try:
                     _ok = (
@@ -7840,29 +8088,39 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                               " required), shading skipped.", flush=True)
                         continue
                     if not _e4mstp_compose(_mstp_t, _svf_t, _opos_t, _oneg_t,
-                                           _slope_t, _slf_t, _slp_t, chemin_out,
+                                           _slope_t, _slf_t, _slp_t, chemin_part,
                                            gamma=_e4_gamma):
-                        if chemin_out.exists():
-                            chemin_out.unlink()
+                        _abandonner_sortie_ombrage(chemin_part)
                         continue
                 except Exception as e_e4:
                     print(f"  ERROR composite e4MSTP: {e_e4}")
-                    if chemin_out.exists():
-                        chemin_out.unlink()
+                    _abandonner_sortie_ombrage(chemin_part)
                     continue
                 finally:
                     for _t in _e4_tmps:
                         if _t.exists():
                             _t.unlink(missing_ok=True)
 
-            if chemin_out.exists():
-                _creer_fichier(chemin_out)
-                taille = chemin_out.stat().st_size / 1e6
-                elap_numpy = int(time.time() - t0_numpy)
-                print(f"  {nom_fichier.ljust(56)}  {_hms(elap_numpy)}  {taille:.0f} Mo")
+            if not chemin_part.exists():
+                print(f"  ERROR {nom_fichier}: no complete temporary output")
+                continue
+            try:
+                _publier_sortie_ombrage(chemin_part, chemin_out)
+            except Exception as e_publication:
+                print(f"  ERROR publishing {nom_fichier}: {e_publication}")
+                _abandonner_sortie_ombrage(chemin_part)
+                continue
+            _creer_fichier(chemin_out)
+            taille = chemin_out.stat().st_size / 1e6
+            elap_numpy = int(time.time() - t0_numpy)
+            print(f"  {nom_fichier.ljust(56)}  {_hms(elap_numpy)}  {taille:.0f} Mo")
 
     finally:
-        # Suppression du dossier _tmp/ projet (VRT, dalles.txt, numpy_source_tmp)
+        # Couvre aussi les ``continue`` précoces et Ctrl+C : seule la version
+        # temporaire de ce processus est supprimée, jamais l'ancien final.
+        for _chemin_part_actif in tuple(_parts_ombrages_actifs):
+            _abandonner_sortie_ombrage(_chemin_part_actif)
+        # Suppression du dossier transactionnel .part (VRT + dalles.txt).
         if _vrt_tmpdir and _vrt_tmpdir.exists():
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
 
@@ -7871,18 +8129,21 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     # l'étape MBTiles de ne tuiler QUE les ombrages demandés au lieu de tout le
     # dossier projet (sinon --tiles-overwrite re-tuile aussi les anciens).
     #
-    # R2#23 : NE PAS rendre des chemins THÉORIQUES. Un ombrage qui a planté est
-    # supprimé (except avalé plus haut, cf. 7126/7256) ; renvoyer son chemin quand
-    # même faisait tuiler un fichier INEXISTANT → « Done » + historique ok SANS
-    # résultat. On LÈVE si un ombrage DEMANDÉ manque (fail-fast, aligné sur
-    # l'invariant « couverture trouée » : erreur>0 et discover-None lèvent déjà).
-    # Le chunk n'est alors pas marqué fait, un re-run le rejoue. « already present »
-    # (7094) laisse le fichier en place → il EXISTE → pas de faux positif.
+    # R2#23 : ne pas rendre de chemins théoriques. On lève aussi quand une
+    # régénération demandée a échoué mais qu'un ancien final existe encore :
+    # l'ancien reste volontairement intact pour la sécurité atomique, sans pour
+    # autant masquer l'échec du recalcul.
     _cibles = [dossier_ville / f"{nom_base}_{sfx}.tif" for _t, _p, sfx in insts]
-    _manquants = [p.name for p in _cibles if not p.exists()]
+    _manquants = [
+        p.name for p in _cibles
+        if not p.exists() or p in _sorties_a_regenerer
+    ]
     if _manquants:
-        raise RuntimeError("shading(s) failed and were removed: "
-                           + ", ".join(_manquants) + " - rerun to complete")
+        raise RuntimeError(
+            "shading(s) failed"
+            " (previous complete output preserved when present): "
+            + ", ".join(_manquants) + " - rerun to complete"
+        )
     _prov = [dossier_ville / f"{nom_base}_{c}_ombrage.tif" for c in _cles_provider]
     return _cibles + [p for p in _prov if p.exists()]
 
@@ -8054,8 +8315,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # run interrompu laissait un partiel que _mbtiles_a_regenerer validait.
     mbtiles_part = _chemin_part(mbtiles)
     con = sqlite3.connect(str(mbtiles_part))
-    con.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
-    con.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec, cf. WMTS
+    # Une seule connexion écrit. Un journal MEMORY est plus cohérent qu'un WAL
+    # persistant : toute la base est déjà jetable sous .part jusqu'au replace,
+    # et aucun sidecar ne doit accompagner le fichier publié.
+    con.execute("PRAGMA journal_mode=MEMORY;")
+    con.execute("PRAGMA synchronous=OFF;")
     cur = con.cursor()
     cur.executescript("""
         CREATE TABLE metadata (name TEXT, value TEXT);
@@ -8278,6 +8542,26 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
                                 num_threads   = 0)  # 0 = tous les CPUs
+                # Les overviews font partie du fichier : les construire sur le
+                # .part avant publication. Une interruption ne peut alors pas
+                # altérer l'ancien cache final.
+                if zoom_max > zoom_min and overview_levels:
+                    print(f"  Overviews (gauss) {overview_levels}...", flush=True)
+                    t_addo = time.time()
+                    try:
+                        import rasterio as _rio_o
+                        from rasterio.enums import Resampling as _Res_o
+                        with _rio_o.open(str(warped_part), "r+") as ds_o:
+                            ds_o.build_overviews(overview_levels, _Res_o.gauss)
+                            ds_o.update_tags(
+                                ns="rio_overview", resampling="gauss"
+                            )
+                        print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
+                    except Exception as _e_ovw:
+                        warped_part.unlink(missing_ok=True)
+                        raise RuntimeError(
+                            f"overview construction failed: {_e_ovw}"
+                        ) from _e_ovw
                 if not _warped_3857_valide(warped_part):
                     warped_part.unlink(missing_ok=True)
                     raise RuntimeError("warpé invalide après écriture "
@@ -8307,18 +8591,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
             # ── 3. Overviews via rasterio (remplace gdaladdo — étape 6) ──────
             # Resampling.gauss reproduit -r gauss de gdaladdo.
-            if zoom_max > zoom_min and overview_levels:
-                print(f"  Overviews (gauss) {overview_levels}...", flush=True)
-                t_addo = time.time()
-                try:
-                    import rasterio as _rio_o
-                    from rasterio.enums import Resampling as _Res_o
-                    with _rio_o.open(str(warped), "r+") as ds_o:
-                        ds_o.build_overviews(overview_levels, _Res_o.gauss)
-                        ds_o.update_tags(ns="rio_overview", resampling="gauss")
-                    print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
-                except Exception as _e_ovw:
-                    print(f"  WARNING overviews: {_e_ovw}, native tiling")
+            # Overviews already built on ``warped_part`` before publication.
 
         # ── 3. Bbox warped (EPSG:3857) ──────────────────────────────────────
         # Priorité : -te calculé lors du warp courant (pas besoin de proj.db).
@@ -8532,7 +8805,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         except Exception: pass
         if _pool is not None:
             _pool.shutdown(wait=True)
-        mbtiles_part.unlink(missing_ok=True)
+        _nettoyer_sqlite_part(mbtiles_part)
         raise
 
     # R1#7 : métadonnée "format" décidée APRÈS coup. Base PNG → 'png'. Base JPEG
@@ -8545,14 +8818,14 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     try:
         cur.execute("INSERT INTO metadata VALUES ('format', ?)", (_fmt_final,))
         con.commit()
-    except Exception:
-        pass
-
-    # Journal DELETE avant fermeture : le header WAL persistant peut bloquer
-    # les lecteurs strictement lecture seule (fichier livré = SQLite classique).
-    try: con.execute("PRAGMA journal_mode=DELETE;")
-    except Exception: pass
-    con.close()
+        con.close()
+    except BaseException:
+        try: con.close()
+        except Exception: pass
+        if _pool is not None:
+            _pool.shutdown(wait=True)
+        _nettoyer_sqlite_part(mbtiles_part)
+        raise
     if _pool is not None:
         _pool.shutdown(wait=True)
 
@@ -8564,15 +8837,25 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     # re-run reprend sans re-warper.
     src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
     if nb_echecs_tr > 0 or (total_insere == 0 and src_size_mb > 1):
-        mbtiles_part.unlink(missing_ok=True)
+        _nettoyer_sqlite_part(mbtiles_part)
         _cause = (f"{nb_echecs_tr} row(s) failed" if nb_echecs_tr
                   else f"0 tiles from {src_size_mb:.0f} MB source")
         print(f"\n  ✗ MBTiles not finalized: {_cause}. "
               f"Rerun to complete (warp cache kept).")
         return None
 
-    # Publication atomique après le close (Windows refuse de renommer un
-    # fichier encore ouvert).
+    # Réouvrir en lecture seule après le close : valide le schéma, le compte
+    # exact et l'absence de dépendance à un journal annexe avant publication.
+    try:
+        _valider_sqlite_part(
+            mbtiles_part, {"metadata": None, "tiles": total_insere}
+        )
+    except BaseException:
+        _nettoyer_sqlite_part(mbtiles_part)
+        raise
+
+    # Publication atomique après le close (Windows refuse de renommer un handle
+    # ouvert et l'ancien livrable doit rester intact jusqu'ici).
     mbtiles_part.replace(mbtiles)
     elapsed = int(time.time() - t0)
     taille_mb = mbtiles.stat().st_size / 1e6 if mbtiles.exists() else 0
@@ -9117,10 +9400,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     _meta_fmt    = "jpeg" if _convert_png else fmt_ext
 
     con = sqlite3.connect(str(chemin_part))
-    con.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
-    # synchronous=OFF sans risque : la cible est un .part jeté sur échec (au
-    # pire un crash OS laisse un .part corrompu, purgé au run suivant). Le
-    # fichier LIVRÉ repasse en journal DELETE au finally avant publication.
+    # Une seule connexion insère les résultats des workers. Le journal reste en
+    # mémoire : la base entière est un .part jetable et aucun -wal/-shm ne doit
+    # être nécessaire au livrable final.
+    con.execute("PRAGMA journal_mode=MEMORY;")
+    # synchronous=OFF sans risque : la cible est un .part jeté sur échec.
     con.execute("PRAGMA synchronous=OFF;")
     cur = con.cursor()
     cur.executescript("""
@@ -9264,12 +9548,11 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                 # tuile. Un .part de nom fixe serait alors écrit par les deux
                 # (l'un tronque pendant que l'autre rename = corruption
                 # persistante, exactement ce que l'atomique doit empêcher).
-                _cache_tmp = _cache_file.with_suffix(
-                    _cache_file.suffix + f".{os.getpid()}.part")
+                _cache_tmp = _chemin_part(_cache_file)
                 try:
                     _cache_tmp.write_bytes(data)
                     os.replace(_cache_tmp, _cache_file)
-                except Exception:
+                except BaseException:
                     _cache_tmp.unlink(missing_ok=True)
                     raise
                 # NB : pas de _creer_fichier ici. Le cache WMTS est PERMANENT
@@ -9406,18 +9689,17 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                 "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
             con.commit()
     finally:
-        # Repasser en journal DELETE avant fermeture : le mode WAL persiste
-        # dans le header du fichier, et un lecteur strictement lecture seule
-        # (carte SD verrouillée) peut refuser d'ouvrir un SQLite en WAL.
-        # Fichier livré = SQLite classique.
-        try: con.execute("PRAGMA journal_mode=DELETE;")
-        except Exception: pass
+        # sys.exc_info() reste renseigné pendant un finally traversé par une
+        # exception : après fermeture on peut alors jeter tout le chantier sans
+        # masquer KeyboardInterrupt/MemoryError/l'erreur d'origine.
+        _wmts_exception_active = sys.exc_info()[0] is not None
         # Toujours fermer la connexion, même sur exception non capturée
         # (KeyboardInterrupt, MemoryError, OSError disque plein…).
-        # Sans ça la WAL reste ouverte, le .mbtiles-wal/-shm traîne.
         try: con.close()
         except Exception: pass
         _wmts_close_all_conns()   # libérer les connexions keep-alive du batch
+        if _wmts_exception_active:
+            _nettoyer_sqlite_part(chemin_part)
 
     # Garde-fou couverture (fin de scan) : AUCUNE tuile dans la couche → bbox
     # hors zone / inversée. R2#17 : critère ok==0 (et non ok*50<absentes) pour ne
@@ -9434,8 +9716,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # .part removed: un fichier vide-presque ferait croire à un succès.
         # Si l'utilisateur veut analyser le partiel, il rejouera et verra les
         # logs.
-        try: chemin_part.unlink(missing_ok=True)
-        except Exception: pass
+        _nettoyer_sqlite_part(chemin_part)
         if abort_hors_couv:
             # Ligne neutre et factuelle : en chunk de grille la boucle de split
             # ajoute « skipped » (pas d'alarme « ✗ ABANDON ... bbox inversé »
@@ -9453,7 +9734,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
         # complet.
         elapsed = int(time.time() - t0)
         taille_mo = chemin_part.stat().st_size / 1e6 if chemin_part.exists() else 0.0
-        chemin_part.unlink(missing_ok=True)
+        _nettoyer_sqlite_part(chemin_part)
         print(f"\n  Interrupted - {ok} tiles written before stop  "
               f"({taille_mo:.0f} MB, partial file removed; cached tiles kept)")
         raise KeyboardInterrupt("MBTiles WMTS interrompu par utilisateur")
@@ -9464,11 +9745,21 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     # réparer. Les tuiles réussies sont dans le cache disque : le re-run ne
     # retélécharge que les manquantes.
     if erreurs > 0:
-        chemin_part.unlink(missing_ok=True)
+        _nettoyer_sqlite_part(chemin_part)
         print(f"\n  ✗ {erreurs} download error(s) - MBTiles not finalized "
               f"({ok} tiles cached; rerun to complete)")
         raise RuntimeError(f"WMTS : {erreurs} erreur(s) de téléchargement, "
                            f"MBTiles non finalisé (relancer pour compléter)")
+
+    # Validation après fermeture : schéma, nombre exact de tuiles, aucun
+    # sidecar requis. Une erreur conserve l'ancien final.
+    try:
+        _valider_sqlite_part(
+            chemin_part, {"metadata": None, "tiles": ok}
+        )
+    except BaseException:
+        _nettoyer_sqlite_part(chemin_part)
+        raise
 
     # Publication atomique : rename après le close (fait dans le finally ;
     # Windows refuse de renommer un fichier encore ouvert).
@@ -9910,8 +10201,8 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
         t0 = time.time()
 
         con_db = sqlite3.connect(str(sqlitedb_part))
-        con_db.execute("PRAGMA journal_mode=WAL;")   # écritures concurrentes sans lock global
-        con_db.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec, cf. WMTS
+        con_db.execute("PRAGMA journal_mode=MEMORY;")
+        con_db.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec
         con_db.executescript("""
             CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
             CREATE TABLE android_metadata (locale TEXT);
@@ -9955,17 +10246,17 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
             # encore ouvert lève PermissionError et masquerait l'erreur d'origine.
             try: con_db.close()
             except Exception: pass
-            sqlitedb_part.unlink(missing_ok=True)
+            _nettoyer_sqlite_part(sqlitedb_part)
             return None
 
         elapsed   = int(time.time() - t0)
-        # Journal DELETE avant fermeture (header WAL persistant vs lecteurs
-        # lecture seule), puis fermer avant rename (Windows refuse de renommer
-        # un fichier ouvert) ; le close du finally devient un no-op idempotent.
-        try: con_db.execute("PRAGMA journal_mode=DELETE;")
-        except Exception: pass
+        # Fermer puis rouvrir en lecture seule pour valider le staging complet.
         try: con_db.close()
         except Exception: pass
+        _valider_sqlite_part(
+            sqlitedb_part,
+            {"tiles": total, "android_metadata": 1, "info": 1},
+        )
         sqlitedb_part.replace(sqlitedb)
         taille_mo = sqlitedb.stat().st_size / 1e6
         print(f"\n  {sqlitedb.name} : {done:,} tiles  ({taille_mo:.0f} MB)"
@@ -9978,6 +10269,9 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
         if con_db is not None:
             try: con_db.close()
             except Exception: pass
+        # Sur exception/interruption ou retour d'échec, seul le staging existe.
+        # Après succès replace() l'a déplacé, donc ce nettoyage est un no-op.
+        _nettoyer_sqlite_part(sqlitedb_part)
 
 
 def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_max):
@@ -10269,7 +10563,7 @@ def _sig_sidecar_stale(chemin, sig):
 def _sig_sidecar_ecrire(chemin, sig):
     """Écrit la signature de config à côté du livrable (best-effort)."""
     try:
-        Path(str(chemin) + ".sig").write_text(sig, encoding="utf-8")
+        _ecrire_texte_atomique(Path(str(chemin) + ".sig"), sig)
     except OSError:
         pass
 
@@ -10322,11 +10616,8 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         _nettoyer_osmosis_temp_orphelins(verbose=True)
 
     lon_min, lat_min, lon_max, lat_max = bbox_wgs84
-    chemin_map     = dossier_ville / f"{nom_zone}.map"
-    chemin_map_tmp = dossier_ville / f"{nom_zone}.map.tmp"
-
-    # Nettoyer un éventuel .map.tmp laissé par une exécution précédente interrompue
-    chemin_map_tmp.unlink(missing_ok=True)
+    chemin_map      = dossier_ville / f"{nom_zone}.map"
+    chemin_map_part = _chemin_part(chemin_map)
 
     # Vérifier la présence des GeoJSON selon les formats DEMANDÉS, pas
     # selon le premier qu'on trouve. Si on demande "gz geojson" et qu'on
@@ -10343,20 +10634,15 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     # (sortie fausse en silence). Sidecar absent = migration douce (pas de regen).
     _sig_osm  = _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)
     _sig_perime = chemin_map.exists() and _sig_sidecar_stale(chemin_map, _sig_osm)
+    _regen_geojson = bool(ecraser_tuiles or _sig_perime)
 
     if chemin_map.exists() and ecraser_tuiles:
-        # Pas d'unlink du .map ici : chemin_map_tmp.replace(chemin_map) écrase
+        # Pas d'unlink du .map ici : chemin_map_part.replace(chemin_map) écrase
         # atomiquement en fin de génération (R2#49). Le supprimer maintenant
-        # perdrait le .map précédent si osmosis échoue (rc != 0 → .tmp jeté).
+        # perdrait le .map précédent si osmosis échoue (le .part est jeté).
         print(f"  Carte OSM : overwrite {chemin_map.name}")
-        # Supprimer les geojson pour forcer leur recalcul (artefacts secondaires
-        # régénérables ; ils ont leur propre écriture atomique .tmp+rename).
-        for _gf in [chemin_geojson_gz, chemin_geojson_raw]:
-            if _gf.exists(): _gf.unlink()
     elif _sig_perime:
         print(f"  {chemin_map.name} → OSM config changed (bbox/tags/PBF), regenerating")
-        for _gf in [chemin_geojson_gz, chemin_geojson_raw]:
-            if _gf.exists(): _gf.unlink()
     elif chemin_map.exists():   # not ecraser, signature OK ou absente (migration)
         if not Path(str(chemin_map) + ".sig").exists():
             _sig_sidecar_ecrire(chemin_map, _sig_osm)   # poser la sig sur un vieux .map
@@ -10383,7 +10669,8 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         print("  WARNING: mapwriter plugin missing - .map skipped.")
         if export_geojson:
             return generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                                       osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
+                                       osm_tags=osm_tags,
+                                       ecraser_tuiles=_regen_geojson,
                                        formats=geojson_formats)
         return None
 
@@ -10425,6 +10712,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     print(f"  Tags : {' '.join(osm_tags)}", flush=True)
 
     chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
+    chemin_pbf_part = _chemin_part(chemin_pbf_filtre)
 
     # R2#27 : une source .osm est du XML — osmosis exige --read-xml. Avant, tout
     # passait par --read-pbf, qui plantait au parsing sur un .osm (accepté en
@@ -10444,7 +10732,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         "--used-node",
         "--tee", "2",
         "--mapfile-writer",
-        f"file={chemin_map_tmp}",
+        f"file={chemin_map_part}",
         "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
         "tag-values=true", "polygon-clipping=true",
         "way-clipping=true", "label-position=true",
@@ -10452,7 +10740,7 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     ]
     if _tagmapping:
         cmd.append(f"tag-conf-file={_tagmapping}")
-    cmd += ["--write-pbf", f"file={chemin_pbf_filtre}"]
+    cmd += ["--write-pbf", f"file={chemin_pbf_part}"]
 
     # Injecter JAVA_HOME dans l'env avant de lancer
     _shell = WINDOWS and str(_osmosis_exe).endswith(".bat")
@@ -10462,13 +10750,29 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             for a in cmd
         )
     _log_req(cmd)
-    rc, stderr_diag = _run_osmosis_streaming(
-        cmd_str if _shell else cmd,
-        shell=_shell, env=_env_osm,
-    )
+    try:
+        rc, stderr_diag = _run_osmosis_streaming(
+            cmd_str if _shell else cmd,
+            shell=_shell, env=_env_osm,
+        )
+    except BaseException:
+        chemin_map_part.unlink(missing_ok=True)
+        chemin_pbf_part.unlink(missing_ok=True)
+        raise
 
-    if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
-        chemin_map_tmp.replace(chemin_map)
+    sorties_valides = (
+        rc == 0
+        and chemin_map_part.exists()
+        and chemin_map_part.stat().st_size > 0
+        and chemin_pbf_part.exists()
+        and chemin_pbf_part.stat().st_size > 0
+    )
+    if sorties_valides:
+        # Le PBF filtré est un cache secondaire ; publier le .map principal en
+        # dernier pour que sa présence atteste que les deux sorties osmosis ont
+        # été produites et validées.
+        chemin_pbf_part.replace(chemin_pbf_filtre)
+        chemin_map_part.replace(chemin_map)
         _sig_sidecar_ecrire(chemin_map, _sig_osm)   # R2#30 : mémoriser la config
         taille_b = chemin_map.stat().st_size
         if taille_b < 1_000_000:
@@ -10478,10 +10782,13 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         if export_geojson:
             pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
             generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
-                                osm_tags=osm_tags, formats=geojson_formats)
+                                osm_tags=osm_tags,
+                                ecraser_tuiles=_regen_geojson,
+                                formats=geojson_formats)
         return chemin_map
     else:
-        chemin_map_tmp.unlink(missing_ok=True)
+        chemin_map_part.unlink(missing_ok=True)
+        chemin_pbf_part.unlink(missing_ok=True)
         print(f"  ERROR osmosis mapfile-writer (code {rc})")
         if stderr_diag:
             # stderr_diag contient les 500 dernières lignes (toutes confondues).
@@ -11536,13 +11843,14 @@ Examples:
                 noms_zone = {d.name for d in toutes_dalles_dispo
                              if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
-                    dalles_zone_txt.write_text(
-                        _dalles_zone_entete(bbox) + "\n"
-                        + "\n".join(sorted(noms_zone)), encoding="utf-8")
-                    _creer_fichier(dalles_zone_txt)
+                    _ecrire_dalles_zone(
+                        dalles_zone_txt, bbox, noms_zone
+                    )
                     print(f"  {dalles_zone_txt.name} rebuilt: {len(noms_zone)} tile(s) in cache")
                 else:
-                    dalles_zone_txt.unlink(missing_ok=True)
+                    # L'ancien fichier porte un en-tête différent et sera donc
+                    # ignoré, mais on ne le détruit pas tant qu'aucune nouvelle
+                    # liste complète n'a pu être publiée.
                     print("  No tile in cache for this zone - use --download")
                     noms_zone = set()
             else:
@@ -11561,10 +11869,9 @@ Examples:
                 noms_zone = {d.name for d in toutes_dalles_dispo
                              if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
                 if noms_zone:
-                    dalles_zone_txt.write_text(
-                        _dalles_zone_entete(bbox) + "\n"
-                        + "\n".join(sorted(noms_zone)), encoding="utf-8")
-                    _creer_fichier(dalles_zone_txt)
+                    _ecrire_dalles_zone(
+                        dalles_zone_txt, bbox, noms_zone
+                    )
                     print(f"  dalles_zone.txt rebuilt: {len(noms_zone)} tile(s) found on disk")
                 else:
                     print(f"  ERROR: no tile of the zone found in {dossier_dalles}")
@@ -11615,13 +11922,20 @@ Examples:
                 print(f"  {len(tifs_a_compresser)} file(s) to compress:")
                 for chemin_out in sorted(tifs_a_compresser):
                     taille_brut = chemin_out.stat().st_size / 1e6
-                    chemin_tmp  = chemin_out.with_suffix(".tmp.tif")
-                    chemin_out.replace(chemin_tmp)
+                    chemin_part = _chemin_part(chemin_out)
                     t0_cmp = time.time()
                     try:
-                        with _rio_cmp.open(str(chemin_tmp)) as src:
+                        # L'ancien final reste la source lisible jusqu'au
+                        # remplacement atomique de la copie recompressée.
+                        with _rio_cmp.open(str(chemin_out)) as src:
                             profile = src.profile.copy()
+                            for _k_cmp in (
+                                "driver", "BIGTIFF", "bigtiff",
+                                "NODATA", "nodata",
+                            ):
+                                profile.pop(_k_cmp, None)
                             profile.update({
+                                "driver":     "GTiff",
                                 "compress":   "deflate",
                                 "predictor":  2,
                                 "tiled":      True,
@@ -11629,7 +11943,9 @@ Examples:
                                 "blockysize": 512,
                                 "BIGTIFF":    "IF_SAFER",
                             })
-                            with _rio_cmp.open(str(chemin_out), "w", **profile) as dst:
+                            if src.nodata is not None:
+                                profile["nodata"] = src.nodata
+                            with _rio_cmp.open(str(chemin_part), "w", **profile) as dst:
                                 # Copier bande par bande avec windowed reads
                                 # pour borner la RAM (un ombrage 50000×50000 px
                                 # uint8 = 2.5 Go en mémoire — trop gros).
@@ -11637,17 +11953,19 @@ Examples:
                                     for b in range(1, src.count + 1):
                                         dst.write(src.read(b, window=window),
                                                   b, window=window)
+                        _publier_tif_atomique(chemin_part, chemin_out)
                         elap = time.time() - t0_cmp
-                        chemin_tmp.unlink(missing_ok=True)
                         taille_cmp = chemin_out.stat().st_size / 1e6
                         gain = int((1 - taille_cmp / taille_brut) * 100)
                         print("  " + chemin_out.name.ljust(56) +
                               str(round(taille_brut)).rjust(6) + " MB -> " +
                               str(round(taille_cmp)).rjust(5) + " MB  (-" +
                               str(gain) + "%)  " + _hms(elap))
-                    except Exception as _e_cmp:
+                    except BaseException as _e_cmp:
+                        chemin_part.unlink(missing_ok=True)
+                        if isinstance(_e_cmp, (KeyboardInterrupt, SystemExit)):
+                            raise
                         print(f"  ERROR compressing {chemin_out.name}: {_e_cmp}")
-                        chemin_tmp.replace(chemin_out)
 
     choix_ombrages, spec_insts = _resoudre_choix_ombrages(args)
     if not dalles_ombrages:
@@ -12077,6 +12395,17 @@ def _dalles_zone_entete(bbox):
             f"# provider:{PROVIDER.CODE}")
 
 
+def _ecrire_dalles_zone(path, bbox, noms):
+    """Publie atomiquement la liste complète des dalles d'une zone."""
+    contenu = (
+        _dalles_zone_entete(bbox)
+        + "\n"
+        + "\n".join(sorted(set(noms)))
+    )
+    _ecrire_texte_atomique(path, contenu)
+    _creer_fichier(Path(path))
+
+
 def _dalles_zone_hdr_ok(lignes, bbox):
     """Valide l'en-tête de dalles_zone.txt : bbox (ligne 0) et, si présente,
     la ligne provider (les anciens fichiers sans elle restent acceptés)."""
@@ -12222,10 +12551,9 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
                         and chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE]
     if noms_persistance:
         dalles_zone_txt = dossier_ville / "dalles_zone.txt"
-        dalles_zone_txt.write_text(
-            _dalles_zone_entete(bbox) + "\n"
-            + "\n".join(sorted(set(noms_persistance))), encoding="utf-8")
-        _creer_fichier(dalles_zone_txt)
+        _ecrire_dalles_zone(
+            dalles_zone_txt, bbox, noms_persistance
+        )
 
     # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
     # pour permettre --nettoyage de les supprimer en fin de chunk. Le
@@ -13291,10 +13619,17 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
         con_z.close()
 
         if n_tuiles == 0:
-            chemin_z_part.unlink(missing_ok=True)
+            _nettoyer_sqlite_part(chemin_z_part)
             print(f"  Sub-zone [{i_lat},{i_lon}]: empty - skipped")
             continue
 
+        try:
+            _valider_sqlite_part(
+                chemin_z_part, {"metadata": None, "tiles": n_tuiles}
+            )
+        except BaseException:
+            _nettoyer_sqlite_part(chemin_z_part)
+            raise
         chemin_z_part.replace(chemin_z)
         print(f"  Sub-zone [{i_lat},{i_lon}]: {n_tuiles:,} tiles → {chemin_z.name}")
         sorties.append(chemin_z)
@@ -14095,12 +14430,11 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     sortie    = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
     sortie_gz = Path(str(sortie) + ".gz")
 
-    # Écrasement explicite : supprimer toutes les sorties existantes pour
-    # repartir clean.
+    # Écrasement explicite : les sorties existantes restent en place jusqu'à
+    # publication de leurs remplaçantes complètes.
     if ecraser_telechargement:
         for p in (sortie_gz, sortie):
             if p.exists():
-                p.unlink()
                 print(f"  {p.name} -> overwrite")
 
     # Vérification par format demandé : on ne skip que si TOUS sont présents.
@@ -14163,8 +14497,8 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
     # ── Écriture streamée : on ouvre le .gz et on écrit les features au fil
     # de la pagination, sans jamais accumuler en RAM. Sur un dept-scale (>1M
     # features), la version précédente faisait peser plusieurs Go en RAM.
-    sortie_gz_tmp = sortie_gz.with_suffix(sortie_gz.suffix + ".tmp")
-    sortie_gz_tmp.parent.mkdir(parents=True, exist_ok=True)
+    sortie_gz_part = _chemin_part(sortie_gz)
+    sortie_gz_part.parent.mkdir(parents=True, exist_ok=True)
     crs_obj = {"type": "name",
                "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
     header = (
@@ -14176,7 +14510,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
 
     out_fh = None
     try:
-        out_fh = gzip.open(sortie_gz_tmp, "wb", compresslevel=6)
+        out_fh = gzip.open(sortie_gz_part, "wb", compresslevel=6)
         out_fh.write(header)
         first_feat = True
 
@@ -14226,7 +14560,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                 print(f"  ✗ WFS {typename}: page failed after {n_features} "
                       f"features - output discarded (rerun to retry)")
                 out_fh.close(); out_fh = None
-                sortie_gz_tmp.unlink(missing_ok=True)
+                sortie_gz_part.unlink(missing_ok=True)
                 return None
 
             page = data.get("features", [])
@@ -14281,7 +14615,7 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
             print(f"  ✗ WFS {typename}: {n_features}/{total_attendu} features "
                   f"- truncated output discarded (rerun to retry)")
             out_fh.close(); out_fh = None
-            sortie_gz_tmp.unlink(missing_ok=True)
+            sortie_gz_part.unlink(missing_ok=True)
             return None
 
         out_fh.write(b"]}")
@@ -14292,11 +14626,15 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
         if out_fh is not None:
             try: out_fh.close()
             except Exception: pass
-        sortie_gz_tmp.unlink(missing_ok=True)
+        sortie_gz_part.unlink(missing_ok=True)
         raise
 
-    # Promotion atomique du .gz
-    sortie_gz_tmp.replace(sortie_gz)
+    # Le gzip sert aussi de staging quand seul le GeoJSON brut est demandé :
+    # dans ce cas il ne doit jamais apparaître sous un nom final intermédiaire.
+    source_gz = sortie_gz_part
+    if ecrire_gz:
+        sortie_gz_part.replace(sortie_gz)
+        source_gz = sortie_gz
 
     chemin_principal = None
     if ecrire_gz:
@@ -14306,14 +14644,18 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
         chemin_principal = sortie_gz
     if ecrire_geojson:
         # Décompresser en streaming vers le .geojson raw
-        _gunzip_vers_fichier(sortie_gz, sortie)
+        try:
+            _gunzip_vers_fichier(source_gz, sortie)
+        except BaseException:
+            if not ecrire_gz:
+                sortie_gz_part.unlink(missing_ok=True)
+            raise
         taille_ko = sortie.stat().st_size // 1024
         print(f"  {sortie.name} : {n_features} features  ({taille_ko} Ko)")
         if chemin_principal is None:
             chemin_principal = sortie
-    if not ecrire_gz and sortie_gz.exists():
-        # On a écrit le .gz comme intermédiaire — utilisateur ne le voulait pas
-        sortie_gz.unlink()
+    if not ecrire_gz:
+        sortie_gz_part.unlink(missing_ok=True)
     return chemin_principal
 
 
@@ -14641,7 +14983,7 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
     # ferait perdre le livrable précédent si ce run échoue (le .part est jeté).
     out_part = _chemin_part(sqlitedb_out)
     con = sqlite3.connect(str(out_part))
-    con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA journal_mode=MEMORY;")
     con.execute("PRAGMA synchronous=OFF;")   # .part jeté sur échec, cf. WMTS
     con.executescript("""
         CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
@@ -14789,14 +15131,20 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         total += zt
         if zt:
             print(f"    z{z}: {zt} tiles", flush=True)
-    con.execute("PRAGMA journal_mode=DELETE;")   # fichier expedie = pas de -wal
     con.commit()
     con.close()
 
     if total == 0:
-        out_part.unlink(missing_ok=True)
+        _nettoyer_sqlite_part(out_part)
         print("  transparent-raster: no non-empty tile")
         return None
+    try:
+        _valider_sqlite_part(
+            out_part, {"tiles": total, "android_metadata": 1, "info": 1}
+        )
+    except BaseException:
+        _nettoyer_sqlite_part(out_part)
+        raise
     out_part.replace(sqlitedb_out)
     print(f"  {sqlitedb_out.name} : {total} tiles  "
           f"({sqlitedb_out.stat().st_size / 1024:.0f} Ko)  {time.time() - _t0:.1f}s")
@@ -15031,8 +15379,12 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     # OSM XML impose strictement l'ordre nodes → ways → relations (osmosis
     # plante sinon). On écrit donc nodes et ways dans des fichiers séparés
     # puis on les concatène dans l'ordre.
-    nodes_tmp = osm_xml_path.parent / (osm_xml_path.name + ".nodes.tmp")
-    ways_tmp  = osm_xml_path.parent / (osm_xml_path.name + ".ways.tmp")
+    nodes_tmp = _chemin_part(
+        osm_xml_path.parent / (osm_xml_path.name + ".nodes")
+    )
+    ways_tmp = _chemin_part(
+        osm_xml_path.parent / (osm_xml_path.name + ".ways")
+    )
     nodes_tmp.parent.mkdir(parents=True, exist_ok=True)
 
     out_nodes = None
@@ -15138,8 +15490,9 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
     # ── Composition du XML final : header + bounds + nodes + ways + footer ───
     # Format reproduit fidèlement ElementTree.write(xml_declaration=True) :
     # prologue avec apostrophes simples, encoding utf-8 minuscule.
+    osm_xml_part = _chemin_part(osm_xml_path)
     try:
-        with open(osm_xml_path, "w", encoding="utf-8") as out:
+        with open(osm_xml_part, "w", encoding="utf-8") as out:
             out.write("<?xml version='1.0' encoding='utf-8'?>\n")
             out.write('<osm version="0.6" generator="lidar2map">')
             if state["bounds_valid"]:
@@ -15159,6 +15512,17 @@ def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
                             break
                         out.write(chunk)
             out.write('</osm>')
+        if osm_xml_part.stat().st_size <= 0:
+            raise IOError("OSM XML staging file is empty")
+        osm_xml_part.replace(osm_xml_path)
+    except KeyboardInterrupt:
+        osm_xml_part.unlink(missing_ok=True)
+        raise
+    except Exception:
+        print("\n  ERROR publishing OSM XML:")
+        _tb.print_exc()
+        osm_xml_part.unlink(missing_ok=True)
+        return False
     finally:
         nodes_tmp.unlink(missing_ok=True)
         ways_tmp.unlink(missing_ok=True)
@@ -15203,10 +15567,9 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     if chemin_map.exists() and not ecraser:
         if chemin_map.stat().st_size == 0:
             print("  IGN .map exists but empty - forced regeneration.")
-            chemin_map.unlink()
         elif _sig_sidecar_stale(chemin_map, _sig_ign):
             print(f"  {chemin_map.name} → IGN config changed (source/bbox/eps), regenerating")
-            # Pas d'unlink : .tmp+replace écrase atomiquement (R2#49).
+            # Pas d'unlink : .part+replace écrase atomiquement (R2#49).
         else:
             if not Path(str(chemin_map) + ".sig").exists():
                 _sig_sidecar_ecrire(chemin_map, _sig_ign)   # migration douce
@@ -15214,9 +15577,9 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
             return chemin_map
 
     if chemin_map.exists() and ecraser:
-        # Pas d'unlink ici : chemin_map_tmp.replace(chemin_map) écrase
+        # Pas d'unlink ici : chemin_map_part.replace(chemin_map) écrase
         # atomiquement en fin de génération (R2#49). Le supprimer maintenant
-        # perdrait le .map précédent si osmosis échoue (rc != 0 → .tmp jeté).
+        # perdrait le .map précédent si osmosis échoue (le .part est jeté).
         print(f"  Carte IGN .map : overwrite {chemin_map.name}")
 
     # ── Étape 1 : GeoJSON → OSM XML ──────────────────────────────────────────
@@ -15239,17 +15602,16 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
     t0 = time.time()
     print(f"  osmosis → {chemin_map.name}...", flush=True)
 
-    # Écriture via .map.tmp + rename, comme generer_carte_osm : un .map présent
+    # Écriture via .map.part + rename, comme generer_carte_osm : un .map présent
     # est toujours complet (un kill mi-écriture laissait un binaire tronqué
     # repris tel quel par le check "already present" au run suivant).
-    chemin_map_tmp = chemin_map.parent / (chemin_map.name + ".tmp")
-    chemin_map_tmp.unlink(missing_ok=True)
+    chemin_map_part = _chemin_part(chemin_map)
 
     cmd = [
         _osmosis_exe,
         "--read-xml", f"file={chemin_osm_xml}",
         "--mapfile-writer",
-        f"file={chemin_map_tmp}",
+        f"file={chemin_map_part}",
         f"bbox={lat_min:.6f},{lon_min:.6f},{lat_max:.6f},{lon_max:.6f}",
         "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
         "tag-values=true", "polygon-clipping=true",
@@ -15264,16 +15626,20 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
             for a in cmd
         )
     _log_req(cmd)
-    rc, stderr_diag = _run_osmosis_streaming(
-        cmd_str if _shell else cmd,
-        shell=_shell, env=_env_map,
-    )
+    try:
+        rc, stderr_diag = _run_osmosis_streaming(
+            cmd_str if _shell else cmd,
+            shell=_shell, env=_env_map,
+        )
+    except BaseException:
+        chemin_map_part.unlink(missing_ok=True)
+        raise
 
     # #10 : exiger rc==0 (comme generer_carte_osm). Un mapwriter en échec
-    # pouvait laisser un .map.tmp non vide qu'on publiait sans vérifier le code
+    # pouvait laisser un .map.part non vide qu'on publiait sans vérifier le code
     # retour d'osmosis.
-    if rc == 0 and chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size > 0:
-        chemin_map_tmp.replace(chemin_map)
+    if rc == 0 and chemin_map_part.exists() and chemin_map_part.stat().st_size > 0:
+        chemin_map_part.replace(chemin_map)
         _sig_sidecar_ecrire(chemin_map, _sig_ign)   # R2#30 : mémoriser la config
         chemin_osm_xml.unlink(missing_ok=True)  # succès seulement
         taille_b = chemin_map.stat().st_size
@@ -15282,13 +15648,13 @@ def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
         else:
             print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
         return chemin_map
-    elif chemin_map_tmp.exists() and chemin_map_tmp.stat().st_size == 0:
-        chemin_map_tmp.unlink(missing_ok=True)
+    elif chemin_map_part.exists() and chemin_map_part.stat().st_size == 0:
+        chemin_map_part.unlink(missing_ok=True)
         print(f"  ⚠ {chemin_map.name} created but empty - no feature recognised by mapwriter.")
         print(f"  {chemin_osm_xml.name} kept for diagnostics.")
         return None
     else:
-        chemin_map_tmp.unlink(missing_ok=True)
+        chemin_map_part.unlink(missing_ok=True)
         print(f"  ERROR osmosis mapfile-writer IGN (code {rc})")
         if stderr_diag:
             print(f"  {stderr_diag.strip()[:2000]}")
@@ -15429,9 +15795,12 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
     gpkg_path = cache_dir / f"{nom_ressource}.gpkg"
 
     if ecraser and gpkg_path.exists():
-        gpkg_path.unlink()
+        # Conserver l'ancien cache jusqu'à validation complète du remplaçant.
+        # Le supprimer ici ferait perdre un GPKG sain au moindre échec réseau,
+        # d'extraction ou de validation SQLite.
         print(f"  GPKG cache: {gpkg_path.name} -> overwrite (re-download)", flush=True)
-    if gpkg_path.exists() and gpkg_path.stat().st_size > 10_000_000:
+    if (not ecraser and gpkg_path.exists()
+            and gpkg_path.stat().st_size > 10_000_000):
         print(f"  GPKG cache: {gpkg_path.name} "
               f"({gpkg_path.stat().st_size/1e6:.0f} MB) reused", flush=True)
         return gpkg_path
@@ -15454,12 +15823,12 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
         import py7zr as _py7zr
 
     # ── Téléchargement du .7z ────────────────────────────────────────────────
-    sz_path = cache_dir / f"{nom_ressource}.7z"
+    archive_name = f"{nom_ressource}.7z"
     print(f"  Downloading BD TOPO D{dep_padded} (~200-800 MB)...", flush=True)
     _log_req(url, "IGN bulk GPKG")
-    # Tmp unique par process : deux runs du même département ne doivent pas
-    # s'écraser le .7z en cours de téléchargement (cache partagé).
-    tmp = cache_dir / f"{nom_ressource}.7z.{os.getpid()}.tmp"
+    # L'archive n'est qu'un artefact de travail : elle reste sous un nom
+    # unique terminé par .part jusqu'à son nettoyage après extraction.
+    archive_part = _chemin_part(cache_dir / archive_name)
     t0 = time.time()
     try:
         try:
@@ -15474,10 +15843,11 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
             # Throttle d'affichage : on actualise au max toutes les 0.5s pour
             # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 MB.
             _last_print = 0.0
-            with open(tmp, "wb") as f:
+            with open(archive_part, "wb") as f:
                 while True:
                     if _stop_event.is_set():
-                        tmp.unlink(missing_ok=True); return None
+                        archive_part.unlink(missing_ok=True)
+                        return None
                     chunk = resp.read(1 << 20)
                     if not chunk:
                         break
@@ -15498,11 +15868,16 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
                             f"\r  {done/1e6:.0f} MB  {_hms(elapsed)}   ")
                     sys.stdout.flush()
         sys.stdout.write("\r" + " " * 70 + "\r"); sys.stdout.flush()
-        tmp.replace(sz_path)
-        print(f"  ✓ {sz_path.name}  ({sz_path.stat().st_size/1e6:.0f} MB)  "
+        if total and done != total:
+            raise OSError(f"archive incomplete: {done}/{total} bytes")
+        if not archive_part.exists() or archive_part.stat().st_size == 0:
+            raise OSError("empty archive")
+        print(f"  ✓ {archive_name}  ({archive_part.stat().st_size/1e6:.0f} MB)  "
               f"{_hms(int(time.time()-t0))}", flush=True)
-    except (OSError, urllib.error.URLError) as e:
-        tmp.unlink(missing_ok=True)
+    except BaseException as e:
+        archive_part.unlink(missing_ok=True)
+        if not isinstance(e, (OSError, urllib.error.URLError)):
+            raise
         print(f"  ERROR downloading ({type(e).__name__}): {e}")
         return None
 
@@ -15514,14 +15889,15 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
     # cache détruit), homonyme périmé d'une extraction crashée, ou process
     # concurrent. Le .gpkg est validé (taille + ouverture SQLite) AVANT
     # d'entrer au cache.
-    print(f"  Extracting GPKG from {sz_path.name}...", flush=True)
-    _tmp_dir = cache_dir / f"_extract_{os.getpid()}"
+    print(f"  Extracting GPKG from {archive_name}...", flush=True)
+    _tmp_dir = cache_dir / (
+        f"_extract_{os.getpid()}_{uuid.uuid4().hex[:12]}.part"
+    )
     try:
-        with _py7zr.SevenZipFile(sz_path, mode="r") as z:
+        with _py7zr.SevenZipFile(archive_part, mode="r") as z:
             gpkg_names = [n for n in z.getnames() if n.lower().endswith(".gpkg")]
             if not gpkg_names:
                 print("  ERROR: no .gpkg in the 7z archive")
-                sz_path.unlink(missing_ok=True)
                 return None
             if len(gpkg_names) > 1:
                 print(f"  ({len(gpkg_names)} .gpkg in archive - using {gpkg_names[0]})")
@@ -15548,16 +15924,17 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
             return None
 
         extracted.replace(gpkg_path)      # promotion atomique vers le cache
-        sz_path.unlink(missing_ok=True)   # libérer l'espace du .7z
         print(f"  ✓ GPKG extrait : {gpkg_path.name} "
               f"({gpkg_path.stat().st_size/1e6:.0f} MB)", flush=True)
         return gpkg_path
 
-    except Exception as e:
+    except BaseException as e:
+        if not isinstance(e, Exception):
+            raise
         print(f"  ERROR .7z extraction ({type(e).__name__}): {e}")
-        sz_path.unlink(missing_ok=True)
         return None
     finally:
+        archive_part.unlink(missing_ok=True)
         shutil.rmtree(_tmp_dir, ignore_errors=True)
 
 
@@ -15584,7 +15961,9 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
         raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
 
     dst_gz = Path(dst_gz)
-    if not str(dst_gz).endswith(".gz"):
+    # Un appelant peut fournir un chemin de transaction déjà terminé par
+    # ``.part`` afin de ne publier le .gz final qu'après d'autres validations.
+    if not str(dst_gz).endswith((".gz", ".part")):
         dst_gz = Path(str(dst_gz) + ".gz")
     dst_gz.parent.mkdir(parents=True, exist_ok=True)
 
@@ -15612,6 +15991,9 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
                                      default=_enc_default).encode("utf-8")
             with gzip.open(dst_tmp, "wb", compresslevel=6) as f:
                 f.write(data_bytes)
+            if not feats:
+                dst_tmp.unlink(missing_ok=True)
+                return 0
             dst_tmp.replace(dst_gz)
             return len(feats)
 
@@ -15640,6 +16022,9 @@ def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
                                           default=_enc_default).encode("utf-8"))
                     n += 1
             out.write(b"]}")
+        if n == 0:
+            dst_tmp.unlink(missing_ok=True)
+            return 0
         dst_tmp.replace(dst_gz)
         return n
     except BaseException:
@@ -15673,7 +16058,8 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
     if ecraser:
         for p in (sortie_gz, sortie_raw):
             if p.exists():
-                p.unlink()
+                # Publication différée : conserver l'ancien résultat tant que
+                # le nouveau GeoJSON n'est pas intégralement produit et validé.
                 print(f"  {p.name} -> overwrite")
 
     if not ecraser:
@@ -15711,7 +16097,10 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
         print("  ERROR: fiona missing, run pip install fiona")
         return None
 
-    tmp_geojson = sortie_gz.parent / (sortie_gz.name.replace(".geojson.gz", "_tmp.geojson"))
+    tmp_geojson = _chemin_part(
+        sortie_gz.parent
+        / sortie_gz.name.replace(".geojson.gz", ".source.geojson")
+    )
 
     # Sérialisation JSON robuste : fiona >= 1.9 rend les champs date/datetime du
     # GPKG comme objets Python (pas des chaînes, contrairement au chemin WFS) ->
@@ -15792,40 +16181,67 @@ def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                 out.write("\n]}\n")
             if n_total >= 20000:
                 print(flush=True)   # clore la ligne de progression
-    except Exception as e:
+    except BaseException as e:
         print(f"  ERROR fiona extraction {layer_name}: {type(e).__name__}: {e}")
         tmp_geojson.unlink(missing_ok=True)
+        if not isinstance(e, Exception):
+            raise
         return None
 
     if not tmp_geojson.exists() or tmp_geojson.stat().st_size == 0 or n_total == 0:
         print(f"  ⚠ {layer_name}: no feature")
         tmp_geojson.unlink(missing_ok=True); return None
 
+    sortie_gz_part = _chemin_part(sortie_gz)
+    sortie_raw_part = _chemin_part(sortie_raw) if ecrire_geojson else None
     try:
-        # _streamer_geojson_ajout_source écrit toujours en .gz — on le génère
-        # systématiquement (fichier de travail), puis on dérive .geojson si demandé.
+        # Toujours construire les formats demandés dans des fichiers de
+        # transaction. Aucun ancien final n'est touché avant que toutes les
+        # transformations aient réussi.
         src_name = sortie_gz.name.replace(".geojson.gz", "")
-        n = _streamer_geojson_ajout_source(tmp_geojson, sortie_gz, src_name)
+        n = _streamer_geojson_ajout_source(
+            tmp_geojson, sortie_gz_part, src_name
+        )
         if n == 0:
             print(f"  ⚠ {layer_name}: 0 features after streaming")
-            sortie_gz.unlink(missing_ok=True)
             return None
+        if ecrire_geojson:
+            _gunzip_vers_fichier(sortie_gz_part, sortie_raw_part)
+
+        if (not sortie_gz_part.exists()
+                or sortie_gz_part.stat().st_size == 0):
+            raise OSError("empty staged GeoJSON gzip")
+        if (ecrire_geojson
+                and (not sortie_raw_part.exists()
+                     or sortie_raw_part.stat().st_size == 0)):
+            raise OSError("empty staged GeoJSON")
+
+        # Promotion seulement après validation de tous les formats demandés.
+        if ecrire_geojson:
+            sortie_raw_part.replace(sortie_raw)
+        if ecrire_gz:
+            sortie_gz_part.replace(sortie_gz)
+
         chemin_principal = None
         if ecrire_gz:
             print(f"  {sortie_gz.name} : {n} features  ({sortie_gz.stat().st_size//1024} Ko)  "
                   f"{_hms(int(time.time()-t0))}", flush=True)
             chemin_principal = sortie_gz
         if ecrire_geojson:
-            _gunzip_vers_fichier(sortie_gz, sortie_raw)
             print(f"  {sortie_raw.name} : {n} features  ({sortie_raw.stat().st_size//1024} Ko)")
             if chemin_principal is None:
                 chemin_principal = sortie_raw
-        # Si seulement .geojson est demandé, supprimer le .gz intermédiaire
-        if not ecrire_gz and sortie_gz.exists():
-            sortie_gz.unlink()
         return chemin_principal
+    except BaseException as e:
+        if not isinstance(e, Exception):
+            raise
+        print(f"  ERROR publishing {layer_name}: {type(e).__name__}: {e}")
+        return None
     finally:
         tmp_geojson.unlink(missing_ok=True)
+        sortie_gz_part.unlink(missing_ok=True)
+        if sortie_raw_part is not None:
+            sortie_raw_part.unlink(missing_ok=True)
 
 
 def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
@@ -16159,17 +16575,11 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         return present
 
     if ecraser_tuiles:
-        # Mode overwrite : supprimer les sorties existantes pour repartir clean
+        # Ne pas supprimer les sorties existantes avant le traitement : elles
+        # restent utilisables si PyOsmium, gzip ou la fusion échoue.
         for p in (chemin_gz_attendu, chemin_raw_attendu):
             if p.exists():
-                p.unlink()
                 print(f"  GeoJSON OSM : overwrite {p.name}")
-        # Aussi supprimer les fichiers thématiques existants (per-clé)
-        for p in dossier_ville.glob(f"{nom_zone}_osm_*.geojson*"):
-            try:
-                p.unlink()
-            except OSError:
-                pass
 
     try:
         import osmium as _osm
@@ -16230,21 +16640,21 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     # les features au fil de la passe PyOsmium. Pas d'accumulation en RAM —
     # un département peut produire plusieurs millions de features.
     _streams       = {}   # cle → file handle gzip ouvert
-    _streams_paths = {}   # cle → (path_tmp_gz, path_final_gz, path_final_raw)
+    _streams_paths = {}   # cle → (path_part_gz, path_final_gz, path_final_raw)
     _first_feat    = {}   # cle → bool (1ère feature non encore écrite)
     _counts_par_cle = {}  # cle → nombre de features écrites
     nb_total = [0]
     nb_kept  = [0]
 
     def _ouvrir_stream_cle(cle):
-        """Ouvre paresseusement le .gz tmp pour cette clé (1ère feature)."""
+        """Ouvre paresseusement le staging .gz pour cette clé (1ère feature)."""
         if cle in _streams:
             return _streams[cle]
         base = dossier_ville / f"{nom_zone}_osm_{cle}.geojson"
         path_gz = Path(str(base) + ".gz")
-        path_tmp = path_gz.with_suffix(path_gz.suffix + ".tmp")
-        path_tmp.parent.mkdir(parents=True, exist_ok=True)
-        fh = gzip.open(path_tmp, "wb", compresslevel=6)
+        path_part = _chemin_part(path_gz)
+        path_part.parent.mkdir(parents=True, exist_ok=True)
+        fh = gzip.open(path_part, "wb", compresslevel=6)
         header = (
             '{"type":"FeatureCollection","name":'
             + json.dumps(f"{nom_zone}_osm_{cle}", ensure_ascii=False)
@@ -16253,18 +16663,18 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         ).encode("utf-8")
         fh.write(header)
         _streams[cle]       = fh
-        _streams_paths[cle] = (path_tmp, path_gz, base)
+        _streams_paths[cle] = (path_part, path_gz, base)
         _first_feat[cle]    = True
         _counts_par_cle[cle] = 0
         return fh
 
     def _fermer_streams_partiels():
-        """Cleanup en cas d'exception : fermer + supprimer les tmp."""
+        """Cleanup en cas d'exception : fermer + supprimer les .part."""
         for fh in _streams.values():
             try: fh.close()
             except Exception: pass
-        for path_tmp, _, _ in _streams_paths.values():
-            try: path_tmp.unlink(missing_ok=True)
+        for path_part, _, _ in _streams_paths.values():
+            try: path_part.unlink(missing_ok=True)
             except Exception: pass
 
     # Itération via FileProcessor moderne (PyOsmium 4.x)
@@ -16326,52 +16736,50 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         print(f"  ERROR PyOsmium: {type(e_proc).__name__}: {e_proc}")
         return None
 
-    # Finaliser chaque stream par-clé : footer ']}' puis close puis replace atomique
-    for cle, fh in list(_streams.items()):
-        try:
+    # Finaliser chaque stream par-clé, mais garder tous les résultats en .part
+    # jusqu'à ce que les sorties thématiques ET globale soient validées.
+    try:
+        for cle, fh in list(_streams.items()):
             fh.write(b"]}")
             fh.close()
-        except Exception:
-            try: fh.close()
-            except Exception: pass
-            _streams_paths[cle][0].unlink(missing_ok=True)
-            continue
-        path_tmp, path_gz, _ = _streams_paths[cle]
-        path_tmp.replace(path_gz)
+    except BaseException as e_close:
+        _fermer_streams_partiels()
+        if not isinstance(e_close, Exception):
+            raise
+        print(f"  ERROR finalizing OSM GeoJSON: "
+              f"{type(e_close).__name__}: {e_close}")
+        return None
 
     print(f"  PyOsmium: {nb_total[0]} objects scanned, {nb_kept[0]} in the bbox", flush=True)
 
     if nb_kept[0] == 0:
-        # Aucune feature retenue — nettoyer les .gz vides éventuels et sortir
-        for _, path_gz, _ in _streams_paths.values():
-            try: path_gz.unlink(missing_ok=True)
-            except Exception: pass
+        _fermer_streams_partiels()
         print("  No OSM feature exported")
         return None
-
-    # Dériver les .geojson raw par-clé si demandé (depuis le .gz, en streaming)
-    for cle, (_, path_gz, base) in _streams_paths.items():
-        n_cle = _counts_par_cle.get(cle, 0)
-        if ecrire_gz:
-            print(f"  {path_gz.name} : {n_cle} features")
-        if ecrire_geojson:
-            _gunzip_vers_fichier(path_gz, base)
-            print(f"  {base.name} : {n_cle} features")
-        if not ecrire_gz:
-            try: path_gz.unlink()
-            except Exception: pass
 
     # Fichier fusionné global : concaténer en streaming les fichiers par-clé
     base_global = dossier_ville / f"{nom_zone}_osm.geojson"
     chemin_global_gz  = Path(str(base_global) + ".gz")
     chemin_global_raw = base_global
 
-    chemin_principal = None
-    # On reconstruit le .gz global à partir des .gz par-clé. Pas via
-    # `_par_cle` qui n'existe plus — on ré-ouvre chaque fichier par-clé en
-    # ijson pour itérer ses features et les ré-injecter dans le global.
-    # Si ijson absent, fallback : json.load() — accepté en dégradé sur cas
-    # extrêmes (le département entier OSM tient < 2 Go en JSON typiquement).
+    # Les sorties raw sont elles aussi préparées sous des noms .part. Ainsi une
+    # décompression/fusion interrompue ne touche aucun ancien fichier final.
+    _raw_parts = {}
+    chemin_global_gz_part = None
+    chemin_global_raw_part = None
+
+    def _nettoyer_publication_osm():
+        _fermer_streams_partiels()
+        for p in _raw_parts.values():
+            p.unlink(missing_ok=True)
+        if chemin_global_gz_part is not None:
+            chemin_global_gz_part.unlink(missing_ok=True)
+        if chemin_global_raw_part is not None:
+            chemin_global_raw_part.unlink(missing_ok=True)
+
+    # On reconstruit le .gz global à partir des .gz thématiques encore en
+    # staging. Toute erreur de lecture est fatale : réutiliser un ancien final
+    # masquerait une publication partielle.
     try:
         import ijson as _ijson_g
         _has_ijson_g = True
@@ -16379,80 +16787,107 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         _has_ijson_g = False
 
     def _iter_feats_par_cle():
-        for cle, (_, path_gz, base) in _streams_paths.items():
-            src = path_gz if path_gz.exists() else base
-            if not src.exists():
-                continue
-            opener = ((lambda s=src: gzip.open(s, "rb"))
-                      if str(src).endswith(".gz")
-                      else (lambda s=src: open(s, "rb")))
+        for _, (path_part, _, _) in _streams_paths.items():
             if _has_ijson_g:
-                try:
-                    with opener() as fh:
-                        for feat in _ijson_g.items(fh, "features.item"):
-                            yield feat
-                    continue
-                except (OSError, ValueError):
-                    pass
-            # Fallback non-streaming (cas ijson cassé / absent)
-            try:
-                with opener() as fh:
-                    payload = fh.read()
-                if isinstance(payload, bytes):
-                    payload = payload.decode("utf-8", errors="replace")
-                gj = json.loads(payload)
-            except Exception:
+                with gzip.open(path_part, "rb") as fh:
+                    yield from _ijson_g.items(fh, "features.item")
                 continue
+            # Fallback non-streaming si ijson est absent.
+            with gzip.open(path_part, "rt", encoding="utf-8") as fh:
+                gj = json.load(fh)
             for feat in gj.get("features", []):
                 yield feat
 
-    if ecrire_gz or ecrire_geojson:
-        chemin_global_gz_tmp = chemin_global_gz.with_suffix(
-            chemin_global_gz.suffix + ".tmp")
-        try:
-            with gzip.open(chemin_global_gz_tmp, "wb", compresslevel=6) as out_g:
-                header_g = (
-                    '{"type":"FeatureCollection","name":'
-                    + json.dumps(f"{nom_zone}_osm", ensure_ascii=False)
-                    + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
-                    + ',"features":['
-                ).encode("utf-8")
-                out_g.write(header_g)
-                first_g = True
-                import decimal as _dec_g
-                def _enc_def(o):
-                    if isinstance(o, _dec_g.Decimal): return float(o)
-                    raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
-                for feat in _iter_feats_par_cle():
-                    if not first_g:
-                        out_g.write(b",")
-                    first_g = False
-                    out_g.write(json.dumps(feat, ensure_ascii=False,
-                                            separators=(",", ":"),
-                                            default=_enc_def).encode("utf-8"))
-                out_g.write(b"]}")
-            chemin_global_gz_tmp.replace(chemin_global_gz)
-        except BaseException:
-            chemin_global_gz_tmp.unlink(missing_ok=True)
-            raise
-
-        if ecrire_gz:
-            taille = chemin_global_gz.stat().st_size // 1024
-            print(f"  {chemin_global_gz.name} : {nb_kept[0]} features"
-                  f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-            chemin_principal = chemin_global_gz
+    try:
+        # Dériver d'abord tous les raw thématiques, toujours vers des .part.
         if ecrire_geojson:
-            _gunzip_vers_fichier(chemin_global_gz, chemin_global_raw)
-            taille = chemin_global_raw.stat().st_size // 1024
-            print(f"  {chemin_global_raw.name} : {nb_kept[0]} features"
-                  f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-            if chemin_principal is None:
-                chemin_principal = chemin_global_raw
-        if not ecrire_gz:
-            try: chemin_global_gz.unlink()
-            except Exception: pass
+            for cle, (path_part, _, base) in _streams_paths.items():
+                raw_part = _chemin_part(base)
+                _raw_parts[cle] = raw_part
+                _gunzip_vers_fichier(path_part, raw_part)
+                if not raw_part.exists() or raw_part.stat().st_size == 0:
+                    raise OSError(f"empty staged GeoJSON: {base.name}")
 
-    return chemin_principal
+        chemin_global_gz_part = _chemin_part(chemin_global_gz)
+        with gzip.open(chemin_global_gz_part, "wb", compresslevel=6) as out_g:
+            header_g = (
+                '{"type":"FeatureCollection","name":'
+                + json.dumps(f"{nom_zone}_osm", ensure_ascii=False)
+                + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
+                + ',"features":['
+            ).encode("utf-8")
+            out_g.write(header_g)
+            first_g = True
+            n_global = 0
+            import decimal as _dec_g
+
+            def _enc_def(o):
+                if isinstance(o, _dec_g.Decimal):
+                    return float(o)
+                raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
+
+            for feat in _iter_feats_par_cle():
+                if not first_g:
+                    out_g.write(b",")
+                first_g = False
+                out_g.write(json.dumps(feat, ensure_ascii=False,
+                                       separators=(",", ":"),
+                                       default=_enc_def).encode("utf-8"))
+                n_global += 1
+            out_g.write(b"]}")
+
+        if n_global != nb_kept[0]:
+            raise OSError(
+                f"incomplete global GeoJSON: {n_global}/{nb_kept[0]} features"
+            )
+        if (not chemin_global_gz_part.exists()
+                or chemin_global_gz_part.stat().st_size == 0):
+            raise OSError("empty staged global GeoJSON gzip")
+
+        if ecrire_geojson:
+            chemin_global_raw_part = _chemin_part(chemin_global_raw)
+            _gunzip_vers_fichier(
+                chemin_global_gz_part, chemin_global_raw_part
+            )
+            if (not chemin_global_raw_part.exists()
+                    or chemin_global_raw_part.stat().st_size == 0):
+                raise OSError("empty staged global GeoJSON")
+
+        # Toutes les transformations sont maintenant validées. Publier les
+        # thématiques, puis le global en dernier comme marqueur de complétude.
+        for cle, (path_part, path_gz, base) in _streams_paths.items():
+            if ecrire_geojson:
+                _raw_parts[cle].replace(base)
+            if ecrire_gz:
+                path_part.replace(path_gz)
+
+        if ecrire_geojson:
+            chemin_global_raw_part.replace(chemin_global_raw)
+        if ecrire_gz:
+            chemin_global_gz_part.replace(chemin_global_gz)
+
+        for cle, (_, path_gz, base) in _streams_paths.items():
+            n_cle = _counts_par_cle.get(cle, 0)
+            if ecrire_gz:
+                print(f"  {path_gz.name} : {n_cle} features")
+            if ecrire_geojson:
+                print(f"  {base.name} : {n_cle} features")
+
+        chemin_principal = (
+            chemin_global_gz if ecrire_gz else chemin_global_raw
+        )
+        taille = chemin_principal.stat().st_size // 1024
+        print(f"  {chemin_principal.name} : {nb_kept[0]} features"
+              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
+        return chemin_principal
+    except BaseException as e_pub:
+        if not isinstance(e_pub, Exception):
+            raise
+        print(f"  ERROR publishing OSM GeoJSON: "
+              f"{type(e_pub).__name__}: {e_pub}")
+        return None
+    finally:
+        _nettoyer_publication_osm()
 
 
 # ============================================================
@@ -16515,7 +16950,7 @@ def fusionner_geojson(fichiers, sortie, fichiers_ignores=None):
               flush=True)
 
     sortie.parent.mkdir(parents=True, exist_ok=True)
-    tmp = sortie.with_suffix(sortie.suffix + ".tmp")
+    part = _chemin_part(sortie)
 
     def _enc_default(o):
         if isinstance(o, _dec.Decimal):
@@ -16610,9 +17045,9 @@ def fusionner_geojson(fichiers, sortie, fichiers_ignores=None):
     out_fh = None
     try:
         if compresser:
-            out_fh = gzip.open(tmp, "wb", compresslevel=6)
+            out_fh = gzip.open(part, "wb", compresslevel=6)
         else:
-            out_fh = open(tmp, "wb")
+            out_fh = open(part, "wb")
         out_fh.write(header)
         first_feat = True
 
@@ -16656,19 +17091,19 @@ def fusionner_geojson(fichiers, sortie, fichiers_ignores=None):
         out_fh.close()
         out_fh = None
     except BaseException:
-        # Fermer + nettoyer le tmp en cas d'interruption ou d'erreur
+        # Fermer + nettoyer le .part en cas d'interruption ou d'erreur.
         if out_fh is not None:
             try: out_fh.close()
             except Exception: pass
-        tmp.unlink(missing_ok=True)
+        part.unlink(missing_ok=True)
         raise
 
     if n_total == 0:
-        tmp.unlink(missing_ok=True)
+        part.unlink(missing_ok=True)
         print("  No feature to merge")
         return None, None
 
-    tmp.replace(sortie)
+    part.replace(sortie)
     taille = sortie.stat().st_size // 1024
     print(f"  → {sortie.name} : {n_total} features  ({taille} Ko)")
 

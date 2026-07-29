@@ -21,6 +21,12 @@ import json
 import urllib.parse
 import urllib.request
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -96,7 +102,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
 
     feats = data.get("features", [])
     try:
-        cache_path.write_text(json.dumps(data), encoding="utf-8")
+        atomic_write_json(cache_path, data)
     except Exception:
         pass
 

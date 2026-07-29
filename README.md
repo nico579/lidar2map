@@ -180,6 +180,7 @@ No Python for the end user to install. The deliverable carries its own runtime (
 | Windows 10/11 (x86_64) | `lidar2map-windows-x86_64.zip` | `Expand-Archive` (PowerShell) or double-click |
 | Linux Ubuntu 24.04+ (x86_64) | `lidar2map-linux-x86_64.tar.gz` | `tar xzf` |
 | macOS 12+ (Apple Silicon) | `lidar2map-macos-arm64.zip` | `unzip` then `xattr -dr com.apple.quarantine LIDAR2MAP.app` |
+| macOS 12+ (Intel) | `lidar2map-macos-x86_64.zip` | same |
 
 The archive extracts into a `lidar2map-<os>-x86_64/` folder containing the binary and its `lidar2map_bundle.zip` side by side. No system installation.
 
@@ -194,7 +195,7 @@ cd lidar2map
 .\lidar2map_win_build.ps1     # 2. Build: 3 steps -> dist\lidar2map.exe + dist\lidar2map_bundle.zip
 ```
 
-##### macOS (Apple Silicon)
+##### macOS (Apple Silicon or Intel)
 
 ```bash
 git clone https://github.com/nico579/lidar2map
@@ -202,6 +203,11 @@ cd lidar2map
 bash setup_build_mac.sh       # 1. Setup
 bash lidar2map_mac_build.sh   # 2. Build -> dist/LIDAR2MAP.app
 ```
+
+The archive takes the architecture of the machine it is built on
+(`lidar2map-macos-arm64.zip` or `-x86_64.zip`). PyInstaller does not
+cross-compile, so an Intel build requires an Intel Mac (or Rosetta 2 with an
+x86_64 Python).
 
 ##### Linux (Ubuntu / Debian)
 
@@ -360,13 +366,23 @@ If you do not need the live view: `nohup python3 lidar2map.py … > run.log 2>&1
 
 **Resume for free.** In split mode the tool writes a manifest and skips already-finished chunks, so a disconnect, a crash or a disk-low stop is recoverable: relaunch the exact same command and it picks up where it left off.
 
-**One-command launcher from your PC.** [`tools/run_on_vm.sh`](tools/run_on_vm.sh) does all of the above over SSH: it installs lidar2map on the VM if needed (from source, the auto-bootstrap handles the deps), then launches your run in a detached `tmux` session.
+**One-command launcher from your PC.** [`tools/run_on_vm.sh`](tools/run_on_vm.sh) is a compatibility wrapper around the stdlib-only Python controller [`tools/run_on_vm.py`](tools/run_on_vm.py). It installs lidar2map on the VM when needed, launches it in a detached `tmux`, supervises the persisted exit status, and progressively mirrors the run's isolated output directory back to the PC (`rsync` when available, otherwise a fingerprinted incremental SSH stream with SHA-256 verification).
 
 ```bash
-bash tools/run_on_vm.sh user@host "--lidar --laz --zone-department 83 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles"
+bash tools/run_on_vm.sh --session var-83 user@host -- \
+  --lidar --laz --zone-department 83 --download --split-width 5 \
+  --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
 ```
 
-Idempotent: it clones or `git pull`s, skips the install when already present, and does not start a second run if one is already going. Key-based SSH is assumed (the Hetzner default).
+The old quoted form remains accepted. Monitoring is now the default: a very visible terminal alert reports success, a non-zero exit, or a vanished tmux session, after one final synchronization. `Ctrl-C` stops only the local monitor. Run the same command again — or just `python tools/run_on_vm.py --session var-83 user@host` — to reconnect to the persisted remote state and continue synchronization without launching a second process. A completed session is not relaunched implicitly: use a new `--session`, or pass `--restart` with the new lidar2map arguments. Results land below `vm-results/<host>/<session>/<run-id>/`; `--local-dir` changes that local root, `--interval` changes the 30-second polling interval, and `--detach` keeps the historical launch-and-return behavior.
+
+The terminal alert is live only while the local monitor is running. If it was closed, tmux still records the terminal state and the next reconnect performs the pending final copy and immediately reports success or failure.
+
+Once a run has succeeded or failed, reclaim its remote space with `python tools/run_on_vm.py --session var-83 --purge-remote user@host`. This command refuses an active session, performs one mandatory final synchronization, then removes only the current run's state, log and results from the VM. Nothing is deleted when that copy fails. The local copy and manifest remain intact; historical archives created by `--restart` are never removed implicitly. If the local controller is interrupted during the purge, run the exact same command again: the local manifest and a remote receipt safely resume the operation without targeting a newer run. Shared `cache/` and `production/` trees, the source checkout, venv and runtime are never removed by this option.
+
+Monitoring does not parse `run.log` text or deliverable names. The tmux wrapper publishes a separate small, atomic and versioned state (`run_id`, status, exit code and timestamps). Deliverables under construction end in `.part` and are ignored; after atomic publication, the SSH fallback waits for two identical inventories during an active run and transfers only new or modified files. Each stream is verified with SHA-256 and atomically published locally. The log is copied as-is once the run is terminal. The legacy `--sync-method scp` value remains an alias for `--sync-method ssh`.
+
+Use a different `--session` for concurrent runs on the same VM. The controller owns `--output-dir` so every session has separate remote results and logs. It never removes a known SSH host key automatically; for an intentionally recycled VM address, use the explicit `--reset-host-key` option. Key-based SSH is assumed (the Hetzner default).
 
 **Shard one area across several machines.** `--block i/M` restricts a run to the i-th of M equal geographic blocks of the zone. Launch the same command on M machines, changing only `i` and the host (so M distinct IPs and M distinct block numbers, one pair per machine):
 
@@ -376,7 +392,7 @@ bash tools/run_on_vm.sh vm2 "--lidar --laz --zone-department 83 --block 2/3 --do
 bash tools/run_on_vm.sh vm3 "--lidar --laz --zone-department 83 --block 3/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles"
 ```
 
-The M blocks tile the zone exactly (no overlap), and `--block` composes with `--split-width` (each machine still chunks its own block for disk). The point: the national LiDAR download is throttled per IP (~3 parallel for IGN), so M machines on M IPs multiply the aggregate bandwidth and cut a wall-clock that a single bigger VM cannot beat. Collect the M output sets afterwards (one `scp` per machine); they are separate MBTiles that Locus Map reassembles seamlessly (geo-referenced, adjacent).
+The M blocks tile the zone exactly (no overlap), and `--block` composes with `--split-width` (each machine still chunks its own block for disk). The point: the national LiDAR download is throttled per IP (~3 parallel for IGN), so M machines on M IPs multiply the aggregate bandwidth and cut a wall-clock that a single bigger VM cannot beat. Each controller progressively collects its machine's output below `vm-results/`; the resulting MBTiles are separate files that Locus Map reassembles seamlessly (geo-referenced, adjacent).
 
 ## LiDAR providers, adding a country
 

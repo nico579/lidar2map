@@ -8,12 +8,14 @@ Vocation à accueillir aussi le HTTP / pagination / retry communs.
 import concurrent.futures
 import json
 import math
+import os
 import re
 import ssl
 import struct
 import threading
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 # Concurrence des conversions LAS→raster. Le post_fetch tourne DANS le pool de
@@ -24,6 +26,38 @@ from pathlib import Path
 # OMP=tous. Les téléchargements restent parallèles (le sémaphore n'entoure que la
 # conversion). Réglé par set_laz_parallelism() avant tout run.
 _CONV_SEM = threading.Semaphore(1)
+
+
+def part_path(path):
+    """Retourne un staging voisin, unique, dont le nom finit par ``.part``."""
+    path = Path(path)
+    return path.with_name(
+        f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    )
+
+
+def atomic_write_text(path, text, encoding="utf-8"):
+    """Écrit un fichier texte complet sous ``*.part``, puis le publie."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = part_path(path)
+    try:
+        with open(staging, "w", encoding=encoding) as fh:
+            fh.write(text)
+            fh.flush()
+            try:
+                os.fsync(fh.fileno())
+            except OSError:
+                pass
+        os.replace(staging, path)
+    except BaseException:
+        staging.unlink(missing_ok=True)
+        raise
+
+
+def atomic_write_json(path, data):
+    """Variante JSON de :func:`atomic_write_text`."""
+    atomic_write_text(path, json.dumps(data))
 
 
 def set_laz_parallelism(k):
@@ -293,9 +327,10 @@ def _craig_ta_local(campaign, ta_index, cache_dir, ua):
     if local.exists() and local.stat().st_size > 1000:
         return local
     url = _craig_public_url(campaign, "01_TA", ta_index)
+    tmp = None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": ua})
-        tmp = local.with_suffix(local.suffix + ".part")
+        tmp = part_path(local)
         with urllib.request.urlopen(req, timeout=90, context=_CTX) as r, \
                 open(tmp, "wb") as f:
             f.write(r.read())
@@ -304,6 +339,9 @@ def _craig_ta_local(campaign, ta_index, cache_dir, ua):
     except Exception as e:
         print(f"  ERROR CRAIG index {campaign}/{ta_index}: {type(e).__name__}: {e}")
         return None
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 def craig_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
@@ -363,9 +401,10 @@ def _cache_download(url, local, ua):
     local.parent.mkdir(parents=True, exist_ok=True)
     if local.exists() and local.stat().st_size > 1000:
         return local
+    tmp = None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": ua})
-        tmp = local.with_suffix(local.suffix + ".part")
+        tmp = part_path(local)
         with urllib.request.urlopen(req, timeout=120, context=_CTX) as r, \
                 open(tmp, "wb") as f:
             f.write(r.read())
@@ -374,6 +413,9 @@ def _cache_download(url, local, ua):
     except Exception as e:
         print(f"  ERROR index {url}: {type(e).__name__}: {e}")
         return None
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
 
 
 def ee_maaamet_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
@@ -499,7 +541,7 @@ def _lgia_index(cache_path, workers, ua):
         return None
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(index), encoding="utf-8")
+        atomic_write_json(cache_path, index)
     except Exception:
         pass
     print(f"  LV LĢIA: {len(index)} tiles indexed ({len(bases)} sheets)")
@@ -663,9 +705,12 @@ def copc_window_to_las(url, bbox_wgs84, out_las, ua="lidar2map/1.0"):
             las.evlrs = [v for v in las.evlrs if getattr(v, "user_id", "") != "copc"]
         except Exception:
             pass
-        tmp = Path(str(out_las) + ".part")
-        las.write(str(tmp))
-        tmp.replace(Path(out_las))
+        tmp = part_path(out_las)
+        try:
+            las.write(str(tmp))
+            tmp.replace(Path(out_las))
+        finally:
+            tmp.unlink(missing_ok=True)
     return n, epsg
 
 
@@ -737,7 +782,7 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
     en float32 relatif a été ESSAYÉ puis rejeté : il fait basculer la classif CSF
     (8k cellules, jusqu'à 3,3 m) pour un gain RAM dérisoire. Conversions
     SÉRIALISÉES par _CONV_SEM (anti-OOM : sur 8 Go on ne tient pas 2 en
-    parallèle). Écriture ATOMIQUE (.tmp → replace) : un crash en cours de
+    parallèle). Écriture ATOMIQUE (.part → replace) : un crash en cours de
     conversion ne laisse pas de GeoTIFF partiel pris pour valide.
     """
     import os
@@ -960,15 +1005,18 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         _mark("binfill")
 
         transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)
-        tmp = Path(str(tif_path) + ".conv.tmp")
-        with rasterio.open(str(tmp), "w",
-                           driver="GTiff", height=ny, width=nx,
-                           count=1, dtype="float32",
-                           crs=rasterio.CRS.from_epsg(crs_epsg),
-                           transform=transform, nodata=nodata,
-                           compress="deflate", predictor=3, tiled=True) as dst:
-            dst.write(grid, 1)
-        tmp.replace(tif_path)
+        tmp = part_path(tif_path)
+        try:
+            with rasterio.open(str(tmp), "w",
+                               driver="GTiff", height=ny, width=nx,
+                               count=1, dtype="float32",
+                               crs=rasterio.CRS.from_epsg(crs_epsg),
+                               transform=transform, nodata=nodata,
+                               compress="deflate", predictor=3, tiled=True) as dst:
+                dst.write(grid, 1)
+            tmp.replace(tif_path)
+        finally:
+            tmp.unlink(missing_ok=True)
         _mark("write")
         if _prof_on:
             _ph = " ".join(f"{_prof[i][0]}={_prof[i][1] - _prof[i-1][1]:.2f}s"
@@ -995,7 +1043,7 @@ def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,
     en le signalant. laspy lit le .las ; pour un .laz il faut un backend (lazrs).
     `bounds=(x0,y0,x1,y1)` : bornes NOMINALES de la dalle → grille alignée entre
     dalles voisines (sinon l'origine dérive des points réels → coutures au VRT).
-    Conversion sérialisée (_CONV_SEM, RAM) ; écriture atomique (.tmp → replace).
+    Conversion sérialisée (_CONV_SEM, RAM) ; écriture atomique (.part → replace).
     """
     import laspy
     import numpy as np
@@ -1061,15 +1109,18 @@ def las_to_dtm(src_las, tif_path, crs_epsg, resolution=1.0,
                       flush=True)
 
         transform = from_bounds(x0, y0, x0 + nx * res, y0 + ny * res, nx, ny)
-        tmp = Path(str(tif_path) + ".conv.tmp")
-        with rasterio.open(str(tmp), "w",
-                           driver="GTiff", height=ny, width=nx,
-                           count=1, dtype="float32",
-                           crs=rasterio.CRS.from_epsg(crs_epsg),
-                           transform=transform, nodata=nodata,
-                           compress="deflate", predictor=2, tiled=True) as dst:
-            dst.write(grid, 1)
-        tmp.replace(tif_path)
+        tmp = part_path(tif_path)
+        try:
+            with rasterio.open(str(tmp), "w",
+                               driver="GTiff", height=ny, width=nx,
+                               count=1, dtype="float32",
+                               crs=rasterio.CRS.from_epsg(crs_epsg),
+                               transform=transform, nodata=nodata,
+                               compress="deflate", predictor=2, tiled=True) as dst:
+                dst.write(grid, 1)
+            tmp.replace(tif_path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def _membre_sous(nom, cible_resolue):
@@ -1136,8 +1187,7 @@ def swisstopo_stac_dalles(collection, product_prefix, asset_ok,
                     url = link["href"]
                     break
         try:
-            cache_bbox.write_text(json.dumps({"bbox": bbox_str, "items": items}),
-                                  encoding="utf-8")
+            atomic_write_json(cache_bbox, {"bbox": bbox_str, "items": items})
         except Exception:
             pass
 
@@ -1194,8 +1244,22 @@ def extraire_membre(zf, member, dest_dir):
     dest_dir = Path(dest_dir).resolve()
     if not _membre_sous(member, dest_dir):
         raise ValueError(f"Chemin de membre ZIP suspect (zip-slip) : {member!r}")
-    zf.extract(member, dest_dir)
-    return dest_dir / member
+    cible = (dest_dir / member).resolve()
+    cible.parent.mkdir(parents=True, exist_ok=True)
+    staging = part_path(cible)
+    try:
+        import shutil
+        with zf.open(member) as src, open(staging, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+            dst.flush()
+            try:
+                os.fsync(dst.fileno())
+            except OSError:
+                pass
+        os.replace(staging, cible)
+        return cible
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 # ── Machinerie commune du mode LAZ (structures debout) ───────────────────────
@@ -1492,10 +1556,13 @@ class LazProvider:
                       f"seul le plus gros est gardé (fusion non implémentée)",
                       flush=True)
             membre = max(membres, key=lambda n: z.getinfo(n).file_size)
-            tmp = Path(str(cloud) + ".part")
-            with z.open(membre) as src, open(tmp, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-        tmp.replace(cloud)                 # atomique
+            tmp = part_path(cloud)
+            try:
+                with z.open(membre) as src, open(tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                tmp.replace(cloud)         # atomique
+            finally:
+                tmp.unlink(missing_ok=True)
         chemin.unlink(missing_ok=True)
         return cloud
 
@@ -1579,13 +1646,22 @@ class LazProvider:
             cloud = self._extract_cloud(chemin, m)
         elif magic == b"LASF":
             cloud = self._cloud_path(chemin, m)
+            cloud_part = part_path(cloud)
+            moved = False
             try:
-                chemin.replace(cloud)          # atomique si même volume
-            except OSError:
-                # cache et production sur des volumes différents (--production-dir) :
-                # os.rename échoue cross-device (EXDEV), shutil.move copie+supprime.
-                import shutil
-                shutil.move(str(chemin), str(cloud))
+                try:
+                    os.replace(chemin, cloud_part)
+                    moved = True
+                except OSError:
+                    # Volumes différents : copier vers .part, jamais vers le final.
+                    import shutil
+                    shutil.copyfile(chemin, cloud_part)
+                os.replace(cloud_part, cloud)
+                if not moved:
+                    chemin.unlink(missing_ok=True)
+            except BaseException:
+                cloud_part.unlink(missing_ok=True)
+                raise
         else:
             return  # déjà un GeoTIFF (ou erreur → validateur)
         print(f"  {self.method_label()} {chemin.name}: converting point cloud "

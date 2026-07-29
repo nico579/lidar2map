@@ -36,6 +36,12 @@ BUNDLE_ZIP="$BUILD_DIR/lidar2map_bundle.zip"
 FINAL_OUT="$ROOT/dist"
 FINAL_APP="$FINAL_OUT/LIDAR2MAP.app"
 
+# Archi du livrable : celle du Python du venv, pas celle du shell. PyInstaller
+# produit un binaire pour l'interpreteur qu'il utilise ; sous Rosetta, `uname -m`
+# mentirait (x86_64 alors que le venv peut etre arm64, ou l'inverse).
+ARCH="$("$VENV/bin/python" -c 'import platform; print(platform.machine())')"
+echo "Architecture cible : $ARCH"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. PyInstaller onedir (la vraie app)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -107,7 +113,7 @@ rm -f "$FINAL_OUT/lidar2map"
 # 4. Archive zip pour distribution (ditto preserve permissions + symlinks +
 #    xattrs, indispensable pour une .app extractable sur un autre Mac)
 # ─────────────────────────────────────────────────────────────────────────────
-RELEASE_ZIP="$FINAL_OUT/lidar2map-macos-arm64.zip"
+RELEASE_ZIP="$FINAL_OUT/lidar2map-macos-$ARCH.zip"
 echo ""
 echo "[4/4] Archive distribution (ditto)..."
 rm -f "$RELEASE_ZIP"

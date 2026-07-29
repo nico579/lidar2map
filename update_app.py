@@ -13,9 +13,10 @@
 #      Patch chirurgical du bundle interne en préservant les permissions
 #      Unix de Contents/MacOS/lidar2map (bit exécutable).
 #
-#   3. Release complète (Windows + Linux + macOS, depuis n'importe quel OS) :
+#   3. Release complète (Windows + Linux + macOS arm64/x86_64, depuis n'importe
+#      quel OS) :
 #        python update_app.py --release [--tag v1.1.0] [--dry-run]
-#      Télécharge les 3 assets de la release, patche le bundle interne dans
+#      Télécharge les assets de la release, patche le bundle interne dans
 #      chacun, met à jour mode 0o755 sur le launcher Linux (bug fix),
 #      réuploade, met à jour le body avec les nouveaux SHA256.
 #      Requiert un token GitHub (GH_TOKEN, GITHUB_TOKEN ou git credential).
@@ -268,6 +269,7 @@ _ASSET_SPECS = [
     ("windows-x86_64.zip",    "zip",   "application/zip"),
     ("linux-x86_64.tar.gz",   "targz", "application/gzip"),
     ("macos-arm64.zip",       "zip",   "application/zip"),
+    ("macos-x86_64.zip",      "zip",   "application/zip"),
 ]
 
 
@@ -477,10 +479,17 @@ def _find_macos_archive():
         _p = Path(_a)
         if _p.exists() and _p.suffix == ".zip" and "macos" in _p.name.lower():
             return _p.resolve()
-    for _c in (HERE / "lidar2map-macos-arm64.zip",
-               HERE / "dist" / "lidar2map-macos-arm64.zip"):
-        if _c.exists():
-            return _c
+    # Archi native d'abord (arm64 sur Apple Silicon, x86_64 sur Intel), l'autre
+    # ensuite : patcher l'archive de l'autre archi depuis un Mac reste valide,
+    # update_app.py ne fait que réécrire du .py dans le zip.
+    _archs = ["arm64", "x86_64"]
+    if platform.machine() == "x86_64":
+        _archs.reverse()
+    for _arch in _archs:
+        for _c in (HERE / f"lidar2map-macos-{_arch}.zip",
+                   HERE / "dist" / f"lidar2map-macos-{_arch}.zip"):
+            if _c.exists():
+                return _c
     return None
 
 

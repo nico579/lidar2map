@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# setup_build_mac.sh — Prepare un Mac ARM64 pour builder LIDAR2MAP.app
+# setup_build_mac.sh — Prepare un Mac (Apple Silicon ou Intel) pour builder
+# LIDAR2MAP.app. Le livrable prend l'archi de la machine : pas de
+# cross-compilation possible avec PyInstaller. Le JRE telecharge par
+# --telecharger-outils suit deja platform.machine() (aarch64 ou x64).
 #
 # 1. Installe Python 3.12 si absent (depuis python.org)
 # 2. Lance lidar2map.py --installer-deps -> installe toutes les dependances
@@ -22,7 +25,8 @@ step "1/4" "Python 3.12"
 _python=""
 for p in python3.12 \
           /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 \
-          /opt/homebrew/bin/python3.12; do
+          /opt/homebrew/bin/python3.12 \
+          /usr/local/bin/python3.12; do   # /usr/local = Homebrew Intel
     command -v "$p" &>/dev/null && { _python="$p"; break; }
 done
 

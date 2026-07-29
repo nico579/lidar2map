@@ -339,7 +339,10 @@ exe = EXE(
     console=CONSOLE,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch='arm64',
+    # target_arch=None : PyInstaller construit pour l'archi du Python courant
+    # (arm64 sur Apple Silicon, x86_64 sur Intel). Pas de valeur en dur, sinon
+    # le build Intel produirait un binaire arm64 inutilisable.
+    target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon=None,

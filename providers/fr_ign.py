@@ -24,6 +24,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -156,15 +157,24 @@ def _deg_to_tile(lat_deg, lon_deg, zoom):
 
 
 def _write_json_atomic(path, data):
-    """Écriture JSON atomique : tmp + os.replace. Best-effort (silent fail)."""
+    """Écriture JSON atomique : .part unique + os.replace. Best-effort."""
+    tmp = None
     try:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp = path.with_name(
+            f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+        )
         tmp.write_text(json.dumps(data), encoding="utf-8")
         os.replace(tmp, path)
     except Exception:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
         pass
+    except BaseException:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def _import_mvt():

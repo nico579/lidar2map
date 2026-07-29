@@ -78,7 +78,10 @@ def post_fetch(chemin):
     profile.pop("blockxsize", None); profile.pop("blockysize", None)
     profile.update(driver="GTiff", crs=rasterio.CRS.from_epsg(2154),
                    compress="deflate", predictor=3, tiled=False)
-    tmp = Path(str(chemin) + ".gtif.tmp")
-    with rasterio.open(str(tmp), "w", **profile) as dst:
-        dst.write(data, 1)
-    tmp.replace(chemin)
+    tmp = common.part_path(chemin)
+    try:
+        with rasterio.open(str(tmp), "w", **profile) as dst:
+            dst.write(data, 1)
+        tmp.replace(chemin)
+    finally:
+        tmp.unlink(missing_ok=True)

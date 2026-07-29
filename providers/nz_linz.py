@@ -23,6 +23,12 @@ import re
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -127,7 +133,7 @@ def _construire_index(cache_path, workers):
             if res:
                 index[res[0]] = {"bbox": res[1], "url": res[2]}
     try:
-        cache_path.write_text(json.dumps(index), encoding="utf-8")
+        atomic_write_json(cache_path, index)
     except Exception:
         pass
     print(f"  LINZ NZ: {len(index)} sheets indexed")

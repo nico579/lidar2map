@@ -23,6 +23,12 @@
 import json
 import urllib.request
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -122,7 +128,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                                          headers={"User-Agent": HTTP_UA})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 index = json.loads(resp.read())
-            cache_path.write_text(json.dumps(index), encoding="utf-8")
+            atomic_write_json(cache_path, index)
         except Exception as e:
             print(f"  ERROR AHN index: {e}")
             return None

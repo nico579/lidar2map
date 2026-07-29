@@ -81,7 +81,7 @@ def post_fetch(chemin):
     if magic != b"LASF":
         return  # déjà un GeoTIFF (ou réponse d'erreur → le validateur tranchera)
 
-    las_tmp = chemin.with_suffix(".las")
+    las_tmp = common.part_path(chemin.with_suffix(".las"))
     chemin.replace(las_tmp)
     # Bornes nominales de la tuile 1 km (le nom porte le coin SW en km) →
     # grille alignée au km entre tuiles voisines (pas de couture au VRT).

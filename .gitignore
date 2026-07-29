@@ -48,6 +48,7 @@ logs/
 
 # ─── lidar2map : structure de travail ──────────────────────────────
 Projets/
+vm-results/
 output/
 sortie/
 

@@ -23,6 +23,12 @@ import re
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+try:
+    from providers.common import atomic_write_json, part_path
+except ModuleNotFoundError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from providers.common import atomic_write_json, part_path
 
 
 # ── Identification ───────────────────────────────────────────────────────────
@@ -121,7 +127,7 @@ def _construire_index(cache_path):
     if not index:
         return None
     try:
-        cache_path.write_text(json.dumps(index), encoding="utf-8")
+        atomic_write_json(cache_path, index)
     except Exception:
         pass
     print(f"  BE SenStadt: {len(index)} tiles indexed")
@@ -207,12 +213,15 @@ def post_fetch(chemin):
 
     transform = from_bounds(x0 - res / 2, y0 - res / 2,
                             x1 + res / 2, y1 + res / 2, nx, ny)
-    tmp = chemin.with_suffix(".tif_tmp")
-    with rasterio.open(str(tmp), "w",
-                       driver="GTiff", height=ny, width=nx,
-                       count=1, dtype="float32",
-                       crs=rasterio.CRS.from_epsg(25833),
-                       transform=transform, nodata=-9999,
-                       compress="deflate", predictor=2, tiled=True) as dst:
-        dst.write(grid, 1)
-    tmp.replace(chemin)
+    tmp = part_path(chemin)
+    try:
+        with rasterio.open(str(tmp), "w",
+                           driver="GTiff", height=ny, width=nx,
+                           count=1, dtype="float32",
+                           crs=rasterio.CRS.from_epsg(25833),
+                           transform=transform, nodata=-9999,
+                           compress="deflate", predictor=2, tiled=True) as dst:
+            dst.write(grid, 1)
+        tmp.replace(chemin)
+    finally:
+        tmp.unlink(missing_ok=True)
