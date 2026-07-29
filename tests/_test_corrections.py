@@ -1107,6 +1107,47 @@ try:
 finally:
     l2m.PROVIDER = _prov_backup
 
+print("== 29. R2#41/#25/#39 validation des arguments CLI ==")
+def _leve(fn, s):
+    try:
+        fn(s); return False
+    except Exception:
+        return True
+# R2#41 : --workers/--laz-parallel doivent être des int >= 1 (max_workers<1
+# plantait ThreadPoolExecutor).
+check("R2#41 _arg_int_positif accepte 8 et 1",
+      l2m._arg_int_positif("8") == 8 and l2m._arg_int_positif("1") == 1)
+check("R2#41 _arg_int_positif rejette 0", _leve(l2m._arg_int_positif, "0"))
+check("R2#41 _arg_int_positif rejette négatif", _leve(l2m._arg_int_positif, "-3"))
+check("R2#41 _arg_int_positif rejette non-entier", _leve(l2m._arg_int_positif, "abc"))
+# R2#25 : les floats non finis (nan/inf) passaient float() puis neutralisaient
+# silencieusement les features (nan>0 == False).
+check("R2#25 _arg_float_fini accepte 1.5", l2m._arg_float_fini("1.5") == 1.5)
+check("R2#25 _arg_float_fini rejette nan", _leve(l2m._arg_float_fini, "nan"))
+check("R2#25 _arg_float_fini rejette inf", _leve(l2m._arg_float_fini, "inf"))
+check("R2#25 _arg_float_fini rejette -inf", _leve(l2m._arg_float_fini, "-inf"))
+check("R2#25 _arg_float_non_negatif accepte 0",
+      l2m._arg_float_non_negatif("0") == 0.0)
+check("R2#25 _arg_float_non_negatif rejette négatif",
+      _leve(l2m._arg_float_non_negatif, "-1"))
+check("R2#25 _arg_float_non_negatif rejette nan (split-width/min-free-gb)",
+      _leve(l2m._arg_float_non_negatif, "nan"))
+check("R2#25 _arg_float_positif accepte 0.5",
+      l2m._arg_float_positif("0.5") == 0.5)
+check("R2#25 _arg_float_positif rejette 0", _leve(l2m._arg_float_positif, "0"))
+check("R2#25 _arg_float_positif rejette inf", _leve(l2m._arg_float_positif, "inf"))
+# R2#39 : le pré-parser manuel n'avale plus `--` ni un flag comme valeur.
+check("R2#39 valeur normale prise",
+      l2m._pre_valeur_suivante(["--provider", "us-tnm"], 0) == "us-tnm")
+check("R2#39 séparateur -- non avalé (le bug)",
+      l2m._pre_valeur_suivante(["--provider", "--"], 0) is None)
+check("R2#39 flag suivant non avalé",
+      l2m._pre_valeur_suivante(["--provider", "--laz"], 0) is None)
+check("R2#39 valeur manquante en fin d'argv",
+      l2m._pre_valeur_suivante(["--provider"], 0) is None)
+check("R2#39 nombre négatif reste une valeur (--laz-hmin -0.5)",
+      l2m._pre_valeur_suivante(["--laz-hmin", "-0.5"], 0) == "-0.5")
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

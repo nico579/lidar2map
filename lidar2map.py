@@ -2632,6 +2632,17 @@ def _discover_providers():
     return result
 
 
+def _pre_valeur_suivante(argv, i):
+    """Valeur du token qui suit un pré-flag `--x VAL`, ou None si absente ou si
+    c'est un autre flag (`--…`) / le séparateur `--` (R2#39 : le pré-parser
+    manuel avalait `--` ou le flag suivant comme valeur, ex. `--provider --laz`
+    posait code=`--laz`, `--provider --` posait code=`--`). Les nombres négatifs
+    (`-0.5`, simple tiret) restent des valeurs valides."""
+    if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+        return argv[i + 1]
+    return None
+
+
 def _load_provider():
     code = None
     # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré).
@@ -2657,8 +2668,12 @@ def _load_provider():
     while _i < len(_argv):
         _a = _argv[_i]
         if _a == "--provider":
-            if _i + 1 < len(_argv):
-                code = _argv[_i + 1]
+            _v = _pre_valeur_suivante(_argv, _i)
+            if _v is None:
+                print("  ERROR: --provider requires a code "
+                      "(e.g. --provider us-tnm).", file=sys.stderr)
+                sys.exit(1)
+            code = _v
             del _argv[_i:_i + 2]
             continue
         if _a.startswith("--provider="):
@@ -2673,8 +2688,12 @@ def _load_provider():
         for _k in ("hmin", "hmax", "classes", "ground",
                    "csf-threshold", "csf-resolution", "csf-rigidness"):
             if _a == f"--laz-{_k}":
-                if _i + 1 < len(_argv):
-                    _laz_params[_k] = _argv[_i + 1]
+                _v = _pre_valeur_suivante(_argv, _i)
+                if _v is None:
+                    print(f"  ERROR: --laz-{_k} requires a value.",
+                          file=sys.stderr)
+                    sys.exit(1)
+                _laz_params[_k] = _v
                 del _argv[_i:_i + 2]
                 _m = True
                 break
@@ -2801,6 +2820,53 @@ SEUIL_DALLE_VALIDE = PROVIDER.SEUIL_DALLE_VALIDE
 MAX_TENTATIVES = 3    # essais avant abandon d'un téléchargement
 DELAI_RETRY    = 5    # secondes entre deux tentatives
 NB_WORKERS     = 8    # workers parallèles par défaut (téléchargement dalles/tuiles)
+
+
+# ── Validateurs argparse (type=…) ────────────────────────────────────────────
+# Fonctions `type=` : argparse les appelle sur chaque valeur brute et, si elles
+# lèvent ArgumentTypeError, affiche l'erreur + usage et sort en code 2. Bien
+# plus propre que des checks post-parse éparpillés. Deux bugs couverts :
+#   R2#41 : `--workers 0/négatif` plantait ThreadPoolExecutor (max_workers<1).
+#   R2#25 : nan/inf passaient float() (littéraux valides) puis neutralisaient
+#           silencieusement les features (nan>0 == False → --split-width/
+#           --min-free-gb désactivés sans le dire).
+def _arg_int_positif(s):
+    """int ≥ 1 (workers, laz-parallel : max_workers<1 plante l'executor)."""
+    try:
+        v = int(s)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"invalid int value: {s!r}")
+    if v < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {v}")
+    return v
+
+
+def _arg_float_fini(s):
+    """float rejetant NaN/inf (params non finis, R2#25)."""
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"invalid float value: {s!r}")
+    if not math.isfinite(v):
+        raise argparse.ArgumentTypeError(f"must be a finite number, got {s!r}")
+    return v
+
+
+def _arg_float_non_negatif(s):
+    """float fini ≥ 0 (largeurs/seuils : 0 = désactivé, négatif = absurde)."""
+    v = _arg_float_fini(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {v}")
+    return v
+
+
+def _arg_float_positif(s):
+    """float fini > 0 (distances/gamma : 0 ou négatif = absurde)."""
+    v = _arg_float_fini(s)
+    if v <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {v}")
+    return v
+
 
 # ── MBTiles / WMTS — paramètres de batch ─────────────────────────────────────
 SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne systémique)
@@ -10380,7 +10446,7 @@ Examples:
     grp_priori.add_argument("--split-rows", "--rows-decoupe", type=int, default=0, metavar="N",
                             dest="rows_decoupe",
                             help="Number of grid rows (North-South).")
-    grp_priori.add_argument("--split-width", "--split-largeur", type=float, default=0.0, metavar="KM",
+    grp_priori.add_argument("--split-width", "--split-largeur", type=_arg_float_non_negatif, default=0.0, metavar="KM",
                             dest="split_width",
                             help="Alternative: split into ~KM km squares (KM = the side).")
     grp_priori.add_argument("--block", "--bloc", default="", metavar="i/M", dest="block",
@@ -10397,7 +10463,7 @@ Examples:
                                  "cache, delete the other intermediates. Use when a later "
                                  "run reprocesses the same area (the GUI queue sets it "
                                  "automatically) to avoid re-downloading them.")
-    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=float, default=0.0, metavar="GB",
+    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=_arg_float_non_negatif, default=0.0, metavar="GB",
                             dest="min_free_gb",
                             help="Stop cleanly before a chunk if free disk space drops below GB "
                                  "(0 = disabled). Set it ABOVE one chunk's peak footprint "
@@ -10433,9 +10499,9 @@ Examples:
                              "For IGN scan*: cartes.gouv.fr pro account (see --raster). "
                              "Can also be set via env IGN_APIKEY or "
                              "OPENTOPOGRAPHY_API_KEY depending on the provider.")
-    parser.add_argument("--workers",  type=int,   default=NB_WORKERS, metavar="N",
+    parser.add_argument("--workers",  type=_arg_int_positif,   default=NB_WORKERS, metavar="N",
                         help=f"Parallel connections (default: {NB_WORKERS})")
-    parser.add_argument("--laz-parallel", type=int, default=1, metavar="N",
+    parser.add_argument("--laz-parallel", type=_arg_int_positif, default=1, metavar="N",
                         dest="laz_parallel",
                         help="LAZ (mode LAZ / --laz) : nb de conversions CSF/DFM "
                              "SIMULTANÉES (défaut 1). Chaque conversion pique ~3 Go "
@@ -10503,7 +10569,7 @@ Examples:
                         help=("SVF convention: flux = cos²γ (compressed near 1, "
                               "contrast to the eye); rvt = 1−sin γ (Kokalj/Hesse, "
                               "archaeology standard/openness). Default: flux."))
-    parser.add_argument("--svf-dist", type=float, default=20.0, metavar="M",
+    parser.add_argument("--svf-dist", type=_arg_float_positif, default=20.0, metavar="M",
                         dest="svf_dist",
                         help=("SVF radius in metres (10–200). Default: 20 "
                               "(micro-relief). 100 = enclosures/roads."))
@@ -10512,7 +10578,7 @@ Examples:
                         help=(f"Sun angle of directional hillshades in degrees "
                               f"(default: {ELEVATION_SOLEIL}°, archaeology optimal). "
                               f"General use: 45°. Archaeology: 20-30°."))
-    parser.add_argument("--svf-gamma", type=float, default=None, metavar="G",
+    parser.add_argument("--svf-gamma", type=_arg_float_positif, default=None, metavar="G",
                         dest="svf_gamma",
                         help=(f"SVF gamma after percentile stretch (default: "
                               f"{SVF_GAMMA}). <1 lightens (√), 1 = linear, >1 "
@@ -13129,7 +13195,7 @@ def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
         loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement")
         loc.add_argument("--zone-region", metavar="SLUG")
 
-    parser.add_argument("--zone-width", "--zone-largeur", type=float, default=width_default,
+    parser.add_argument("--zone-width", "--zone-largeur", type=_arg_float_positif, default=width_default,
                         metavar="KM", dest="zone_width",
                         help=f"Width in km of the (square) zone around the point "
                              f"(the side, not a radius; default: "
@@ -13271,7 +13337,7 @@ def main_decouper():
                         help="Number of grid columns (East-West).")
     parser.add_argument("--rows", type=int, default=0, metavar="N",
                         help="Number of grid rows (North-South).")
-    parser.add_argument("--split-width", "--split-largeur", type=float, default=0.0, metavar="KM",
+    parser.add_argument("--split-width", "--split-largeur", type=_arg_float_non_negatif, default=0.0, metavar="KM",
                         dest="split_width", help="Split into ~KM km squares (KM = the side).")
     # Mode raster uniquement : pas de map/geojson/transparent-raster (sorties
     # vecteur) — spécialisation intentionnelle, cf. le parser principal (l.~8699).
@@ -13367,13 +13433,13 @@ Examples:
     grp_priori.add_argument("--split-rows", "--rows-decoupe", type=int, default=0, metavar="N",
                             dest="rows_decoupe",
                             help="Number of grid rows (North-South).")
-    grp_priori.add_argument("--split-width", "--split-largeur", type=float, default=0.0, metavar="KM",
+    grp_priori.add_argument("--split-width", "--split-largeur", type=_arg_float_non_negatif, default=0.0, metavar="KM",
                             dest="split_width",
                             help="Alternative: split into ~KM km squares (KM = the side).")
     grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
                             help="Delete intermediate tiles + TIFs after each chunk. "
                                  "Essential for large areas (a whole department).")
-    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=float, default=0.0, metavar="GB",
+    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=_arg_float_non_negatif, default=0.0, metavar="GB",
                             dest="min_free_gb",
                             help="Stop cleanly before a chunk if free disk space drops below GB "
                                  "(0 = disabled). Set it ABOVE one chunk's peak footprint "
@@ -13417,7 +13483,7 @@ Examples:
                         help="Output folder (default: Projets/<name>/raster/)")
 
     # Comportement
-    parser.add_argument("--workers",       type=int, default=NB_WORKERS, metavar="N")
+    parser.add_argument("--workers",       type=_arg_int_positif, default=NB_WORKERS, metavar="N")
     parser.add_argument("--image-format", "--formats-image", choices=["auto","jpeg","png"], default="auto",
                         metavar="FMT", dest="formats_image",
                         help="Format of tile images: auto, jpeg or png (default: auto).")
@@ -15576,7 +15642,7 @@ def main_wfs():
     )
     parser.add_argument("--output-dir", "--dossier",     metavar="PATH", default=None, dest="dossier",
                         help="Output folder (default: ./ign_vecteur/)")
-    parser.add_argument("--workers",  type=int, default=4, metavar="N",
+    parser.add_argument("--workers",  type=_arg_int_positif, default=4, metavar="N",
                         help="Parallel WFS connections (default: 4)")
     parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
                         help="Overwrite existing GeoJSON (force re-download)")
@@ -15589,7 +15655,7 @@ def main_wfs():
                              "for OsmAnd overlay over the LiDAR.")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Overwrite existing .map")
-    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
+    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=_arg_float_non_negatif, default=None,
                         metavar="M", dest="simplification_vecteur",
                         help="Douglas-Peucker simplification epsilon in metres. "
                              "Without it, computed automatically from the area "
@@ -16405,7 +16471,7 @@ Examples:
                         help="Uncompressed .geojson output (default: .geojson.gz)")
     parser.add_argument("--file-formats", "--formats-fichier", nargs="+", default=["gz"], dest="formats_fichier",
                         metavar="FMT", help="gz geojson map transparent-raster")
-    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=float, default=None,
+    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=_arg_float_non_negatif, default=None,
                         metavar="M", dest="simplification_vecteur",
                         help="Douglas-Peucker epsilon in metres (default: auto from area).")
     args, _extra = parser.parse_known_args()  # tolère d'éventuels tokens globaux
