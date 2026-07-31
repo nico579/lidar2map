@@ -20,9 +20,12 @@ Prérequis (orchestré par lidar2map_mac_build.sh) :
   4. copie  lidar2map_bundle.zip             -> LIDAR2MAP.app/Contents/Resources/
 """
 
+import os
 from pathlib import Path
 
 BUNDLE_ZIP = Path(SPECPATH) / "build" / "lidar2map_bundle.zip"
+CODESIGN_IDENTITY = os.environ.get("LIDAR2MAP_CODESIGN_IDENTITY") or None
+ENTITLEMENTS_FILE = Path(SPECPATH) / "macos.entitlements"
 if not BUNDLE_ZIP.exists():
     raise SystemExit(
         f"[lidar2map_mac_launcher.spec] Bundle introuvable : {BUNDLE_ZIP}\n"
@@ -82,8 +85,10 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=True,        # double-clic sur fichier -> args forwards
     target_arch=None,           # archi du Python courant (arm64 ou x86_64)
-    codesign_identity=None,
-    entitlements_file=None,
+    codesign_identity=CODESIGN_IDENTITY,
+    entitlements_file=(str(ENTITLEMENTS_FILE)
+                       if CODESIGN_IDENTITY and ENTITLEMENTS_FILE.exists()
+                       else None),
     icon=None,
 )
 
@@ -98,7 +103,5 @@ app = BUNDLE(
         'NSAppTransportSecurity': {
             'NSAllowsArbitraryLoads': True,
         },
-        'com.apple.security.cs.allow-jit':                        True,
-        'com.apple.security.cs.allow-unsigned-executable-memory': True,
     },
 )

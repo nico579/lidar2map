@@ -35,12 +35,23 @@ BUILD_DIR="$ROOT/build"
 BUNDLE_ZIP="$BUILD_DIR/lidar2map_bundle.zip"
 FINAL_OUT="$ROOT/dist"
 FINAL_APP="$FINAL_OUT/LIDAR2MAP.app"
+# "-" = signature ad hoc gratuite. Pour une release notarisee, fournir le nom
+# exact du certificat, ex. "Developer ID Application: Example (TEAMID)".
+CODESIGN_IDENTITY="${LIDAR2MAP_CODESIGN_IDENTITY:--}"
+ENTITLEMENTS_FILE="$ROOT/macos.entitlements"
+NOTARY_PROFILE="${LIDAR2MAP_NOTARY_PROFILE:-}"
+NOTARY_KEYCHAIN="${LIDAR2MAP_NOTARY_KEYCHAIN:-}"
 
 # Archi du livrable : celle du Python du venv, pas celle du shell. PyInstaller
 # produit un binaire pour l'interpreteur qu'il utilise ; sous Rosetta, `uname -m`
 # mentirait (x86_64 alors que le venv peut etre arm64, ou l'inverse).
 ARCH="$("$VENV/bin/python" -c 'import platform; print(platform.machine())')"
 echo "Architecture cible : $ARCH"
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+    echo "Signature finale : ad hoc"
+else
+    echo "Signature finale : Developer ID ($CODESIGN_IDENTITY)"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. PyInstaller onedir (la vraie app)
@@ -55,6 +66,32 @@ echo "[1/3] PyInstaller onedir (lidar2map_mac.spec)..."
 if [ ! -f "$ONEDIR_ROOT/lidar2map" ]; then
     echo "ERREUR : $ONEDIR_ROOT/lidar2map introuvable apres build"
     exit 1
+fi
+
+# Les wheels Intel de pyproj et rasterio embarquent chacune un
+# libtiff.6.dylib sous le même install-name. Sur le build Intel observé en
+# conditions réelles, dyld choisit la copie pyproj, incompatible avec les
+# extensions rasterio ; la compression TIFF échoue alors avant même la GUI.
+# Conserver la copie rasterio qui exerce effectivement l'I/O TIFF, à
+# l'emplacement attendu par pyproj. Le correctif est limité à x86_64 et n'est
+# appliqué que si les deux dylibs existent.
+if [ "$ARCH" = "x86_64" ]; then
+    PYPROJ_TIFF=$(find "$ONEDIR_ROOT/_internal/pyproj/.dylibs" \
+        -name 'libtiff.6.dylib' -type f -print -quit 2>/dev/null || true)
+    RASTERIO_TIFF=$(find "$ONEDIR_ROOT/_internal/rasterio/.dylibs" \
+        -name 'libtiff.6.dylib' -type f -print -quit 2>/dev/null || true)
+    if [ -n "$PYPROJ_TIFF" ] && [ -n "$RASTERIO_TIFF" ]; then
+        echo "  Intel : harmonisation libtiff pyproj <- rasterio"
+        cp "$RASTERIO_TIFF" "$PYPROJ_TIFF"
+        if [ "$CODESIGN_IDENTITY" = "-" ]; then
+            codesign --force --sign - "$PYPROJ_TIFF"
+        else
+            codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$PYPROJ_TIFF"
+        fi
+        codesign --verify --strict --verbose=2 "$PYPROJ_TIFF"
+    else
+        echo "  ATTENTION : paire libtiff pyproj/rasterio introuvable ; audit requis"
+    fi
 fi
 
 ONEDIR_SIZE=$(du -sm "$ONEDIR_ROOT" | cut -f1)
@@ -103,6 +140,24 @@ mkdir -p "$FINAL_APP/Contents/Resources"
 cp "$BUNDLE_ZIP" "$FINAL_APP/Contents/Resources/lidar2map_bundle.zip"
 echo "  → $FINAL_APP/Contents/Resources/lidar2map_bundle.zip"
 
+# PyInstaller signe le .app avant la copie ci-dessus. Cette copie modifie le
+# resource seal et provoquait "LIDAR2MAP.app is damaged" une fois le ZIP
+# marque com.apple.quarantine par le navigateur. La signature du bundle COMPLET
+# doit donc impérativement être la dernière mutation avant l'archivage.
+echo "  Signature du bundle complet..."
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+    codesign --force --deep --all-architectures --sign - "$FINAL_APP"
+else
+    if [ ! -f "$ENTITLEMENTS_FILE" ]; then
+        echo "ERREUR : entitlements introuvables : $ENTITLEMENTS_FILE" >&2
+        exit 1
+    fi
+    codesign --force --deep --all-architectures --options runtime --timestamp \
+        --entitlements "$ENTITLEMENTS_FILE" \
+        --sign "$CODESIGN_IDENTITY" "$FINAL_APP"
+fi
+codesign --verify --deep --strict --verbose=2 "$FINAL_APP"
+
 FINAL_SIZE=$(du -sm "$FINAL_APP" | cut -f1)
 
 # Supprimer l'exécutable brut intermédiaire (artefact PyInstaller EXE,
@@ -118,6 +173,31 @@ echo ""
 echo "[4/4] Archive distribution (ditto)..."
 rm -f "$RELEASE_ZIP"
 ditto -c -k --keepParent "$FINAL_APP" "$RELEASE_ZIP"
+
+# Notarisation optionnelle : le profil est créé une fois avec
+# `xcrun notarytool store-credentials`. Après acceptation, stapler modifie le
+# .app ; recréer le ZIP est donc nécessaire pour distribuer le ticket agrafé.
+if [ -n "$NOTARY_PROFILE" ]; then
+    if [ "$CODESIGN_IDENTITY" = "-" ]; then
+        echo "ERREUR : notarisation demandee avec une signature ad hoc." >&2
+        exit 1
+    fi
+    echo "  Notarisation Apple..."
+    if [ -n "$NOTARY_KEYCHAIN" ]; then
+        xcrun notarytool submit "$RELEASE_ZIP" \
+            --keychain-profile "$NOTARY_PROFILE" \
+            --keychain "$NOTARY_KEYCHAIN" --wait
+    else
+        xcrun notarytool submit "$RELEASE_ZIP" \
+            --keychain-profile "$NOTARY_PROFILE" --wait
+    fi
+    xcrun stapler staple "$FINAL_APP"
+    xcrun stapler validate "$FINAL_APP"
+    spctl --assess --type execute --verbose=4 "$FINAL_APP"
+    rm -f "$RELEASE_ZIP"
+    ditto -c -k --keepParent "$FINAL_APP" "$RELEASE_ZIP"
+fi
+
 ZIP_SIZE=$(du -sm "$RELEASE_ZIP" | cut -f1)
 ZIP_SHA=$(shasum -a 256 "$RELEASE_ZIP" | awk '{print $1}')
 
@@ -128,7 +208,16 @@ echo "    $FINAL_APP   (${FINAL_SIZE} Mo)"
 echo "    $RELEASE_ZIP (${ZIP_SIZE} Mo)"
 echo "    sha256       $ZIP_SHA"
 echo ""
-echo "  Note : .app non signe -> macOS affichera une alerte Gatekeeper"
-echo "  au premier lancement. Pour contourner :"
-echo "    xattr -dr com.apple.quarantine \"$FINAL_APP\""
-echo "  Ou clic droit -> Ouvrir -> Ouvrir quand meme."
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+    echo "  Note : signature ad hoc valide, mais application non notarisee."
+    echo "  Gatekeeper demandera une autorisation au premier lancement."
+    echo "  Contournement pour un build de confiance :"
+    echo "    xattr -dr com.apple.quarantine \"$FINAL_APP\""
+else
+    echo "  Signature Developer ID valide."
+    if [ -n "$NOTARY_PROFILE" ]; then
+        echo "  Notarisation acceptee et ticket agrafe."
+    else
+        echo "  ATTENTION : notarisation non demandee (LIDAR2MAP_NOTARY_PROFILE vide)."
+    fi
+fi

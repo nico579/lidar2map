@@ -39,6 +39,10 @@ jobs:
     name: build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      # GitHub n'autorise pas secrets.* directement dans un `if`; passage par
+      # le contexte env pour rendre toute la chaîne Apple strictement optionnelle.
+      MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +55,44 @@ jobs:
       - name: Setup Python 3.12
         uses: actions/setup-python@v6
         with:
+          # 3.12.13 est source-only sur python.org ; setup-python sélectionne
+          # ici une distribution 3.12 disponible pour chaque runner.
           python-version: "3.12"
+
+      # Secrets optionnels pour une distribution sans alerte Gatekeeper :
+      #   MACOS_CERTIFICATE_BASE64  (.p12 encodé en base64)
+      #   MACOS_CERTIFICATE_PASSWORD, MACOS_KEYCHAIN_PASSWORD
+      #   MACOS_CODESIGN_IDENTITY   (Developer ID Application: ...)
+      #   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+      # Sans eux, le build reste ad hoc mais sa signature finale est valide.
+      - name: Configure Apple signing and notarization
+        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE_BASE64 != ''
+        env:
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERTIFICATE_PATH="$RUNNER_TEMP/lidar2map-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/lidar2map-build.keychain-db"
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$MACOS_KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          xcrun notarytool store-credentials lidar2map-notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --keychain "$KEYCHAIN_PATH"
+          echo "LIDAR2MAP_CODESIGN_IDENTITY=$MACOS_CODESIGN_IDENTITY" >> "$GITHUB_ENV"
+          echo "LIDAR2MAP_NOTARY_PROFILE=lidar2map-notary" >> "$GITHUB_ENV"
+          echo "LIDAR2MAP_NOTARY_KEYCHAIN=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       # ── Windows ──────────────────────────────────────────────────────────
       - name: Setup machine (Windows)

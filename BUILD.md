@@ -88,12 +88,12 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 | `update_app.py` | Met à jour `lidar2map.py` dans le bundle sans rebuild |
 | `lidar2map_mac.spec` | Build interne onedir macOS ARM64 |
 | `lidar2map_mac_launcher.spec` | Launcher `.app` macOS |
-| `lidar2map_mac_build.sh` | Script de build macOS (3 étapes) |
+| `lidar2map_mac_build.sh` | Script de build macOS (4 étapes + signature/notarisation optionnelle) |
 | `lidar2map_win.spec` | Build interne onedir Windows (+ Linux) |
 | `lidar2map_win_launcher.spec` | Launcher `.exe` Windows (+ Linux) |
 | `lidar2map_win_build.ps1` | Script de build Windows (3 étapes) |
 | `lidar2map_linux_build.sh` | Script de build Linux (3 étapes, miroir bash) |
-| `setup_build_mac.sh` | Setup machine de build macOS vierge (4 étapes) |
+| `setup_build_mac.sh` | Setup machine de build macOS vierge (5 étapes, pile Intel dédiée) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
 | `deploy.py` | **Déploiement unifié en 1 commande** (cross-platform Win/Mac/Linux) : push, détection du diff, patch cloud/local ou tag pour rebuild |
@@ -624,11 +624,22 @@ sudo apt install python3.12-venv
 
 ### Gatekeeper bloque le .app (macOS)
 
+Le script resigne toujours le bundle complet après l'ajout de
+`lidar2map_bundle.zip`. Sans certificat Apple, cette signature reste ad hoc et
+Gatekeeper demande une autorisation au premier téléchargement :
+
 ```bash
 xattr -dr com.apple.quarantine LIDAR2MAP.app
 ```
 
 Ou clic droit → Ouvrir → Ouvrir quand même.
+
+Pour une release publique sans avertissement, définir
+`LIDAR2MAP_CODESIGN_IDENTITY` et `LIDAR2MAP_NOTARY_PROFILE` avant le build. Le
+workflow GitHub configure automatiquement ces variables lorsque les secrets
+`MACOS_CERTIFICATE_BASE64`, `MACOS_CERTIFICATE_PASSWORD`,
+`MACOS_KEYCHAIN_PASSWORD`, `MACOS_CODESIGN_IDENTITY`, `APPLE_ID`,
+`APPLE_TEAM_ID` et `APPLE_APP_PASSWORD` sont présents.
 
 ### Spécifique Linux
 

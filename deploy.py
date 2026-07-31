@@ -86,6 +86,7 @@ MAP = {
     "lidar2map_mac_launcher.spec":   "lidar2map_mac_launcher.spec",
     "lidar2map_mac_build.sh":        "lidar2map_mac_build.sh",
     "setup_build_mac.sh":            "setup_build_mac.sh",
+    "macos.entitlements":            "macos.entitlements",
     # Doc + CI + meta
     "README_Github.md":              "README.md",
     "README_Github.fr.md":           "README.fr.md",
@@ -129,6 +130,7 @@ def is_rebuild_file(name: str) -> bool:
     return (
         name == "_loader.py"
         or name == "tagmapping-min.xml"
+        or name.endswith(".entitlements")
         or name.endswith(".spec")
         or name.endswith("_build.ps1")
         or name.endswith("_build.sh")

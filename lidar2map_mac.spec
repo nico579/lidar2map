@@ -34,6 +34,8 @@ NAME    = "lidar2map"
 SRC               = Path(SPECPATH)
 STAGING           = SRC / "build" / "staging"
 LIDAR2MAP_HOME    = Path.home() / ".lidar2map"
+CODESIGN_IDENTITY = os.environ.get("LIDAR2MAP_CODESIGN_IDENTITY") or None
+ENTITLEMENTS_FILE = SRC / "macos.entitlements"
 
 # Osmosis et JRE : d'abord dans bin/ local (comme Windows),
 # sinon dans ~/.lidar2map/ où le script les télécharge automatiquement.
@@ -343,8 +345,12 @@ exe = EXE(
     # (arm64 sur Apple Silicon, x86_64 sur Intel). Pas de valeur en dur, sinon
     # le build Intel produirait un binaire arm64 inutilisable.
     target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
+    # Sans certificat, PyInstaller conserve sa signature ad hoc. En release,
+    # LIDAR2MAP_CODESIGN_IDENTITY permet de signer aussi le payload interne.
+    codesign_identity=CODESIGN_IDENTITY,
+    entitlements_file=(str(ENTITLEMENTS_FILE)
+                       if CODESIGN_IDENTITY and ENTITLEMENTS_FILE.exists()
+                       else None),
     icon=None,
 )
 
