@@ -73,7 +73,7 @@ flowchart LR
     C --> E4[e4MSTP]
 ```
 
-| Rendu lidar2map — nom développé | Ce que le rendu met surtout en évidence | Avantages | Limites principales |
+| Rendu lidar2map — nom développé | À regarder en priorité | Avantages | Limites principales |
 |---|---|---|---|
 | `lrm` — **Local Relief Model**<br>ici **SLRM**, *Simple Local Relief Model* | murs bas, fossés étroits, plateformes, microrelief | très lisible, sans direction solaire, rapide | échelle unique ; enlève le contexte général ; petit σ = bruit et halos |
 | `vat` — **Visualization for Archaeological Topography**<br>variante VAT-style de lidar2map | lecture composite générale | creux, bosses et ruptures dans une image | composite plus difficile à interpréter ; plus lent que LRM |
