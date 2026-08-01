@@ -50,7 +50,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   | `lrm` | LRM simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut 15 px du provider) |
   | `rrim` | Composite couleur lidar2map inspiré du RRIM (Chiba 2008) : pente en rouge, SLRM en clair/foncé | `sigma` (du SLRM interne) |
   | `vat` | Composite lidar2map inspiré du **Visualization for Archaeological Topography** : SVF + openness positif + pente en niveaux de gris | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste final, défaut 2.0) |
-  | `e4mstp` | Composite couleur expérimental multi-échelle : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourd | `dist` (défaut 20), `gamma` (défaut 0,8) |
+  | `e4mstp` | Variante lidar2map inspirée de l'**e4MSTP publié** (Kokalj 2025) : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourde ; différente du preset RVT exact | `dist` (défaut 20), `gamma` (défaut 0,8) |
 
   **[Guide détaillé des ombrages : histoire, formules, schémas, avantages, limites et méthode de comparaison](docs/shadings.fr.md).**
 

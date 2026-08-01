@@ -2140,7 +2140,7 @@ const OMB_DEFS = {
   // e4mstp : gamma défaut 0.8 = ALIGNÉ sur le pipeline (PAS 2.0 comme svf/vat :
   // le composite couleur est déjà blendé, 2.0 l'écraserait en rendu très sombre ;
   // ombAdd() SÈME les défauts dans les params émis, donc ce def part au CLI).
-  e4mstp:{label:'e4MSTP (composite couleur)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
+  e4mstp:{label:'e4MSTP (variante lidar2map)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
                                            gamma:{lbl:'omb.gamma', def:0.8, min:0.3, max:3.0, step:0.1}}},
   svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
                                   dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},

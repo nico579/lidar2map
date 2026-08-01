@@ -52,7 +52,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   | `lrm` | Simplified LRM (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
   | `rrim` | lidar2map colour composite inspired by RRIM (Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
   | `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
-  | `e4mstp` | Experimental multi-scale colour composite: MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive | `dist` (default 20), `gamma` (default 0.8) |
+  | `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
 
   **[Detailed visualization guide: history, formulas, diagrams, strengths, limitations, and comparison workflow](docs/shadings.md).**
 

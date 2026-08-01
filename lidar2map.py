@@ -7164,7 +7164,7 @@ def _vat_compose(svf_path, opos_path, slope_path, dst_path,
 
 def _mstp_chunked(src_path, dst_path, scales_m=None, res=0.5,
                   lightness=0.85, k=2.2):
-    """Multi-Scale Topographic Position (Kokalj/RVT) chunké → GeoTIFF RGB uint8.
+    """Approximation gaussienne interne du MSTP, chunkée → GeoTIFF RGB uint8.
 
     DEV(σ) = (z − moyenne_σ) / écart-type_σ : déviation d'altitude standardisée
     (≈ slope-invariant), calculée sur 3 bandes d'échelle (local/méso/large).
@@ -7245,7 +7245,11 @@ def _mstp_chunked(src_path, dst_path, scales_m=None, res=0.5,
 
 def _e4mstp_compose(mstp_path, svf_path, opos_path, oneg_path, slope_path,
                     slrm_fine_path, slrm_path_path, dst_path, gamma=1.0):
-    """Composite e4MSTP (Kokalj/RVT, patent-safe) → GeoTIFF RGB uint8.
+    """Variante lidar2map inspirée de l'e4MSTP → GeoTIFF RGB uint8.
+
+    Ce composite ne reproduit pas la recette RVT de référence (Kokalj 2025) :
+    il emploie un SVF et deux SLRM, sans dominance locale, ainsi qu'une
+    approximation gaussienne interne du MSTP.
 
     Combine la couleur multi-échelle du MSTP et la netteté type-VAT du SVF :
       base   = relief coloré (openness positive = crêtes claires, négative =
@@ -8058,16 +8062,18 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
                             _t.unlink(missing_ok=True)
 
             elif cle == "e4mstp":
-                # ── e4MSTP — composite MSTP + relief coloré + SVF (Kokalj/RVT,
-                # variante sans brevet). Même patron que VAT : composantes en
-                # temp, blend, nettoie. Combine la couleur multi-échelle du MSTP
-                # et la netteté du SVF. Lourd (openness pos+neg + SVF + slope +
-                # 2 LRM + MSTP) ; réservé aux zones/chunks, pas le défaut.
+                # ── Variante lidar2map inspirée de l'e4MSTP publié (Kokalj
+                # 2025/RVT), sans reproduire son preset exact. Même patron que
+                # VAT : composantes en temp, blend, nettoie. Combine la couleur
+                # multi-échelle du MSTP et la netteté du SVF. Lourd (openness
+                # pos+neg + SVF + slope + 2 LRM + MSTP) ; réservé aux zones et
+                # chunks, pas le défaut.
                 _e4_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
                 _e4_gamma   = float(p_i["gamma"])
                 _slrm_fine_px = max(1, int(round(1.5 / RESOLUTION_M)))  # micro-relief
                 _slrm_path_px = max(1, int(round(8.0 / RESOLUTION_M)))  # échelle chemin
-                print(f"  e4MSTP: composite MSTP + coloured relief + SVF"
+                print(f"  e4MSTP-style (lidar2map variant):"
+                      f" composite MSTP + coloured relief + SVF"
                       f" (radius {_e4_dist_px * RESOLUTION_M:.0f} m)"
                       f", may take 15-30 min...", flush=True)
                 _svf_t = _chemin_part(

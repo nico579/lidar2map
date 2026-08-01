@@ -52,7 +52,7 @@ flowchart LR
 | `315` `045` `135` `225` | an oriented structure | powerful when light is perpendicular to the trace | strong azimuth bias; always compare directions |
 | `slope` | banks, scarps, abrupt breaks | fast and azimuth-independent | no uphill/downhill or mound/pit distinction; noise-sensitive |
 | `rrim` | coloured slope plus local relief | combines gradient breaks with local anomalies | lidar2map differs from academic RRIM; colour grammar must be learned |
-| `e4mstp` | multi-scale exploration of a small area | gathers many clues in one colour image | very expensive, complex, lidar2map-specific composite |
+| `e4mstp` | multi-scale exploration of a small area | gathers many clues in one colour image | very expensive; colour grammar takes practice; lidar2map variant differs from the RVT preset |
 
 ## Historical landmarks
 
@@ -67,9 +67,15 @@ flowchart LR
 | 2013 | Doneus openness application | joint archaeological reading of convexities and concavities |
 | 2018 | Guyot, Hubert-Moy & Lorho MSTP | three topographic-position scales combined as RGB |
 | 2019 | Kokalj & Somrak VAT | structured blend of archaeological visualizations |
+| 2025 | Kokalj e4MSTP | fusion of MSTP, two SVFs, positive/negative openness, local dominance, and red slope |
 
-`e4MSTP` in lidar2map is an experimental composition. It is not a separately
-published academic method with this exact formula.
+e4MSTP was not created by lidar2map. Version 4 is described by [Kokalj
+(2025)](https://doi.org/10.1002/arp.70002), has been included in RVT Python
+2.2.3 since July 2025, and was further explained by [Kokalj & Čož
+(2025)](https://doi.org/10.13140/RG.2.2.19992.66563). The current lidar2map
+output is nevertheless a **variant inspired by that method**, not a
+pixel-identical implementation of the RVT preset; the differences are detailed
+below.
 
 ## Slope and hillshade
 
@@ -277,9 +283,58 @@ $B(S,O^+)=1-2(1-S)(1-O^+)$. The selected gamma is then applied. $S$ is
 normalized SVF and $P$ normalized slope. It is therefore not pixel-identical to
 the RVT VAT preset.
 
-`e4mstp` is a lidar2map-specific colour composite. It combines multi-scale
-topographic position, SVF, O+, O−, slope, and two local residuals
-($\sigma=1.5$ m and 8 m). Its standardized deviation at each scale is based on:
+### Published e4MSTP
+
+The e4MSTP v4 published by [Kokalj
+(2025)](https://doi.org/10.1002/arp.70002) is a complex blend designed for
+multi-scale detection; “e4” means *enhanced, version 4*. The [reference RVT
+recipe](https://rvt-py.readthedocs.io/en/latest/rvt.blend.html#rvt.blend.e4mstp)
+stacks the layers in this order:
+
+```mermaid
+flowchart LR
+    S["Red slope (0–55°)"] --> OL["× O+ − O− and local dominance"]
+    OP["O+ − O−"] --> OL
+    LD["Local dominance"] --> OL
+    OL --> SV["× two merged SVFs"]
+    SV1["General-terrain SVF"] --> SV
+    SV2["Flat-terrain SVF, 10 m radius"] --> SV
+    SV --> M["MSTP Overlay at 90%"]
+    MSTP["MSTP"] --> M
+    M --> E4["e4MSTP v4"]
+```
+
+- the O+ − O− difference, stretched from −15 to 15, is placed at 50% over
+  local dominance stretched from 0.5 to 1.8;
+- a general-terrain SVF stretched from 0.7 to 1 is merged with a second SVF
+  for flat terrain, computed with a 10 m radius and stretched from 0.9 to 1;
+  the combined layer is multiplied at 25%;
+- MSTP is finally added in Overlay mode at 90%.
+
+This version is particularly effective at showing subtle topographic variation
+in very flat terrain and small structures. Its colours take time to learn and
+are better suited to detection and recognition than detailed interpretation.
+A Luminosity blend can remove the colours when they distract from the forms.
+
+![Example e4MSTP produced by RVT](images/shadings/e4mstp-rvt-pivola.jpg)
+
+*Example of the reference e4MSTP recipe on the 0.5 m Pivola DTM. Illustration
+from the [Relief Visualization Toolbox
+Python](https://github.com/EarthObservation/RVT_py/blob/8002c0c9ea34a4970c8298139ab4399247961433/docs/figures/rvtvis_qgis_Pivola_dem_05m_e4MSTP_8bit.jpg),
+© ZRC SAZU and University of Ljubljana, licensed under [Apache
+2.0](https://www.apache.org/licenses/LICENSE-2.0).*
+
+### Current lidar2map variant
+
+lidar2map's `e4mstp` output combines its MSTP calculation, one SVF, O+, O−,
+slope, and two SLRM residuals ($\sigma=1.5$ m and 8 m). It does not calculate
+local dominance, does not merge the two SVFs from the reference recipe, and
+uses a Gaussian approximation of MSTP with different scales and RGB encoding
+from RVT. The stretches, opacities, and blend modes also differ. It is therefore
+an **experimental e4MSTP-inspired variant**, not a pixel-identical reproduction
+of the RVT preset.
+
+Its standardized topographic deviation at each scale is based on:
 
 $$
 DEV_\sigma=\frac{z-G_\sigma(z)}
@@ -292,12 +347,11 @@ render.
 
 ![Principle of a multi-scale MSTP composition](images/shadings/mstp-workflow.png)
 
-*Published MSTP principle: the DTM produces topographic deviations at micro,
-meso and macro scales, then combines them as RGB. Figure 5 from [Guyot,
-Hubert-Moy & Lorho
-(2018)](https://doi.org/10.3390/rs10020225), [CC BY
-4.0](https://creativecommons.org/licenses/by/4.0/). `e4mstp` adopts the
-multi-scale idea, but its composition and formula remain lidar2map-specific.*
+*Published MSTP foundation: the DTM produces topographic deviations at micro,
+meso and macro scales, then combines them as RGB. e4MSTP v4 enriches this
+foundation with the layers described above. Figure 5 from [Guyot, Hubert-Moy &
+Lorho (2018)](https://doi.org/10.3390/rs10020225), [CC BY
+4.0](https://creativecommons.org/licenses/by/4.0/).*
 
 ## Cross-reading and validation
 
@@ -329,7 +383,9 @@ visualizations and retain coherent geometry.
 - Kokalj & Hesse, 2017 — [*Airborne Laser Scanning Raster Data Visualization*](https://doi.org/10.3986/9789612549848).
 - Guyot, Hubert-Moy & Lorho, 2018 — [multi-scale MSTP approach](https://doi.org/10.3390/rs10020225).
 - Kokalj & Somrak, 2019 — [*Why Not a Single Image?* — VAT](https://doi.org/10.3390/rs11070747).
-- Relief Visualization Toolbox — [visualization documentation](https://rvt-py.readthedocs.io/en/latest/).
+- Kokalj, 2025 — [*Standardizing Visualization in Ancient Maya Lidar Research*](https://doi.org/10.1002/arp.70002).
+- Kokalj & Čož, 2025 — [*Advancement of Relief Interpretation with a Complex Combination of Visualisation Techniques*](https://doi.org/10.13140/RG.2.2.19992.66563).
+- Relief Visualization Toolbox — [eMSTP documentation](https://rvt-py.readthedocs.io/en/latest/listofvis_emstp.html) and [e4MSTP recipe](https://rvt-py.readthedocs.io/en/latest/rvt.blend.html#rvt.blend.e4mstp).
 
 Original files and figure licences are listed in the [illustration
 registry](images/shadings/README.md).
