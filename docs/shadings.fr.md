@@ -2,6 +2,38 @@
 
 *[English version](shadings.md) | **Français***
 
+Le nuage de points LiDAR contient déjà le relief en trois dimensions : chaque
+retour possède des coordonnées $(x,y,z)$. Pour cartographier le terrain, les
+points classés « sol » sont interpolés en un **modèle numérique de terrain
+(MNT)**, une grille où chaque pixel conserve une altitude. Sur une carte plane,
+ce nombre ne rend toutefois pas spontanément visibles la forme d'un talus, le
+signe d'un fossé ou un microrelief de quelques décimètres.
+
+Les « ombrages » de lidar2map sont donc, au sens large, des **encodages visuels
+2D de la géométrie du MNT**. Ils transforment l'altitude ou ses relations avec
+le voisinage — pente et aspect, écart au relief de fond, angles d'horizon,
+fraction de ciel visible, convexité et concavité — en luminance ou en couleur.
+Ils ne recréent pas une 3D perdue et ne modifient pas le MNT : ils rendent ses
+formes perceptibles et sélectionnent les échelles ou propriétés à mettre en
+évidence. Seuls le hillshade et le multidirectionnel simulent réellement un
+éclairage ; LRM, pente, SVF et openness sont d'autres visualisations
+géométriques.
+
+```mermaid
+flowchart LR
+    P["Nuage LiDAR 3D (x, y, z)"] --> G[Points classés sol]
+    G --> Z["MNT : altitude z(x, y)"]
+    Z --> D["Mesure géométrique : pente, horizons, échelles"]
+    D --> I["Image 2D : luminance ou couleur"]
+```
+
+Un visualiseur 3D peut bien sûr afficher directement le nuage ou le MNT, et
+l'altitude peut aussi être représentée par des courbes de niveau ou des teintes
+hypsométriques. Les rasters 2D restent néanmoins pratiques pour comparer les
+méthodes, superposer le résultat à d'autres cartes et l'utiliser hors ligne sur
+un téléphone ; leurs dérivées locales sont particulièrement efficaces pour
+repérer les faibles reliefs sous couvert forestier.
+
 Les visualisations de relief ne montrent pas toutes la même chose. Une trace qui
 ressort fortement dans un LRM peut disparaître dans un hillshade, et une forme
 claire dans l'openness positif peut être ambiguë tant que l'openness négatif n'a
