@@ -15,7 +15,7 @@ le voisinage — pente et aspect, écart au relief de fond, angles d'horizon,
 fraction de ciel visible, convexité et concavité — en luminance ou en couleur.
 Ils ne recréent pas une 3D perdue et ne modifient pas le MNT : ils rendent ses
 formes perceptibles et sélectionnent les échelles ou propriétés à mettre en
-évidence. Seuls le hillshade et le multidirectionnel simulent réellement un
+évidence. Seuls l'ombrage directionnel et l'ombrage multidirectionnel simulent réellement un
 éclairage ; LRM, pente, SVF et openness sont d'autres visualisations
 géométriques.
 
@@ -35,7 +35,7 @@ un téléphone ; leurs dérivées locales sont particulièrement efficaces pour
 repérer les faibles reliefs sous couvert forestier.
 
 Les visualisations de relief ne montrent pas toutes la même chose. Une trace qui
-ressort fortement dans un LRM peut disparaître dans un hillshade, et une forme
+ressort fortement dans un LRM peut disparaître dans un ombrage directionnel, et une forme
 claire dans l'openness positif peut être ambiguë tant que l'openness négatif n'a
 pas été consulté. Il n'existe donc pas d'ombrage universel.
 
@@ -59,7 +59,7 @@ flowchart LR
     DEM[MNT / DEM] --> D1[Dérivées locales]
     DEM --> H[Angles d'horizon]
     DEM --> F[Filtres d'échelle]
-    D1 --> HS[Hillshade / multi]
+    D1 --> HS[Ombrage directionnel / multi]
     D1 --> SL[Pente]
     H --> SVF[SVF]
     H --> OP[Openness O+ / O−]
@@ -80,8 +80,8 @@ flowchart LR
 | `opos` (O+) — **positive openness**<br>ouverture positive | tertres, crêtes, levées, bords hauts | aucune direction d'éclairage ; excellent pour les convexités | renseigne peu sur les creux ; dépend fortement du rayon |
 | `oneg` (O−) — **negative openness**<br>ouverture négative | fossés, chemins creux, cuvettes, bords bas | complément direct de O+ | renseigne peu sur les bosses ; rendu naturellement granuleux |
 | `svf` — **Sky-View Factor**<br>facteur de vue du ciel | fossés, murs et formes sur pente | peu de biais directionnel ; conserve une bonne sensation du relief | calcul plus lourd ; sensible au rayon, au stretch et au bruit sur terrain plat |
-| `multi` — **multidirectional hillshade**<br>ombrage multidirectionnel | lecture générale familière | rapide, intuitif, moins biaisé qu'un seul azimut | reste une simulation d'éclairage ; certaines formes restent masquées |
-| `315` `045` `135` `225` — **hillshades directionnels**<br>azimuts de la lumière | vérification d'une structure orientée | très efficace quand le soleil est perpendiculaire à la trace | biais d'azimut fort ; toujours comparer plusieurs directions |
+| `multi` — **ombrage multidirectionnel** | lecture générale familière | rapide, intuitif, moins biaisé qu'un seul azimut | reste une simulation d'éclairage ; certaines formes restent masquées |
+| `315` `045` `135` `225` — **ombrages directionnels**<br>azimuts de la lumière | vérification d'une structure orientée | très efficace quand le soleil est perpendiculaire à la trace | biais d'azimut fort ; toujours comparer plusieurs directions |
 | `slope` — **pente**<br>angle local du terrain | talus, escarpements et ruptures de pente | rapide, indépendant de l'azimut | ne distingue ni montée/descente, ni bosse/creux ; sensible au bruit |
 | `rrim` — **Red Relief Image Map**<br>carte de relief rouge | lecture couleur pente + relief local | combine rupture de pente et anomalie locale | implémentation lidar2map différente du RRIM académique ; code couleur à apprendre |
 | `e4mstp` — **e⁴MSTP**<br>**Multiscale Topographic Position — enhanced version 4** | exploration multi-échelle d'une petite zone | rassemble beaucoup d'indices dans une image couleur | très lourd ; code couleur à apprendre ; variante lidar2map non identique au preset RVT |
@@ -177,7 +177,7 @@ Ainsi, augmenter `dist` dans e4MSTP ne signifie pas « agrandir toutes les
 échelles ». Il élargit uniquement le contexte des couches calculées à partir de
 l'horizon.
 
-### Hillshades et pente : `elevation`
+### Ombrages directionnels et pente : `elevation`
 
 Pour `315`, `045`, `135` et `225`, le type choisi fixe déjà l'azimut de la
 lumière. `elevation` est seulement sa hauteur au-dessus de l'horizon :
@@ -219,7 +219,7 @@ composites lourds recalculeraient des couches déjà demandées.
 | Année | Méthode | Apport |
 |---:|---|---|
 | 1981 | gradient de Horn | estimation robuste de pente/aspect sur une fenêtre 3×3 |
-| 1992 | hillshade multidirectionnel de Mark | quatre éclairages pondérés pour réduire le biais d'orientation |
+| 1992 | ombrage multidirectionnel de Mark | quatre éclairages pondérés pour réduire le biais d'orientation |
 | 2002 | openness de Yokoyama, Shirasawa et Pike | description angulaire des convexités et concavités sans soleil artificiel |
 | 2008 | RRIM de Chiba, Kaneta et Suzuki | pente en rouge + dominance/openness en luminosité |
 | 2010 | Local Relief Model de Hesse | retrait du relief de fond pour isoler les formes locales |
@@ -236,7 +236,7 @@ depuis juillet 2025, puis explicitée par [Kokalj et Čož
 lidar2map est toutefois une **variante inspirée de cette méthode**, et non le
 preset RVT reproduit à l'identique ; les différences sont détaillées plus bas.
 
-## Pente et hillshade
+## Pente et ombrage directionnel
 
 lidar2map calcule les dérivées avec l'opérateur 3×3 de Horn. Pour les neuf
 altitudes suivantes :
@@ -260,7 +260,7 @@ $$
 s=\arctan\!\left(\sqrt{p^2+q^2}\right)
 $$
 
-Le hillshade directionnel applique ensuite une illumination lambertienne :
+L'ombrage directionnel applique ensuite une illumination lambertienne :
 
 $$
 I=\max\left(0,
@@ -269,11 +269,11 @@ $$
 
 où $z$ est l'angle zénithal du soleil, $A$ son azimut, $s$ la pente et
 $\alpha$ l'aspect. Une lumière basse (`elevation=20` à `30`) accentue le
-microrelief, mais allonge les ombres et augmente le contraste. Une lumière à
+microrelief, mais étend les zones sombres et augmente le contraste. Une lumière à
 45° est plus neutre pour un usage général. Il s'agit d'une illumination locale,
 pas d'un lancer de rayons calculant de véritables ombres portées.
 
-![Géométrie du hillshade : soleil, pente et normale](images/shadings/hillshade-geometry.gif)
+![Géométrie de l'ombrage directionnel : soleil, pente et normale](images/shadings/hillshade-geometry.gif)
 
 *La luminance dépend de l'angle $i$ entre le rayon solaire et la normale à la
 pente ; la pente, son aspect et la position du soleil déterminent donc ensemble
@@ -285,7 +285,7 @@ public](https://www.usgs.gov/information-policies-and-instructions/copyrights-an
 ### Multidirectionnel (`multi`)
 
 La méthode de [Mark (1992)](https://doi.org/10.3133/ofr92422) combine quatre
-hillshades. lidar2map, comme le mode multidirectionnel de GDAL, utilise les
+ombrages directionnels. lidar2map, comme le mode multidirectionnel de GDAL, utilise les
 azimuts 225°, 270°, 315° et 360° avec :
 
 $$
@@ -447,7 +447,7 @@ sens du papier de 2008.
 ## VAT et e4MSTP
 
 Le VAT publié par [Kokalj et Somrak
-(2019)](https://doi.org/10.3390/rs11070747) combine hillshade, pente inversée,
+(2019)](https://doi.org/10.3390/rs11070747) combine ombrage directionnel, pente inversée,
 openness positif et SVF avec des étirements et modes de fusion définis.
 
 ![Chaîne de calcul du VAT publié](images/shadings/vat-workflow.png)
@@ -551,7 +551,7 @@ l'implémentation ; l'e4MSTP ajoute ensuite les couches du schéma précédent.*
    convexités et concavités.
 3. **Contexte :** utiliser SVF, VAT ou RRIM pour replacer l'anomalie dans le
    relief environnant.
-4. **Orientation :** comparer plusieurs azimuts de hillshade si la géométrie
+4. **Orientation :** comparer plusieurs azimuts d'ombrage directionnel si la géométrie
    reste ambiguë.
 5. **Retour aux données :** vérifier orthophoto, cadastre, cartes anciennes et
    terrain. Une visualisation n'est jamais une preuve archéologique.
