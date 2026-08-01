@@ -110,7 +110,17 @@ $$
 où $z$ est l'angle zénithal du soleil, $A$ son azimut, $s$ la pente et
 $\alpha$ l'aspect. Une lumière basse (`elevation=20` à `30`) accentue le
 microrelief, mais allonge les ombres et augmente le contraste. Une lumière à
-45° est plus neutre pour un usage général.
+45° est plus neutre pour un usage général. Il s'agit d'une illumination locale,
+pas d'un lancer de rayons calculant de véritables ombres portées.
+
+![Géométrie du hillshade : soleil, pente et normale](images/shadings/hillshade-geometry.gif)
+
+*La luminance dépend de l'angle $i$ entre le rayon solaire et la normale à la
+pente ; la pente, son aspect et la position du soleil déterminent donc ensemble
+l'intensité. Figure 2 de [Pike
+(1992)](https://pubs.usgs.gov/bul/b2016/chapb/ch_b.html), U.S. Geological
+Survey, [domaine
+public](https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits).*
 
 ### Multidirectionnel (`multi`)
 
@@ -126,13 +136,6 @@ $$
 La pondération renforce les éclairages perpendiculaires à la pente locale. Le
 rendu est plus équilibré qu'une lumière unique, mais il reste dépendant d'un
 modèle d'illumination.
-
-![Deux hillshades du même relief avec des azimuts différents](images/shadings/hillshade-direction-bias.png)
-
-*Le même relief éclairé à 315° (a) puis 45° (b) : les structures parallèles à
-la lumière deviennent difficiles à lire. Figure 1 de [Zakšek, Oštir et Kokalj
-(2011)](https://doi.org/10.3390/rs3020398), données NASA/JPL/University of
-Arizona, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
 
 ## LRM dans lidar2map : la variante simplifiée
 
@@ -155,6 +158,14 @@ flowchart LR
     B --> S
     S --> R[Résiduel local Rσ]
 ```
+
+![Séparation du relief par bandes de fréquences](images/shadings/lrm-frequency-principle.png)
+
+*Le profil observé est la somme d'un relief naturel de fond et de composantes
+locales de fréquence plus élevée. Le LRM exploite cette séparation d'échelles
+pour isoler les petites formes. Figure 2 de [Toumazet, Simon et Mayoral
+(2021)](https://doi.org/10.3390/geomatics1040026), [CC BY
+4.0](https://creativecommons.org/licenses/by/4.0/).*
 
 - Petit $\sigma$ : petits détails, arêtes nettes, mais davantage de bruit et de
   halos.
@@ -234,7 +245,9 @@ $r$. Figure 1 de [Doneus
 
 Dans lidar2map, `oneg` est affiché inversé afin que les creux apparaissent
 sombres. Comparer O+ et O− côte à côte est plus informatif que de choisir l'un
-des deux.
+des deux. Les deux sorties sont étirées par percentiles pour chaque jeu de
+données : leurs valeurs affichées sont des contrastes visuels, pas des angles
+physiques directement comparables entre projets.
 
 ## RRIM : publication et variante lidar2map
 
@@ -246,6 +259,14 @@ avec une quantité dérivée de l'openness :
 $$
 D=\frac{O^+-O^-}{2}
 $$
+
+![Encodage géométrique du RRIM](images/shadings/rrim-colour-principle.png)
+
+*Dans le RRIM publié, l'axe vertical commande le rouge selon la pente ; l'axe
+horizontal $D$ sépare les convexités des concavités et commande la luminosité.
+Extrait recadré de la figure 7 de [Chiba, Kaneta et Suzuki
+(2008)](https://isprs.org/proceedings/XXXVII/congress/2_pdf/11_ThS-6/08.pdf),
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
 
 La sortie `rrim` de lidar2map est un **composite RRIM-style**, pas une
 reproduction exacte. Elle utilise :
@@ -325,14 +346,6 @@ couleurs demandent un apprentissage et servent davantage à la détection et à 
 reconnaissance qu'à l'interprétation détaillée. Un mode de fusion Luminosité
 permet de la lire sans les couleurs.
 
-![Exemple d'e4MSTP produit par le RVT](images/shadings/e4mstp-rvt-pivola.jpg)
-
-*Exemple de la recette e4MSTP de référence sur le MNT à 0,5 m de Pivola.
-Illustration du [Relief Visualization Toolbox
-Python](https://github.com/EarthObservation/RVT_py/blob/8002c0c9ea34a4970c8298139ab4399247961433/docs/figures/rvtvis_qgis_Pivola_dem_05m_e4MSTP_8bit.jpg),
-© ZRC SAZU et University of Ljubljana, licence [Apache
-2.0](https://www.apache.org/licenses/LICENSE-2.0).*
-
 ### Variante actuelle de lidar2map
 
 La sortie `e4mstp` de lidar2map réunit son calcul MSTP, un SVF, O+, O−, la pente
@@ -354,13 +367,21 @@ Il peut être très riche sur une petite zone, mais son coût et le nombre de
 couches fusionnées le rendent moins adapté comme première lecture ou pour un
 département entier.
 
-![Principe d'une composition MSTP multi-échelle](images/shadings/mstp-workflow.png)
+```mermaid
+flowchart LR
+    Z[MNT z] --> L[Position topographique locale]
+    Z --> M[Position topographique intermédiaire]
+    Z --> B[Position topographique large]
+    L --> RGB[Un canal couleur par bande d'échelle]
+    M --> RGB
+    B --> RGB
+    RGB --> MSTP[Composition MSTP]
+```
 
-*Socle MSTP publié : le MNT produit des écarts topographiques aux échelles
-micro, méso et macro, ensuite réunis en RGB. L'e4MSTP v4 enrichit ce socle avec
-les couches décrites ci-dessus. Figure 5 de [Guyot, Hubert-Moy et Lorho
-(2018)](https://doi.org/10.3390/rs10020225), [CC BY
-4.0](https://creativecommons.org/licenses/by/4.0/).*
+*Principe géométrique du MSTP : mesurer la position relative d'un point dans
+son voisinage à trois échelles, puis réunir ces trois informations en couleur.
+L'affectation précise des canaux et les échelles diffèrent selon
+l'implémentation ; l'e4MSTP ajoute ensuite les couches du schéma précédent.*
 
 ## Lecture croisée et validation
 
@@ -383,10 +404,12 @@ plusieurs visualisations indépendantes et présenter une géométrie cohérente
 ## Références
 
 - Horn, 1981 — [*Hill Shading and the Reflectance Map*](https://doi.org/10.1109/PROC.1981.11918).
+- Pike, 1992 — [*Machine Visualization of Synoptic Topography by Digital Image Processing*](https://pubs.usgs.gov/bul/b2016/chapb/ch_b.html).
 - Mark, 1992 — [*A multidirectional, oblique-weighted, shaded-relief image of the Island of Hawaii*](https://doi.org/10.3133/ofr92422).
 - Yokoyama, Shirasawa & Pike, 2002 — [*Visualizing Topography by Openness*](https://www.asprs.org/wp-content/uploads/pers/2002journal/march/2002_mar_257-265.pdf).
 - Chiba, Kaneta & Suzuki, 2008 — [*Red Relief Image Map*](https://isprs.org/proceedings/XXXVII/congress/2_pdf/11_ThS-6/08.pdf).
 - Hesse, 2010 — [*LiDAR-derived Local Relief Models*](https://doi.org/10.1002/arp.374).
+- Toumazet, Simon & Mayoral, 2021 — [*Self-AdaptIve LOcal Relief Enhancer (SAILORE)*](https://doi.org/10.3390/geomatics1040026).
 - Zakšek, Oštir & Kokalj, 2011 — [*Sky-View Factor as a Relief Visualization Technique*](https://doi.org/10.3390/rs3020398).
 - Kokalj, Zakšek & Oštir, 2011 — [application archéologique du SVF](https://doi.org/10.1017/S0003598X00067594).
 - Doneus, 2013 — [*Openness as Visualization Technique for Interpretative Mapping*](https://doi.org/10.3390/rs5126427).

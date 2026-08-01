@@ -112,6 +112,15 @@ A low light (`elevation=20` to `30`) emphasizes microrelief but increases
 contrast; 45° is more neutral for general use. This is local illumination, not
 a ray-cast model of true cast shadows.
 
+![Hillshade geometry: Sun, slope, and normal](images/shadings/hillshade-geometry.gif)
+
+*Luminance depends on angle $i$ between the solar ray and the slope normal;
+slope, aspect, and Sun position therefore jointly determine intensity. Figure 2
+from [Pike
+(1992)](https://pubs.usgs.gov/bul/b2016/chapb/ch_b.html), U.S. Geological
+Survey, [public
+domain](https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits).*
+
 ### Multidirectional (`multi`)
 
 [Mark (1992)](https://doi.org/10.3133/ofr92422) combines four hillshades.
@@ -125,13 +134,6 @@ $$
 
 This favours illumination perpendicular to the local slope. It is more balanced
 than one light source, but it remains an illumination model.
-
-![Two hillshades of the same relief with different azimuths](images/shadings/hillshade-direction-bias.png)
-
-*The same relief illuminated from 315° (a) and 45° (b): structures parallel to
-the light become difficult to read. Figure 1 from [Zakšek, Oštir & Kokalj
-(2011)](https://doi.org/10.3390/rs3020398), data NASA/JPL/University of Arizona,
-[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
 
 ## LRM in lidar2map: the simplified variant
 
@@ -153,6 +155,14 @@ flowchart LR
     B --> S
     S --> R[Local residual Rσ]
 ```
+
+![Relief separation into frequency bands](images/shadings/lrm-frequency-principle.png)
+
+*The observed profile is the sum of broad natural relief and higher-frequency
+local components. LRM uses this scale separation to isolate small landforms.
+Figure 2 from [Toumazet, Simon & Mayoral
+(2021)](https://doi.org/10.3390/geomatics1040026), [CC BY
+4.0](https://creativecommons.org/licenses/by/4.0/).*
 
 - Small $\sigma$: fine detail and sharp edges, but more noise and halos.
 - Large $\sigma$: broader terraces and structures, while fine detail merges
@@ -242,6 +252,14 @@ $$
 D=\frac{O^+-O^-}{2}
 $$
 
+![Geometric encoding used by RRIM](images/shadings/rrim-colour-principle.png)
+
+*In published RRIM, the vertical axis controls red chroma through slope; the
+horizontal $D$ axis separates convexity from concavity and controls lightness.
+Cropped from Figure 7 in [Chiba, Kaneta & Suzuki
+(2008)](https://isprs.org/proceedings/XXXVII/congress/2_pdf/11_ThS-6/08.pdf),
+[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
+
 lidar2map's `rrim` is an **RRIM-style composite**, not an exact reproduction:
 
 $$
@@ -316,14 +334,6 @@ in very flat terrain and small structures. Its colours take time to learn and
 are better suited to detection and recognition than detailed interpretation.
 A Luminosity blend can remove the colours when they distract from the forms.
 
-![Example e4MSTP produced by RVT](images/shadings/e4mstp-rvt-pivola.jpg)
-
-*Example of the reference e4MSTP recipe on the 0.5 m Pivola DTM. Illustration
-from the [Relief Visualization Toolbox
-Python](https://github.com/EarthObservation/RVT_py/blob/8002c0c9ea34a4970c8298139ab4399247961433/docs/figures/rvtvis_qgis_Pivola_dem_05m_e4MSTP_8bit.jpg),
-© ZRC SAZU and University of Ljubljana, licensed under [Apache
-2.0](https://www.apache.org/licenses/LICENSE-2.0).*
-
 ### Current lidar2map variant
 
 lidar2map's `e4mstp` output combines its MSTP calculation, one SVF, O+, O−,
@@ -345,13 +355,21 @@ It can be information-rich on a small site, but its many Gaussian scales and
 horizon layers make it unsuitable as a first view or a cheap department-wide
 render.
 
-![Principle of a multi-scale MSTP composition](images/shadings/mstp-workflow.png)
+```mermaid
+flowchart LR
+    Z[DTM z] --> L[Local topographic position]
+    Z --> M[Intermediate topographic position]
+    Z --> B[Broad topographic position]
+    L --> RGB[One colour channel per scale band]
+    M --> RGB
+    B --> RGB
+    RGB --> MSTP[MSTP composition]
+```
 
-*Published MSTP foundation: the DTM produces topographic deviations at micro,
-meso and macro scales, then combines them as RGB. e4MSTP v4 enriches this
-foundation with the layers described above. Figure 5 from [Guyot, Hubert-Moy &
-Lorho (2018)](https://doi.org/10.3390/rs10020225), [CC BY
-4.0](https://creativecommons.org/licenses/by/4.0/).*
+*MSTP geometry in principle: measure a point's relative position in its
+neighbourhood at three scales, then combine the three measurements as colour.
+Exact channel assignment and scales depend on the implementation; e4MSTP then
+adds the layers shown in the preceding workflow.*
 
 ## Cross-reading and validation
 
@@ -373,10 +391,12 @@ visualizations and retain coherent geometry.
 ## References
 
 - Horn, 1981 — [*Hill Shading and the Reflectance Map*](https://doi.org/10.1109/PROC.1981.11918).
+- Pike, 1992 — [*Machine Visualization of Synoptic Topography by Digital Image Processing*](https://pubs.usgs.gov/bul/b2016/chapb/ch_b.html).
 - Mark, 1992 — [*A multidirectional, oblique-weighted, shaded-relief image of the Island of Hawaii*](https://doi.org/10.3133/ofr92422).
 - Yokoyama, Shirasawa & Pike, 2002 — [*Visualizing Topography by Openness*](https://www.asprs.org/wp-content/uploads/pers/2002journal/march/2002_mar_257-265.pdf).
 - Chiba, Kaneta & Suzuki, 2008 — [*Red Relief Image Map*](https://isprs.org/proceedings/XXXVII/congress/2_pdf/11_ThS-6/08.pdf).
 - Hesse, 2010 — [*LiDAR-derived Local Relief Models*](https://doi.org/10.1002/arp.374).
+- Toumazet, Simon & Mayoral, 2021 — [*Self-AdaptIve LOcal Relief Enhancer (SAILORE)*](https://doi.org/10.3390/geomatics1040026).
 - Zakšek, Oštir & Kokalj, 2011 — [*Sky-View Factor as a Relief Visualization Technique*](https://doi.org/10.3390/rs3020398).
 - Kokalj, Zakšek & Oštir, 2011 — [archaeological SVF application](https://doi.org/10.1017/S0003598X00067594).
 - Doneus, 2013 — [*Openness as Visualization Technique for Interpretative Mapping*](https://doi.org/10.3390/rs5126427).
