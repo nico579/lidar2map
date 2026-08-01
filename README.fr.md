@@ -41,15 +41,18 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
   | Type | Ce qu'il révèle | Paramètres |
   |------|-----------------|------------|
-  | `multi` | Hillshade multidirectionnel (Mark 1992), relief général sans biais d'azimut | `elevation` (° soleil, défaut 25, bas = micro-relief, 45 = usage général) |
+  | `multi` | Hillshade multidirectionnel (Mark 1992), relief général avec biais d'azimut réduit | `elevation` (° soleil, défaut 25, bas = micro-relief, 45 = usage général) |
   | `315` `045` `135` `225` | Hillshades directionnels, accentuent les structures perpendiculaires à l'azimut choisi | `elevation` (idem) |
   | `slope` | Pente 0-90° étalée sur 1-255, talus, ruptures, terrasses | (aucun) |
   | `svf` | Sky-View Factor, fraction de ciel visible : fossés, restanques, enceintes en sombre | `conv` (`flux` = cos²γ contrasté, défaut ; `rvt` = 1−sin γ, standard archéo Kokalj/Hesse), `dist` (rayon d'horizon en m, défaut 20, 20 = micro-relief, 100 = enceintes/voiries), `gamma` (contraste, défaut 2.0) |
   | `opos` | Openness positive (Yokoyama 2002), angle d'horizon moyen au-dessus de l'horizontale : crêtes, bosses, tumuli en clair | `dist`, `gamma` |
   | `oneg` | Openness négative inversée, vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
-  | `lrm` | Local Relief Model, soustrait le relief lissé (gaussienne σ) : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (rayon gaussien en m ≈ échelle max des structures conservées ; défaut 15 px du provider) |
-  | `rrim` | Red Relief Image Map (Chiba 2008), composite couleur : pente en rouge (rampe absolue 0-45°), LRM en clair/foncé, creux ET bosses d'un seul regard | `sigma` (du LRM interne) |
-  | `vat` | **Visualization for Archaeological Topography**, le détecteur le plus complet : SVF + openness positif + pente fondus en un seul niveau de gris, révèle creux ET bosses sans choisir une méthode (esprit RVT, ZRC SAZU). Plus lent que `lrm`, plus granuleux aussi. Nécessite numba | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste du composite, défaut 2.0, 1 clair, 2 foncé) |
+  | `lrm` | LRM simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut 15 px du provider) |
+  | `rrim` | Composite couleur lidar2map inspiré du RRIM (Chiba 2008) : pente en rouge, SLRM en clair/foncé | `sigma` (du SLRM interne) |
+  | `vat` | Composite lidar2map inspiré du **Visualization for Archaeological Topography** : SVF + openness positif + pente en niveaux de gris | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste final, défaut 2.0) |
+  | `e4mstp` | Composite couleur expérimental multi-échelle : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourd | `dist` (défaut 20), `gamma` (défaut 0,8) |
+
+  **[Guide détaillé des ombrages : histoire, formules, schémas, avantages, limites et méthode de comparaison](docs/shadings.fr.md).**
 
   Deux façons de les demander :
 
@@ -565,6 +568,7 @@ disclaimer anti-détection ci-dessous).
 ## Documentation
 
 - **README de l'utilisateur** : ce fichier
+- **Choisir un ombrage LiDAR** : [histoire, formules, schémas, avantages et limites de chaque rendu](docs/shadings.fr.md)
 - **Build & déploiement** : [BUILD.md](BUILD.md), architecture du bundle, scripts de build par OS, mise à jour sans rebuild, dépannage (incluant cas spécifiques Linux et macOS)
 - **Aide intégrée** : `python lidar2map.py --help` (LiDAR), `--raster --help` (raster), `--vector --help` (vecteur), `--osm --help`, `--merge --help`
 

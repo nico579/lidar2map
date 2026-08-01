@@ -43,15 +43,18 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
   | Type | What it reveals | Parameters |
   |------|-----------------|------------|
-  | `multi` | Multidirectional hillshade (Mark 1992), general relief without azimuth bias | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
+  | `multi` | Multidirectional hillshade (Mark 1992), general relief with reduced azimuth bias | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
   | `315` `045` `135` `225` | Directional hillshades, emphasize structures perpendicular to the chosen azimuth | `elevation` (same) |
   | `slope` | Slope 0-90° stretched to 1-255, banks, breaks, terraces | (none) |
   | `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
   | `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
   | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
-  | `lrm` | Local Relief Model, subtracts the smoothed terrain (gaussian σ): removes hills and valleys, keeps only local anomalies. Fast and readable: the GUI default | `sigma` (gaussian radius in m ≈ max scale of preserved structures; default 15 px of the provider) |
-  | `rrim` | Red Relief Image Map (Chiba 2008), color composite: slope in red (absolute 0-45° ramp), LRM as light/dark, hollows AND mounds at a glance | `sigma` (of the internal LRM) |
-  | `vat` | **Visualization for Archaeological Topography**, the most complete detector: SVF + positive openness + slope blended into a single grayscale, reveals hollows AND mounds without picking a method (RVT style, ZRC SAZU). Slower than `lrm`, grainier too. Needs numba | `dist` (SVF/openness radius in m, default 20), `gamma` (final composite contrast, default 2.0, 1 light, 2 dark) |
+  | `lrm` | Simplified LRM (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
+  | `rrim` | lidar2map colour composite inspired by RRIM (Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
+  | `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
+  | `e4mstp` | Experimental multi-scale colour composite: MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive | `dist` (default 20), `gamma` (default 0.8) |
+
+  **[Detailed visualization guide: history, formulas, diagrams, strengths, limitations, and comparison workflow](docs/shadings.md).**
 
   Two ways to request them:
 
@@ -570,6 +573,7 @@ anti-detecting disclaimer above).
 ## Documentation
 
 - **User README**: this file
+- **Choosing a LiDAR visualization**: [history, formulas, diagrams, strengths and limitations of every output](docs/shadings.md)
 - **Build & deployment**: [BUILD.md](BUILD.md), bundle architecture, per-OS build scripts, updating without rebuild, troubleshooting (including Linux- and macOS-specific cases)
 - **Built-in help**: `python lidar2map.py --help` (LiDAR), `--raster --help` (raster), `--vector --help` (vector), `--osm --help`, `--merge --help`
 
