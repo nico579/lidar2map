@@ -86,6 +86,150 @@ flowchart LR
 | `rrim` | lecture couleur pente + relief local | combine rupture de pente et anomalie locale | implémentation lidar2map différente du RRIM académique ; code couleur à apprendre |
 | `e4mstp` | exploration multi-échelle d'une petite zone | rassemble beaucoup d'indices dans une image couleur | très lourd ; code couleur à apprendre ; variante lidar2map non identique au preset RVT |
 
+## Noms et paramètres dans lidar2map
+
+### Signification des noms
+
+| Code affiché | Nom développé | Ce que le nom désigne ici |
+|---|---|---|
+| `lrm` | **Local Relief Model** — modèle de relief local | lidar2map calcule plus précisément sa variante simple, le **SLRM** (*Simple Local Relief Model*) : altitude moins relief lissé |
+| `vat` | **Visualization for Archaeological Topography** — visualisation pour la topographie archéologique | le code reprend le nom de la méthode publiée ; lidar2map produit une variante « VAT-style » en niveaux de gris, à base de SVF, openness positif et pente |
+| `svf` | **Sky-View Factor** — facteur de vue du ciel | fraction du ciel visible, estimée à partir des horizons autour du pixel |
+| `opos` / O+ | **positive openness** — ouverture positive | ouverture vers le zénith ; met l'accent sur convexités, crêtes et tertres |
+| `oneg` / O− | **negative openness** — ouverture négative | ouverture vers le nadir ; lidar2map l'inverse visuellement pour garder fossés et creux sombres |
+| `rrim` | **Red Relief Image Map** — carte de relief rouge | variante lidar2map : pente dans le rouge et SLRM dans la luminosité |
+| `mstp` | **Multiscale Topographic Position** — position topographique multi-échelle | composante interne qui compare la position du pixel à plusieurs voisinages |
+| `e4mstp` | **e⁴MSTP : Multiscale Topographic Position — enhanced version 4** | quatrième version enrichie de la méthode MSTP publiée ; la sortie proposée est la variante lidar2map décrite plus bas |
+| `multi` | **multidirectional hillshade** — hillshade multidirectionnel | quatre éclairages pondérés réunis dans une image |
+| `315`, `045`, `135`, `225` | hillshades directionnels | azimut fixé par le nom : nord-ouest, nord-est, sud-est et sud-ouest |
+| `slope` | pente | angle de la pente locale, sans direction solaire |
+
+### Champs affichés par l'interface
+
+Chaque clic sur **+** crée une instance avec ses propres paramètres. On peut
+donc ajouter deux fois le même type, par exemple un SVF local et un SVF de plus
+grande portée. Les clés entre parenthèses sont celles de la CLI répétable
+`--shading TYPE:cle=valeur,...`.
+
+| Sortie | Paramètres affichés | Valeurs initiales | Plage proposée dans la GUI |
+|---|---|---|---|
+| `lrm` | lissage (`sigma`, m) | 15 pixels natifs, convertis en mètres | 1–100 m, pas 0,5 m ; le champ peut être vidé pour revenir à l'auto |
+| `vat` | rayon d'horizon (`dist`), gamma final (`gamma`) | 20 m ; 2,0 | 10–200 m, pas 5 m ; 0,3–3, pas 0,1 |
+| `e4mstp` | rayon d'horizon (`dist`), gamma final (`gamma`) | 20 m ; 0,8 | mêmes plages que VAT |
+| `svf` | convention (`conv`), rayon (`dist`), gamma (`gamma`), calcul rapide (`sweep`) | `flux` ; 20 m ; 2,0 ; activé | `flux` ou `rvt` ; 10–200 m ; 0,3–3 ; activé/désactivé |
+| `opos` | rayon (`dist`), gamma (`gamma`) | 20 m ; 2,0 | 10–200 m ; 0,3–3 |
+| `oneg` | rayon (`dist`), gamma miroir (`gamma`) | 20 m ; 2,0 | 10–200 m ; 0,3–3 |
+| `rrim` | lissage (`sigma`, m) | 15 pixels natifs, convertis en mètres | 1–100 m, pas 0,5 m ; auto si le champ est vidé |
+| `multi`, `315`, `045`, `135`, `225` | hauteur du soleil (`elevation`) | 25° | 5–60°, pas 1° |
+| `slope` | aucun | — | — |
+
+Ces bornes sont les **plages proposées par l'interface**, pas la définition
+mathématique des méthodes. `dist` et `sigma` sont saisis en mètres puis arrondis
+au pixel du MNT le plus proche. `gamma`, en revanche, ne change pas la géométrie
+calculée : il règle seulement la luminance après l'étirement des valeurs.
+
+### LRM et RRIM : `sigma`
+
+`sigma` est l'**écart-type du lissage gaussien**, et non le rayon exact d'un
+objet. Sa valeur automatique est 15 pixels natifs : 7,5 m sur un MNT à
+0,5 m/pixel, 15 m sur un MNT à 1 m/pixel.
+
+- Dans `lrm`, un petit `sigma` ne conserve que les écarts très locaux : détails
+  fins, mais aussi bruit et petits halos. Un grand `sigma` laisse apparaître des
+  structures plus larges, avec davantage de relief naturel de fond.
+- Dans `rrim`, `sigma` ne modifie que la composante SLRM claire/foncée placée
+  dans les canaux vert et bleu. Le rouge, commandé par la pente, ne change pas.
+- L'étirement du LRM entre ses percentiles 5 et 95 rend le contraste relatif à
+  la zone calculée. Comparer deux instances sur la même emprise est donc plus
+  fiable que comparer leurs niveaux de gris entre deux projets différents.
+
+### SVF : `conv`, `dist`, `gamma` et `sweep`
+
+- `conv=flux` utilise la convention $\cos^2\gamma_k$ ; c'est le défaut de
+  lidar2map. `conv=rvt` utilise $1-\sin\gamma_k$, convention du **Relief
+  Visualization Toolbox**. Ce choix change la formule, pas la qualité du
+  calcul.
+- `dist` est la distance maximale jusqu'à laquelle l'horizon est recherché dans
+  16 directions. Une petite valeur privilégie les murs et fossés proches et
+  calcule plus vite ; une grande valeur inclut enceintes, voiries et relief plus
+  éloigné, mais coûte nettement plus de temps.
+- `gamma` est appliqué après l'étirement percentile :
+  $I=I_0^\gamma$. En dessous de 1, l'image s'éclaircit ; à 1, elle reste
+  linéaire ; au-dessus de 1, les tons intermédiaires s'assombrissent.
+- `sweep` activé choisit l'algorithme d'horizon accéléré. Il conserve la même
+  formule et le même rayon, mais peut produire un léger aliasing. Le désactiver
+  utilise le calcul de référence, plus précis et plus lent.
+
+### Openness O+ et O− : `dist` et `gamma`
+
+`dist` est ici encore le rayon maximal de recherche de l'horizon. Petit rayon :
+convexités ou concavités locales ; grand rayon : formes topographiques plus
+larges. Il ne s'agit ni d'un flou ni de la résolution de sortie.
+
+Pour `opos`, le gamma ordinaire $I=I_0^\gamma$ suit la règle du SVF. Pour
+`oneg`, lidar2map emploie un **gamma miroir** :
+
+$$
+I=1-(1-I_0)^\gamma
+$$
+
+Avec O−, augmenter `gamma` pousse donc le fond vers le blanc tout en gardant les
+creux profonds sombres ; cela augmente leur séparation visuelle sans assombrir
+toute l'image. O+ et O− utilisent toujours le calcul d'horizon de référence :
+le paramètre `sweep` ne leur est pas proposé.
+
+### VAT et e4MSTP : portée exacte de `dist` et `gamma`
+
+- Dans `vat`, `dist` règle le rayon du SVF `flux` et de l'openness positif
+  internes ; il ne change pas la pente. Les composants sont fusionnés sans
+  gamma, puis `gamma` est appliqué une seule fois au composite final. Une valeur
+  supérieure à 1 l'assombrit, une valeur inférieure à 1 l'éclaircit.
+- Dans `e4mstp`, `dist` ne règle que le SVF et les openness O+/O− internes. Il ne
+  change ni les deux SLRM fixes ($\sigma=1{,}5$ m et 8 m), ni les bandes MSTP
+  internes (1,5–5 m, 12–27 m et 55–100 m), ni la pente. `gamma` agit seulement
+  sur la couleur finale ; son défaut 0,8 éclaircit légèrement le composite.
+
+Ainsi, augmenter `dist` dans e4MSTP ne signifie pas « agrandir toutes les
+échelles ». Il élargit uniquement le contexte des couches calculées à partir de
+l'horizon.
+
+### Hillshades et pente : `elevation`
+
+Pour `315`, `045`, `135` et `225`, le type choisi fixe déjà l'azimut de la
+lumière. `elevation` est seulement sa hauteur au-dessus de l'horizon :
+
+- faible valeur : lumière rasante, microrelief et contraste directionnel forts,
+  avec davantage de zones noires ;
+- forte valeur : image plus claire et plus douce, relief moins marqué ;
+- 25° est le défaut de lidar2map ; 45° convient à une lecture plus générale.
+
+`multi` applique la même hauteur à quatre éclairages fixes (225°, 270°, 315° et
+360°), puis les pondère selon l'aspect de la pente. Leurs azimuts ne sont pas
+réglables. `slope` n'a aucun paramètre : il encode directement la pente locale
+de 0 à 90°, indépendamment du soleil, de `dist` et de `gamma`.
+
+### Syntaxe et presets CLI
+
+Une occurrence de `--shading` produit une sortie ; l'option peut être répétée :
+
+```text
+--shading lrm:sigma=10
+--shading svf:conv=rvt,dist=20,gamma=1,sweep=0
+--shading oneg:dist=100,gamma=2
+```
+
+Le raccourci `--shading-preset` ajoute `svf + opos + lrm + multi + slope` :
+
+| Preset | Rayon SVF/O+ | Sigma LRM | Soleil | Choix automatique |
+|---|---:|---:|---:|---|
+| `micro` | 15 m | 8 m | 25° | résolution ≤ 0,75 m/pixel |
+| `standard` | 30 m | 15 m | 25° | 0,75 < résolution ≤ 2,5 m/pixel |
+| `landscape` | 80 m | 40 m | 30° | résolution > 2,5 m/pixel |
+
+`--shading-preset auto` sélectionne la ligne d'après la résolution du provider.
+Le mot-clé `--shadings tous` exclut volontairement VAT et e4MSTP : ces deux
+composites lourds recalculeraient des couches déjà demandées.
+
 ## Repères historiques
 
 | Année | Méthode | Apport |
@@ -345,9 +489,9 @@ au preset VAT du RVT.
 
 ### e4MSTP publié
 
-L'e4MSTP v4 publié par [Kokalj
+L'e⁴MSTP publié par [Kokalj
 (2025)](https://doi.org/10.1002/arp.70002) est une combinaison complexe conçue
-pour la détection multi-échelle ; « e4 » signifie *enhanced, version 4*. La
+pour la détection multi-échelle ; « e⁴ » signifie *enhanced version 4*. La
 [recette de référence du
 RVT](https://rvt-py.readthedocs.io/en/latest/rvt.blend.html#rvt.blend.e4mstp)
 empile les couches dans cet ordre :
@@ -362,7 +506,7 @@ flowchart LR
     SV2["SVF terrain plat, rayon 10 m"] --> SV
     SV --> M["Overlay MSTP à 90 %"]
     MSTP["MSTP"] --> M
-    M --> E4["e4MSTP v4"]
+    M --> E4["e⁴MSTP"]
 ```
 
 - la différence O+ − O−, étirée de −15 à 15, est posée à 50 % sur la

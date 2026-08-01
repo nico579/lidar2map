@@ -144,9 +144,20 @@ const I18N = {
     "tip.svfgamma":"Gamma après stretch percentile. <1 éclaircit (√), 1 = linéaire, >1 assombrit. ~2.0 optimal pour flux, ~1.0 pour RVT.",
     "tip.svfsweep":"Kernel sweep-horizon (running max sur deque) : ×2-3 à 20 m, ×15+ à 100 m. Léger aliasing NN imperceptible pour structures > 1-2 px.",
     // Libellés dynamiques d'ombrage (OMB_DEFS), rendus via t()
-    "omb.gamma":"γ (1 clair, 2 foncé)", "omb.gamma.mirror":"γ miroir (1 clair, 2 foncé)",
-    "omb.sigma":"rayon (σ, m)",
-    "tip.ombsigma":"Rayon du lissage gaussien (LRM/RRIM). Défaut = 15 px de la résolution native (≈ 7,5 m à 0,5 m/px). Petit = détails fins (fossés), grand = structures larges (terrasses). Vider = auto.",
+    "omb.gamma":"gamma (contraste)", "omb.gamma.final":"gamma final", "omb.gamma.mirror":"gamma miroir (O−)",
+    "omb.sigma":"lissage (σ, m)", "omb.dist":"rayon d'horizon (m)",
+    "omb.conv":"convention SVF", "omb.sweep":"calcul sweep rapide", "omb.elevation":"hauteur du soleil (°)",
+    "omb.select":"Sélectionnez une instance…", "omb.none":"aucun paramètre",
+    "omb.sigma.auto":"auto (15 px = {m} m)",
+    "omb.name.e4":"e⁴MSTP (variante lidar2map)",
+    "tip.ombsigma":"Écart-type σ du lissage gaussien, en mètres — ce n'est pas un rayon exact. Défaut = 15 px de la résolution native (≈ 7,5 m à 0,5 m/px). Petit = détails fins et bruit ; grand = structures plus larges et davantage de relief de fond. Vider = auto.",
+    "tip.ombdist":"Rayon maximal de recherche de l'horizon pour le SVF, l'openness et leurs composites. Petit = formes locales et calcul plus rapide ; grand = formes plus larges et calcul plus lent. Dans e⁴MSTP, il ne change pas les échelles MSTP (position topographique multi-échelle) ni les SLRM (modèles de relief local simples) fixes.",
+    "tip.ombgamma":"Gamma appliqué après l'étirement : 1 = inchangé, inférieur à 1 = plus clair, supérieur à 1 = tons moyens plus sombres. Il change l'affichage, pas la géométrie calculée.",
+    "tip.ombgammafinal":"Gamma appliqué au composite final : 1 = inchangé, inférieur à 1 = plus clair, supérieur à 1 = plus sombre. Il ne change ni les rayons ni les échelles calculées.",
+    "tip.ombgammamirror":"Gamma miroir de O− : 1 = inchangé ; au-dessus de 1, le fond se rapproche du blanc tandis que les creux profonds restent sombres. Ce n'est pas le même assombrissement que le gamma ordinaire.",
+    "tip.ombconv":"Formule du Sky-View Factor, pas un niveau de qualité : flux = cos²γ, contrasté après étirement ; rvt = 1−sin γ, convention du Relief Visualization Toolbox.",
+    "tip.ombsweep":"Algorithme SVF accéléré, activé par défaut. Même rayon et même formule ; beaucoup plus rapide, avec un léger aliasing possible. Désactiver pour le calcul de référence plus lent.",
+    "tip.ombelevation":"Angle du soleil au-dessus de l'horizon. Faible = lumière rasante, contraste et biais directionnel forts ; 45° = lecture plus douce. Le hillshade ne calcule pas de véritables ombres portées.",
     // Infobulles de grille
     "tip.deps":"Un ou plusieurs départements\nExemples : 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Colonnes Est-Ouest", "tip.rowsns":"Lignes Nord-Sud",
@@ -262,9 +273,20 @@ const I18N = {
     "tip.svfdist":"SVF horizon radius in metres. 20 = micro-relief (ditches, walls); 100 = enclosures/roads. Larger = slower.",
     "tip.svfgamma":"Gamma after percentile stretch. <1 lightens (√), 1 = linear, >1 darkens. ~2.0 optimal for flux, ~1.0 for RVT.",
     "tip.svfsweep":"Sweep-horizon kernel (running max on deque): ×2-3 at 20 m, ×15+ at 100 m. Slight NN aliasing imperceptible for structures > 1-2 px.",
-    "omb.gamma":"γ (1 light, 2 dark)", "omb.gamma.mirror":"γ mirror (1 light, 2 dark)",
-    "omb.sigma":"radius (σ, m)",
-    "tip.ombsigma":"Gaussian smoothing radius (LRM/RRIM). Default = 15 px of native resolution (≈ 7.5 m at 0.5 m/px). Small = fine detail (ditches), large = broad structures (terraces). Clear = auto.",
+    "omb.gamma":"gamma (contrast)", "omb.gamma.final":"final gamma", "omb.gamma.mirror":"mirror gamma (O−)",
+    "omb.sigma":"smoothing (σ, m)", "omb.dist":"horizon radius (m)",
+    "omb.conv":"SVF convention", "omb.sweep":"fast sweep calculation", "omb.elevation":"Sun elevation (°)",
+    "omb.select":"Select an instance…", "omb.none":"no parameters",
+    "omb.sigma.auto":"auto (15 px = {m} m)",
+    "omb.name.e4":"e⁴MSTP (lidar2map variant)",
+    "tip.ombsigma":"Gaussian smoothing standard deviation σ in metres — not an exact radius. Default = 15 px of native resolution (≈ 7.5 m at 0.5 m/px). Small = fine detail and noise; large = broader structures and more background relief. Clear = auto.",
+    "tip.ombdist":"Maximum horizon-search radius for SVF, openness, and their composites. Small = local forms and faster calculation; large = broader forms and slower calculation. In e⁴MSTP it does not change the fixed MSTP (Multiscale Topographic Position) or SLRM (Simple Local Relief Model) scales.",
+    "tip.ombgamma":"Gamma applied after stretching: 1 = unchanged, below 1 = lighter, above 1 = darker midtones. It changes display, not the computed geometry.",
+    "tip.ombgammafinal":"Gamma applied to the final composite: 1 = unchanged, below 1 = lighter, above 1 = darker. It changes neither radii nor computed scales.",
+    "tip.ombgammamirror":"O− mirror gamma: 1 = unchanged; above 1 the background approaches white while deep depressions remain dark. This is not the same darkening as ordinary gamma.",
+    "tip.ombconv":"Sky-View Factor formula, not a quality level: flux = cos²γ, contrasted after stretching; rvt = 1−sin γ, the Relief Visualization Toolbox convention.",
+    "tip.ombsweep":"Accelerated SVF algorithm, enabled by default. Same radius and formula; much faster, with slight aliasing possible. Disable it for the slower reference calculation.",
+    "tip.ombelevation":"Sun angle above the horizon. Low = grazing light with stronger contrast and directional bias; 45° = gentler reading. Hillshade does not compute true cast shadows.",
     "tip.deps":"One or more departments\nExamples: 83 | 83,06,13 | 1-10 | 1-3,75,83 | 2A | 971",
     "tip.colsew":"Columns East-West", "tip.rowsns":"Rows North-South",
     "tip.colsew2":"Columns (East-West)", "tip.rowsns2":"Rows (North-South)",
@@ -322,6 +344,10 @@ function setLang(code, persist){
   // applyI18n a réécrit btn-run depuis sa clé « btn.run » : ré-applique le
   // libellé « Lancer la file (N) » si la file a des items en attente.
   renderFile();
+  // Les lignes et infobulles d'ombrage sont créées dynamiquement : les
+  // reconstruire pour qu'elles basculent elles aussi immédiatement de langue.
+  if (typeof ombRender === 'function')
+    ombRender(document.getElementById('omb-liste')?.selectedIndex ?? 0);
   if (persist && window.pywebview && pywebview.api && pywebview.api.set_lang) {
     pywebview.api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
   }
@@ -717,6 +743,7 @@ function buildProviders(providers, activeCode) {
   applyProviderApiKey(opt);
   applyProviderLaz(sel.value);
   applyZoomCap();
+  ombShowParams();   // actualise notamment « auto (15 px = … m) » au démarrage
   sel.addEventListener('change', () => {
     _applyProviderSelection();
     ombShowParams();   // rafraîchit le champ σ ouvert avec le nouveau défaut
@@ -2135,30 +2162,32 @@ function loadConfig(cfg) {
 // SVF, paire openness, RRIM, hillshades, slope en dernier.
 const OMB_DEFS = {
   lrm:   {label:'LRM',    fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
-  vat:   {label:'VAT (composite)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                           gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
+  vat:   {label:'VAT (composite)', fields:{dist :{lbl:'omb.dist', tip:'tip.ombdist', def:20,  min:10,  max:200, step:5},
+                                           gamma:{lbl:'omb.gamma.final', tip:'tip.ombgammafinal', def:2.0, min:0.3, max:3.0, step:0.1}}},
   // e4mstp : gamma défaut 0.8 = ALIGNÉ sur le pipeline (PAS 2.0 comme svf/vat :
   // le composite couleur est déjà blendé, 2.0 l'écraserait en rendu très sombre ;
   // ombAdd() SÈME les défauts dans les params émis, donc ce def part au CLI).
-  e4mstp:{label:'e4MSTP (variante lidar2map)', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                           gamma:{lbl:'omb.gamma', def:0.8, min:0.3, max:3.0, step:0.1}}},
-  svf:   {label:'SVF',    fields:{conv :{lbl:'type',         def:'flux', opts:['flux','rvt']},
-                                  dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                  gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1},
-                                  sweep:{lbl:'sweep-horizon', def:1, bool:true}}},
-  opos:  {label:'O+ openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                       gamma:{lbl:'omb.gamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
-  oneg:  {label:'O− openness', fields:{dist :{lbl:'distance (m)', def:20,  min:10,  max:200, step:5},
-                                       gamma:{lbl:'omb.gamma.mirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
+  e4mstp:{label:'omb.name.e4', fields:{dist :{lbl:'omb.dist', tip:'tip.ombdist', def:20,  min:10,  max:200, step:5},
+                                           gamma:{lbl:'omb.gamma.final', tip:'tip.ombgammafinal', def:0.8, min:0.3, max:3.0, step:0.1}}},
+  svf:   {label:'SVF',    fields:{conv :{lbl:'omb.conv', tip:'tip.ombconv', def:'flux', opts:['flux','rvt']},
+                                  dist :{lbl:'omb.dist', tip:'tip.ombdist', def:20,  min:10,  max:200, step:5},
+                                  gamma:{lbl:'omb.gamma', tip:'tip.ombgamma', def:2.0, min:0.3, max:3.0, step:0.1},
+                                  sweep:{lbl:'omb.sweep', tip:'tip.ombsweep', def:1, bool:true}}},
+  opos:  {label:'O+ openness', fields:{dist :{lbl:'omb.dist', tip:'tip.ombdist', def:20,  min:10,  max:200, step:5},
+                                       gamma:{lbl:'omb.gamma', tip:'tip.ombgamma', def:2.0, min:0.3, max:3.0, step:0.1}}},
+  oneg:  {label:'O− openness', fields:{dist :{lbl:'omb.dist', tip:'tip.ombdist', def:20,  min:10,  max:200, step:5},
+                                       gamma:{lbl:'omb.gamma.mirror', tip:'tip.ombgammamirror', def:2.0, min:0.3, max:3.0, step:0.1}}},
   rrim:  {label:'RRIM',   fields:{sigma:{lbl:'omb.sigma', tip:'tip.ombsigma', def:'', min:1, max:100, step:0.5, opt:true}}},
-  multi: {label:'multi',  fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '315': {label:'315°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '045': {label:'045°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '135': {label:'135°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
-  '225': {label:'225°',   fields:{elevation:{lbl:'☀ élévation (°)', def:25,  min:5,   max:60,  step:1}}},
+  multi: {label:'multi',  fields:{elevation:{lbl:'omb.elevation', tip:'tip.ombelevation', def:25,  min:5,   max:60,  step:1}}},
+  '315': {label:'315°',   fields:{elevation:{lbl:'omb.elevation', tip:'tip.ombelevation', def:25,  min:5,   max:60,  step:1}}},
+  '045': {label:'045°',   fields:{elevation:{lbl:'omb.elevation', tip:'tip.ombelevation', def:25,  min:5,   max:60,  step:1}}},
+  '135': {label:'135°',   fields:{elevation:{lbl:'omb.elevation', tip:'tip.ombelevation', def:25,  min:5,   max:60,  step:1}}},
+  '225': {label:'225°',   fields:{elevation:{lbl:'omb.elevation', tip:'tip.ombelevation', def:25,  min:5,   max:60,  step:1}}},
   slope: {label:'slope',  fields:{}},
 };
-let ombInstances = [{type:'lrm', params:{sigma: sigmaDefautM()}}];   // défaut = LRM (rapide + lisible)
+// Laisser sigma absent signifie « auto = 15 pixels natifs » côté pipeline.
+// Cela suit correctement la résolution si le provider change avant le run.
+let ombInstances = [{type:'lrm', params:{}}];   // défaut = LRM (rapide + lisible)
 
 function ombLabel(inst) {
   const d = OMB_DEFS[inst.type]; if (!d) return inst.type;
@@ -2166,7 +2195,8 @@ function ombLabel(inst) {
     .filter(([k, v]) => v !== '' && v != null)
     .filter(([k, v]) => !(k === 'sweep' && v == 1))   // sweep=1 = défaut, pas de bruit
     .map(([k, v]) => `${k}=${v}`);
-  return d.label + (parts.length ? '   [' + parts.join('  ') + ']' : '');
+  const label = d.label.startsWith('omb.') ? t(d.label) : d.label;
+  return label + (parts.length ? '   [' + parts.join('  ') + ']' : '');
 }
 function ombRender(selIdx) {
   const sel = document.getElementById('omb-liste'); if (!sel) return;
@@ -2186,7 +2216,8 @@ function ombAdd() {
   const params = {};
   Object.entries(OMB_DEFS[t].fields).forEach(([k, f]) => {
     if (!f.opt) params[k] = f.def;
-    else if (k === 'sigma') params[k] = sigmaDefautM();   // pré-remplir σ (LRM/RRIM) au défaut résolution
+    // Les champs optionnels restent absents : le pipeline applique ainsi son
+    // défaut natif (sigma = 15 px), même après un changement de provider.
   });
   ombInstances.push({type: t, params});
   ombRender(ombInstances.length - 1);
@@ -2206,11 +2237,11 @@ function ombShowParams() {
     sp.style.color = 'var(--dim)'; sp.textContent = txt; return sp;
   };
   if (i == null || i < 0 || !ombInstances[i]) {
-    box.appendChild(dimSpan('Sélectionnez une instance…')); return;
+    box.appendChild(dimSpan(t('omb.select'))); return;
   }
   const inst = ombInstances[i], defs = OMB_DEFS[inst.type].fields;
   if (!Object.keys(defs).length) {
-    box.appendChild(dimSpan('aucun paramètre')); return;
+    box.appendChild(dimSpan(t('omb.none'))); return;
   }
   Object.entries(defs).forEach(([k, f]) => {
     const row = document.createElement('div');
@@ -2235,7 +2266,10 @@ function ombShowParams() {
       inp.type = 'number'; inp.className = 'inp-short';
       inp.min = f.min; inp.max = f.max; inp.step = f.step;
       inp.value = inst.params[k] ?? '';
-      if (f.opt) inp.placeholder = 'auto (15 px)';
+      if (f.opt) {
+        const sigmaM = String(sigmaDefautM()).replace('.', _lang === 'fr' ? ',' : '.');
+        inp.placeholder = tf('omb.sigma.auto', {m: sigmaM});
+      }
       inp.onchange = () => {
         const v = inp.value;
         if (v === '') delete inst.params[k];
@@ -2243,7 +2277,11 @@ function ombShowParams() {
         ombRender(i);
       };
     }
-    if (f.tip) inp.title = t(f.tip);
+    if (f.tip) {
+      const tip = t(f.tip);
+      inp.title = tip;
+      row.title = tip;
+    }
     row.appendChild(inp);
     box.appendChild(row);
   });

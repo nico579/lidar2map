@@ -440,6 +440,43 @@ check("OMB_DEFS == _SHADING_TYPES", types_js == types_pipe,
 _me4 = re.search(r"e4mstp:\{label:.*?gamma:\{[^}]*def:([\d.]+)", _appjs, re.S)
 check("def gamma e4mstp du GUI = 0.8 (aligné pipeline)",
       _me4 is not None and float(_me4.group(1)) == 0.8)
+# Les réglages dynamiques doivent rester auto-documentés : chaque famille de
+# champ a une infobulle FR/EN, et elle est portée à la fois par la ligne et par
+# le contrôle (utile notamment pour les cases à cocher et les écrans tactiles).
+_omb_tips = (
+    "tip.ombsigma", "tip.ombdist", "tip.ombgamma",
+    "tip.ombgammafinal", "tip.ombgammamirror", "tip.ombconv",
+    "tip.ombsweep", "tip.ombelevation",
+)
+check("toutes les infobulles d'ombrage existent en FR et EN",
+      all(_appjs.count(f'"{_tip}"') >= 2 for _tip in _omb_tips))
+check("les infobulles couvrent le champ et sa ligne",
+      "inp.title = tip" in _appjs and "row.title = tip" in _appjs)
+check("sigma est présenté comme un lissage, pas comme un rayon",
+      '"omb.sigma":"lissage (σ, m)"' in _appjs
+      and '"omb.sigma":"smoothing (σ, m)"' in _appjs)
+check("ombrages dynamiques : bascule FR/EN rerendue",
+      "if (typeof ombRender === 'function')" in _appjs
+      and _appjs.count('"omb.select"') >= 2
+      and _appjs.count('"omb.none"') >= 2
+      and 'data-i18n="omb.name.e4"' in _html)
+check("sigma auto reste lié aux 15 px natifs du provider",
+      "let ombInstances = [{type:'lrm', params:{}}]" in _appjs
+      and "else if (k === 'sigma') params[k] = sigmaDefautM()" not in _appjs
+      and "omb.sigma.auto" in _appjs
+      and "ombShowParams();   // actualise notamment" in _appjs)
+_shading_docs = [
+    (_ROOT / "docs" / _name).read_text(encoding="utf-8")
+    for _name in ("shadings.fr.md", "shadings.md")
+]
+check("guide ombrages : sigles développés dans les deux langues",
+      all(all(_term in _doc for _term in (
+          "Local Relief Model", "Visualization for Archaeological Topography",
+          "Sky-View Factor", "Red Relief Image Map",
+          "Multiscale Topographic Position", "enhanced version 4",
+      )) for _doc in _shading_docs))
+check("guide ombrages : aucune macro KaTeX refusée déjà signalée",
+      all(r"\operatorname" not in _doc for _doc in _shading_docs))
 
 # ══ 9. DFM (mode structures debout) : mécanique + jumeaux GUI ═════════════════
 # En prod, le répertoire de lidar2map.py est dans sys.path (script principal) ;

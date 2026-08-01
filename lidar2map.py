@@ -175,8 +175,13 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   N>1 exige la RAM (N×3 Go) et les cœurs. Pour
                                   une VM multi-cœurs ; laisser 1 sur 8 Go.
     --ombrages TYPE...          Shadings to generate (ordre d'utilité) :
-                                  lrm vat svf opos oneg rrim
+                                  lrm vat e4mstp svf opos oneg rrim
                                   multi 315 045 135 225 slope | tous | aucun
+                                  LRM = Local Relief Model (ici SLRM, Simple LRM)
+                                  VAT = Visualization for Archaeological Topography
+                                  SVF = Sky-View Factor ; RRIM = Red Relief Image Map
+                                  e4MSTP = Multiscale Topographic Position,
+                                  enhanced version 4 (variante lidar2map)
                                   (opos/oneg = openness ± Yokoyama 2002,
                                    rayon --svf-dist, gamma --svf-gamma)
     --shading TYPE[:k=v,...]    Instance d'ombrage PARAMÉTRÉE, répétable —
@@ -184,20 +189,25 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   --shading svf:dist=20 --shading svf:dist=100
                                   --shading oneg:gamma=1.5 --shading lrm:sigma=10
                                   Params : elevation (directionnels/multi),
-                                  conv/dist/gamma (svf), dist/gamma (opos/oneg),
-                                  sigma en m (lrm/rrim). Les params explicites
-                                  sont encodés dans le nom de fichier.
+                                  conv/dist/gamma/sweep (svf),
+                                  dist/gamma (opos/oneg/vat/e4mstp),
+                                  sigma en m (lrm/rrim). Dans e4mstp, dist ne
+                                  règle que SVF/O+/O− et gamma vaut 0,8 par
+                                  défaut. Plusieurs instances coexistent tant
+                                  que leurs noms de sortie normalisés diffèrent.
     --shading-preset auto|micro|standard|landscape
                                 Stack d'ombrages calibré sur la RÉSOLUTION
                                   (opt-in, params en mètres) : svf + opos + lrm
                                   dimensionnés pour le MNT, plus multi + slope.
-                                  'auto' choisit micro (≤0,75 m) / standard
-                                  (~1 m) / landscape (≥5 m) selon le provider.
+                                  'auto' choisit micro (≤0,75 m), standard
+                                  (>0,75 à ≤2,5 m), sinon landscape.
     --svf-conv flux|rvt         Convention SVF (flux cos²γ / rvt 1−sin γ ; déf. flux)
-    --svf-dist M                Rayon SVF en mètres, 10–200 (déf. 20)
+    --svf-dist M                Rayon d'horizon SVF/openness/composites en mètres,
+                                  plage GUI 10–200 (déf. 20)
     --svf-sweep / --no-svf-sweep  Kernel sweep-horizon SVF (déf. activé)
     --ombrages-elevation DEG    Angle solaire en degrés (défaut: 25)
-    --svf-gamma G               Gamma du SVF (défaut: 2.0 ; <1 éclaircit, >1 assombrit)
+    --svf-gamma G               Gamma SVF/O+/O−/VAT (déf. 2.0 ; O− en miroir).
+                                  e4mstp garde son gamma final propre (déf. 0,8).
     --ombrages-compresser       Compresser les TIF ombrages existants (DEFLATE)
     --ombrages-ecraser          Recalculer les ombrages même s'ils existent
     --tuiles-ecraser            Réécrire les tuiles / MBTiles / .map existants
@@ -7405,8 +7415,10 @@ def parser_shading_spec(spec):
       svf                   : conv (flux|rvt), dist (m), gamma,
                               sweep (1|0, kernel sweep-horizon — défaut --svf-sweep)
       opos/oneg             : dist (m), gamma
-      lrm/rrim              : sigma (m, rayon gaussien — défaut 15 px du provider)
+      lrm/rrim              : sigma (m, écart-type gaussien — défaut 15 px du provider)
       vat                   : dist (m, rayon SVF/openness), gamma (du composite)
+      e4mstp                : dist (m, rayon SVF/openness), gamma (RGB final,
+                              défaut 0.8 ; échelles MSTP/SLRM inchangées)
       slope                 : aucun
 
     Lève ValueError (message clair) si type ou clé inconnus.
@@ -7452,10 +7464,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         opos — Openness positive (Yokoyama 2002, rayon/gamma du SVF) : crêtes
         oneg — Openness négative inversée : fossés/chemins creux sombres
         rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
-        lrm  — Local Relief Model    : LRM = DEM − gaussienne(σ 7.5 m) — scipy requis
-        vat  — Visualization for Archaeological Topography : composite niveaux de
-               gris SVF + openness positif + slope (la "meilleure vue archéo" en
-               une seule image ; numba requis pour les composantes SVF/openness)
+        lrm  — Local Relief Model    : SLRM = DEM − gaussienne(σ auto 15 pixels
+               natifs, ou valeur explicite en mètres) — scipy requis
+        vat  — Visualization for Archaeological Topography : variante VAT-style
+               en niveaux de gris, SVF + openness positif + pente
+        e4mstp — Multiscale Topographic Position, enhanced version 4 : variante
+               lidar2map multi-échelle (SVF, O+/O−, pente, MSTP et deux SLRM)
 
     Deux chemins d'entrée, cumulables :
       choix     : liste de TYPES (--shadings, GUI historique) — chaque type
@@ -7463,12 +7477,12 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
       instances : liste (type, params explicites) du flag répétable
                   --shading TYPE:cle=val,... (cf. parser_shading_spec) —
                   permet plusieurs instances du même type (svf 20 m + 100 m).
-    Les params sont encodés dans le nom de fichier quand ils diffèrent des
-    défauts canoniques → pas de collision, caches historiques préservés.
+    Les suffixes de fichier sont normalisés et certains paramètres sont arrondis.
+    Si deux instances aboutissent au même nom, la première sortie est conservée.
 
     elevation_soleil : angle solaire des hillshades directionnels (défaut: 25°).
     svf_conv  : "flux" (cos²γ, contraste) ou "rvt" (1−sin γ, archéo).  Défaut flux.
-    svf_dist  : rayon SVF/openness en mètres (10–200).  Défaut 20.
+    svf_dist  : rayon SVF/openness en mètres (GUI : 10–200).  Défaut 20.
     svf_gamma : gamma après stretch (défaut: SVF_GAMMA ; miroir pour oneg).
     use_sweep : kernel sweep-horizon (SVF uniquement).
     SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
@@ -11049,8 +11063,14 @@ Examples:
                         help=(
                             "Shadings to generate (default: interactive). "
                             "Values: " + " ".join(SHADING_TYPES_ORDRE) + " tous(all) aucun(none). "
-                            "opos/oneg = openness positive/negative (Yokoyama 2002, rayon/gamma du SVF). "
-                            "vat = composite archeo (svf+opos+slope) ; voir aussi --shading-preset. "
+                            "Names: lrm = Local Relief Model (implemented as SLRM, Simple LRM); "
+                            "vat = Visualization for Archaeological Topography (VAT-style variant); "
+                            "e4mstp = Multiscale Topographic Position, enhanced version 4 "
+                            "(lidar2map variant); svf = Sky-View Factor; "
+                            "rrim = Red Relief Image Map. "
+                            "opos/oneg = positive/negative openness (Yokoyama 2002; "
+                            "radius and gamma use the SVF defaults). "
+                            "See also --shading-preset. "
                             "SVF is tuned via --svf-conv / --svf-dist / --svf-gamma / --svf-sweep. "
                             "svf/lrm/rrim/vat: computed with numpy/scipy/numba (auto-installed). "
                             "Ex: --shadings multi slope svf rrim"
@@ -11059,15 +11079,18 @@ Examples:
                         dest="shading_specs", default=None,
                         help=(
                             "Parameterized shading instance, repeatable. "
-                            "Each occurrence yields ONE output with ITS params "
-                            "(encoded in the filename, no collision): "
+                            "Each occurrence requests one output with its own parameters. "
+                            "Filename suffixes are canonicalized; if two specifications "
+                            "resolve to the same filename, the first output is kept. "
                             "--shading svf:dist=20,gamma=2 --shading svf:dist=100 "
                             "--shading oneg:dist=20,gamma=1.5 --shading 315:elevation=20 "
                             "--shading lrm:sigma=10. "
                             "Params: 315/045/135/225/multi=elevation ; "
-                            "svf=conv,dist,gamma ; opos/oneg=dist,gamma ; "
-                            "lrm/rrim=sigma(m) ; slope=none. "
-                            "Unset params inherit --svf-* / --shading-elevation. "
+                            "svf=conv,dist,gamma,sweep ; opos/oneg=dist,gamma ; "
+                            "vat/e4mstp=dist,gamma ; lrm/rrim=sigma(m) ; "
+                            "slope=none. Unset params inherit --svf-* / "
+                            "--shading-elevation, except e4mstp gamma, which "
+                            "defaults to 0.8. "
                             "Combines with --shadings (a type listed in --shading "
                             "is not re-generated at default params)."
                         ))
@@ -11077,7 +11100,8 @@ Examples:
                         help=("Resolution-tuned shading stack (opt-in, params in "
                               "metres): adds svf + opos + lrm sized for the DEM "
                               "resolution, plus multi + slope. 'auto' picks micro "
-                              "(<=0.75 m) / standard (~1 m) / landscape (>=5 m) from "
+                              "(<=0.75 m), standard (>0.75 and <=2.5 m), or landscape "
+                              "(>2.5 m) from "
                               "the active provider. Off by default; when set it takes "
                               "precedence over --shadings default params."))
     parser.add_argument("--svf-conv", choices=["flux", "rvt"], default="flux",
@@ -11087,8 +11111,9 @@ Examples:
                               "archaeology standard/openness). Default: flux."))
     parser.add_argument("--svf-dist", type=_arg_float_positif, default=20.0, metavar="M",
                         dest="svf_dist",
-                        help=("SVF radius in metres (10–200). Default: 20 "
-                              "(micro-relief). 100 = enclosures/roads."))
+                        help=("Horizon-search radius in metres for SVF, openness, "
+                              "and their composites (GUI range 10–200). Default: "
+                              "20 (micro-relief). 100 = enclosures/roads."))
     parser.add_argument("--shading-elevation", "--ombrages-elevation", type=int, default=None, metavar="DEG",
                         dest="ombrages_elevation",
                         help=(f"Sun angle of directional hillshades in degrees "
@@ -11096,9 +11121,11 @@ Examples:
                               f"General use: 45°. Archaeology: 20-30°."))
     parser.add_argument("--svf-gamma", type=_arg_float_positif, default=None, metavar="G",
                         dest="svf_gamma",
-                        help=(f"SVF gamma after percentile stretch (default: "
-                              f"{SVF_GAMMA}). <1 lightens (√), 1 = linear, >1 "
-                              f"darkens. Ex: --svf-gamma 0.7 for lighter."))
+                        help=(f"Gamma after percentile stretch for SVF, openness, "
+                              f"and VAT (default: {SVF_GAMMA}). <1 lightens, "
+                              f"1 = linear, >1 darkens; negative openness uses "
+                              f"mirror gamma. e4mstp has its own final gamma "
+                              f"(default 0.8)."))
 
     # Mode non-interactif
     parser.add_argument("--download", "--telechargement", action="store_true", dest="telechargement",
