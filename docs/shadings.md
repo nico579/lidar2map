@@ -64,6 +64,8 @@ flowchart LR
 | 2008 | Chiba, Kaneta & Suzuki RRIM | red slope plus openness/dominance lightness |
 | 2010 | Hesse Local Relief Model | removes broad relief to isolate local landforms |
 | 2011 | Zakšek, Oštir & Kokalj SVF | visible-sky fraction applied to relief visualization |
+| 2013 | Doneus openness application | joint archaeological reading of convexities and concavities |
+| 2018 | Guyot, Hubert-Moy & Lorho MSTP | three topographic-position scales combined as RGB |
 | 2019 | Kokalj & Somrak VAT | structured blend of archaeological visualizations |
 
 `e4MSTP` in lidar2map is an experimental composition. It is not a separately
@@ -323,7 +325,9 @@ visualizations and retain coherent geometry.
 - Hesse, 2010 — [*LiDAR-derived Local Relief Models*](https://doi.org/10.1002/arp.374).
 - Zakšek, Oštir & Kokalj, 2011 — [*Sky-View Factor as a Relief Visualization Technique*](https://doi.org/10.3390/rs3020398).
 - Kokalj, Zakšek & Oštir, 2011 — [archaeological SVF application](https://doi.org/10.1017/S0003598X00067594).
+- Doneus, 2013 — [*Openness as Visualization Technique for Interpretative Mapping*](https://doi.org/10.3390/rs5126427).
 - Kokalj & Hesse, 2017 — [*Airborne Laser Scanning Raster Data Visualization*](https://doi.org/10.3986/9789612549848).
+- Guyot, Hubert-Moy & Lorho, 2018 — [multi-scale MSTP approach](https://doi.org/10.3390/rs10020225).
 - Kokalj & Somrak, 2019 — [*Why Not a Single Image?* — VAT](https://doi.org/10.3390/rs11070747).
 - Relief Visualization Toolbox — [visualization documentation](https://rvt-py.readthedocs.io/en/latest/).
 

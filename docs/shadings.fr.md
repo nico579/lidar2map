@@ -64,6 +64,8 @@ flowchart LR
 | 2008 | RRIM de Chiba, Kaneta et Suzuki | pente en rouge + dominance/openness en luminosité |
 | 2010 | Local Relief Model de Hesse | retrait du relief de fond pour isoler les formes locales |
 | 2011 | SVF de Zakšek, Oštir et Kokalj | part de ciel visible appliquée à la visualisation du relief |
+| 2013 | openness appliqué par Doneus | lecture archéologique conjointe des convexités et concavités |
+| 2018 | MSTP de Guyot, Hubert-Moy et Lorho | position topographique à trois échelles réunie en RGB |
 | 2019 | VAT de Kokalj et Somrak | combinaison raisonnée de plusieurs visualisations archéologiques |
 
 `e4MSTP` est une composition expérimentale propre à lidar2map. Ce nom ne doit
@@ -333,7 +335,9 @@ plusieurs visualisations indépendantes et présenter une géométrie cohérente
 - Hesse, 2010 — [*LiDAR-derived Local Relief Models*](https://doi.org/10.1002/arp.374).
 - Zakšek, Oštir & Kokalj, 2011 — [*Sky-View Factor as a Relief Visualization Technique*](https://doi.org/10.3390/rs3020398).
 - Kokalj, Zakšek & Oštir, 2011 — [application archéologique du SVF](https://doi.org/10.1017/S0003598X00067594).
+- Doneus, 2013 — [*Openness as Visualization Technique for Interpretative Mapping*](https://doi.org/10.3390/rs5126427).
 - Kokalj & Hesse, 2017 — [*Airborne Laser Scanning Raster Data Visualization*](https://doi.org/10.3986/9789612549848).
+- Guyot, Hubert-Moy & Lorho, 2018 — [approche MSTP multi-échelle](https://doi.org/10.3390/rs10020225).
 - Kokalj & Somrak, 2019 — [*Why Not a Single Image?* — VAT](https://doi.org/10.3390/rs11070747).
 - Relief Visualization Toolbox — [documentation des visualisations](https://rvt-py.readthedocs.io/en/latest/).
 
