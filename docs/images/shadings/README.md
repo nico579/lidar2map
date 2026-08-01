@@ -1,0 +1,13 @@
+# Figure sources and licences
+
+These scientific figures are stored locally so the documentation remains
+readable offline and does not depend on third-party hotlinks. No figure has
+been modified.
+
+| Local file | Source | Licence |
+|---|---|---|
+| `hillshade-direction-bias.png` | Zakšek, K.; Oštir, K.; Kokalj, Ž. (2011), *Sky-View Factor as a Relief Visualization Technique*, Figure 1. [Article](https://doi.org/10.3390/rs3020398) · [original file](https://mdpi-res.com/d_attachment/remotesensing/remotesensing-03-00398/article_deploy/html/images/remotesensing-03-00398-g001.png). Underlying Mars data: NASA/JPL/University of Arizona. | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| `sky-view-factor-principle.png` | Zakšek, K.; Oštir, K.; Kokalj, Ž. (2011), *Sky-View Factor as a Relief Visualization Technique*, Figure 2. [Article](https://doi.org/10.3390/rs3020398) · [original file](https://mdpi-res.com/d_attachment/remotesensing/remotesensing-03-00398/article_deploy/html/images/remotesensing-03-00398-g002.png). | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| `openness-principle.png` | Doneus, M. (2013), *Openness as Visualization Technique for Interpretative Mapping of Airborne Lidar Derived Digital Terrain Models*, Figure 1. [Article](https://doi.org/10.3390/rs5126427) · [original file](https://mdpi-res.com/d_attachment/remotesensing/remotesensing-05-06427/article_deploy/html/images/remotesensing-05-06427f1.png). | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| `vat-workflow.png` | Kokalj, Ž.; Somrak, M. (2019), *Why Not a Single Image? Combining Visualizations to Facilitate Fieldwork and On-Screen Mapping*, Figure 1. [Article](https://doi.org/10.3390/rs11070747) · [original file](https://mdpi-res.com/d_attachment/remotesensing/remotesensing-11-00747/article_deploy/html/images/remotesensing-11-00747-g001.png). | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| `mstp-workflow.png` | Guyot, A.; Hubert-Moy, L.; Lorho, T. (2018), *Detecting Neolithic Burial Mounds from LiDAR-Derived Elevation Data Using a Multi-Scale Approach and Machine Learning Techniques*, Figure 5. [Article](https://doi.org/10.3390/rs10020225) · [original file](https://mdpi-res.com/d_attachment/remotesensing/remotesensing-10-00225/article_deploy/html/images/remotesensing-10-00225-g005.png). | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |

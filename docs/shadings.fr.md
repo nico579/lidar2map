@@ -7,24 +7,18 @@ ressort fortement dans un LRM peut disparaître dans un hillshade, et une forme
 claire dans l'openness positif peut être ambiguë tant que l'openness négatif n'a
 pas été consulté. Il n'existe donc pas d'ombrage universel.
 
-> **Conseil de Nico :** pour rechercher les petits détails, mon rendu préféré est
-> le **LRM avec `sigma=3`**. Je le compare toujours avec **VAT**, **openness O+**
-> et **openness O−** : LRM donne l'alerte, VAT restitue une vue d'ensemble, O+
-> vérifie les formes positives et O− les formes négatives.
+Les paramètres d'échelle et de distance doivent être adaptés à la taille des
+formes recherchées et à la résolution du MNT. Pour le LRM, une valeur explicite
+de `sigma` est exprimée en mètres et sa valeur en pixels est :
 
-Dans la GUI, ajoutez ces quatre instances dans la liste des ombrages. En CLI :
+$$
+\sigma_{px}=\frac{\sigma_m}{\rho}
+$$
 
-```bash
---shading lrm:sigma=3 \
---shading vat:dist=20,gamma=2 \
---shading opos:dist=20,gamma=2 \
---shading oneg:dist=20,gamma=2
-```
-
-`sigma=3` est exprimé en mètres. Sur le MNT IGN à 0,5 m/pixel, cela correspond à
-un écart-type gaussien de 6 pixels. C'est un réglage volontairement fin : il
-favorise les petites anomalies, mais fait aussi davantage ressortir le bruit,
-les traces de traitement du MNT et les objets modernes.
+$\rho$ est la résolution du MNT en mètres par pixel. Une petite valeur accentue
+les détails fins, mais aussi le bruit, les traces de
+traitement du MNT et les objets modernes. La GUI permet d'ajouter plusieurs
+instances d'un même rendu afin de comparer différentes échelles.
 
 ## Vue d'ensemble
 
@@ -50,7 +44,7 @@ flowchart LR
 | Rendu lidar2map | À regarder en priorité | Avantages | Limites principales |
 |---|---|---|---|
 | `lrm` | murs bas, fossés étroits, plateformes, microrelief | très lisible, sans direction solaire, rapide | échelle unique ; enlève le contexte général ; petit σ = bruit et halos |
-| `vat` | contrôle général après le LRM | creux, bosses et ruptures dans une image | composite plus difficile à interpréter ; plus lent que LRM |
+| `vat` | lecture composite générale | creux, bosses et ruptures dans une image | composite plus difficile à interpréter ; plus lent que LRM |
 | `opos` (O+) | tertres, crêtes, levées, bords hauts | aucune direction d'éclairage ; excellent pour les convexités | renseigne peu sur les creux ; dépend fortement du rayon |
 | `oneg` (O−) | fossés, chemins creux, cuvettes, bords bas | complément direct de O+ | renseigne peu sur les bosses ; rendu naturellement granuleux |
 | `svf` | fossés, murs et formes sur pente | peu de biais directionnel ; conserve une bonne sensation du relief | calcul plus lourd ; sensible au rayon, au stretch et au bruit sur terrain plat |
@@ -127,6 +121,13 @@ La pondération renforce les éclairages perpendiculaires à la pente locale. Le
 rendu est plus équilibré qu'une lumière unique, mais il reste dépendant d'un
 modèle d'illumination.
 
+![Deux hillshades du même relief avec des azimuts différents](images/shadings/hillshade-direction-bias.png)
+
+*Le même relief éclairé à 315° (a) puis 45° (b) : les structures parallèles à
+la lumière deviennent difficiles à lire. Figure 1 de [Zakšek, Oštir et Kokalj
+(2011)](https://doi.org/10.3390/rs3020398), données NASA/JPL/University of
+Arizona, [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).*
+
 ## LRM dans lidar2map : la variante simplifiée
 
 Le LRM complet publié par [Hesse
@@ -157,8 +158,9 @@ flowchart LR
   en fréquence, pas une « taille maximale d'objet » exacte.
 
 Le défaut de lidar2map vaut 15 pixels de la résolution native, soit 7,5 m pour
-le LiDAR IGN à 0,5 m/pixel. Le choix `sigma=3` est donc nettement plus orienté
-vers les petits détails que le défaut généraliste.
+le LiDAR IGN à 0,5 m/pixel. Une valeur explicite inférieure à ce défaut cible
+des formes plus petites ; une valeur supérieure conserve davantage de
+structures larges.
 
 ## Sky-View Factor (`svf`)
 
@@ -175,6 +177,14 @@ et la convention RVT :
 $$
 SVF_{rvt}\approx\frac{1}{n}\sum_{k=1}^{n}(1-\sin\gamma_k)
 $$
+
+![Principe du Sky-View Factor](images/shadings/sky-view-factor-principle.png)
+
+*En coupe (a), le relief masque une partie de l'hémisphère céleste ; en plan
+(b), l'horizon est recherché dans plusieurs directions jusqu'au rayon $R$.
+Figure 2 de [Zakšek, Oštir et Kokalj
+(2011)](https://doi.org/10.3390/rs3020398), [CC BY
+3.0](https://creativecommons.org/licenses/by/3.0/).*
 
 La méthode a été formalisée comme visualisation de relief par [Zakšek, Oštir et
 Kokalj (2011)](https://doi.org/10.3390/rs3020398), puis appliquée aux paysages
@@ -196,8 +206,8 @@ $$
 $$
 
 $$
-\beta_k=\max_{0<r\le L}\theta_k(r),\qquad
-\delta_k=\min_{0<r\le L}\theta_k(r)
+\beta_k=\max_{r\in(0,L]}\theta_k(r),\qquad
+\delta_k=\min_{r\in(0,L]}\theta_k(r)
 $$
 
 $$
@@ -208,23 +218,13 @@ $$
 $L$ est le rayon d'analyse et $u_k$ une direction. **O− n'est pas simplement
 l'inverse de O+.** Ils mesurent deux géométries complémentaires.
 
-```text
-             horizon le plus haut
-                    ●
-                   /|
-                  / | Δz
-----------------P--+---------------- horizontale
-                 <--- r --->
-                  θ = atan(Δz/r)
-```
+![Principe de l'openness positif et négatif](images/shadings/openness-principle.png)
 
-```mermaid
-flowchart TB
-    P[Pixel observé] --> U[Horizon vers le haut, n directions]
-    P --> D[Horizon vers le bas, n directions]
-    U --> OP[O+ : convexités, crêtes, tertres]
-    D --> ON[O− : concavités, fossés, chemins creux]
-```
+*Les angles zénithaux rouges définissent O+ ; les angles au nadir blancs
+définissent O−. Le calcul est répété dans toutes les directions jusqu'au rayon
+$r$. Figure 1 de [Doneus
+(2013)](https://doi.org/10.3390/rs5126427), [CC BY
+3.0](https://creativecommons.org/licenses/by/3.0/).*
 
 Dans lidar2map, `oneg` est affiché inversé afin que les creux apparaissent
 sombres. Comparer O+ et O− côte à côte est plus informatif que de choisir l'un
@@ -245,7 +245,7 @@ La sortie `rrim` de lidar2map est un **composite RRIM-style**, pas une
 reproduction exacte. Elle utilise :
 
 $$
-R=255\,\operatorname{clip}(s/45^\circ,0,1)^{0.7}
+R=255\left[\min\left(1,\max\left(0,\frac{s}{45^\circ}\right)\right)\right]^{0.7}
 $$
 
 $$
@@ -263,17 +263,26 @@ Le VAT publié par [Kokalj et Somrak
 (2019)](https://doi.org/10.3390/rs11070747) combine hillshade, pente inversée,
 openness positif et SVF avec des étirements et modes de fusion définis.
 
+![Chaîne de calcul du VAT publié](images/shadings/vat-workflow.png)
+
+*Chaîne du VAT publié : calcul et normalisation des couches, puis fusion dans
+un ordre et avec des opacités définis. Figure 1 de [Kokalj et Somrak
+(2019)](https://doi.org/10.3390/rs11070747), [CC BY
+4.0](https://creativecommons.org/licenses/by/4.0/). La variante de lidar2map
+décrite ci-dessous n'est pas ce preset à l'identique.*
+
 Le rendu `vat` de lidar2map est **VAT-style**. Sa base est le SVF ; un overlay
 d'openness positif renforce les convexités, puis la pente assombrit les talus.
 Avec les opacités internes actuelles de 0,5 :
 
 $$
-V=\left[0.5S+0.5\,\operatorname{overlay}(S,O^+)\right]
-\left(1-0.5P\right)
+V=\left[0.5S+0.5B(S,O^+)\right]\left(1-0.5P\right)
 $$
 
-puis le gamma choisi est appliqué. $S$ est le SVF normalisé et $P$ la pente
-normalisée. Ce mélange n'est donc pas pixel-identique au preset VAT du RVT.
+$B$ est la fusion Overlay : pour $S\leq 0.5$, $B(S,O^+)=2SO^+$ ; au-delà,
+$B(S,O^+)=1-2(1-S)(1-O^+)$. Puis le gamma choisi est appliqué. $S$ est le SVF
+normalisé et $P$ la pente normalisée. Ce mélange n'est donc pas pixel-identique
+au preset VAT du RVT.
 
 `e4mstp` est un composite couleur spécifique à lidar2map : il réunit position
 topographique multi-échelle, SVF, O+, O−, pente et deux résiduels locaux
@@ -289,14 +298,23 @@ Il peut être très riche sur une petite zone, mais son coût et le nombre de
 couches fusionnées le rendent moins adapté comme première lecture ou pour un
 département entier.
 
-## Méthode de lecture recommandée
+![Principe d'une composition MSTP multi-échelle](images/shadings/mstp-workflow.png)
 
-1. **Détection fine :** LRM `sigma=3`.
-2. **Contexte :** VAT pour vérifier si l'anomalie appartient à une forme plus
-   large ou à une rupture naturelle.
-3. **Signe de la forme :** O+ pour une levée/convexité, O− pour un
-   fossé/concavité.
-4. **Orientation :** un ou plusieurs hillshades directionnels si la géométrie
+*Principe du MSTP publié : le MNT produit des écarts topographiques aux échelles
+micro, méso et macro, ensuite réunis en RGB. Figure 5 de [Guyot, Hubert-Moy et
+Lorho (2018)](https://doi.org/10.3390/rs10020225), [CC BY
+4.0](https://creativecommons.org/licenses/by/4.0/). `e4mstp` reprend l'idée
+multi-échelle, mais sa composition et sa formule restent propres à lidar2map.*
+
+## Lecture croisée et validation
+
+1. **Échelle :** comparer plusieurs valeurs de LRM, du détail fin aux formes
+   plus larges.
+2. **Signe de la forme :** lire O+ et O− côte à côte pour distinguer
+   convexités et concavités.
+3. **Contexte :** utiliser SVF, VAT ou RRIM pour replacer l'anomalie dans le
+   relief environnant.
+4. **Orientation :** comparer plusieurs azimuts de hillshade si la géométrie
    reste ambiguë.
 5. **Retour aux données :** vérifier orthophoto, cadastre, cartes anciennes et
    terrain. Une visualisation n'est jamais une preuve archéologique.
@@ -318,3 +336,6 @@ plusieurs visualisations indépendantes et présenter une géométrie cohérente
 - Kokalj & Hesse, 2017 — [*Airborne Laser Scanning Raster Data Visualization*](https://doi.org/10.3986/9789612549848).
 - Kokalj & Somrak, 2019 — [*Why Not a Single Image?* — VAT](https://doi.org/10.3390/rs11070747).
 - Relief Visualization Toolbox — [documentation des visualisations](https://rvt-py.readthedocs.io/en/latest/).
+
+Les fichiers sources et les licences des figures sont détaillés dans le
+[registre des illustrations](images/shadings/README.md).
