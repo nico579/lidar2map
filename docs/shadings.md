@@ -70,36 +70,20 @@ flowchart LR
     C --> E4[e4MSTP]
 ```
 
-| lidar2map output | Look for | Strengths | Main limitations |
+| lidar2map output — expanded name | Look for | Strengths | Main limitations |
 |---|---|---|---|
-| `lrm` | low walls, narrow ditches, platforms, microrelief | readable, illumination-independent, fast | one scale; removes broad context; small σ amplifies noise and halos |
-| `vat` | general composite reading | pits, mounds and breaks in one image | composite is harder to interpret; slower than LRM |
-| `opos` (O+) | mounds, ridges, banks, upper edges | no illumination direction; excellent for convexities | says little about depressions; strongly radius-dependent |
-| `oneg` (O−) | ditches, hollow ways, pits, lower edges | direct complement to O+ | says little about positive forms; naturally granular |
-| `svf` | ditches, walls, and features on slopes | little directional bias; retains a useful relief impression | costlier; sensitive to radius, stretch, and flat-ground noise |
-| `multi` | familiar overview | fast, intuitive, less biased than one azimuth | still an illumination model; some features remain hidden |
-| `315` `045` `135` `225` | an oriented structure | powerful when light is perpendicular to the trace | strong azimuth bias; always compare directions |
-| `slope` | banks, scarps, abrupt breaks | fast and azimuth-independent | no uphill/downhill or mound/pit distinction; noise-sensitive |
-| `rrim` | coloured slope plus local relief | combines gradient breaks with local anomalies | lidar2map differs from academic RRIM; colour grammar must be learned |
-| `e4mstp` | multi-scale exploration of a small area | gathers many clues in one colour image | very expensive; colour grammar takes practice; lidar2map variant differs from the RVT preset |
+| `lrm` — **Local Relief Model**<br>implemented here as **SLRM**, *Simple Local Relief Model* | low walls, narrow ditches, platforms, microrelief | readable, illumination-independent, fast | one scale; removes broad context; small σ amplifies noise and halos |
+| `vat` — **Visualization for Archaeological Topography**<br>lidar2map VAT-style variant | general composite reading | pits, mounds and breaks in one image | composite is harder to interpret; slower than LRM |
+| `opos` (O+) — **positive openness** | mounds, ridges, banks, upper edges | no illumination direction; excellent for convexities | says little about depressions; strongly radius-dependent |
+| `oneg` (O−) — **negative openness** | ditches, hollow ways, pits, lower edges | direct complement to O+ | says little about positive forms; naturally granular |
+| `svf` — **Sky-View Factor** | ditches, walls, and features on slopes | little directional bias; retains a useful relief impression | costlier; sensitive to radius, stretch, and flat-ground noise |
+| `multi` — **multidirectional hillshade** | familiar overview | fast, intuitive, less biased than one azimuth | still an illumination model; some features remain hidden |
+| `315` `045` `135` `225` — **directional hillshades**<br>light-source azimuths | an oriented structure | powerful when light is perpendicular to the trace | strong azimuth bias; always compare directions |
+| `slope` — **local terrain slope** | banks, scarps, abrupt breaks | fast and azimuth-independent | no uphill/downhill or mound/pit distinction; noise-sensitive |
+| `rrim` — **Red Relief Image Map** | coloured slope plus local relief | combines gradient breaks with local anomalies | lidar2map differs from academic RRIM; colour grammar must be learned |
+| `e4mstp` — **e⁴MSTP**<br>**Multiscale Topographic Position — enhanced version 4** | multi-scale exploration of a small area | gathers many clues in one colour image | very expensive; colour grammar takes practice; lidar2map variant differs from the RVT preset |
 
-## Names and parameters in lidar2map
-
-### What the names mean
-
-| Displayed code | Expanded name | Meaning here |
-|---|---|---|
-| `lrm` | **Local Relief Model** | lidar2map more precisely computes its simple variant, **SLRM** (*Simple Local Relief Model*): elevation minus smoothed relief |
-| `vat` | **Visualization for Archaeological Topography** | the code borrows the published method's name; lidar2map produces a greyscale VAT-style variant based on SVF, positive openness, and slope |
-| `svf` | **Sky-View Factor** | visible fraction of the sky, estimated from horizons around the pixel |
-| `opos` / O+ | **positive openness** | zenith-facing openness; emphasizes convexity, ridges, and mounds |
-| `oneg` / O− | **negative openness** | nadir-facing openness; lidar2map visually inverts it so ditches and depressions remain dark |
-| `rrim` | **Red Relief Image Map** | lidar2map variant: slope in red and SLRM in lightness |
-| `mstp` | **Multiscale Topographic Position** | internal component comparing a pixel's position with several neighbourhood sizes |
-| `e4mstp` | **e⁴MSTP: Multiscale Topographic Position — enhanced version 4** | fourth enhanced version of the published MSTP method; the available output is the lidar2map variant described below |
-| `multi` | **multidirectional hillshade** | four weighted illuminations combined into one image |
-| `315`, `045`, `135`, `225` | directional hillshades | azimuth fixed by the name: north-west, north-east, south-east, and south-west |
-| `slope` | slope | local slope angle, with no illumination direction |
+## Parameters in lidar2map
 
 ### Fields shown by the interface
 

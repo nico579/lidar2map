@@ -73,36 +73,20 @@ flowchart LR
     C --> E4[e4MSTP]
 ```
 
-| Rendu lidar2map | À regarder en priorité | Avantages | Limites principales |
+| Rendu lidar2map — nom développé | À regarder en priorité | Avantages | Limites principales |
 |---|---|---|---|
-| `lrm` | murs bas, fossés étroits, plateformes, microrelief | très lisible, sans direction solaire, rapide | échelle unique ; enlève le contexte général ; petit σ = bruit et halos |
-| `vat` | lecture composite générale | creux, bosses et ruptures dans une image | composite plus difficile à interpréter ; plus lent que LRM |
-| `opos` (O+) | tertres, crêtes, levées, bords hauts | aucune direction d'éclairage ; excellent pour les convexités | renseigne peu sur les creux ; dépend fortement du rayon |
-| `oneg` (O−) | fossés, chemins creux, cuvettes, bords bas | complément direct de O+ | renseigne peu sur les bosses ; rendu naturellement granuleux |
-| `svf` | fossés, murs et formes sur pente | peu de biais directionnel ; conserve une bonne sensation du relief | calcul plus lourd ; sensible au rayon, au stretch et au bruit sur terrain plat |
-| `multi` | lecture générale familière | rapide, intuitif, moins biaisé qu'un seul azimut | reste une simulation d'éclairage ; certaines formes restent masquées |
-| `315` `045` `135` `225` | vérification d'une structure orientée | très efficace quand le soleil est perpendiculaire à la trace | biais d'azimut fort ; toujours comparer plusieurs directions |
-| `slope` | talus, scarps et ruptures de pente | rapide, indépendant de l'azimut | ne distingue ni montée/descente, ni bosse/creux ; sensible au bruit |
-| `rrim` | lecture couleur pente + relief local | combine rupture de pente et anomalie locale | implémentation lidar2map différente du RRIM académique ; code couleur à apprendre |
-| `e4mstp` | exploration multi-échelle d'une petite zone | rassemble beaucoup d'indices dans une image couleur | très lourd ; code couleur à apprendre ; variante lidar2map non identique au preset RVT |
+| `lrm` — **Local Relief Model**<br>ici **SLRM**, *Simple Local Relief Model* | murs bas, fossés étroits, plateformes, microrelief | très lisible, sans direction solaire, rapide | échelle unique ; enlève le contexte général ; petit σ = bruit et halos |
+| `vat` — **Visualization for Archaeological Topography**<br>variante VAT-style de lidar2map | lecture composite générale | creux, bosses et ruptures dans une image | composite plus difficile à interpréter ; plus lent que LRM |
+| `opos` (O+) — **positive openness**<br>ouverture positive | tertres, crêtes, levées, bords hauts | aucune direction d'éclairage ; excellent pour les convexités | renseigne peu sur les creux ; dépend fortement du rayon |
+| `oneg` (O−) — **negative openness**<br>ouverture négative | fossés, chemins creux, cuvettes, bords bas | complément direct de O+ | renseigne peu sur les bosses ; rendu naturellement granuleux |
+| `svf` — **Sky-View Factor**<br>facteur de vue du ciel | fossés, murs et formes sur pente | peu de biais directionnel ; conserve une bonne sensation du relief | calcul plus lourd ; sensible au rayon, au stretch et au bruit sur terrain plat |
+| `multi` — **multidirectional hillshade**<br>ombrage multidirectionnel | lecture générale familière | rapide, intuitif, moins biaisé qu'un seul azimut | reste une simulation d'éclairage ; certaines formes restent masquées |
+| `315` `045` `135` `225` — **hillshades directionnels**<br>azimuts de la lumière | vérification d'une structure orientée | très efficace quand le soleil est perpendiculaire à la trace | biais d'azimut fort ; toujours comparer plusieurs directions |
+| `slope` — **pente**<br>angle local du terrain | talus, escarpements et ruptures de pente | rapide, indépendant de l'azimut | ne distingue ni montée/descente, ni bosse/creux ; sensible au bruit |
+| `rrim` — **Red Relief Image Map**<br>carte de relief rouge | lecture couleur pente + relief local | combine rupture de pente et anomalie locale | implémentation lidar2map différente du RRIM académique ; code couleur à apprendre |
+| `e4mstp` — **e⁴MSTP**<br>**Multiscale Topographic Position — enhanced version 4** | exploration multi-échelle d'une petite zone | rassemble beaucoup d'indices dans une image couleur | très lourd ; code couleur à apprendre ; variante lidar2map non identique au preset RVT |
 
-## Noms et paramètres dans lidar2map
-
-### Signification des noms
-
-| Code affiché | Nom développé | Ce que le nom désigne ici |
-|---|---|---|
-| `lrm` | **Local Relief Model** — modèle de relief local | lidar2map calcule plus précisément sa variante simple, le **SLRM** (*Simple Local Relief Model*) : altitude moins relief lissé |
-| `vat` | **Visualization for Archaeological Topography** — visualisation pour la topographie archéologique | le code reprend le nom de la méthode publiée ; lidar2map produit une variante « VAT-style » en niveaux de gris, à base de SVF, openness positif et pente |
-| `svf` | **Sky-View Factor** — facteur de vue du ciel | fraction du ciel visible, estimée à partir des horizons autour du pixel |
-| `opos` / O+ | **positive openness** — ouverture positive | ouverture vers le zénith ; met l'accent sur convexités, crêtes et tertres |
-| `oneg` / O− | **negative openness** — ouverture négative | ouverture vers le nadir ; lidar2map l'inverse visuellement pour garder fossés et creux sombres |
-| `rrim` | **Red Relief Image Map** — carte de relief rouge | variante lidar2map : pente dans le rouge et SLRM dans la luminosité |
-| `mstp` | **Multiscale Topographic Position** — position topographique multi-échelle | composante interne qui compare la position du pixel à plusieurs voisinages |
-| `e4mstp` | **e⁴MSTP : Multiscale Topographic Position — enhanced version 4** | quatrième version enrichie de la méthode MSTP publiée ; la sortie proposée est la variante lidar2map décrite plus bas |
-| `multi` | **multidirectional hillshade** — hillshade multidirectionnel | quatre éclairages pondérés réunis dans une image |
-| `315`, `045`, `135`, `225` | hillshades directionnels | azimut fixé par le nom : nord-ouest, nord-est, sud-est et sud-ouest |
-| `slope` | pente | angle de la pente locale, sans direction solaire |
+## Paramètres dans lidar2map
 
 ### Champs affichés par l'interface
 
