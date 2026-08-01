@@ -70,7 +70,7 @@ flowchart LR
     C --> E4[e4MSTP]
 ```
 
-| lidar2map output — expanded name | Look for | Strengths | Main limitations |
+| lidar2map output — expanded name | What the visualization highlights | Strengths | Main limitations |
 |---|---|---|---|
 | `lrm` — **Local Relief Model**<br>implemented here as **SLRM**, *Simple Local Relief Model* | low walls, narrow ditches, platforms, microrelief | readable, illumination-independent, fast | one scale; removes broad context; small σ amplifies noise and halos |
 | `vat` — **Visualization for Archaeological Topography**<br>lidar2map VAT-style variant | general composite reading | pits, mounds and breaks in one image | composite is harder to interpret; slower than LRM |
