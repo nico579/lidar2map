@@ -17607,9 +17607,9 @@ def _lire_historique() -> list:
 
 # ── Partage LAN (transfert PC → téléphone via QR) ─────────────────────────────
 # Sert les livrables (sqlitedb/rmap/mbtiles/map/obf) sur le réseau local via un
-# petit serveur HTTP éphémère. Le téléphone (même WiFi) scanne un QR, télécharge
-# le fichier, puis « Ouvrir avec OsmAnd/Locus » l'importe. Idiome standard (cf.
-# qrcp) : pas de câble, pas de cloud, pas de compte, hors-ligne (LAN seul).
+# petit serveur HTTP éphémère. Le téléphone (même WiFi) scanne un QR et télécharge
+# le fichier ; l'importeur interne de Locus reste la voie fiable, « Ouvrir avec »
+# dépendant des associations déclarées par Android. Pas de câble, cloud ni compte.
 def _ip_lan():
     """IP LAN de la machine (truc UDP sans trafic réel). 127.0.0.1 en repli."""
     import socket
@@ -17656,13 +17656,17 @@ class _PartageServeur:
             # Accept-Language (standard HTTP ; ex. "fr-FR,fr;q=0.9,en;q=0.8").
             _TXT = {
                 "fr": {"h": "Fichiers à importer",
-                       "p": "Tape un fichier, puis « Ouvrir avec » OsmAnd ou Locus.",
+                       "p": "Télécharge un fichier. Dans Locus : Gestionnaire de "
+                            "cartes → Importer une carte → gestionnaire de fichiers. "
+                            "« Ouvrir avec » peut aussi fonctionner selon Android.",
                        "w": "Android peut avertir « Impossible de télécharger de "
                             "façon sécurisée » : choisir <b>Enregistrer</b>. "
                             "Transfert local en WiFi (HTTP sans certificat), "
                             "rien ne sort du réseau."},
                 "en": {"h": "Files to import",
-                       "p": "Tap a file, then “Open with” OsmAnd or Locus.",
+                       "p": "Download a file. In Locus: Map Manager → Import map → "
+                            "system file manager. ‘Open with’ may also work, "
+                            "depending on Android.",
                        "w": "Android may warn the download is insecure: choose "
                             "<b>Save</b>. Local WiFi transfer (plain HTTP, no "
                             "certificate), nothing leaves your network."},
@@ -17738,6 +17742,22 @@ def _base_projets(dossier=None):
     return Path(dossier) if dossier else DOSSIER_TRAVAIL / "Projets"
 
 
+def _dossier_partage_projet(nom, dossier=None):
+    """Dossier à parcourir pour le partage LAN d'un projet.
+
+    Le pipeline normalise toujours le nom de projet en slug ASCII minuscule
+    quand la sortie est automatique. Sur un système sensible à la casse
+    (Linux), rechercher le nom brut saisi dans la GUI ferait donc manquer un
+    dossier pourtant valide (``Thones`` vs ``thones``).
+
+    Avec ``--output-dir`` / le champ « Dossier sortie », les pipelines écrivent
+    directement dans ce dossier : il ne faut pas lui ajouter le nom du projet.
+    """
+    if dossier:
+        return Path(dossier)
+    return _base_projets() / normaliser_nom((nom or "").strip())
+
+
 def _livrables_projet(proj):
     """Livrables d'un projet (récursif, toutes sorties confondues), du plus
     récent au plus vieux. Partagé par start_share (GUI) et main_serve (CLI)."""
@@ -17764,7 +17784,7 @@ def main_serve():
                         help="Dossier de sortie custom (défaut : <travail>/Projets)")
     args = parser.parse_args()
 
-    proj = _base_projets(args.dossier) / args.zone_nom
+    proj = _dossier_partage_projet(args.zone_nom, args.dossier)
     fichiers = _livrables_projet(proj)
     if not fichiers:
         print(f"  No deliverable (sqlitedb/rmap/mbtiles/map) in {proj}")
@@ -17790,8 +17810,9 @@ def main_serve():
         _qr.print_ascii(invert=True)
     except Exception:
         pass
-    print("  Phone on the same WiFi: scan (or type the URL), download a file,")
-    print("  then 'Open with' OsmAnd or Locus. Ctrl+C to stop.")
+    print("  Phone on the same WiFi: scan (or type the URL), download a file.")
+    print("  Locus: Map Manager > Import map > system file manager")
+    print("  ('Open with' may also work, depending on Android). Ctrl+C to stop.")
     try:
         while True:
             time.sleep(3600)
@@ -18048,7 +18069,9 @@ def lancer_gui():
             nom = (cfg.get("nom") or "").strip()
             if not nom:
                 return {"ok": False, "error": "Aucun projet : lance d'abord une génération."}
-            proj = _base_projets(cfg.get("dossier")) / nom
+            # Miroir exact du routage du pipeline : slug minuscule en sortie
+            # automatique, dossier direct avec un --output-dir personnalisé.
+            proj = _dossier_partage_projet(nom, cfg.get("dossier"))
             fichiers = _livrables_projet(proj)
             if not fichiers:
                 return {"ok": False,

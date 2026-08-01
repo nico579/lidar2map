@@ -276,3 +276,6 @@ jobs:
 
       - name: Tests interactions cache/flag/manifeste (sans reseau, mocks)
         run: python tests/_test_interactions.py
+
+      - name: Tests partage telephone (chemins Linux, GUI et serveur local)
+        run: python tests/test_phone_share.py

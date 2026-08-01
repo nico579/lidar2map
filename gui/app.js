@@ -27,7 +27,7 @@ const fmtRes = (r) => (_lang === 'fr' ? String(r).replace('.', ',') : String(r))
 const I18N = {
   fr: {
     "btn.run":"▶ Lancer", "btn.stop":"■ Arrêter", "btn.hist":"⏱ Historique", "btn.log":"📋 Logs",
-    "btn.share":"📲 Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Scanne un fichier, télécharge, puis « Ouvrir avec » OsmAnd ou Locus.", "share.close":"Fermer",
+    "btn.share":"📲 Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Télécharge le fichier. Dans Locus : Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers. « Ouvrir avec » peut aussi fonctionner selon Android.", "share.close":"Fermer",
     "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
     "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
@@ -162,7 +162,7 @@ const I18N = {
   },
   en: {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
-    "btn.share":"📲 Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Tap a file, download, then \"Open with\" OsmAnd or Locus.", "share.close":"Close",
+    "btn.share":"📲 Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Download the file. In Locus: Map Manager → Import map → system file manager. ‘Open with’ may also work, depending on Android.", "share.close":"Close",
     "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
     "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
     "tip.projlist":"Existing projects (fills the Name field)",

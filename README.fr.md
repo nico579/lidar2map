@@ -144,7 +144,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd ; pour Locus, utiliser MBTiles), Mapsforge `.map` (Locus Map), `.sqlitedb` transparent en superposition (`transparent-raster`)
 
-- **Envoi vers le téléphone** : après génération, le bouton 📲 de la GUI (ou `--serve --zone-name X` en CLI) sert les cartes sur le WiFi local et affiche un QR code. On scanne avec le téléphone, on télécharge, puis « Ouvrir avec » OsmAnd ou Locus : pas de câble, pas de cloud, rien ne sort du réseau. (Android peut avertir que le téléchargement n'est pas sécurisé : choisir Enregistrer, c'est un simple transfert local.)
+- **Envoi vers le téléphone** : après génération, le bouton 📲 de la GUI (ou `--serve --zone-name X` en CLI) sert les cartes sur le WiFi local et affiche un QR code. On scanne avec le téléphone puis on télécharge : pas de câble, pas de cloud, rien ne sort du réseau. Dans Locus, la méthode fiable est **Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers** ; « Ouvrir avec » peut aussi fonctionner selon Android. (Android peut avertir que le téléchargement n'est pas sécurisé : choisir Enregistrer, c'est un simple transfert local.)
 
 - **File d'attente des traitements** : dans la GUI, on empile plusieurs zones avec le bouton `＋ File`, puis `Lancer la file` les traite l'une après l'autre, sans surveillance. Un job en échec n'arrête pas la file (chaque item affiche son statut), on peut donc aligner un lot de zones et laisser tourner. En CLI, l'équivalent est l'enchaînement de commandes dans un script shell.
 
@@ -509,7 +509,7 @@ Cinq types de traitement : LiDAR, raster, vectoriel, fusion vectorielle et déco
 |---|---|
 | ![Onglet Fusion vectorielle](screenshots/GUI/vector_merge.PNG) | ![Onglet Découpage raster](screenshots/GUI/raster_split.PNG) |
 
-Envoi vers le téléphone : le bouton 📲 sert les cartes générées sur le WiFi local, on scanne le QR code puis « Ouvrir avec » OsmAnd ou Locus.
+Envoi vers le téléphone : le bouton 📲 sert les cartes générées sur le WiFi local. On scanne le QR code, on télécharge, puis on importe dans Locus via **Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers**. « Ouvrir avec » peut aussi fonctionner selon Android.
 
 ![Envoi vers le téléphone (QR)](screenshots/GUI/phone.PNG)
 

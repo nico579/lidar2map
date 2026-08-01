@@ -145,7 +145,7 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd; for Locus use MBTiles), Mapsforge `.map` (Locus Map), transparent overlay `.sqlitedb` (`transparent-raster`)
 
-- **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan with the phone, download, then "Open with" OsmAnd or Locus: no cable, no cloud, nothing leaves your network. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
+- **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan and download: no cable, no cloud, nothing leaves your network. In Locus, the reliable method is **Map Manager → Import map → system file manager**; "Open with" may also work depending on Android. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
 
 - **Processing queue**: in the GUI, stack several zones with the `＋ Queue` button, then `Run queue` runs them one after another, unattended. A failed job doesn't stop the queue (each item shows its status), so you can line up a batch of areas and walk away. The CLI equivalent is chaining commands in a shell script.
 
@@ -515,7 +515,7 @@ Five processing types: LiDAR, raster, vector, vector merge and raster splitting.
 |---|---|
 | ![Vector merge tab](screenshots/GUI/vector_merge.PNG) | ![Raster splitting tab](screenshots/GUI/raster_split.PNG) |
 
-Send to phone: the 📲 button serves the generated maps over local WiFi, scan the QR code and "Open with" OsmAnd or Locus.
+Send to phone: the 📲 button serves the generated maps over local WiFi. Scan the QR code, download, then import in Locus through **Map Manager → Import map → system file manager**. "Open with" may also work depending on Android.
 
 ![Send to phone (QR)](screenshots/GUI/phone.PNG)
 
