@@ -406,6 +406,9 @@ ni les dépendances, ni les specs.
 | ⚡ **`update_app.py --release`** (local) | non | **ta** connexion | fix de code hors cloud |
 | 🔧 **build local par-OS** (`lidar2map_*_build.*`) | oui (1 OS) | — | itérer / déboguer |
 
+L'icône officielle `lidar2map_icon.png` est utilisée par les builds Windows et
+macOS et reste incluse dans l'archive Linux pour les lanceurs de bureau.
+
 Détails :
 - ☁️ **`release.yml`** — **source de vérité des binaires distribués** : runner neuf,
   reproductible (pas de dérive machine ; ex. un venv local avec une mauvaise

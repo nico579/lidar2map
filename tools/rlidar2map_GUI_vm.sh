@@ -38,6 +38,7 @@ DEFAULT_RDP_PASSWORD="${DEFAULT_RDP_PASSWORD:-userlidar}"
 # Le client ne met pas à niveau tout Ubuntu par défaut : c'est long et non
 # requis pour installer xrdp. UPGRADE_SYSTEM=yes l'active explicitement.
 UPGRADE_SYSTEM="${UPGRADE_SYSTEM:-no}"
+LIDAR2MAP_ICON_SOURCE="${LIDAR2MAP_ICON_SOURCE:-}"
 GITHUB_REPO="nico579/lidar2map"
 LIDAR2MAP_ARCHIVE="lidar2map-linux-x86_64.tar.gz"
 # La version, l'URL de téléchargement et le checksum SHA256 sont récupérés
@@ -326,16 +327,26 @@ install -d -m 700 -o "${USERNAME}" -g "${USERNAME}" \
   "${USER_HOME}/.local" \
   "${USER_HOME}/.local/bin" \
   "${USER_HOME}/.local/share" \
+  "${USER_HOME}/.local/share/icons" \
   "${USER_HOME}/.config/autostart"
+
+ICON_DEST="${USER_HOME}/.local/share/icons/lidar2map.png"
+if [[ -n "${LIDAR2MAP_ICON_SOURCE}" && -f "${LIDAR2MAP_ICON_SOURCE}" ]]; then
+  install -m 644 -o "${USERNAME}" -g "${USERNAME}" \
+    "${LIDAR2MAP_ICON_SOURCE}" "${ICON_DEST}"
+fi
 
 cat > "${USER_HOME}/Desktop/lidar2map.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=lidar2map
+Icon=${ICON_DEST}
 Exec=${USER_HOME}/.local/bin/lidar2map-gui
 Path=${INSTALL_DIR}
 Terminal=false
 Categories=Utility;
+StartupNotify=true
+StartupWMClass=lidar2map
 EOF
 
 cat > "${USER_HOME}/.local/bin/lidar2map-gui" << EOF

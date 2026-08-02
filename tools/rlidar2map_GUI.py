@@ -26,6 +26,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 REMOTE_SCRIPT_NAME = "rlidar2map_GUI_vm.sh"
+ICON_FILE_NAME = "lidar2map_icon.png"
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*$")
 LOG_CHILD_ENV = "RLIDAR2MAP_GUI_LOGGED_CHILD"
 LOG_FILE_NAME = "rlidar2map_GUI.log"
@@ -185,8 +186,11 @@ def deploy(
     ssh_keygen = require_command("ssh-keygen")
 
     local_script = bundled_resource("rlidar2map_GUI_vm.sh")
+    local_icon = bundled_resource(ICON_FILE_NAME)
     if not local_script.is_file():
         raise SystemExit(f"Script Linux introuvable : {local_script}")
+    if not local_icon.is_file():
+        raise SystemExit(f"Icône lidar2map introuvable : {local_icon}")
 
     identity_args: list[str] = []
     if identity_file:
@@ -201,7 +205,7 @@ def deploy(
     scp_destination = f"{ssh_user}@{ssh_host(ip)}"
     ssh_destination = f"{ssh_user}@{ip}"
 
-    print(f"\nCopie du script vers {ssh_destination}...")
+    print(f"\nCopie du script et de l'icône vers {ssh_destination}...")
     with tempfile.TemporaryDirectory(prefix="rlidar2map-GUI-") as temp_dir:
         normalized_script = Path(temp_dir) / REMOTE_SCRIPT_NAME
         normalized_lf_copy(local_script, normalized_script)
@@ -211,7 +215,8 @@ def deploy(
                 *host_key_args,
                 *identity_args,
                 str(normalized_script),
-                f"{scp_destination}:{REMOTE_SCRIPT_NAME}",
+                str(local_icon),
+                f"{scp_destination}:.",
             ],
             check=True,
         )
@@ -220,7 +225,9 @@ def deploy(
     upgrade_value = "yes" if upgrade_system else "no"
     root_command = (
         f"SET_RDP_PASSWORD=default UPGRADE_SYSTEM={upgrade_value} "
-        f"USERNAME='{gui_user}' bash \"$HOME/{REMOTE_SCRIPT_NAME}\""
+        f"USERNAME='{gui_user}' "
+        f"LIDAR2MAP_ICON_SOURCE=\"$HOME/{ICON_FILE_NAME}\" "
+        f"bash \"$HOME/{REMOTE_SCRIPT_NAME}\""
     )
 
     remote_command = (

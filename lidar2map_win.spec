@@ -36,6 +36,7 @@ CONSOLE = True
 NAME    = "lidar2map"
 
 SRC               = Path(SPECPATH)
+APP_ICON          = SRC / "lidar2map_icon.png"
 STAGING           = SRC / "build" / "staging"
 LIDAR2MAP_HOME    = Path.home() / ".lidar2map"
 MAPWRITER_JAR_SRC = (Path.home() / ".openstreetmap" / "osmosis" / "plugins"
@@ -133,6 +134,9 @@ staging_osmosis_root = _prepare_osmosis_staging()
 datas         = []
 binaries      = []
 hiddenimports = []
+
+if APP_ICON.exists():
+    datas += [(str(APP_ICON), ".")]
 
 # ── Ressources statiques ──────────────────────────────────────────────────────
 if (SRC / "tagmapping-min.xml").exists():
@@ -383,7 +387,7 @@ if ONEFILE:
         upx_exclude=[], runtime_tmpdir=None, console=CONSOLE,
         disable_windowed_traceback=False, argv_emulation=False,
         target_arch=None, codesign_identity=None, entitlements_file=None,
-        icon=None,
+        icon=str(APP_ICON),
     )
 else:
     exe = EXE(
@@ -392,7 +396,7 @@ else:
         bootloader_ignore_signals=False, strip=False, upx=False,
         console=CONSOLE, disable_windowed_traceback=False,
         argv_emulation=False, target_arch=None,
-        codesign_identity=None, entitlements_file=None, icon=None,
+        codesign_identity=None, entitlements_file=None, icon=str(APP_ICON),
     )
     coll = COLLECT(
         exe, a.binaries, a.datas,

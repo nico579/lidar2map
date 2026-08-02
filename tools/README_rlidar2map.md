@@ -55,6 +55,10 @@ release lidar2map et un raccourci de bureau sécurisé. Sur Ubuntu 26.04, il
 applique aussi l'isolation des bibliothèques de compatibilité Qt nécessaires à
 la saisie clavier.
 
+Le raccourci utilise la notification de démarrage XFCE : après un double-clic,
+le pointeur affiche l'état occupé jusqu'à l'apparition de la fenêtre Qt (ou
+jusqu'au délai de sécurité du bureau si l'application ne démarre pas).
+
 À la fin, il ouvre automatiquement le client RDP :
 
 - Windows : Connexion Bureau à distance (`mstsc`) ;
@@ -152,5 +156,9 @@ PyInstaller sur leurs systèmes natifs. Chaque release contient :
   `rlidar2map_CLI-macos-arm64.zip` ;
 - macOS Intel : `rlidar2map_GUI-macos-x86_64.zip` et
   `rlidar2map_CLI-macos-x86_64.zip`.
+
+L'icône commune `lidar2map_icon.png` est intégrée aux exécutables Windows et
+macOS, livrée dans toutes les archives et installée automatiquement sur le
+raccourci du bureau XFCE par `rlidar2map_GUI`.
 
 La page de release affiche la somme SHA-256 de chaque archive.

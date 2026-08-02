@@ -115,6 +115,7 @@ jobs:
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item dist\lidar2map.exe          $stage\
           Copy-Item dist\lidar2map_bundle.zip   $stage\
+          Copy-Item lidar2map_icon.png           $stage\
           $zip = "dist\lidar2map-windows-x86_64.zip"
           Compress-Archive -Path $stage -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
@@ -134,6 +135,7 @@ jobs:
             $stage = "dist\$client-windows-x86_64"
             New-Item -ItemType Directory -Force $stage | Out-Null
             Copy-Item "dist\remote-clients\$client.exe" $stage\
+            Copy-Item lidar2map_icon.png $stage\
             $zip = "dist\$client-windows-x86_64.zip"
             Compress-Archive -Path $stage -DestinationPath $zip -Force
             (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
@@ -158,6 +160,7 @@ jobs:
           mkdir -p dist/lidar2map-linux-x86_64
           cp dist/lidar2map             dist/lidar2map-linux-x86_64/
           cp dist/lidar2map_bundle.zip  dist/lidar2map-linux-x86_64/
+          cp lidar2map_icon.png         dist/lidar2map-linux-x86_64/
           tar czf dist/lidar2map-linux-x86_64.tar.gz -C dist lidar2map-linux-x86_64
           sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
             > dist/lidar2map-linux-x86_64.tar.gz.sha256
@@ -174,6 +177,7 @@ jobs:
             stage="dist/$client-linux-x86_64"
             mkdir -p "$stage"
             cp "dist/remote-clients/$client" "$stage/"
+            cp lidar2map_icon.png "$stage/"
             archive="dist/$client-linux-x86_64.tar.gz"
             tar czf "$archive" -C dist "$client-linux-x86_64"
             sha256sum "$archive" | awk '{print $1}' > "$archive.sha256"
@@ -217,8 +221,12 @@ jobs:
                 --sign "$IDENTITY" "$BIN"
             fi
             codesign --verify --strict --verbose=2 "$BIN"
+            STAGE="dist/$client-macos-$ARCH"
+            mkdir -p "$STAGE"
+            cp "$BIN" "$STAGE/"
+            cp lidar2map_icon.png "$STAGE/"
             ZIP="dist/$client-macos-$ARCH.zip"
-            ditto -c -k --keepParent "$BIN" "$ZIP"
+            ditto -c -k --keepParent "$STAGE" "$ZIP"
             shasum -a 256 "$ZIP" | awk '{print $1}' > "$ZIP.sha256"
           done
 

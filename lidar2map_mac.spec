@@ -32,6 +32,7 @@ CONSOLE = False
 NAME    = "lidar2map"
 
 SRC               = Path(SPECPATH)
+APP_ICON          = SRC / "lidar2map_icon.png"
 STAGING           = SRC / "build" / "staging"
 LIDAR2MAP_HOME    = Path.home() / ".lidar2map"
 CODESIGN_IDENTITY = os.environ.get("LIDAR2MAP_CODESIGN_IDENTITY") or None
@@ -112,6 +113,9 @@ staging_osmosis_root = _prepare_osmosis_staging()
 datas         = []
 binaries      = []
 hiddenimports = []
+
+if APP_ICON.exists():
+    datas += [(str(APP_ICON), ".")]
 
 if (SRC / "tagmapping-min.xml").exists():
     datas += [("tagmapping-min.xml", ".")]
@@ -351,7 +355,7 @@ exe = EXE(
     entitlements_file=(str(ENTITLEMENTS_FILE)
                        if CODESIGN_IDENTITY and ENTITLEMENTS_FILE.exists()
                        else None),
-    icon=None,
+    icon=str(APP_ICON),
 )
 
 coll = COLLECT(

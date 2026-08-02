@@ -23,6 +23,7 @@ Prérequis (orchestré par lidar2map_win_build.ps1) :
 from pathlib import Path
 
 BUNDLE_ZIP = Path(SPECPATH) / "build" / "lidar2map_bundle.zip"
+APP_ICON = Path(SPECPATH) / "lidar2map_icon.png"
 if not BUNDLE_ZIP.exists():
     raise SystemExit(
         f"[lidar2map_win_launcher.spec] Bundle introuvable : {BUNDLE_ZIP}\n"
@@ -90,5 +91,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=str(APP_ICON),
 )

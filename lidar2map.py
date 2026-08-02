@@ -2224,8 +2224,8 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.31.4"
-VERSION_DATE = "2026-07"
+VERSION      = "1.31.5"
+VERSION_DATE = "2026-08"
 
 
 def _urlopen(url, headers=None, timeout=15):

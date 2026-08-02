@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 
 BUNDLE_ZIP = Path(SPECPATH) / "build" / "lidar2map_bundle.zip"
+APP_ICON = Path(SPECPATH) / "lidar2map_icon.png"
 CODESIGN_IDENTITY = os.environ.get("LIDAR2MAP_CODESIGN_IDENTITY") or None
 ENTITLEMENTS_FILE = Path(SPECPATH) / "macos.entitlements"
 if not BUNDLE_ZIP.exists():
@@ -89,13 +90,13 @@ exe = EXE(
     entitlements_file=(str(ENTITLEMENTS_FILE)
                        if CODESIGN_IDENTITY and ENTITLEMENTS_FILE.exists()
                        else None),
-    icon=None,
+    icon=str(APP_ICON),
 )
 
 app = BUNDLE(
     exe,
     name='LIDAR2MAP.app',
-    icon=None,
+    icon=str(APP_ICON),
     bundle_identifier='fr.nicolas.lidar2map',
     info_plist={
         'NSHighResolutionCapable':        'True',

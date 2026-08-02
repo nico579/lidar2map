@@ -74,6 +74,7 @@ MAP = {
     "coverage.geojson":              "coverage.geojson",
     "coverage.png":                  "coverage.png",
     "coverage.fr.png":               "coverage.fr.png",
+    "lidar2map_icon.png":            "lidar2map_icon.png",
     # Build Windows / Linux
     "lidar2map_win.spec":            "lidar2map_win.spec",
     "lidar2map_win_launcher.spec":   "lidar2map_win_launcher.spec",
@@ -130,6 +131,7 @@ REMOVE = [
 def is_rebuild_file(name: str) -> bool:
     return (
         name == "_loader.py"
+        or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"
         or name.endswith(".entitlements")
         or name.endswith(".spec")
