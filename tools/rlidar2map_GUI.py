@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import ipaddress
+import os
 import re
 import shutil
 import subprocess
@@ -13,14 +15,112 @@ import tempfile
 from pathlib import Path
 
 
+# Unifie l'encodage du processus superviseur, du processus journalisé et des
+# sorties SSH Ubuntu. Sans cela, la console Windows CP-1252 peut échouer sur un
+# caractère UTF-8 reçu dans le flux combiné.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
+
 REMOTE_SCRIPT_NAME = "rlidar2map_GUI_vm.sh"
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*$")
+LOG_CHILD_ENV = "RLIDAR2MAP_GUI_LOGGED_CHILD"
+LOG_FILE_NAME = "rlidar2map_GUI.log"
 
 
 def bundled_resource(name: str) -> Path:
     """Retourne une ressource voisine, y compris dans un onefile PyInstaller."""
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return bundle_root / name
+
+
+def normalized_lf_copy(source: Path, destination: Path) -> None:
+    """Copie un script texte en imposant les fins de ligne Unix LF."""
+    content = source.read_text(encoding="utf-8")
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    with destination.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(content)
+
+
+def log_path() -> Path:
+    """Retourne le journal voisin de l'exécutable, avec un repli inscriptible."""
+    executable = (
+        Path(sys.executable).resolve()
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve()
+    )
+    candidates = (
+        executable.with_name(LOG_FILE_NAME),
+        Path.cwd() / LOG_FILE_NAME,
+        Path(tempfile.gettempdir()) / LOG_FILE_NAME,
+    )
+    for candidate in candidates:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            with candidate.open("a", encoding="utf-8"):
+                pass
+            return candidate
+        except OSError:
+            continue
+    raise SystemExit("Impossible de créer le fichier journal rlidar2map_GUI.log.")
+
+
+def run_with_log() -> int:
+    """Relance le programme en capturant aussi les sorties de ssh/scp."""
+    journal = log_path()
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command.append(str(Path(__file__).resolve()))
+    command.extend(sys.argv[1:])
+
+    environment = os.environ.copy()
+    environment[LOG_CHILD_ENV] = "1"
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONUNBUFFERED"] = "1"
+
+    print(f"Journal : {journal}")
+    with journal.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(
+            "\n{line}\nDémarrage : {started}\nCommande : {command}\n{line}\n".format(
+                line="=" * 72,
+                started=dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+                command=subprocess.list2cmdline(command),
+            )
+        )
+        stream.flush()
+        process = subprocess.Popen(
+            command,
+            stdin=None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=environment,
+        )
+        assert process.stdout is not None
+        while True:
+            chunk = process.stdout.read(1)
+            if not chunk:
+                break
+            print(chunk, end="", flush=True)
+            stream.write(chunk)
+            stream.flush()
+        return_code = process.wait()
+        stream.write(f"\nCode de sortie : {return_code}\n")
+
+    print(f"\nJournal enregistré dans : {journal}")
+    if return_code and os.name == "nt":
+        try:
+            input("Échec de l'installation. Appuie sur Entrée pour fermer...")
+        except EOFError:
+            pass
+    return return_code
 
 
 def require_command(name: str) -> str:
@@ -102,16 +202,19 @@ def deploy(
     ssh_destination = f"{ssh_user}@{ip}"
 
     print(f"\nCopie du script vers {ssh_destination}...")
-    subprocess.run(
-        [
-            scp,
-            *host_key_args,
-            *identity_args,
-            str(local_script),
-            f"{scp_destination}:{REMOTE_SCRIPT_NAME}",
-        ],
-        check=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="rlidar2map-GUI-") as temp_dir:
+        normalized_script = Path(temp_dir) / REMOTE_SCRIPT_NAME
+        normalized_lf_copy(local_script, normalized_script)
+        subprocess.run(
+            [
+                scp,
+                *host_key_args,
+                *identity_args,
+                str(normalized_script),
+                f"{scp_destination}:{REMOTE_SCRIPT_NAME}",
+            ],
+            check=True,
+        )
 
     print(f"\nInstallation de XFCE et xrdp sur {ip}...")
     upgrade_value = "yes" if upgrade_system else "no"
@@ -160,7 +263,12 @@ def launch_rdp(ip: str, gui_user: str) -> None:
             check=True,
             stdout=subprocess.DEVNULL,
         )
-        subprocess.Popen([client, str(rdp_file)])
+        subprocess.Popen(
+            [client, str(rdp_file)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         return
 
     if sys.platform.startswith("linux"):
@@ -174,12 +282,20 @@ def launch_rdp(ip: str, gui_user: str) -> None:
                         f"/u:{gui_user}",
                         "/p:userlidar",
                         "/cert:ignore",
-                    ]
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 return
         remmina = shutil.which("remmina")
         if remmina:
-            subprocess.Popen([remmina, "-c", f"rdp://{gui_user}@{address}"])
+            subprocess.Popen(
+                [remmina, "-c", f"rdp://{gui_user}@{address}"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             return
         print("Aucun client RDP trouvé. Installe FreeRDP ou Remmina.")
         return
@@ -265,4 +381,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if os.environ.get(LOG_CHILD_ENV) == "1":
+        raise SystemExit(main())
+    raise SystemExit(run_with_log())

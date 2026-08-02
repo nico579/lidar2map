@@ -42,6 +42,12 @@ question avec les valeurs par défaut :
 - mot de passe initial : `userlidar` ;
 - clé SSH : clé OpenSSH par défaut de l'ordinateur local.
 
+Dès le démarrage, toutes les sorties sont ajoutées au fichier
+`rlidar2map_GUI.log` placé à côté de l'exécutable. Ce journal contient aussi les
+messages de `ssh`, `scp` et du programme d'installation Ubuntu. Sous Windows,
+la fenêtre reste ouverte après une erreur afin de laisser le temps de lire le
+diagnostic et l'emplacement du journal.
+
 Le client supprime automatiquement l'ancienne empreinte SSH associée à cette
 adresse IP, accepte la nouvelle empreinte, copie le script de préparation puis
 l'exécute. Il installe XFCE, xrdp, Xorg, les bibliothèques Qt/XCB, la dernière
@@ -76,7 +82,9 @@ la mise à niveau complète d'Ubuntu n'est pas nécessaire à l'installation.
 
 Le build `rlidar2map_GUI` embarque le script interne
 `rlidar2map_GUI_vm.sh`. Il l'extrait temporairement puis le copie sur la VM :
-l'utilisateur n'a ni à le télécharger ni à le lancer manuellement.
+l'utilisateur n'a ni à le télécharger ni à le lancer manuellement. Avant la
+copie, le client impose systématiquement les fins de ligne Unix `LF`, y compris
+si l'archive a été construite sur Windows.
 
 Le journal APT détaillé est enregistré sur la VM dans
 `/var/log/rlidar2map_GUI_apt.log`.

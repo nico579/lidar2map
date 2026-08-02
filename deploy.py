@@ -99,6 +99,7 @@ MAP = {
     "smoke_github.yml":              ".github/workflows/smoke.yml",
     "LICENSE":                       "LICENSE",
     ".gitignore":                    ".gitignore",
+    ".gitattributes":                ".gitattributes",
 }
 
 # Dossiers à synchroniser récursivement (mirror local -> remote)

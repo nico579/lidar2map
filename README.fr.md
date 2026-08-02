@@ -367,7 +367,7 @@ Sans besoin de la vue live : `nohup python3 lidar2map.py … > run.log 2>&1 &` (
 
 **La reprise est gratuite.** En mode découpé, l'outil écrit un manifeste et saute les morceaux déjà terminés : une déconnexion, un crash ou un arrêt disque-bas est récupérable, relance la même commande et il repart où il s'était arrêté.
 
-**Deux clients distants autonomes pour Windows, Linux et macOS, vers Ubuntu 24.04/26.04.** Consulte la [documentation rlidar2map](tools/README_rlidar2map.md) pour choisir entre `rlidar2map_GUI` (XFCE + RDP) et `rlidar2map_CLI` (calcul headless + synchronisation). `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance dans un `tmux` détaché, surveille son code de sortie persistant et recopie progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync` s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
+**Deux clients distants autonomes pour Windows, Linux et macOS, vers Ubuntu 24.04/26.04.** Consulte la [documentation rlidar2map](tools/README_rlidar2map.md) pour choisir entre `rlidar2map_GUI` (XFCE + RDP, avec journal voisin de l'exécutable) et `rlidar2map_CLI` (calcul headless + synchronisation). `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance dans un `tmux` détaché, surveille son code de sortie persistant et recopie progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync` s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
 
 ```bash
 rlidar2map_CLI --session var-83 user@host -- \
