@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run_on_vm.py — Lancement et supervision d'un calcul lidar2map sur une VM
+rlidar2map_CLI.py — Lancement et supervision d'un calcul lidar2map sur une VM
 =========================================================================
 
 Contrôleur local sans dépendance Python externe. Il lance lidar2map dans une
@@ -35,7 +35,7 @@ vers le PC au fur et à mesure.
   fichiers auxiliaires SQLite sont ignorés ; pendant un run actif, l'inventaire
   doit être identique deux fois avant transfert. Chaque fichier est vérifié par
   SHA-256 et publié atomiquement en local. Le journal est copié une seule fois
-  lorsque le run est terminal. --sync-method scp reste un alias de ssh.
+  lorsque le run est terminal. Les méthodes ssh et scp utilisent ce flux.
 
   Le contrôleur ne déduit pas le résultat en analysant le texte du journal :
   l'état, le code de sortie et les horodatages publiés par le wrapper tmux font
@@ -45,18 +45,18 @@ vers le PC au fur et à mesure.
   PARAMÈTRES DU CONTRÔLEUR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Les exemples ci-dessous utilisent la VM Ubuntu 37.27.31.152 et ce calcul de
+  Les exemples ci-dessous utilisent la VM Ubuntu 192.0.2.10 et ce calcul de
   référence : MNT LiDAR de Garéoult sur 5 km, LRM sigma 3, sortie MBTiles.
 
-  python tools/run_on_vm.py --source --session doc-gareoult-lrm3 \
-      root@37.27.31.152 -- --ignlidar --zone-ville gareoult \
+  python tools/rlidar2map_CLI.py --source --session doc-gareoult-lrm3 \
+      root@192.0.2.10 -- --ignlidar --zone-ville gareoult \
       --zone-width 5 --zone-nom doc_gareoult_lrm3 --telechargement \
       --ombrages lrm --shading lrm:sigma=3 --formats-fichier mbtiles
 
   VM                         [OBLIGATOIRE, sans défaut]
                              Cible SSH : user@hote, adresse IP ou
                              alias déclaré dans ~/.ssh/config.
-                             Ex. : root@37.27.31.152 dans la commande ci-dessus.
+                             Ex. : root@192.0.2.10 dans la commande ci-dessus.
 
   --source                   [OPTIONNEL, mode par défaut]
                              Utilise le checkout source.
@@ -65,8 +65,8 @@ vers le PC au fur et à mesure.
   --bundle                   [OPTIONNEL, défaut : désactivé]
                              Télécharge et utilise le bundle Linux publié.
                              Ex. : même calcul avec le bundle :
-                             python tools/run_on_vm.py --bundle -s doc-bundle \
-                                 root@37.27.31.152 -- --ignlidar \
+                             python tools/rlidar2map_CLI.py --bundle -s doc-bundle \
+                                 root@192.0.2.10 -- --ignlidar \
                                  --zone-ville gareoult --zone-width 5 \
                                  --zone-nom doc_bundle --telechargement \
                                  --ombrages lrm --shading lrm:sigma=3 \
@@ -75,76 +75,76 @@ vers le PC au fur et à mesure.
   --session NOM, -s NOM      [OPTIONNEL, défaut : lidar]
                              Nom tmux et identifiant persistant du run.
                              Ex. : reprendre le calcul de référence :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 root@192.0.2.10
 
   --local-dir DOSSIER        [OPTIONNEL]
                              Racine de destination locale. Défaut calculé :
                              ./vm-results/<hôte>/<session>/<run-id>/.
                              Ex. : reprendre la copie sous D:/lidar/vm-results :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --local-dir D:/lidar/vm-results root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --local-dir D:/lidar/vm-results root@192.0.2.10
 
   --interval SECONDES        [OPTIONNEL, défaut : 30]
                              Délai en secondes entre contrôles/synchronisations.
                              Ex. : contrôler toutes les 10 secondes :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --interval 10 root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --interval 10 root@192.0.2.10
 
   --sync-method MÉTHODE      [OPTIONNEL, défaut : auto]
                              Valeurs : auto, rsync, ssh ou scp ; auto préfère rsync.
                              Ex. : forcer le flux SSH incrémental :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --sync-method ssh root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --sync-method ssh root@192.0.2.10
 
   --identity FICHIER         [OPTIONNEL, défaut : aucune option -i]
                              Clé privée utilisée par SSH. Sans cette option,
                              SSH utilise son agent et sa configuration normale.
                              Prérequis : ce fichier de clé doit exister.
-                             Ex. : python tools/run_on_vm.py -s doc-gareoult-lrm3 \
+                             Ex. : python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
                                  --identity C:/Users/Nico/.ssh/id_ed25519 \
-                                 root@37.27.31.152
+                                 root@192.0.2.10
 
   --ssh-timeout SECONDES     [OPTIONNEL, défaut : 10]
                              Délai maximal d'une commande SSH, en secondes.
                              Ex. : tolérer 20 secondes par commande :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --ssh-timeout 20 root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --ssh-timeout 20 root@192.0.2.10
 
   --ssh-option KEY=VALUE     [OPTIONNEL, défaut : aucune]
                              Option OpenSSH supplémentaire, répétable.
                              Ex. : maintenir la connexion active :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
                                  --ssh-option ServerAliveInterval=15 \
                                  --ssh-option ServerAliveCountMax=4 \
-                                 root@37.27.31.152
+                                 root@192.0.2.10
 
   --reset-host-key           [OPTIONNEL, défaut : désactivé]
                              Supprime explicitement l'ancienne clé de cette
                              cible dans known_hosts avant la connexion. Utile
                              quand la VM change tout en gardant son IP.
                              Ex. : reprendre après réinstallation de la VM :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --reset-host-key root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --reset-host-key root@192.0.2.10
 
   --max-ssh-errors N         [OPTIONNEL, défaut : 3]
                              Nombre d'échecs SSH consécutifs tolérés avant
                              l'abandon de la surveillance.
                              Ex. : tolérer huit erreurs consécutives :
-                             python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --max-ssh-errors 8 root@37.27.31.152
+                             python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --max-ssh-errors 8 root@192.0.2.10
 
   --no-bell                  [OPTIONNEL, défaut : bip activé]
                              Désactive le bip terminal de fin ou de plantage.
-                             Ex. : python tools/run_on_vm.py -s doc-gareoult-lrm3 \
-                                 --no-bell root@37.27.31.152
+                             Ex. : python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
+                                 --no-bell root@192.0.2.10
 
   --restart                  [OPTIONNEL, défaut : désactivé]
                              Archive un run terminé puis relance la session.
                              Prérequis : doc-gareoult-lrm3 doit être terminé.
                              Ex. : relancer le même calcul :
-                             python tools/run_on_vm.py --restart \
-                                 -s doc-gareoult-lrm3 root@37.27.31.152 -- \
+                             python tools/rlidar2map_CLI.py --restart \
+                                 -s doc-gareoult-lrm3 root@192.0.2.10 -- \
                                  --ignlidar --zone-ville gareoult --zone-width 5 \
                                  --zone-nom doc_gareoult_lrm3 --telechargement \
                                  --ombrages lrm --shading lrm:sigma=3 \
@@ -153,14 +153,14 @@ vers le PC au fur et à mesure.
   --purge-remote             [OPTIONNEL, défaut : désactivé]
                              Synchronise puis purge les données du run terminé.
                              Prérequis : doc-gareoult-lrm3 doit être terminé.
-                             Ex. : python tools/run_on_vm.py --purge-remote \
-                                 -s doc-gareoult-lrm3 root@37.27.31.152
+                             Ex. : python tools/rlidar2map_CLI.py --purge-remote \
+                                 -s doc-gareoult-lrm3 root@192.0.2.10
 
   --detach                   [OPTIONNEL, défaut : surveillance continue]
                              Lance/retrouve le run sans surveillance continue.
                              Ex. : lancer un calcul LAZ puis rendre la main :
-                             python tools/run_on_vm.py --detach -s doc-gareoult-laz \
-                                 root@37.27.31.152 -- --laz --ignlidar \
+                             python tools/rlidar2map_CLI.py --detach -s doc-gareoult-laz \
+                                 root@192.0.2.10 -- --laz --ignlidar \
                                  --zone-ville gareoult --zone-width 5 \
                                  --zone-nom doc_gareoult_laz --telechargement \
                                  --ombrages lrm --shading lrm:sigma=3 \
@@ -169,12 +169,12 @@ vers le PC au fur et à mesure.
   --once                     [OPTIONNEL, défaut : surveillance continue]
                              Effectue un seul contrôle et une synchronisation.
                              Prérequis : doc-gareoult-laz a été lancé ci-dessus.
-                             Ex. : python tools/run_on_vm.py --once \
-                                 -s doc-gareoult-laz root@37.27.31.152
+                             Ex. : python tools/rlidar2map_CLI.py --once \
+                                 -s doc-gareoult-laz root@192.0.2.10
 
   -h, --help                 [OPTIONNEL, défaut : désactivé]
                              Affiche l'aide complète puis quitte.
-                             Ex. : python tools/run_on_vm.py --help
+                             Ex. : python tools/rlidar2map_CLI.py --help
 
   --                         [CONDITIONNEL, recommandé au lancement]
                              Sépare les options du contrôleur des arguments
@@ -183,7 +183,7 @@ vers le PC au fur et à mesure.
                              --restart, et doivent être omis pour une reprise ou
                              --purge-remote.
                              Ex. : la commande de référence sépare
-                             root@37.27.31.152 de --ignlidar avec « -- ».
+                             root@192.0.2.10 de --ignlidar avec « -- ».
 
   Contraintes : --source et --bundle sont mutuellement exclusifs ; --restart
   et --purge-remote aussi. --detach et --once ne peuvent pas être combinés,
@@ -204,37 +204,36 @@ vers le PC au fur et à mesure.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   # MNT LiDAR de Garéoult sur 5 km, LRM sigma 3, MBTiles
-  python tools/run_on_vm.py --session gareoult-lrm3 \
-      root@37.27.31.152 -- --ignlidar --zone-ville gareoult \
+  python tools/rlidar2map_CLI.py --session gareoult-lrm3 \
+      root@192.0.2.10 -- --ignlidar --zone-ville gareoult \
       --zone-width 5 --zone-nom gareoult_lrm3 --telechargement \
       --ombrages lrm --shading lrm:sigma=3 --formats-fichier mbtiles
 
   # Calcul LAZ indépendant, avec un nom de session explicite
-  python tools/run_on_vm.py --session gareoult-laz \
-      root@37.27.31.152 -- --laz --ignlidar \
+  python tools/rlidar2map_CLI.py --session gareoult-laz \
+      root@192.0.2.10 -- --laz --ignlidar \
       --zone-ville gareoult --zone-width 5 --telechargement \
       --ombrages lrm --shading lrm:sigma=3 --formats-fichier mbtiles
 
   # Reconnexion après fermeture du contrôleur local
-  python tools/run_on_vm.py --session gareoult-laz root@37.27.31.152
+  python tools/rlidar2map_CLI.py --session gareoult-laz root@192.0.2.10
 
   # Lancement sans attendre, puis contrôle ponctuel
-  python tools/run_on_vm.py --detach --session gareoult-detache \
-      root@37.27.31.152 -- --ignlidar --zone-ville gareoult \
+  python tools/rlidar2map_CLI.py --detach --session gareoult-detache \
+      root@192.0.2.10 -- --ignlidar --zone-ville gareoult \
       --zone-width 5 --zone-nom gareoult_detache --telechargement \
       --ombrages lrm --shading lrm:sigma=3 --formats-fichier mbtiles
-  python tools/run_on_vm.py --once --session gareoult-detache \
-      root@37.27.31.152
+  python tools/rlidar2map_CLI.py --once --session gareoult-detache \
+      root@192.0.2.10
 
   # Après la fin : dernière synchronisation puis purge distante du run
-  python tools/run_on_vm.py --session gareoult-detache --purge-remote \
-      root@37.27.31.152
+  python tools/rlidar2map_CLI.py --session gareoult-detache --purge-remote \
+      root@192.0.2.10
 
   # Aide complète des options
-  python tools/run_on_vm.py --help
+  python tools/rlidar2map_CLI.py --help
 
-Les arguments destinés à lidar2map doivent être placés après « -- ». L'ancienne
-syntaxe du wrapper tools/run_on_vm.sh reste acceptée.
+Les arguments destinés à lidar2map doivent être placés séparément après « -- ».
 """
 
 from __future__ import annotations
@@ -264,10 +263,10 @@ SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 TERMINAL_STATES = frozenset(("succeeded", "failed"))
 ACTIVE_STATES = frozenset(("provisioning", "starting", "running"))
-PURGE_PENDING_MARKER = ".run_on_vm-purge-pending.json"
-PURGED_MARKER = ".run_on_vm-purged.json"
-PURGE_SUPERSEDED_MARKER = ".run_on_vm-purge-superseded.json"
-SCP_INDEX_NAME = ".run_on_vm-scp-index.json"
+PURGE_PENDING_MARKER = ".rlidar2map-purge-pending.json"
+PURGED_MARKER = ".rlidar2map-purged.json"
+PURGE_SUPERSEDED_MARKER = ".rlidar2map-purge-superseded.json"
+SCP_INDEX_NAME = ".rlidar2map-ssh-index.json"
 FILE_STREAM_MAGIC = b"L2M-FILE-STREAM-1\n"
 
 
@@ -444,7 +443,7 @@ fi
 for arg in "${LIDAR_ARGS[@]}"; do
   case "$arg" in
     --output-dir|--output-dir=*|--dossier|--dossier=*)
-      echo "run_on_vm reserves --output-dir/--dossier for synchronized results." >&2
+      echo "rlidar2map_CLI reserves --output-dir/--dossier for synchronized results." >&2
       exit 64
       ;;
   esac
@@ -1178,8 +1177,11 @@ class RemoteState:
 
 
 def _parser() -> argparse.ArgumentParser:
+    frozen = getattr(sys, "frozen", False)
+    program_name = "rlidar2map_CLI" if frozen else "rlidar2map_CLI.py"
+    example_command = "rlidar2map_CLI" if frozen else "python tools/rlidar2map_CLI.py"
     parser = argparse.ArgumentParser(
-        prog="run_on_vm.py",
+        prog=program_name,
         add_help=False,
         description=(
             "Lance lidar2map dans tmux, surveille son état et synchronise "
@@ -1187,19 +1189,19 @@ def _parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Exemples:\n"
-            "  python tools/run_on_vm.py --session gareoult-lrm3 root@37.27.31.152 -- "
+            f"  {example_command} --session gareoult-lrm3 root@192.0.2.10 -- "
             "--ignlidar --zone-ville gareoult --zone-width 5 --zone-nom gareoult_lrm3 "
             "--telechargement --ombrages lrm --shading lrm:sigma=3 "
             "--formats-fichier mbtiles\n"
-            "  python tools/run_on_vm.py --session gareoult-laz root@37.27.31.152 -- --laz "
+            f"  {example_command} --session gareoult-laz root@192.0.2.10 -- --laz "
             "--ignlidar --zone-ville gareoult --zone-width 5 --telechargement "
             "--ombrages lrm --shading lrm:sigma=3 --formats-fichier mbtiles\n"
-            "  python tools/run_on_vm.py --session gareoult-laz root@37.27.31.152\n"
-            "  python tools/run_on_vm.py --session gareoult-laz --purge-remote "
-            "root@37.27.31.152\n\n"
+            f"  {example_command} --session gareoult-laz root@192.0.2.10\n"
+            f"  {example_command} --session gareoult-laz --purge-remote "
+            "root@192.0.2.10\n\n"
             "Après Ctrl-C, relancer la même session reprend la surveillance et la copie. "
             "Les arguments lidar2map doivent être placés après '--'. "
-            "L'ancienne syntaxe run_on_vm.sh reste acceptée."
+            "Chaque argument lidar2map est transmis sans réinterprétation."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1237,8 +1239,8 @@ def _parser() -> argparse.ArgumentParser:
         choices=("auto", "rsync", "ssh", "scp"),
         default="auto",
         help=(
-            "optionnel, défaut auto ; transport (auto préfère rsync ; scp est "
-            "l'alias historique de ssh incrémental)"
+            "optionnel, défaut auto ; transport (auto préfère rsync ; ssh et "
+            "scp utilisent le flux SSH incrémental)"
         ),
     )
     parser.add_argument(
@@ -1329,12 +1331,6 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
     lidar_args = list(ns.lidar_args)
     if lidar_args and lidar_args[0] == "--":
         lidar_args.pop(0)
-    # Backward compatibility with the original quoted argument string.
-    if len(lidar_args) == 1 and any(ch.isspace() for ch in lidar_args[0]):
-        try:
-            lidar_args = shlex.split(lidar_args[0], posix=True)
-        except ValueError as exc:
-            parser.error("arguments lidar2map invalides : {}".format(exc))
     if "--purge-remote" in lidar_args:
         parser.error("--purge-remote doit être placé avant la cible VM")
     if ns.purge_remote and lidar_args:
@@ -1346,7 +1342,7 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
             or arg.startswith("--dossier=")
         ):
             parser.error(
-                "--output-dir/--dossier est géré par run_on_vm pour garantir "
+                "--output-dir/--dossier est géré par rlidar2map_CLI pour garantir "
                 "la synchronisation"
             )
 
@@ -1605,7 +1601,7 @@ class VmController:
     @contextmanager
     def _local_sync_lock(self, local_dir: Path):
         local_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = local_dir / ".run_on_vm-sync.lock"
+        lock_path = local_dir / ".rlidar2map-sync.lock"
         if lock_path.is_symlink():
             raise RunOnVmError("verrou local de synchronisation non sûr")
         stream = lock_path.open("a+b")
@@ -1815,7 +1811,7 @@ class VmController:
     ) -> Path:
         local_dir = self.local_run_dir(state)
         local_dir.mkdir(parents=True, exist_ok=True)
-        path = local_dir / "run_on_vm.json"
+        path = local_dir / "rlidar2map.json"
         for _attempt in range(4):
             records = self._purge_marker_snapshot(local_dir)
             effective_state = state
@@ -2020,7 +2016,7 @@ class VmController:
         remote = "{}:{}/".format(self.options.vm, state.results_dir)
         command = list(self.deps.rsync_prefix) + [
             "-a",
-            "--partial-dir=.run_on_vm-rsync-partial",
+            "--partial-dir=.rlidar2map-rsync-partial",
             "--protect-args",
             "--itemize-changes",
             "--exclude=*.part",
@@ -2445,7 +2441,7 @@ class VmController:
         local_run_dir = local_results.parent
         stage = Path(
             tempfile.mkdtemp(
-                prefix=".run_on_vm-sync-",
+                prefix=".rlidar2map-sync-",
                 dir=str(local_run_dir),
             )
         )
@@ -2631,9 +2627,10 @@ class VmController:
             return ok, method, local_dir
 
     def reconnect_command(self) -> str:
-        parts = [
-            sys.executable,
-            str(Path(__file__).resolve()),
+        parts = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            parts.append(str(Path(__file__).resolve()))
+        parts.extend([
             "--session",
             self.options.session,
             "--local-dir",
@@ -2646,7 +2643,7 @@ class VmController:
             str(self.options.ssh_timeout),
             "--max-ssh-errors",
             str(self.options.max_ssh_errors),
-        ]
+        ])
         if self.options.identity is not None:
             parts.extend(
                 (

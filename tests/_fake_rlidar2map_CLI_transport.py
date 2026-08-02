@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake ssh/scp/rsync executable used by _test_run_on_vm.py."""
+"""Fake ssh/scp/rsync executable used by _test_rlidar2map_CLI.py."""
 
 from __future__ import annotations
 

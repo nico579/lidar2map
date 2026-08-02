@@ -5,7 +5,7 @@ Statut : **proposition à terme, non implémentée**.
 Aujourd'hui, deux points d'entrée coexistent :
 
 - `lidar2map.py` exécute directement un calcul sur la machine locale ;
-- `tools/run_on_vm.py` déploie le calcul sur une VM, le maintient dans `tmux`,
+- `tools/rlidar2map_CLI.py` déploie le calcul sur une VM, le maintient dans `tmux`,
   le surveille et synchronise ses résultats.
 
 L'évolution proposée consiste à offrir une interface unique dans
@@ -24,7 +24,7 @@ python lidar2map.py --ignlidar --zone-ville gareoult --zone-width 5 \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 
 # Syntaxe distante envisagée — elle n'est pas encore implémentée
-python lidar2map.py --remote root@37.27.31.152 \
+python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 \
     --ignlidar --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
@@ -86,12 +86,12 @@ lidar2map.py
 ```
 
 Le futur module `remote_runner` reprendrait le code actuellement validé dans
-`tools/run_on_vm.py`. Il devrait rester utilisable avec la seule bibliothèque
+`tools/rlidar2map_CLI.py`. Il devrait rester utilisable avec la seule bibliothèque
 standard Python : déclencher un calcul distant ne doit pas charger Rasterio,
 NumPy, GDAL ou les autres dépendances lourdes sur le poste contrôleur.
 
-`tools/run_on_vm.py` serait conservé comme wrapper compatible vers ce module.
-Les scripts et habitudes existants continueraient donc à fonctionner.
+`tools/rlidar2map_CLI.py` resterait le point d'entrée public et importerait ce
+module interne.
 
 ## Séquence d'exécution
 
@@ -135,7 +135,7 @@ Une commande distante avec des paramètres métier créerait un run absent :
 
 ```bash
 # Syntaxe cible, non encore disponible
-python lidar2map.py --remote root@37.27.31.152 \
+python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 \
     --ignlidar --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
@@ -145,7 +145,7 @@ python lidar2map.py --remote root@37.27.31.152 \
 La même commande sans paramètres métier reprendrait seulement le run :
 
 ```bash
-python lidar2map.py --remote root@37.27.31.152 \
+python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3
 ```
 
@@ -153,14 +153,14 @@ Une session terminée nécessiterait une action explicite :
 
 ```bash
 # Nouveau calcul sous le même nom
-python lidar2map.py --remote root@37.27.31.152 \
+python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 --remote-restart \
     --ignlidar --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 
 # Dernière synchronisation puis purge distante
-python lidar2map.py --remote root@37.27.31.152 \
+python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 --remote-purge
 ```
 
@@ -187,14 +187,14 @@ de clés ou les alias de `~/.ssh/config`.
 
 ### Étape 1 — Stabiliser le contrôleur actuel
 
-Conserver `tools/run_on_vm.py` comme référence testée et maintenir ses tests de
+Conserver `tools/rlidar2map_CLI.py` comme référence testée et maintenir ses tests de
 reprise, synchronisation, interruption, échec et purge.
 
 ### Étape 2 — Extraire le moteur
 
 Déplacer la logique réutilisable vers un module indépendant, par exemple
-`lidar2map_remote.py`, sans changer la CLI actuelle. `run_on_vm.py` deviendrait
-un wrapper léger vers ce module.
+`lidar2map_remote.py`, sans changer l'interface publique de
+`rlidar2map_CLI.py`.
 
 ### Étape 3 — Ajouter le dispatch dans lidar2map
 
@@ -221,8 +221,7 @@ L'évolution sera considérée prête lorsque :
 - une commande `lidar2map --remote ...` lance et surveille un run complet ;
 - fermer puis relancer le contrôleur reprend la synchronisation ;
 - les options distantes sont absentes de la commande exécutée sur la VM ;
-- `run_on_vm.py` reste compatible avec les scripts existants ;
+- `rlidar2map_CLI.py` reste le point d'entrée public documenté ;
 - les tests couvrent local, distant, reprise, échec SSH, échec lidar2map,
   synchronisation finale et purge ;
 - la documentation distingue clairement les syntaxes actuelle et future.
-

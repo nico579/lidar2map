@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Self-contained tests for tools/run_on_vm.py (no VM or pytest required)."""
+"""Self-contained tests for tools/rlidar2map_CLI.py (no VM or pytest required)."""
 
 from __future__ import annotations
 
@@ -18,17 +18,17 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "tools" / "run_on_vm.py"
-FAKE_TRANSPORT = ROOT / "Tests" / "_fake_run_on_vm_transport.py"
-SPEC = importlib.util.spec_from_file_location("run_on_vm", MODULE_PATH)
+MODULE_PATH = ROOT / "tools" / "rlidar2map_CLI.py"
+FAKE_TRANSPORT = ROOT / "Tests" / "_fake_rlidar2map_CLI_transport.py"
+SPEC = importlib.util.spec_from_file_location("rlidar2map_CLI", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
-run_on_vm = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = run_on_vm
-SPEC.loader.exec_module(run_on_vm)
+rlidar2map_cli = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = rlidar2map_cli
+SPEC.loader.exec_module(rlidar2map_cli)
 
 
-def options(*extra: str) -> run_on_vm.Options:
-    return run_on_vm.parse_options([*extra, "vm.example"])
+def options(*extra: str) -> rlidar2map_cli.Options:
+    return rlidar2map_cli.parse_options([*extra, "vm.example"])
 
 
 def remote_state(
@@ -37,10 +37,10 @@ def remote_state(
     exit_code=None,
     reason: str = "",
     rsync: bool = False,
-) -> run_on_vm.RemoteState:
-    return run_on_vm.RemoteState(
+) -> rlidar2map_cli.RemoteState:
+    return rlidar2map_cli.RemoteState(
         exists=True,
-        tmux=status in run_on_vm.ACTIVE_STATES,
+        tmux=status in rlidar2map_cli.ACTIVE_STATES,
         session="lidar",
         run_id="20260729T120000Z-123",
         status=status,
@@ -51,7 +51,7 @@ def remote_state(
         started_at="2026-07-29T12:00:01Z",
         finished_at=(
             "2026-07-29T12:01:00Z"
-            if status in run_on_vm.TERMINAL_STATES
+            if status in rlidar2map_cli.TERMINAL_STATES
             else ""
         ),
         run_dir="/home/test/.lidar2map-runs/lidar",
@@ -62,23 +62,6 @@ def remote_state(
 
 
 class ParseTests(unittest.TestCase):
-    def test_legacy_quoted_arguments_are_split(self):
-        parsed = run_on_vm.parse_options(
-            [
-                "--bundle",
-                "--session",
-                "var-83",
-                "root@vm",
-                "--lidar --name 'A B' --download",
-            ]
-        )
-        self.assertEqual(parsed.mode, "bundle")
-        self.assertEqual(parsed.session, "var-83")
-        self.assertEqual(
-            parsed.lidar_args,
-            ["--lidar", "--name", "A B", "--download"],
-        )
-
     def test_recommended_argument_vector_is_preserved(self):
         hostile = [
             "--lidar",
@@ -90,23 +73,23 @@ class ParseTests(unittest.TestCase):
             "*",
             "éà",
         ]
-        parsed = run_on_vm.parse_options(["root@vm", "--", *hostile])
+        parsed = rlidar2map_cli.parse_options(["root@vm", "--", *hostile])
         self.assertEqual(parsed.lidar_args, hostile)
 
     def test_output_directory_is_reserved(self):
         with self.assertRaises(SystemExit):
-            run_on_vm.parse_options(["vm", "--", "--lidar", "--output-dir=x"])
+            rlidar2map_cli.parse_options(["vm", "--", "--lidar", "--output-dir=x"])
 
     def test_invalid_session_is_rejected(self):
         with self.assertRaises(SystemExit):
-            run_on_vm.parse_options(["--session", "../bad", "vm"])
+            rlidar2map_cli.parse_options(["--session", "../bad", "vm"])
 
     def test_ssh_target_cannot_be_an_option(self):
         with self.assertRaises(SystemExit):
-            run_on_vm.parse_options(["--", "-oProxyCommand=bad"])
+            rlidar2map_cli.parse_options(["--", "-oProxyCommand=bad"])
 
     def test_purge_remote_is_a_dedicated_mode(self):
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "--session", "done", "root@vm"]
         )
         self.assertTrue(parsed.purge_remote)
@@ -119,7 +102,7 @@ class ParseTests(unittest.TestCase):
             ["root@vm", "--purge-remote"],
         ):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
-                run_on_vm.parse_options(argv)
+                rlidar2map_cli.parse_options(argv)
 
 
 class ProtocolTests(unittest.TestCase):
@@ -144,14 +127,14 @@ class ProtocolTests(unittest.TestCase):
                 "rsync=1",
             ]
         )
-        state = run_on_vm.parse_state(payload, "lidar")
+        state = rlidar2map_cli.parse_state(payload, "lidar")
         self.assertTrue(state.exists)
         self.assertEqual(state.exit_code, 7)
         self.assertTrue(state.terminal)
         self.assertTrue(state.rsync)
 
     def test_parse_absent_state_with_legacy_tmux_collision(self):
-        state = run_on_vm.parse_state(
+        state = rlidar2map_cli.parse_state(
             "protocol=1\nexists=0\ntmux=1\n", "lidar"
         )
         self.assertFalse(state.exists)
@@ -171,12 +154,12 @@ class ProtocolTests(unittest.TestCase):
                 "log_path=/tmp/run.log",
             ]
         )
-        with self.assertRaises(run_on_vm.RunOnVmError):
-            run_on_vm.parse_state(payload, "lidar")
+        with self.assertRaises(rlidar2map_cli.RunOnVmError):
+            rlidar2map_cli.parse_state(payload, "lidar")
 
     def test_remote_scripts_keep_exact_exit_and_safe_argv(self):
-        launch = run_on_vm.REMOTE_LAUNCH_SCRIPT
-        query = run_on_vm.REMOTE_QUERY_SCRIPT
+        launch = rlidar2map_cli.REMOTE_LAUNCH_SCRIPT
+        query = rlidar2map_cli.REMOTE_QUERY_SCRIPT
         self.assertIn("set -euo pipefail", launch)
         self.assertIn('pipeline_status=("${PIPESTATUS[@]}")', launch)
         self.assertIn('COMMAND+=("${LIDAR_ARGS[@]}"', launch)
@@ -208,7 +191,7 @@ class ProtocolTests(unittest.TestCase):
             query.index("if claim_query_lock; then"),
             query.index('write_value "$RUN_DIR/status" "failed"'),
         )
-        purge = run_on_vm.REMOTE_PURGE_SCRIPT
+        purge = rlidar2map_cli.REMOTE_PURGE_SCRIPT
         self.assertIn('flock -w 60 9', purge)
         self.assertIn('actual_run_id" != "$EXPECTED_RUN_ID', purge)
         self.assertIn("exit 78", purge)
@@ -228,9 +211,9 @@ class ProtocolTests(unittest.TestCase):
         if bash is None:
             self.skipTest("bash is unavailable")
         for name, script in (
-            ("query", run_on_vm.REMOTE_QUERY_SCRIPT),
-            ("launch", run_on_vm.REMOTE_LAUNCH_SCRIPT),
-            ("purge", run_on_vm.REMOTE_PURGE_SCRIPT),
+            ("query", rlidar2map_cli.REMOTE_QUERY_SCRIPT),
+            ("launch", rlidar2map_cli.REMOTE_LAUNCH_SCRIPT),
+            ("purge", rlidar2map_cli.REMOTE_PURGE_SCRIPT),
         ):
             completed = subprocess.run(
                 [bash, "-n"],
@@ -248,7 +231,7 @@ class ProtocolTests(unittest.TestCase):
                 ),
             )
         compile(
-            run_on_vm.REMOTE_FILE_SYNC_HELPER,
+            rlidar2map_cli.REMOTE_FILE_SYNC_HELPER,
             "<remote-file-sync-helper>",
             "exec",
         )
@@ -259,15 +242,15 @@ class ProtocolTests(unittest.TestCase):
             "session=done\nrun_id=run-42\n"
         )
         self.assertFalse(
-            run_on_vm.parse_purge_response(payload, "done", "run-42")
+            rlidar2map_cli.parse_purge_response(payload, "done", "run-42")
         )
-        with self.assertRaises(run_on_vm.RunOnVmError):
-            run_on_vm.parse_purge_response(payload, "other", "run-42")
+        with self.assertRaises(rlidar2map_cli.RunOnVmError):
+            rlidar2map_cli.parse_purge_response(payload, "other", "run-42")
 
 
 class TransportTests(unittest.TestCase):
     def test_remote_command_round_trips_hostile_arguments(self):
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             [
                 "--session",
                 "safe",
@@ -281,8 +264,8 @@ class TransportTests(unittest.TestCase):
                 "*",
             ]
         )
-        deps = run_on_vm.RuntimeDeps(which=lambda _name: None)
-        controller = run_on_vm.VmController(parsed, deps)
+        deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: None)
+        controller = rlidar2map_cli.VmController(parsed, deps)
         remote_args = [
             "source",
             "safe",
@@ -300,7 +283,7 @@ class TransportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             local_dir = Path(tmp) / "local results"
             identity = Path(tmp) / "key file"
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 [
                     "--session",
                     "var-83",
@@ -322,7 +305,7 @@ class TransportTests(unittest.TestCase):
                     "root@vm",
                 ]
             )
-            controller = run_on_vm.VmController(parsed)
+            controller = rlidar2map_cli.VmController(parsed)
             expected = [
                 sys.executable,
                 str(MODULE_PATH.resolve()),
@@ -351,9 +334,38 @@ class TransportTests(unittest.TestCase):
             )
             self.assertEqual(controller.reconnect_command(), rendered)
 
+    def test_frozen_reconnect_command_does_not_repeat_embedded_script(self):
+        parsed = rlidar2map_cli.parse_options(["--session", "frozen", "root@vm"])
+        controller = rlidar2map_cli.VmController(parsed)
+        with mock.patch.object(rlidar2map_cli.sys, "frozen", True, create=True):
+            rendered = controller.reconnect_command()
+        expected = [
+            sys.executable,
+            "--session",
+            "frozen",
+            "--local-dir",
+            str(controller._base_local_dir()),
+            "--interval",
+            "30.0",
+            "--sync-method",
+            "auto",
+            "--ssh-timeout",
+            "10",
+            "--max-ssh-errors",
+            "3",
+            "root@vm",
+        ]
+        command = (
+            subprocess.list2cmdline(expected)
+            if os.name == "nt"
+            else shlex.join(expected)
+        )
+        self.assertEqual(rendered, command)
+        self.assertNotIn(str(MODULE_PATH.resolve()), rendered)
+
     def test_remote_purge_uses_expected_run_id_and_marks_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 [
                     "--purge-remote",
                     "--local-dir",
@@ -363,7 +375,7 @@ class TransportTests(unittest.TestCase):
                     "vm.example",
                 ]
             )
-            controller = run_on_vm.VmController(parsed)
+            controller = rlidar2map_cli.VmController(parsed)
             state = remote_state("succeeded", exit_code=0)
             response = (
                 b"protocol=1\npurged=1\nalready_purged=0\n"
@@ -375,7 +387,7 @@ class TransportTests(unittest.TestCase):
                 calls.append((list(command), kwargs))
                 return subprocess.CompletedProcess(command, 0, response, b"")
 
-            with mock.patch.object(run_on_vm.subprocess, "run", fake_run):
+            with mock.patch.object(rlidar2map_cli.subprocess, "run", fake_run):
                 already = controller.purge_remote(state)
 
             self.assertFalse(already)
@@ -386,7 +398,7 @@ class TransportTests(unittest.TestCase):
             )
             self.assertEqual(
                 calls[0][1]["input"],
-                run_on_vm.REMOTE_PURGE_SCRIPT.encode("utf-8"),
+                rlidar2map_cli.REMOTE_PURGE_SCRIPT.encode("utf-8"),
             )
             pending_path = controller.mark_remote_purge_pending(state, "scp")
             pending_manifest = json.loads(
@@ -414,11 +426,11 @@ class TransportTests(unittest.TestCase):
 
     def test_scp_fallback_writes_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 ["--local-dir", tmp, "--sync-method", "auto", "vm.example"]
             )
-            deps = run_on_vm.RuntimeDeps(which=lambda _name: None)
-            controller = run_on_vm.VmController(parsed, deps)
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: None)
+            controller = rlidar2map_cli.VmController(parsed, deps)
             state = remote_state()
             calls = []
 
@@ -427,7 +439,7 @@ class TransportTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, b"", b"")
 
             with mock.patch.object(
-                run_on_vm.subprocess, "run", fake_run
+                rlidar2map_cli.subprocess, "run", fake_run
             ), mock.patch.object(
                     controller,
                     "_remote_results_inventory",
@@ -439,7 +451,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(method, "ssh")
             self.assertEqual(calls, [])
             manifest = json.loads(
-                (local_dir / "run_on_vm.json").read_text(encoding="utf-8")
+                (local_dir / "rlidar2map.json").read_text(encoding="utf-8")
             )
             self.assertEqual(manifest["run_id"], state.run_id)
             self.assertFalse(manifest["sync_pending"])
@@ -447,17 +459,17 @@ class TransportTests(unittest.TestCase):
 
     def test_scp_failure_never_replaces_a_complete_local_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 ["--local-dir", tmp, "--sync-method", "scp", "vm.example"]
             )
-            controller = run_on_vm.VmController(parsed)
+            controller = rlidar2map_cli.VmController(parsed)
             state = remote_state("succeeded", exit_code=0)
             local_results = Path(tmp) / state.run_id / "results"
             destination = local_results / "nested" / "result.mbtiles"
             destination.parent.mkdir(parents=True)
             destination.write_bytes(b"complete-old")
             relative = "nested/result.mbtiles"
-            encoded = run_on_vm.base64.b64encode(
+            encoded = rlidar2map_cli.base64.b64encode(
                 relative.encode("utf-8")
             ).decode("ascii")
             new_content = b"complete-new"
@@ -468,7 +480,7 @@ class TransportTests(unittest.TestCase):
                 raw = json.dumps(
                     payload, separators=(",", ":")
                 ).encode("ascii")
-                return run_on_vm.struct.pack(">Q", len(raw)) + raw
+                return rlidar2map_cli.struct.pack(">Q", len(raw)) + raw
 
             class FakeProcess:
                 def __init__(self, output, returncode):
@@ -489,7 +501,7 @@ class TransportTests(unittest.TestCase):
                     self._returncode = -9
 
             interrupted_stream = (
-                run_on_vm.FILE_STREAM_MAGIC
+                rlidar2map_cli.FILE_STREAM_MAGIC
                 + frame(
                     {
                         "type": "file",
@@ -504,7 +516,7 @@ class TransportTests(unittest.TestCase):
                     "_remote_results_inventory",
                     return_value=inventory,
             ), mock.patch.object(
-                    run_on_vm.subprocess,
+                    rlidar2map_cli.subprocess,
                     "Popen",
                     return_value=FakeProcess(interrupted_stream, 1),
             ):
@@ -513,11 +525,11 @@ class TransportTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertEqual(destination.read_bytes(), b"complete-old")
             self.assertFalse(
-                list(local_results.parent.glob(".run_on_vm-sync-*"))
+                list(local_results.parent.glob(".rlidar2map-sync-*"))
             )
-            digest = run_on_vm.hashlib.sha256(new_content).hexdigest()
+            digest = rlidar2map_cli.hashlib.sha256(new_content).hexdigest()
             complete_stream = (
-                run_on_vm.FILE_STREAM_MAGIC
+                rlidar2map_cli.FILE_STREAM_MAGIC
                 + frame(
                     {
                         "type": "file",
@@ -541,7 +553,7 @@ class TransportTests(unittest.TestCase):
                     "_remote_results_inventory",
                     return_value=inventory,
             ), mock.patch.object(
-                    run_on_vm.subprocess,
+                    rlidar2map_cli.subprocess,
                     "Popen",
                     return_value=FakeProcess(complete_stream, 0),
             ):
@@ -552,11 +564,11 @@ class TransportTests(unittest.TestCase):
 
     def test_purge_markers_are_monotonic_across_stale_monitors(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 ["--local-dir", tmp, "vm.example"]
             )
-            old_monitor = run_on_vm.VmController(parsed)
-            purge_controller = run_on_vm.VmController(parsed)
+            old_monitor = rlidar2map_cli.VmController(parsed)
+            purge_controller = rlidar2map_cli.VmController(parsed)
             succeeded = remote_state("succeeded", exit_code=0)
             stale_running = remote_state("running")
 
@@ -569,19 +581,19 @@ class TransportTests(unittest.TestCase):
             )
 
             local_dir = old_monitor.local_run_dir(succeeded)
-            pending_marker = local_dir / run_on_vm.PURGE_PENDING_MARKER
+            pending_marker = local_dir / rlidar2map_cli.PURGE_PENDING_MARKER
             self.assertTrue(pending_marker.is_file())
             recovered = old_monitor.load_remote_purge_pending()
             self.assertIsNotNone(recovered)
             manifest = json.loads(
-                (local_dir / "run_on_vm.json").read_text(encoding="utf-8")
+                (local_dir / "rlidar2map.json").read_text(encoding="utf-8")
             )
             self.assertTrue(manifest["remote_purge_pending"])
             self.assertFalse(manifest["sync_pending"])
             self.assertEqual(manifest["status"], "succeeded")
 
             purge_controller.mark_remote_purged(succeeded, "scp")
-            purged_marker = local_dir / run_on_vm.PURGED_MARKER
+            purged_marker = local_dir / rlidar2map_cli.PURGED_MARKER
             purged_record = purged_marker.read_bytes()
             old_monitor._write_manifest(
                 stale_running, "scp", sync_pending=True
@@ -591,7 +603,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(purged_marker.read_bytes(), purged_record)
             self.assertIsNone(old_monitor.load_remote_purge_pending())
             manifest = json.loads(
-                (local_dir / "run_on_vm.json").read_text(encoding="utf-8")
+                (local_dir / "rlidar2map.json").read_text(encoding="utf-8")
             )
             self.assertTrue(manifest["remote_purged"])
             self.assertFalse(manifest["remote_purge_pending"])
@@ -600,10 +612,10 @@ class TransportTests(unittest.TestCase):
 
     def test_superseded_marker_prevents_old_pending_from_resurrecting(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 ["--local-dir", tmp, "vm.example"]
             )
-            controller = run_on_vm.VmController(parsed)
+            controller = rlidar2map_cli.VmController(parsed)
             succeeded = remote_state("succeeded", exit_code=0)
             controller.mark_remote_purge_pending(succeeded, "scp")
             controller.mark_remote_purge_superseded(
@@ -616,7 +628,7 @@ class TransportTests(unittest.TestCase):
             self.assertIsNone(controller.load_remote_purge_pending())
             manifest = json.loads(
                 (
-                    controller.local_run_dir(succeeded) / "run_on_vm.json"
+                    controller.local_run_dir(succeeded) / "rlidar2map.json"
                 ).read_text(encoding="utf-8")
             )
             self.assertTrue(manifest["remote_purge_superseded"])
@@ -625,11 +637,11 @@ class TransportTests(unittest.TestCase):
 
     def test_rsync_is_preferred_when_available_on_both_sides(self):
         with tempfile.TemporaryDirectory() as tmp:
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 ["--local-dir", tmp, "--sync-method", "auto", "vm.example"]
             )
-            deps = run_on_vm.RuntimeDeps(which=lambda _name: "rsync")
-            controller = run_on_vm.VmController(parsed, deps)
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: "rsync")
+            controller = rlidar2map_cli.VmController(parsed, deps)
             state = remote_state(rsync=True)
             calls = []
 
@@ -637,14 +649,14 @@ class TransportTests(unittest.TestCase):
                 calls.append(list(command))
                 return subprocess.CompletedProcess(command, 0, b"", b"")
 
-            with mock.patch.object(run_on_vm.subprocess, "run", fake_run):
+            with mock.patch.object(rlidar2map_cli.subprocess, "run", fake_run):
                 ok, method, _local_dir = controller.sync_once(state)
 
             self.assertTrue(ok)
             self.assertEqual(method, "rsync")
             self.assertEqual(calls[0][0], "rsync")
             self.assertIn(
-                "--partial-dir=.run_on_vm-rsync-partial", calls[0]
+                "--partial-dir=.rlidar2map-rsync-partial", calls[0]
             )
             self.assertIn("--exclude=*.part", calls[0])
             self.assertIn("--exclude=*.part-wal", calls[0])
@@ -656,7 +668,7 @@ class ControllerTests(unittest.TestCase):
         fake = mock.Mock()
         fake.query_state.side_effect = list(states)
         fake.sync_once.side_effect = list(sync_results)
-        fake.deps = run_on_vm.RuntimeDeps(sleep=lambda _seconds: None)
+        fake.deps = rlidar2map_cli.RuntimeDeps(sleep=lambda _seconds: None)
         fake.reconnect_command.return_value = "resume"
         fake.local_run_dir.return_value = Path("local")
         fake.load_remote_purge_pending.return_value = None
@@ -664,7 +676,7 @@ class ControllerTests(unittest.TestCase):
         return fake
 
     def test_start_monitor_sync_and_success(self):
-        absent = run_on_vm.RemoteState(exists=False)
+        absent = rlidar2map_cli.RemoteState(exists=False)
         running = remote_state("running")
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock(
@@ -674,10 +686,10 @@ class ControllerTests(unittest.TestCase):
                 (True, "scp", Path("local")),
             ],
         )
-        parsed = run_on_vm.parse_options(["vm.example", "--", "--lidar"])
+        parsed = rlidar2map_cli.parse_options(["vm.example", "--", "--lidar"])
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.launch.assert_called_once_with()
@@ -691,12 +703,12 @@ class ControllerTests(unittest.TestCase):
             [(True, "scp", Path("local"))],
         )
         fake.purge_remote.return_value = False
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.purge_remote.assert_called_once_with(succeeded)
@@ -719,17 +731,17 @@ class ControllerTests(unittest.TestCase):
         )
 
     def test_absent_remote_resumes_pending_purge_from_local_manifest(self):
-        absent = run_on_vm.RemoteState(exists=False)
+        absent = rlidar2map_cli.RemoteState(exists=False)
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock([absent], [])
         fake.load_remote_purge_pending.return_value = (succeeded, "scp")
         fake.purge_remote.return_value = True
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.sync_once.assert_not_called()
@@ -737,19 +749,19 @@ class ControllerTests(unittest.TestCase):
         fake.mark_remote_purged.assert_called_once_with(succeeded, "scp")
 
     def test_gone_pending_is_superseded_and_no_new_run_is_deleted(self):
-        absent = run_on_vm.RemoteState(exists=False)
+        absent = rlidar2map_cli.RemoteState(exists=False)
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock([absent], [])
         fake.load_remote_purge_pending.return_value = (succeeded, "scp")
         fake.purge_remote.side_effect = (
-            run_on_vm.PurgeTargetChangedError("run absent")
+            rlidar2map_cli.PurgeTargetChangedError("run absent")
         )
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.mark_remote_purge_superseded.assert_called_once_with(
@@ -758,16 +770,16 @@ class ControllerTests(unittest.TestCase):
         fake.mark_remote_purged.assert_not_called()
 
     def test_already_purged_local_marker_makes_retry_idempotent(self):
-        absent = run_on_vm.RemoteState(exists=False)
+        absent = rlidar2map_cli.RemoteState(exists=False)
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock([absent], [])
         fake.load_remote_purged.return_value = (succeeded, "ssh")
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.sync_once.assert_not_called()
@@ -777,13 +789,13 @@ class ControllerTests(unittest.TestCase):
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock([succeeded], [])
         fake.load_remote_purge_pending.return_value = (succeeded, "scp")
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--restart", "vm.example", "--", "--lidar"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            with self.assertRaises(run_on_vm.RunOnVmError):
-                run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            with self.assertRaises(rlidar2map_cli.RunOnVmError):
+                rlidar2map_cli.run_controller(parsed)
 
         fake.launch.assert_not_called()
 
@@ -794,15 +806,15 @@ class ControllerTests(unittest.TestCase):
             [(True, "scp", Path("local"))],
         )
         fake.purge_remote.side_effect = (
-            run_on_vm.PurgeTargetChangedError("run changed")
+            rlidar2map_cli.PurgeTargetChangedError("run changed")
         )
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            with self.assertRaises(run_on_vm.RunOnVmError):
-                run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            with self.assertRaises(rlidar2map_cli.RunOnVmError):
+                rlidar2map_cli.run_controller(parsed)
 
         fake.mark_remote_purge_pending.assert_called_once_with(
             succeeded, "scp"
@@ -819,12 +831,12 @@ class ControllerTests(unittest.TestCase):
             [(True, "scp", Path("local"))],
         )
         fake.purge_remote.return_value = False
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.purge_remote.assert_called_once_with(failed)
@@ -835,12 +847,12 @@ class ControllerTests(unittest.TestCase):
             [succeeded],
             [(False, "scp", Path("local"))],
         )
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 4)
         fake.purge_remote.assert_not_called()
@@ -850,13 +862,13 @@ class ControllerTests(unittest.TestCase):
     def test_active_run_cannot_be_purged(self):
         running = remote_state("running")
         fake = self._controller_mock([running], [])
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--purge-remote", "vm.example"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            with self.assertRaises(run_on_vm.RunOnVmError):
-                run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            with self.assertRaises(rlidar2map_cli.RunOnVmError):
+                rlidar2map_cli.run_controller(parsed)
         fake.sync_once.assert_not_called()
         fake.purge_remote.assert_not_called()
 
@@ -874,8 +886,8 @@ class ControllerTests(unittest.TestCase):
         )
         parsed = options()
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 7)
         fake.launch.assert_not_called()
@@ -885,7 +897,7 @@ class ControllerTests(unittest.TestCase):
         running = remote_state("running")
         succeeded = remote_state("succeeded", exit_code=0)
         fake = self._controller_mock(
-            [running, run_on_vm.SshError("temporary"), succeeded],
+            [running, rlidar2map_cli.SshError("temporary"), succeeded],
             [
                 (True, "scp", Path("local")),
                 (True, "scp", Path("local")),
@@ -894,8 +906,8 @@ class ControllerTests(unittest.TestCase):
         )
         parsed = options("--max-ssh-errors", "2")
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         titles = [call.args[0] for call in fake.notify.call_args_list]
@@ -909,8 +921,8 @@ class ControllerTests(unittest.TestCase):
         )
         parsed = options()
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 4)
         self.assertIn(
@@ -925,12 +937,12 @@ class ControllerTests(unittest.TestCase):
             [succeeded, running],
             [(True, "scp", Path("local"))],
         )
-        parsed = run_on_vm.parse_options(
+        parsed = rlidar2map_cli.parse_options(
             ["--restart", "--once", "vm.example", "--", "--lidar"]
         )
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 0)
         fake.launch.assert_called_once_with()
@@ -940,8 +952,8 @@ class ControllerTests(unittest.TestCase):
         fake = self._controller_mock(
             [
                 running,
-                run_on_vm.SshError("offline"),
-                run_on_vm.SshError("offline"),
+                rlidar2map_cli.SshError("offline"),
+                rlidar2map_cli.SshError("offline"),
             ],
             [
                 (True, "scp", Path("local")),
@@ -950,8 +962,8 @@ class ControllerTests(unittest.TestCase):
         )
         parsed = options("--max-ssh-errors", "2")
 
-        with mock.patch.object(run_on_vm, "VmController", return_value=fake):
-            rc = run_on_vm.run_controller(parsed)
+        with mock.patch.object(rlidar2map_cli, "VmController", return_value=fake):
+            rc = rlidar2map_cli.run_controller(parsed)
 
         self.assertEqual(rc, 3)
         self.assertEqual(
@@ -961,9 +973,9 @@ class ControllerTests(unittest.TestCase):
 
     def test_keyboard_interrupt_never_kills_remote_tmux(self):
         with mock.patch.object(
-            run_on_vm, "run_controller", side_effect=KeyboardInterrupt
+            rlidar2map_cli, "run_controller", side_effect=KeyboardInterrupt
         ):
-            rc = run_on_vm.main(["vm.example"])
+            rc = rlidar2map_cli.main(["vm.example"])
         self.assertEqual(rc, 130)
 
 
@@ -1012,7 +1024,7 @@ class EndToEndFakeTransportTests(unittest.TestCase):
                 sys.executable,
                 str(FAKE_TRANSPORT),
             )
-            deps = run_on_vm.RuntimeDeps(
+            deps = rlidar2map_cli.RuntimeDeps(
                 ssh_prefix=common
                 + ("ssh", str(state_path), str(call_log), str(remote_root)),
                 scp_prefix=common
@@ -1023,7 +1035,7 @@ class EndToEndFakeTransportTests(unittest.TestCase):
                 which=lambda _name: None,
             )
             hostile = ["--name", "A B", "--expr", "O'Brien; touch PWN", "$HOME", "*"]
-            parsed = run_on_vm.parse_options(
+            parsed = rlidar2map_cli.parse_options(
                 [
                     "--no-bell",
                     "--local-dir",
@@ -1035,7 +1047,7 @@ class EndToEndFakeTransportTests(unittest.TestCase):
                 ]
             )
 
-            rc = run_on_vm.run_controller(parsed, deps)
+            rc = rlidar2map_cli.run_controller(parsed, deps)
 
             self.assertEqual(rc, 0)
             local_run = local_root / "fake-run-1"

@@ -126,23 +126,21 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
 #fusion-list div.sel{background:var(--ac);color:#fff}
 /* ═══ PANNEAU DE LOG ═══ */
 #panneau-log{
-  position:fixed;left:0;right:0;bottom:0;
-  height:200px; min-height:60px; max-height:85vh;
-  background:var(--bg2);border-top:2px solid var(--bd);
+  position:fixed;top:0;right:0;bottom:0;
+  width:460px;min-width:300px;max-width:70vw;
+  background:var(--bg2);border-left:2px solid var(--bd);
   display:flex;flex-direction:column;z-index:50;
-  /* Pas de transition .15s sur height : ça lutte avec le drag de la
+  /* Pas de transition sur width : ça lutte avec le drag de la
      poignée et provoque un effet d'inertie/saccade pendant le mousemove.
      Conservé seulement pour le toggle ouvert/fermé via JS qui ajoute la
      classe `animating` le temps de la transition. */
 }
-#panneau-log.animating{ transition:height .15s ease; }
-/* Poignée de redimensionnement vertical : 6 px sur le bord supérieur,
-   débordant 3 px au-dessus pour faciliter le clic (zone de hit plus
-   généreuse que la bordure visible). Cursor ns-resize est explicite. */
+#panneau-log.animating{transition:opacity .15s ease}
+/* Poignée de redimensionnement horizontal sur le bord gauche. */
 #log-resize-handle{
-  position:absolute; left:0; right:0; top:-3px;
-  height:6px;
-  cursor:ns-resize;
+  position:absolute;left:-3px;top:0;bottom:0;
+  width:6px;
+  cursor:ew-resize;
   z-index:51;
   background:transparent;
 }
@@ -156,7 +154,7 @@ body.type-decoupe #btn-run{background:var(--decoupe)}
 body.log-resizing,
 body.log-resizing *{
   user-select:none !important;
-  cursor:ns-resize !important;
+  cursor:ew-resize !important;
 }
 /* Caché par défaut, ouvert au clic sur le bouton Logs */
 #panneau-log.hidden{display:none}
@@ -187,8 +185,7 @@ body.log-resizing *{
 #log-content .log-dim {color:#7575a0;font-style:italic}
 #log-content .log-cmd {color:#80a0d0;font-style:italic;border-bottom:1px dashed var(--bd);
                        padding-bottom:4px;margin-bottom:6px}
-/* Compenser la hauteur du panneau dans le main quand il est visible */
-#main.log-visible{padding-bottom:210px}
+/* Le volet latéral se superpose au contenu, comme le panneau Historique. */
 /* Bouton Logs actif (panneau visible) — bordure plus claire */
 #btn-log.active{background:var(--ac)!important;color:#fff!important}
 /* Barre de progression */

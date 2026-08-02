@@ -128,8 +128,8 @@ nécessairement un venv 3.14.
 Le venv existant est par ailleurs validé uniquement par l'import des
 dépendances. Sa version Python n'est pas vérifiée explicitement.
 
-Dans `tools/run_on_vm.sh`, le lanceur possède encore une partie du cycle de vie
-du venv :
+Dans le script distant intégré à `tools/rlidar2map_CLI.py`, le contrôleur
+possède encore une partie du cycle de vie du venv :
 
 ```bash
 _venv="$HOME/.lidar2map/venv"
@@ -482,7 +482,7 @@ consommées ou écrasées explicitement par le processus suivant.
 ## Verrou interprocessus
 
 Deux lancements SSH peuvent aujourd'hui atteindre le bootstrap simultanément,
-car `run_on_vm.sh` vérifie la session tmux après le bootstrap.
+car le contrôleur distant vérifie la session tmux après le bootstrap.
 
 Protéger ensemble :
 
@@ -579,8 +579,8 @@ optionnelle n'a pas de wheel pour une architecture donnée.
 ## Traitement de `--version` et préparation explicite
 
 Aujourd'hui, `python3 lidar2map.py --version` déclenche toute l'installation avant
-qu'argparse affiche la version. `run_on_vm.sh` exploite implicitement cet effet
-de bord comme commande de préparation.
+qu'argparse affiche la version. Le script distant de `rlidar2map_CLI.py`
+exploite implicitement cet effet de bord comme commande de préparation.
 
 Il est préférable de séparer les deux usages :
 
@@ -596,7 +596,7 @@ Comportement proposé :
   dépendances critiques, afficher le diagnostic puis quitter ;
 - lancement normal : préparer automatiquement si nécessaire.
 
-`tools/run_on_vm.sh` utilisera alors :
+Le script distant intégré à `tools/rlidar2map_CLI.py` utilisera alors :
 
 ```bash
 ( cd "$DIR" && python3 lidar2map.py --prepare-runtime )
@@ -604,7 +604,7 @@ Comportement proposé :
 
 Il ne devra plus lire, supprimer ou réparer directement le venv.
 
-## Changements précis dans `tools/run_on_vm.sh`
+## Changements précis dans le script distant de `rlidar2map_CLI.py`
 
 Conserver :
 

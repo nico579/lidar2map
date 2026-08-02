@@ -166,7 +166,7 @@ const I18N = {
     "tip.epsilon":"Epsilon Douglas-Peucker en mètres. Vide = auto depuis surface.",
     // Panneaux historique / log
     "hist.title":"Historique des traitements", "clear":"🗑 Vider", "log.copy":"⎘ Copier",
-    "tip.logresize":"Redimensionner verticalement", "tip.logcopy":"Copier le log dans le presse-papier",
+    "tip.logresize":"Redimensionner horizontalement", "tip.logcopy":"Copier le log dans le presse-papier",
     "tip.logclear":"Effacer le contenu du log",
     "tip.loghide":"Masquer le panneau (ré-affichable via le bouton Logs en haut)",
     "status.running":"en cours",
@@ -293,7 +293,7 @@ const I18N = {
     "tip.radiuschunk1":"Chunk side in km (alternative to the grid)", "tip.radiuschunk2":"Chunk side in km",
     "tip.epsilon":"Douglas-Peucker epsilon in metres. Empty = auto from area.",
     "hist.title":"Processing history", "clear":"🗑 Clear", "log.copy":"⎘ Copy",
-    "tip.logresize":"Resize vertically", "tip.logcopy":"Copy the log to the clipboard",
+    "tip.logresize":"Resize horizontally", "tip.logcopy":"Copy the log to the clipboard",
     "tip.logclear":"Clear the log content",
     "tip.loghide":"Hide the panel (re-show via the Logs button at the top)",
     "status.running":"running",
@@ -485,45 +485,45 @@ function copierLog() {
 
 function toggleLogPanel() {
   const p = document.getElementById('panneau-log');
-  const m = document.getElementById('main');
   const b = document.getElementById('btn-log');
   if (!p) return;
+  if (p.classList.contains('hidden')) {
+    const hist = document.getElementById('panneau-hist');
+    if (hist) hist.classList.add('hidden');
+  }
   // On active la transition CSS uniquement pour le toggle, pas pour le
   // drag de redimensionnement (sinon effet d'inertie pendant le mousemove).
   p.classList.add('animating');
   setTimeout(() => p.classList.remove('animating'), 200);
   p.classList.toggle('hidden');
   const visible = !p.classList.contains('hidden');
-  if (m) m.classList.toggle('log-visible', visible);
   if (b) b.classList.toggle('active', visible);
 }
 
 // ── Drag de la poignée de redimensionnement du panneau de log ─────────────
-// Pattern classique : mousedown sur la poignée → on enregistre Y de départ
-// + hauteur de départ ; mousemove document → recalcule height ; mouseup
-// document → cleanup. Le clamp respecte min-height (60) et 85vh.
-// Persistance de la hauteur en localStorage : `log-h-px` — stable entre
+// Le volet est ancré à droite : déplacer son bord gauche ajuste sa largeur.
+// Persistance de la largeur en localStorage — stable entre
 // sessions sans nécessiter d'aller-retour Python.
 (function _initLogResize(){
   const HANDLE_ID = 'log-resize-handle';
   const PANEL_ID  = 'panneau-log';
-  const KEY       = 'lidar2map.log-height';
-  const MIN_PX    = 60;
-  const MAX_FRAC  = 0.85;   // 85vh
+  const KEY       = 'lidar2map.log-width';
+  const MIN_PX    = 300;
+  const MAX_FRAC  = 0.70;
 
-  function _maxPx(){ return Math.floor(window.innerHeight * MAX_FRAC); }
-  function _clamp(h){ return Math.max(MIN_PX, Math.min(_maxPx(), h)); }
+  function _maxPx(){ return Math.floor(window.innerWidth * MAX_FRAC); }
+  function _clamp(w){ return Math.max(MIN_PX, Math.min(_maxPx(), w)); }
 
-  function _appliquerHauteur(h){
+  function _appliquerLargeur(w){
     const p = document.getElementById(PANEL_ID);
     if (!p) return;
-    p.style.height = _clamp(h) + 'px';
+    p.style.width = _clamp(w) + 'px';
   }
 
-  // Restaurer la hauteur au chargement (si persistée)
+  // Restaurer la largeur au chargement (si persistée)
   try {
     const saved = parseInt(localStorage.getItem(KEY) || '', 10);
-    if (!isNaN(saved) && saved >= MIN_PX) _appliquerHauteur(saved);
+    if (!isNaN(saved) && saved >= MIN_PX) _appliquerLargeur(saved);
   } catch(e) { /* localStorage indispo (privacy mode) — non critique */ }
 
   function _attacher(){
@@ -533,16 +533,14 @@ function toggleLogPanel() {
     if (handle.dataset.bound === '1') return;   // idempotent
     handle.dataset.bound = '1';
 
-    let dragStartY = 0;
-    let dragStartH = 0;
+    let dragStartX = 0;
+    let dragStartW = 0;
     let dragging   = false;
 
     function onMouseMove(ev){
       if (!dragging) return;
-      // dY positif quand on descend ; le panneau est ancré en bas, donc
-      // descendre la souris RÉDUIT la hauteur. Inverser.
-      const dy = ev.clientY - dragStartY;
-      _appliquerHauteur(dragStartH - dy);
+      const dx = ev.clientX - dragStartX;
+      _appliquerLargeur(dragStartW - dx);
       ev.preventDefault();
     }
     function onMouseUp(){
@@ -554,15 +552,15 @@ function toggleLogPanel() {
       document.removeEventListener('mouseup', onMouseUp);
       // Persister la hauteur finale
       try {
-        const h = parseInt(panel.style.height, 10);
-        if (!isNaN(h)) localStorage.setItem(KEY, String(h));
+        const w = parseInt(panel.style.width, 10);
+        if (!isNaN(w)) localStorage.setItem(KEY, String(w));
       } catch(e) {}
     }
     handle.addEventListener('mousedown', function(ev){
       if (ev.button !== 0) return;   // bouton gauche uniquement
       dragging   = true;
-      dragStartY = ev.clientY;
-      dragStartH = panel.getBoundingClientRect().height;
+      dragStartX = ev.clientX;
+      dragStartW = panel.getBoundingClientRect().width;
       handle.classList.add('dragging');
       document.body.classList.add('log-resizing');
       document.addEventListener('mousemove', onMouseMove);
@@ -570,10 +568,10 @@ function toggleLogPanel() {
       ev.preventDefault();
     });
 
-    // Re-clamp si la fenêtre rétrécit (max passe sous la hauteur courante)
+    // Re-clamp si la fenêtre rétrécit.
     window.addEventListener('resize', function(){
-      const h = parseInt(panel.style.height, 10);
-      if (!isNaN(h)) _appliquerHauteur(h);
+      const w = parseInt(panel.style.width, 10);
+      if (!isNaN(w)) _appliquerLargeur(w);
     });
   }
 
@@ -1202,7 +1200,12 @@ function buildHistorique(hist) {
 
 function toggleHistorique() {
   const p = document.getElementById('panneau-hist');
-  if (p) p.classList.toggle('hidden');
+  if (!p) return;
+  if (p.classList.contains('hidden')) {
+    const logs = document.getElementById('panneau-log');
+    if (logs && !logs.classList.contains('hidden')) toggleLogPanel();
+  }
+  p.classList.toggle('hidden');
 }
 
 async function viderHistorique() {
