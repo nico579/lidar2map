@@ -44,7 +44,7 @@ pas les confondre avec les paramètres du calcul lidar2map.
 | `--remote HOST` | Active le mode distant et désigne la cible SSH | absent : mode local |
 | `--remote-session NOM` | Identifiant persistant du run et nom du `tmux` | `lidar` |
 | `--remote-mode source\|bundle` | Déploiement du checkout ou du bundle publié | `source` |
-| `--remote-local-dir DOSSIER` | Racine de synchronisation sur le PC | `vm-results/<hôte>/<session>` |
+| `--remote-local-dir DOSSIER` | Racine de synchronisation sur l'ordinateur local | `vm-results/<hôte>/<session>` |
 | `--remote-interval SECONDES` | Fréquence de surveillance et de synchronisation | `30` |
 | `--remote-sync-method MÉTHODE` | `auto`, `rsync` ou flux SSH incrémental | `auto` |
 | `--remote-identity FICHIER` | Clé privée SSH explicite | configuration SSH normale |
@@ -114,7 +114,7 @@ une seconde VM.
 
 L'intégration ne devra pas affaiblir les garanties actuelles :
 
-- `Ctrl-C` sur le PC n'arrête pas le calcul distant ;
+- `Ctrl-C` sur l'ordinateur local n'arrête pas le calcul distant ;
 - relancer la même cible et la même session reprend la surveillance ;
 - une session existante ne lance jamais implicitement un second processus ;
 - le résultat est déterminé par l'état persistant et le code de sortie, pas par

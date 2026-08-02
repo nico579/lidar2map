@@ -10,7 +10,7 @@
 # GUI vs CLI, les deux options :
 #  - GUI  (ce script)        : bureau distant RDP, on lance lidar2map à la souris.
 #  - CLI  (exécutable rlidar2map_CLI) : calcul HEADLESS sans bureau, installé
-#                               et lancé depuis le PC via SSH/tmux. Pour un
+#                               et lancé depuis l'ordinateur via SSH/tmux. Pour un
 #                               serveur de calcul, choisir ce mode.
 #
 # Ce script (option GUI) :
@@ -424,5 +424,5 @@ echo "   puis mstsc -> localhost:13389 (le mot de passe RDP reste requis)"
 echo ""
 echo " Rappel : configure le pare-feu du fournisseur ou de la VM pour autoriser"
 echo " TCP 22 (SSH) et TCP 3389 (RDP), si possible uniquement depuis"
-echo " l'adresse IP de ton PC. Sur un réseau local, vérifie aussi le routage."
+echo " l'adresse IP de ton ordinateur. Sur un réseau local, vérifie aussi le routage."
 echo "=================================================="

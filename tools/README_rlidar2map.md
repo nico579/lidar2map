@@ -7,7 +7,7 @@ quel que soit leur fournisseur, y compris une VM locale.
 - `rlidar2map_GUI` installe un bureau XFCE accessible par RDP et permet
   d'utiliser l'interface graphique complète de lidar2map.
 - `rlidar2map_CLI` lance des calculs sans bureau dans `tmux`, les surveille et
-  recopie progressivement les résultats sur le PC.
+  recopie progressivement les résultats sur l'ordinateur local.
 
 Les exécutables autonomes publiés dans les releases GitHub embarquent Python.
 Pour exécuter les sources, utiliser Python 3.8 ou plus récent.
@@ -15,7 +15,8 @@ Pour exécuter les sources, utiliser Python 3.8 ou plus récent.
 ## Prérequis communs
 
 La VM doit être neuve ou dans un état cohérent, joignable en SSH et disposer
-d'un accès Internet. Le PC doit fournir le client OpenSSH `ssh`; le mode GUI
+d'un accès Internet. L'ordinateur Windows, Linux ou macOS doit fournir le
+client OpenSSH `ssh`; le mode GUI
 utilise aussi `scp` et `ssh-keygen`.
 
 L'authentification SSH peut utiliser le mot de passe du compte administrateur
@@ -26,8 +27,8 @@ avec un compte disposant de `sudo` sans interaction.
 Autoriser uniquement les ports nécessaires dans le pare-feu :
 
 - TCP 22 pour SSH dans les deux modes ;
-- TCP 3389 pour RDP dans le mode GUI, de préférence limité à l'adresse IP du
-  PC utilisateur.
+- TCP 3389 pour RDP dans le mode GUI, de préférence limité à l'adresse IP de
+  l'ordinateur utilisateur.
 
 ## rlidar2map_GUI : bureau XFCE et RDP
 
@@ -39,7 +40,7 @@ question avec les valeurs par défaut :
 - compte administrateur SSH : `root` ;
 - compte Linux/RDP créé : `userlidar` ;
 - mot de passe initial : `userlidar` ;
-- clé SSH : clé OpenSSH par défaut du PC.
+- clé SSH : clé OpenSSH par défaut de l'ordinateur local.
 
 Le client supprime automatiquement l'ancienne empreinte SSH associée à cette
 adresse IP, accepte la nouvelle empreinte, copie le script de préparation puis

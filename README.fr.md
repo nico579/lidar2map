@@ -348,7 +348,7 @@ Un run à l'échelle d'un département prend des heures : on le lance donc en g�
 
 **Pas besoin de bureau.** Avec des arguments, l'outil tourne en pur ligne de commande : aucune fenêtre, aucun serveur X, et aucune des libs système Qt/xcb dont seule la GUI a besoin. Un Ubuntu Server nu suffit, et l'auto-bootstrap (`~/.lidar2map/venv`) se comporte pareil en headless.
 
-**Survivre à la déconnexion SSH avec `tmux`.** Lancé directement en SSH, le job meurt dès que ta connexion tombe (laptop en veille, PC éteint). `tmux` le garde vivant sur le serveur et te laisse te rattacher plus tard, barre de progression comprise :
+**Survivre à la déconnexion SSH avec `tmux`.** Lancé directement en SSH, le job meurt dès que ta connexion tombe (ordinateur en veille ou éteint). `tmux` le garde vivant sur le serveur et te laisse te rattacher plus tard, barre de progression comprise :
 
 ```bash
 sudo apt install -y tmux
@@ -356,7 +356,7 @@ tmux new -s lidar                       # crée et entre dans la session
 python3 lidar2map.py --lidar --laz --zone-department 83 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
-# détacher : Ctrl-b puis d. Ferme le SSH, éteins ton PC.
+# détacher : Ctrl-b puis d. Ferme le SSH, éteins ton ordinateur.
 # plus tard, de n'importe où : reconnecte-toi en SSH, puis
 tmux attach -t lidar                    # la barre de progression en direct
 ```
@@ -367,7 +367,7 @@ Sans besoin de la vue live : `nohup python3 lidar2map.py … > run.log 2>&1 &` (
 
 **La reprise est gratuite.** En mode découpé, l'outil écrit un manifeste et saute les morceaux déjà terminés : une déconnexion, un crash ou un arrêt disque-bas est récupérable, relance la même commande et il repart où il s'était arrêté.
 
-**Deux clients distants autonomes pour Ubuntu 24.04/26.04.** Consulte la [documentation rlidar2map](tools/README_rlidar2map.md) pour choisir entre `rlidar2map_GUI` (XFCE + RDP) et `rlidar2map_CLI` (calcul headless + synchronisation). `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance dans un `tmux` détaché, surveille son code de sortie persistant et recopie progressivement le dossier de résultats isolé vers le PC (`rsync` s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
+**Deux clients distants autonomes pour Windows, Linux et macOS, vers Ubuntu 24.04/26.04.** Consulte la [documentation rlidar2map](tools/README_rlidar2map.md) pour choisir entre `rlidar2map_GUI` (XFCE + RDP) et `rlidar2map_CLI` (calcul headless + synchronisation). `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance dans un `tmux` détaché, surveille son code de sortie persistant et recopie progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync` s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
 
 ```bash
 rlidar2map_CLI --session var-83 user@host -- \
