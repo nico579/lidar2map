@@ -381,32 +381,11 @@ python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map; OsmAnd uses its own OBF vector format and cannot read Mapsforge files, but its built-in offline map already provides the vector layer, so on OsmAnd simply put the LiDAR raster on top as an overlay).
 
-### Advanced remote execution
+### Headless remote execution with `rlidar2map_CLI`
 
-A department-scale run takes hours, so it is usually launched on a remote Linux server (a cheap cloud VM does the job). Two things matter there: the job must survive your SSH session, and the disk must not fill up.
-
-**No desktop needed.** With arguments the tool runs as a pure command-line job: no window, no X server, and none of the Qt/xcb system libraries that only the GUI needs. A bare Ubuntu Server is enough, and the auto-bootstrap (`~/.lidar2map/venv`) behaves the same headless.
-
-**Survive the SSH disconnect with `tmux`.** Run directly over SSH and the job dies the moment your connection drops (computer asleep or powered off). `tmux` keeps it running on the server and lets you reattach later, live progress bar and all:
-
-```bash
-sudo apt install -y tmux
-tmux new -s lidar                       # create and enter the session
-python3 lidar2map.py --lidar --laz --zone-department 83 --download \
-  --split-width 5 --cleanup --min-free-gb 20 \
-  --shading lrm:sigma=4 --file-formats mbtiles
-# detach: Ctrl-b then d. Close SSH, shut down your computer.
-# later, from anywhere: ssh back in, then
-tmux attach -t lidar                    # the live progress bar again
-```
-
-If you do not need the live view: `nohup python3 lidar2map.py … > run.log 2>&1 &` (follow with `tail -f run.log`), or `systemd-run --user --unit=lidar83 python3 lidar2map.py …` for a fully unattended job that survives a reboot.
-
-**Keep the disk in check.** LiDAR point clouds are heavy (an IGN HD tile is ~200 MB). On a large area, split into chunks and clean each one as it completes: `--split-width 5 --cleanup` frees a chunk's intermediates (tiles, cached `.laz`, shading TIFs) before the next starts, and `--min-free-gb 20` stops cleanly if free space drops below the threshold (exit code 3, resumable) rather than crashing on a full disk.
-
-**Resume for free.** In split mode the tool writes a manifest and skips already-finished chunks, so a disconnect, a crash or a disk-low stop is recoverable: relaunch the exact same command and it picks up where it left off.
-
-#### Automate it with `rlidar2map_CLI`
+For long-running jobs without a desktop, use `rlidar2map_CLI`: it installs lidar2map
+on the VM, starts the run in `tmux`, monitors its state, and synchronizes the results.
+Installation and options are documented in the [two remote clients guide](tools/README_rlidar2map.md).
 
 The [remote-use chapter](#local-use-or-a-remote-vm) also presents the graphical
 `rlidar2map_GUI` alternative. For headless work, `rlidar2map_CLI` installs
