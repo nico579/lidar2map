@@ -6,7 +6,13 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, ou script Python unique) qui télécharge les données LiDAR publiques de portails nationaux dans **<!--N-->27<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Suède, Irlande, Tchéquie, Slovénie, Estonie, Lettonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Philippines, Japon<!--/LIST-->), calcule des ombrages spécialisés pour la prospection archéologique, et génère des cartes utilisables hors-ligne sur smartphone (formats MBTiles, RMAP, SQLiteDB, Mapsforge). Les cartes raster/vecteur IGN restent France-only.
+Outil autonome (exécutables Windows / macOS / Linux sans Python à installer,
+ou script Python unique) qui télécharge le LiDAR public national, calcule des
+ombrages spécialisés pour la prospection archéologique et génère des cartes
+hors-ligne pour smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge). La
+[couverture LiDAR et la liste des pays](#couverture-lidar--sources-évaluées)
+sont détaillées dans leur chapitre ; les cartes raster/vecteur IGN restent
+France-only.
 
 ![Même lieu : satellite, OpenStreetMap, puis relief LiDAR (SVF)](screenshots/hero.png)
 
@@ -14,19 +20,29 @@ Outil autonome (exécutables Windows / macOS / Linux sans Python à installer, o
 
 > ⚠️ **Statut** : usage personnel diffusé. Code testé intensivement sur Windows 10/11. Linux et macOS testés partiellement, cas connus + dépannage cross-OS dans la section *Dépannage* de [BUILD.md](BUILD.md). Les retours sont bienvenus via les [issues GitHub](https://github.com/nico579/lidar2map/issues).
 
----
+## Utilisation locale ou sur une VM distante
 
-**Ton pays est-il couvert ?** <!--N-->27<!--/N--> pays en LiDAR sol-nu (dont USA, Canada & Japon en couverture par projet). Repère ta zone avant de te lancer :
+lidar2map fonctionne aussi bien sur l'ordinateur de l'utilisateur que sur une
+VM de calcul. Les trois programmes sont autonomes sur Windows, Linux et macOS :
 
-![Carte de couverture LiDAR lidar2map](coverage.fr.png)
+| Programme | Usage | Fonctionnement |
+|---|---|---|
+| `lidar2map` | Calcul local | GUI ou CLI sur l'ordinateur courant |
+| `rlidar2map_GUI` | Bureau graphique distant | prépare une VM Ubuntu 24.04/26.04 avec XFCE + xrdp, installe lidar2map puis ouvre le client RDP |
+| `rlidar2map_CLI` | Calcul distant sans bureau | installe et lance lidar2map dans `tmux`, surveille le calcul et synchronise progressivement les résultats |
 
-*Détails, résolutions et sources évaluées : section [Couverture LiDAR](#couverture-lidar--sources-évaluées) plus bas.*
+Les clients distants ne nécessitent pas Python sur l'ordinateur de départ. Ils
+sont publiés avec lidar2map sur la [page Releases](https://github.com/nico579/lidar2map/releases).
+Le guide [Exécuter lidar2map sur une VM](tools/README_rlidar2map.md) explique le
+choix GUI/CLI, la connexion SSH, le compte RDP et les plateformes prises en
+charge. Les détails pour les gros calculs headless figurent aussi dans la
+section [Exécution distante avancée](#exécution-distante-avancée).
 
 ---
 
 ## Pour qui ?
 
-- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil fonctionne dans **<!--N-->27<!--/N--> pays** (<!--LIST-->France, Royaume-Uni, Allemagne, Autriche, Pays-Bas, Suisse, Norvège, Belgique, Luxembourg, Finlande, Danemark, Suède, Irlande, Tchéquie, Slovénie, Estonie, Lettonie, Espagne, Portugal, Italie, Pologne, USA, Canada, Nouvelle-Zélande, Australie, Philippines, Japon<!--/LIST-->), avec d'autres en cours. Les calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) sont identiques d'un pays à l'autre.
+- **Archéologues amateurs** intéressés par la prospection LiDAR : l'outil couvre de nombreux [pays et sources nationales](#couverture-lidar--sources-évaluées), avec les mêmes calculs d'ombrages (multi, SVF, openness, LRM, RRIM, VAT) d'un provider à l'autre.
 - **Randonneurs français** qui veulent des cartes IGN topo offline sur téléphone (Locus Map Pro, OsmAnd+) : les onglets IGN raster/vecteur restent France-only.
 - **Prospecteurs paysage** qui combinent orthophotos historiques (1950-1995, France) et MNT pour repérer les vestiges humains avant la déprise agricole.
 - **Spéléologues / explorateurs** qui ont besoin de fonds de carte précis dans des zones non couvertes par les apps grand public.
@@ -132,13 +148,10 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
   | ![DFM par réinjection de classes, murs visibles avec mouchetis](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM avec socle tissu CSF, fond plus propre](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
   | Le rectangle du bâtiment réapparaît (moucheté) | Mêmes murs, fond plus propre |
 
-  Sources LiDAR : **<!--N-->27<!--/N--> pays** via le flag `--provider <code>` (ou le dropdown
-  de la GUI), France (défaut), Pays-Bas, Suisse, Norvège, Allemagne (12 Länder),
-  Autriche (national + Tyrol), Royaume-Uni, Belgique (Flandre), Finlande, Danemark,
-  Irlande, Tchéquie, Slovénie, Estonie, Lettonie, Espagne (+ Pays basque, Navarre, Catalogne), Italie (Émilie-Romagne, Sardaigne), Pologne, USA, Canada, Nouvelle-Zélande,
-  Australie (QLD/NSW), Philippines (zone Taal). Le détail par provider (donnée, résolution, CRS, mécanisme
-  d'accès, couverture, clés API) est dans **l'unique tableau de référence** de la
-  section [Providers LiDAR](#providers-lidar--ajouter-un-pays).
+  Sources LiDAR : choisir `--provider <code>` en CLI ou le provider dans la GUI.
+  La [couverture LiDAR](#couverture-lidar--sources-évaluées) et le
+  [tableau des providers](#providers-lidar--ajouter-un-pays) regroupent la liste
+  de référence, les résolutions, les CRS, les mécanismes d'accès et les clés API.
 
 - **Cartes raster IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
 - **Imagerie USGS** *(USA, `--couche naip`)* : imagerie aérienne dérivée NAIP, domaine public (~1 m, cache complet jusqu'à z16), complément image du LiDAR 3DEP `us-tnm`.
@@ -342,7 +355,7 @@ python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
 Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible par Locus Map ; OsmAnd utilise son propre format vectoriel OBF et ne lit pas le Mapsforge, mais sa carte offline intégrée fournit déjà la couche vectorielle : sur OsmAnd, il suffit de poser le raster LiDAR par-dessus en overlay).
 
-### Faire tourner en headless sur un serveur
+### Exécution distante avancée
 
 Un run à l'échelle d'un département prend des heures : on le lance donc en général sur un serveur Linux distant (une petite VM cloud suffit). Deux points comptent là-bas : le job doit survivre à ta session SSH, et le disque ne doit pas saturer.
 
@@ -367,7 +380,14 @@ Sans besoin de la vue live : `nohup python3 lidar2map.py … > run.log 2>&1 &` (
 
 **La reprise est gratuite.** En mode découpé, l'outil écrit un manifeste et saute les morceaux déjà terminés : une déconnexion, un crash ou un arrêt disque-bas est récupérable, relance la même commande et il repart où il s'était arrêté.
 
-**Deux clients distants autonomes pour Windows, Linux et macOS, vers Ubuntu 24.04/26.04.** Consulte la [documentation rlidar2map](tools/README_rlidar2map.md) pour choisir entre `rlidar2map_GUI` (XFCE + RDP, avec journal voisin de l'exécutable) et `rlidar2map_CLI` (calcul headless + synchronisation). `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance dans un `tmux` détaché, surveille son code de sortie persistant et recopie progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync` s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
+#### Automatiser avec `rlidar2map_CLI`
+
+Le [chapitre sur l'utilisation distante](#utilisation-locale-ou-sur-une-vm-distante)
+présente aussi l'alternative graphique `rlidar2map_GUI`. Pour les calculs
+headless, `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance
+dans un `tmux` détaché, surveille son code de sortie persistant et recopie
+progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync`
+s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
 
 ```bash
 rlidar2map_CLI --session var-83 user@host -- \
@@ -459,6 +479,10 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 ## Fonctionnalités principales
 
+- **Exécution distante intégrée** : `rlidar2map_GUI` prépare un bureau XFCE/xrdp
+  sur une VM Ubuntu et ouvre la connexion RDP ; `rlidar2map_CLI` exécute les
+  calculs headless dans `tmux` avec surveillance, reprise et synchronisation
+  vérifiée des résultats. Voir [Utilisation locale ou sur une VM distante](#utilisation-locale-ou-sur-une-vm-distante).
 - **Auto-bootstrap** : aucune dépendance pré-installée requise. Le script télécharge à la demande les deps Python (Pillow, pyproj, numpy, scipy, rasterio, dont les wheels embarquent leur propre GDAL), le JRE Temurin 21, osmosis, mapwriter.
 - **Streaming mémoire** : traitement département-scale sans saturer la RAM (ijson, rasterio windowed reads, génération MBTiles tuile par tuile).
 - **Cancellation propre** : `Ctrl+C` une fois → arrêt après le morceau en cours. `Ctrl+C` deux fois → arrêt immédiat.
@@ -471,7 +495,10 @@ Pour ajouter un pays (ex. Pologne, Slovénie, Slovaquie, Italie PNRR) : copier l
 
 ## Couverture LiDAR & sources évaluées
 
-La carte colorée est [en haut du README](#lidar2map). Version interactive (clic = `NAME` + code) :
+![Carte de couverture LiDAR lidar2map](coverage.fr.png)
+
+La carte colorée résume la couverture nationale disponible. Version interactive
+(clic = `NAME` + code) :
 
 🗺️ **[Carte de couverture interactive](coverage.geojson)**, rendue directement par GitHub, ou glissable dans [geojson.io](https://geojson.io) / QGIS pour tester un point.
 
