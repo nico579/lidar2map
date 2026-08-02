@@ -292,12 +292,22 @@ Troubleshooting: the *Troubleshooting* section of [BUILD.md](BUILD.md) (includin
 
 ## Usage
 
-Two modes, selected automatically based on the arguments (same logic as the
-twin project [gpxsolar](https://github.com/nico579/gpxsolar)):
+Two local modes, selected automatically based on the arguments (same logic as
+the twin project [gpxsolar](https://github.com/nico579/gpxsolar)):
 
 - **No argument → graphical interface** (pywebview / Qt). The common mode.
 - **With arguments → command-line computation** (headless, no window).
   Handy for scripting, running on a server, or reproducing an exact render.
+
+For running lidar2map on a VM, the two remote clients match those same uses:
+
+- **`rlidar2map_GUI` → remote graphical interface**: prepares XFCE/xrdp on
+  Ubuntu 24.04/26.04, installs lidar2map, and opens the RDP desktop.
+- **`rlidar2map_CLI` → remote headless processing**: starts the run in `tmux`,
+  monitors it, and synchronizes results back to the local computer.
+
+See [Local use or a remote VM](#local-use-or-a-remote-vm) and the
+[rlidar2map guide](tools/README_rlidar2map.md).
 
 Everything below applies to the binary as well as the script, just replace
 `python lidar2map.py` with `lidar2map.exe` (Windows), `./lidar2map` (Linux) or

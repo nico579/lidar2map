@@ -292,12 +292,23 @@ Résolution de problèmes : section *Dépannage* de [BUILD.md](BUILD.md) (inclua
 
 ## Utilisation
 
-Deux modes, sélectionnés automatiquement selon les arguments (même logique que
-le projet jumeau [gpxsolar](https://github.com/nico579/gpxsolar)) :
+Deux modes locaux, sélectionnés automatiquement selon les arguments (même
+logique que le projet jumeau [gpxsolar](https://github.com/nico579/gpxsolar)) :
 
 - **Sans argument → interface graphique** (pywebview / Qt). Mode courant.
 - **Avec arguments → calcul en ligne de commande** (headless, sans fenêtre).
   Pratique pour scripter, lancer sur un serveur, ou reproduire un rendu précis.
+
+Pour exécuter lidar2map sur une VM, les deux clients distants correspondent aux
+mêmes usages :
+
+- **`rlidar2map_GUI` → interface graphique distante** : prépare XFCE/xrdp sur
+  Ubuntu 24.04/26.04, installe lidar2map et ouvre le bureau RDP.
+- **`rlidar2map_CLI` → calcul distant headless** : lance le calcul dans `tmux`,
+  le surveille et synchronise les résultats vers l'ordinateur local.
+
+Voir [Utilisation locale ou sur une VM distante](#utilisation-locale-ou-sur-une-vm-distante)
+et le [guide rlidar2map](tools/README_rlidar2map.md).
 
 Tout ce qui suit vaut pour le binaire comme pour le script, remplacez simplement
 `python lidar2map.py` par `lidar2map.exe` (Windows), `./lidar2map` (Linux) ou
