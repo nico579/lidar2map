@@ -34,9 +34,8 @@ VM de calcul. Les trois programmes sont autonomes sur Windows, Linux et macOS :
 Les clients distants ne nécessitent pas Python sur l'ordinateur de départ. Ils
 sont publiés avec lidar2map sur la [page Releases](https://github.com/nico579/lidar2map/releases).
 Le guide [Exécuter lidar2map sur une VM](tools/README_rlidar2map.md) explique le
-choix GUI/CLI, la connexion SSH, le compte RDP et les plateformes prises en
-charge. Les détails pour les gros calculs headless figurent aussi dans la
-section [Exécution distante avancée](#exécution-distante-avancée).
+choix GUI/CLI, la connexion SSH, le compte RDP, les calculs longs et les
+plateformes prises en charge.
 
 ---
 
@@ -382,45 +381,10 @@ python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
 Le format `map` convertit le GeoJSON IGN en carte Mapsforge `.map` (lisible par Locus Map ; OsmAnd utilise son propre format vectoriel OBF et ne lit pas le Mapsforge, mais sa carte offline intégrée fournit déjà la couche vectorielle : sur OsmAnd, il suffit de poser le raster LiDAR par-dessus en overlay).
 
-### Exécution distante headless avec `rlidar2map_CLI`
+### Utilisation distante
 
-Pour les calculs longs sans bureau, utilisez `rlidar2map_CLI` : il installe lidar2map
-sur la VM, lance le calcul dans `tmux`, surveille son état et synchronise les résultats.
-Le détail de l'installation et des options se trouve dans le [guide des deux clients
-distants](tools/README_rlidar2map.md).
-
-Le [chapitre sur l'utilisation distante](#utilisation-locale-ou-sur-une-vm-distante)
-présente aussi l'alternative graphique `rlidar2map_GUI`. Pour les calculs
-headless, `rlidar2map_CLI` installe lidar2map sur la VM si nécessaire, le lance
-dans un `tmux` détaché, surveille son code de sortie persistant et recopie
-progressivement le dossier de résultats isolé vers l'ordinateur local (`rsync`
-s'il est disponible, sinon un flux SSH incrémental avec empreintes et SHA-256).
-
-```bash
-rlidar2map_CLI --session var-83 user@host -- \
-  --lidar --laz --zone-department 83 --download --split-width 5 \
-  --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-```
-
-Les arguments lidar2map sont fournis séparément après `--`. La surveillance est le comportement par défaut : une alerte terminal très visible signale le succès, un code de sortie non nul ou la disparition anormale de tmux, après une dernière synchronisation. `Ctrl-C` n'arrête que le moniteur local. Relance la même commande — ou simplement `rlidar2map_CLI --session var-83 user@host` — pour relire l'état distant persistant et reprendre la copie sans lancer un second calcul. Une session terminée n'est jamais relancée implicitement : utilise un nouveau `--session`, ou passe `--restart` avec les nouveaux arguments lidar2map. Les résultats arrivent sous `vm-results/<hôte>/<session>/<run-id>/` ; `--local-dir` change cette racine locale, `--interval` change l'intervalle de 30 secondes, et `--detach` lance puis rend la main.
-
-L'alerte terminal n'est en direct que tant que le moniteur local tourne. S'il a été fermé, tmux conserve quand même l'état final ; la prochaine reconnexion effectue la copie finale en attente et signale immédiatement le succès ou l'échec.
-
-Une fois un run terminé ou en échec, libère son espace distant avec `rlidar2map_CLI --session var-83 --purge-remote user@host`. Cette commande refuse une session encore active, refait obligatoirement une dernière synchronisation, puis supprime uniquement l'état, le log et les résultats du run courant sur la VM. Si la copie échoue, rien n'est supprimé. La copie et le manifeste locaux sont conservés ; les archives historiques créées par `--restart` ne sont jamais touchées implicitement. Si le contrôleur local est interrompu pendant la purge, relance exactement cette commande : le manifeste local et un reçu distant permettent de reprendre l'opération sans viser un nouveau run. Les dossiers partagés `cache/`, `production/`, le dépôt, le venv et le runtime ne sont jamais supprimés par cette option.
-
-La surveillance n'analyse pas le texte de `run.log` ni les noms des livrables. Le wrapper tmux publie séparément un petit état atomique et versionné (`run_id`, statut, code de sortie et horodatages). Les livrables en construction finissent par `.part` et sont ignorés ; après renommage atomique, le fallback SSH attend deux inventaires identiques pendant un run actif, puis ne transfère que les fichiers nouveaux ou modifiés. Chaque flux est vérifié par SHA-256 et publié atomiquement en local. Le journal est copié tel quel une seule fois à l'état terminal.
-
-Utilise un `--session` différent pour chaque calcul concurrent sur une même VM. Le contrôleur réserve `--output-dir` afin d'isoler résultats et logs de chaque session. Pour une adresse de VM volontairement recyclée, utilise l'option explicite `--reset-host-key`. L'authentification SSH par clé est recommandée quel que soit le fournisseur de la VM.
-
-**Sharder une zone sur plusieurs machines.** `--block i/M` restreint un run au i-ème des M blocs géographiques égaux de la zone. Lance la même commande sur M machines, en ne changeant que `i` et le host (donc M IP distinctes et M numéros de bloc distincts, un couple par machine) :
-
-```bash
-rlidar2map_CLI vm1 -- --lidar --laz --zone-department 83 --block 1/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-rlidar2map_CLI vm2 -- --lidar --laz --zone-department 83 --block 2/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-rlidar2map_CLI vm3 -- --lidar --laz --zone-department 83 --block 3/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-```
-
-Les M blocs pavent la zone exactement (sans recouvrement), et `--block` compose avec `--split-width` (chaque machine re-découpe SON bloc pour le disque). L'intérêt : le download LiDAR national est throttlé par IP (~3 parallèles pour l'IGN), donc M machines sur M IP multiplient la bande passante agrégée et cassent un wall-clock qu'une seule grosse VM ne peut pas battre. Chaque contrôleur recopie progressivement les sorties de sa machine sous `vm-results/` ; ce sont des MBTiles séparées que Locus Map réassemble tout seul (géoréférencées, jointives).
+Les deux clients distants et toutes les options de calcul headless sont documentés
+dans le [guide rlidar2map](tools/README_rlidar2map.md).
 
 ## Providers LiDAR, ajouter un pays
 

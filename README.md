@@ -35,8 +35,7 @@ programs are standalone on Windows, Linux and macOS:
 The remote clients require no Python installation on the originating computer.
 They are published alongside lidar2map on the [Releases page](https://github.com/nico579/lidar2map/releases).
 The [Run lidar2map on a VM](tools/README_rlidar2map.md) guide covers the GUI/CLI
-choice, SSH connection, RDP account, and supported platforms. Large headless
-runs are also covered under [Advanced remote execution](#advanced-remote-execution).
+choice, SSH connection, RDP account, long-running jobs, and supported platforms.
 
 ---
 
@@ -381,44 +380,10 @@ python lidar2map.py --vector --zone-department 83 \
     --layer routes batiments --file-formats gz map```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map; OsmAnd uses its own OBF vector format and cannot read Mapsforge files, but its built-in offline map already provides the vector layer, so on OsmAnd simply put the LiDAR raster on top as an overlay).
 
-### Headless remote execution with `rlidar2map_CLI`
+### Remote use
 
-For long-running jobs without a desktop, use `rlidar2map_CLI`: it installs lidar2map
-on the VM, starts the run in `tmux`, monitors its state, and synchronizes the results.
-Installation and options are documented in the [two remote clients guide](tools/README_rlidar2map.md).
-
-The [remote-use chapter](#local-use-or-a-remote-vm) also presents the graphical
-`rlidar2map_GUI` alternative. For headless work, `rlidar2map_CLI` installs
-lidar2map on the VM when needed, launches it in a detached `tmux`, supervises
-the persisted exit status, and progressively mirrors the run's isolated output
-directory back to the local computer (`rsync` when available, otherwise a
-fingerprinted incremental SSH stream with SHA-256 verification).
-
-```bash
-rlidar2map_CLI --session var-83 user@host -- \
-  --lidar --laz --zone-department 83 --download --split-width 5 \
-  --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-```
-
-Pass each lidar2map argument separately after `--`. Monitoring is the default: a very visible terminal alert reports success, a non-zero exit, or a vanished tmux session, after one final synchronization. `Ctrl-C` stops only the local monitor. Run the same command again — or just `rlidar2map_CLI --session var-83 user@host` — to reconnect to the persisted remote state and continue synchronization without launching a second process. A completed session is not relaunched implicitly: use a new `--session`, or pass `--restart` with the new lidar2map arguments. Results land below `vm-results/<host>/<session>/<run-id>/`; `--local-dir` changes that local root, `--interval` changes the 30-second polling interval, and `--detach` launches and returns immediately.
-
-The terminal alert is live only while the local monitor is running. If it was closed, tmux still records the terminal state and the next reconnect performs the pending final copy and immediately reports success or failure.
-
-Once a run has succeeded or failed, reclaim its remote space with `rlidar2map_CLI --session var-83 --purge-remote user@host`. This command refuses an active session, performs one mandatory final synchronization, then removes only the current run's state, log and results from the VM. Nothing is deleted when that copy fails. The local copy and manifest remain intact; historical archives created by `--restart` are never removed implicitly. If the local controller is interrupted during the purge, run the exact same command again: the local manifest and a remote receipt safely resume the operation without targeting a newer run. Shared `cache/` and `production/` trees, the source checkout, venv and runtime are never removed by this option.
-
-Monitoring does not parse `run.log` text or deliverable names. The tmux wrapper publishes a separate small, atomic and versioned state (`run_id`, status, exit code and timestamps). Deliverables under construction end in `.part` and are ignored; after atomic publication, the SSH fallback waits for two identical inventories during an active run and transfers only new or modified files. Each stream is verified with SHA-256 and atomically published locally. The log is copied as-is once the run is terminal.
-
-Use a different `--session` for concurrent runs on the same VM. The controller owns `--output-dir` so every session has separate remote results and logs. For an intentionally recycled VM address, use the explicit `--reset-host-key` option. Key-based SSH authentication is recommended with every VM provider.
-
-**Shard one area across several machines.** `--block i/M` restricts a run to the i-th of M equal geographic blocks of the zone. Launch the same command on M machines, changing only `i` and the host (so M distinct IPs and M distinct block numbers, one pair per machine):
-
-```bash
-rlidar2map_CLI vm1 -- --lidar --laz --zone-department 83 --block 1/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-rlidar2map_CLI vm2 -- --lidar --laz --zone-department 83 --block 2/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-rlidar2map_CLI vm3 -- --lidar --laz --zone-department 83 --block 3/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
-```
-
-The M blocks tile the zone exactly (no overlap), and `--block` composes with `--split-width` (each machine still chunks its own block for disk). The point: the national LiDAR download is throttled per IP (~3 parallel for IGN), so M machines on M IPs multiply the aggregate bandwidth and cut a wall-clock that a single bigger VM cannot beat. Each controller progressively collects its machine's output below `vm-results/`; the resulting MBTiles are separate files that Locus Map reassembles seamlessly (geo-referenced, adjacent).
+Both remote clients and all headless-run options are documented in the
+[rlidar2map guide](tools/README_rlidar2map.md).
 
 ## LiDAR providers, adding a country
 

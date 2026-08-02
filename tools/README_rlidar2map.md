@@ -143,6 +143,45 @@ sur la VM :
 rlidar2map_CLI --session paris --purge-remote root@192.0.2.10
 ```
 
+### Calculs longs, reprise et exécution parallèle
+
+Les arguments lidar2map sont fournis séparément après `--`. La surveillance est
+active par défaut : le client attend la fin du calcul dans `tmux`, signale le
+succès ou l'échec après une dernière synchronisation, et recopie progressivement
+les résultats. `Ctrl-C` n'arrête que le moniteur local. Relancer la même commande,
+ou simplement `rlidar2map_CLI --bundle --session paris root@192.0.2.10`, relit
+l'état distant sans lancer un second calcul. Une session terminée n'est jamais
+relancée implicitement : utiliser un nouveau `--session`, ou `--restart` avec de
+nouveaux arguments.
+
+Les résultats sont placés sous `vm-results/<hôte>/<session>/<run-id>/`.
+`--local-dir` change cette racine, `--interval` règle la fréquence de surveillance
+et `--detach` lance le calcul puis rend immédiatement la main. Si le moniteur est
+fermé, `tmux` conserve l'état final et la prochaine reconnexion effectue la copie
+finale en attente. Le wrapper publie un état atomique (identifiant, statut, code
+de sortie et horodatages) ; les fichiers `.part` sont ignorés, les transferts sont
+vérifiés par SHA-256 et le journal est copié à l'état terminal.
+
+Utiliser un `--session` différent pour chaque calcul concurrent sur une même VM.
+Le contrôleur isole les résultats et les journaux avec `--output-dir`. Pour une
+adresse IP réattribuée à une autre VM, utiliser explicitement `--reset-host-key`.
+L'authentification par clé SSH est recommandée quel que soit le fournisseur.
+
+Pour répartir une zone sur plusieurs machines, `--block i/M` sélectionne le
+`i`-ème bloc parmi `M` blocs géographiques sans recouvrement :
+
+```bash
+rlidar2map_CLI vm1 -- --lidar --laz --zone-department 83 --block 1/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
+rlidar2map_CLI vm2 -- --lidar --laz --zone-department 83 --block 2/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
+rlidar2map_CLI vm3 -- --lidar --laz --zone-department 83 --block 3/3 --download --split-width 5 --cleanup --min-free-gb 20 --shading lrm:sigma=4 --file-formats mbtiles
+```
+
+Chaque machine traite son bloc et synchronise ses fichiers sous `vm-results/`.
+`--block` se combine avec `--split-width` : chaque machine peut encore découper
+son propre bloc pour limiter l'espace disque. Des IP distinctes permettent aussi
+de multiplier les téléchargements parallèles lorsque le portail national limite
+le débit par adresse.
+
 ## Construction et publication GitHub
 
 La matrice de `.github/workflows/release.yml` construit les deux clients avec
