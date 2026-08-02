@@ -158,7 +158,23 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 - **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*. Les deux se rendent aussi en **`transparent-raster`** : les couches choisies (chemins, routes, cours d'eau...) dessinées sur tuiles transparentes (.sqlitedb), à superposer au relief LiDAR dans OsmAnd (qui ne sait pas superposer du vectoriel nativement)
 
-- **Sorties** : MBTiles (universel), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd ; pour Locus, utiliser MBTiles), Mapsforge `.map` (Locus Map), `.sqlitedb` transparent en superposition (`transparent-raster`)
+- **Sorties** : voir le tableau de compatibilité détaillé ci-dessous. Les formats produits par lidar2map ont des usages différents : MBTiles pour les cartes raster polyvalentes (notamment Locus), SQLiteDB pour OsmAnd, RMAP pour TwoNav/CompeGPS, Mapsforge `.map` pour les cartes vectorielles Locus/OruxMaps, et GeoJSON pour l'échange de données avec QGIS ou les applications qui acceptent les overlays GeoJSON.
+
+### Formats de sortie et compatibilité
+
+Les formats produits ne sont pas interchangeables : choisissez celui qui correspond à
+l'application cible. Le tableau tient compte de la manière dont lidar2map écrit chaque
+format (raster tuilé, vectoriel Mapsforge ou GeoJSON d'échange).
+
+| Format produit | Type écrit par lidar2map | Applications principales | Recommandation |
+|---|---|---|---|
+| **MBTiles** (`.mbtiles`) | Raster tuilé XYZ/TMS (JPEG/PNG ; alpha possible sur les bords) | **Locus Map**, **OruxMaps**, **AlpineQuest**, **Guru Maps**, QGIS | Format raster le plus polyvalent ; recommandé pour Locus. OsmAnd ne l'utilise pas directement comme carte raster : demander aussi `sqlitedb` ou convertir. |
+| **SQLiteDB OsmAnd/RMaps** (`.sqlitedb`) | Raster tuilé dans le schéma SQLite attendu par OsmAnd | **OsmAnd** (carte et overlay), RMaps ; import possible dans Guru Maps et d'autres applications RMaps | Format recommandé pour OsmAnd. `transparent-raster` écrit des tuiles PNG avec alpha, prévues pour une superposition OsmAnd. Pour Locus, préférer le MBTiles produit par lidar2map. |
+| **RMAP** (`.rmap`) | Raster géoréférencé, tuiles JPEG (format propriétaire) | **TwoNav / CompeGPS**, **OruxMaps**, AlpineQuest ; support limité dans Locus | À choisir principalement pour TwoNav/CompeGPS. La conversion lidar2map ré-encode les tuiles en JPEG conformément au format RMAP. |
+| **Mapsforge** (`.map`) | Carte vectorielle OSM/IGN écrite au format Mapsforge | **Locus Map** et **OruxMaps** | À placer dans le dossier des cartes vectorielles. Ce n'est pas un raster ; OsmAnd utilise son propre format vectoriel `.obf` et ne lit pas ce fichier. |
+| **GeoJSON** (`.geojson` ou `.geojson.gz`) | Données vectorielles (chemins, routes, rivières, bâtiments...) | **Locus Map** (import d'objets), **Guru Maps** (overlay), **QGIS**, geojson.io et les outils SIG | Locus peut importer les entités, mais le GeoJSON n'est pas une carte hors-ligne affichable comme un `.map` ou un MBTiles. Décompresser le `.gz` avant un import dans une application qui ne gère pas gzip. Pour une vraie carte vectorielle Locus, utiliser Mapsforge `.map`. |
+
+Références : [Locus — formats externes](https://docs.locusmap.app/doku.php/manual%3Auser_guide%3Amaps_external), [OsmAnd — formats de fichiers](https://www.osmand.net/docs/technical/osmand-file-formats/), [TwoNav — RMAP](https://manual.twonav.com/manual/Manual_TwoNav_Tablet_22_en.pdf), [OruxMaps](https://www.oruxmaps.com/index_en.html), [AlpineQuest](https://www.alpinequest.net/en/help/v2/maps/file-based-select), [Guru Maps](https://gurumaps.app/docs/intro).
 
 - **Envoi vers le téléphone** : après génération, le bouton 📲 de la GUI (ou `--serve --zone-name X` en CLI) sert les cartes sur le WiFi local et affiche un QR code. On scanne avec le téléphone puis on télécharge : pas de câble, pas de cloud, rien ne sort du réseau. Dans Locus, la méthode fiable est **Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers** ; « Ouvrir avec » peut aussi fonctionner selon Android. (Android peut avertir que le téléchargement n'est pas sécurisé : choisir Enregistrer, c'est un simple transfert local.)
 

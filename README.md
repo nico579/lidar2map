@@ -157,7 +157,23 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
 
 - **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*. Both can also render as **`transparent-raster`**: the selected layers (paths, roads, rivers...) drawn on transparent tiles (.sqlitedb), to float above the LiDAR relief as an OsmAnd overlay (OsmAnd cannot overlay vector data natively)
 
-- **Outputs**: MBTiles (universal), RMAP (CompeGPS / TwoNav), SQLiteDB (OsmAnd; for Locus use MBTiles), Mapsforge `.map` (Locus Map), transparent overlay `.sqlitedb` (`transparent-raster`)
+- **Outputs**: see the compatibility table below. lidar2map writes different formats for different uses: MBTiles for versatile tiled rasters (especially Locus), SQLiteDB for OsmAnd, RMAP for TwoNav/CompeGPS, Mapsforge `.map` for Locus/OruxMaps vector maps, and GeoJSON for QGIS or apps accepting GeoJSON overlays.
+
+### Output formats and compatibility
+
+The generated formats are not interchangeable: choose the one matching the target
+application. The table reflects how lidar2map writes each format (tiled raster,
+Mapsforge vector map, or interchange GeoJSON).
+
+| Generated format | Type written by lidar2map | Main applications | Recommendation |
+|---|---|---|---|
+| **MBTiles** (`.mbtiles`) | XYZ/TMS tiled raster (JPEG/PNG; alpha possible at edges) | **Locus Map**, **OruxMaps**, **AlpineQuest**, **Guru Maps**, QGIS | Most versatile raster format; recommended for Locus. OsmAnd does not use it directly as a raster map: request `sqlitedb` too or convert it. |
+| **OsmAnd/RMaps SQLiteDB** (`.sqlitedb`) | Tiled raster in OsmAnd's expected SQLite schema | **OsmAnd** (map and overlay), RMaps; importable by Guru Maps and other RMaps-compatible apps | Recommended for OsmAnd. `transparent-raster` writes alpha-transparent PNG tiles intended for OsmAnd overlays. Prefer lidar2map's MBTiles output for Locus. |
+| **RMAP** (`.rmap`) | Georeferenced raster with JPEG tiles (proprietary format) | **TwoNav / CompeGPS**, **OruxMaps**, AlpineQuest; limited support in Locus | Mainly for TwoNav/CompeGPS. lidar2map re-encodes tiles as JPEG as required by RMAP. |
+| **Mapsforge** (`.map`) | OSM/IGN vector map in Mapsforge format | **Locus Map** and **OruxMaps** | Put it in the app's vector-map directory. It is not a raster; OsmAnd uses its own `.obf` vector format and cannot read it. |
+| **GeoJSON** (`.geojson` or `.geojson.gz`) | Vector data (paths, roads, rivers, buildings...) | **Locus Map** (data import), **Guru Maps** (overlay), **QGIS**, geojson.io, GIS tools | Locus can import the features, but GeoJSON is not an offline map displayed like `.map` or MBTiles. Decompress `.gz` before importing into an app that does not handle gzip. For a real Locus vector map, use Mapsforge `.map`. |
+
+References: [Locus — external formats](https://docs.locusmap.app/doku.php/manual%3Auser_guide%3Amaps_external), [OsmAnd — file formats](https://www.osmand.net/docs/technical/osmand-file-formats/), [TwoNav — RMAP](https://manual.twonav.com/manual/Manual_TwoNav_Tablet_22_en.pdf), [OruxMaps](https://www.oruxmaps.com/index_en.html), [AlpineQuest](https://www.alpinequest.net/en/help/v2/maps/file-based-select), [Guru Maps](https://gurumaps.app/docs/intro).
 
 - **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan and download: no cable, no cloud, nothing leaves your network. In Locus, the reliable method is **Map Manager → Import map → system file manager**; "Open with" may also work depending on Android. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
 
