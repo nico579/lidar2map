@@ -4208,6 +4208,52 @@ def _comprimer_dalle_deflate(chemin):
               f"{type(_e_cmp).__name__}: {_e_cmp}", flush=True)
 
 
+# Instrumentation R1#6 (LIDAR2MAP_LAZ_PROFILE=1) : mesure le temps-mur DOWNLOAD
+# vs CONVERSION (post_fetch CSF/DFM) par dalle, pour décider du découplage des
+# pools (aujourd'hui la conversion tourne DANS la tâche de download = pool
+# partagé, donc --laz-parallel est bridé au plafond de download). No-op quand la
+# variable n'est pas posée. Accumulateur thread-safe (appelé depuis le pool de dl).
+_LAZ_PROFILE = os.environ.get(
+    "LIDAR2MAP_LAZ_PROFILE", "").strip() not in ("", "0", "false", "False", "no")
+_laz_prof_lock = threading.Lock()
+_laz_prof = {"dl_n": 0, "dl_s": 0.0, "conv_n": 0, "conv_s": 0.0, "conv_max": 0.0}
+
+
+def _laz_prof_add(dl_s=None, conv_s=None):
+    """Accumule un temps de download et/ou de conversion (R1#6). No-op si off."""
+    if not _LAZ_PROFILE:
+        return
+    with _laz_prof_lock:
+        if dl_s is not None:
+            _laz_prof["dl_n"] += 1
+            _laz_prof["dl_s"] += dl_s
+        if conv_s is not None:
+            _laz_prof["conv_n"] += 1
+            _laz_prof["conv_s"] += conv_s
+            _laz_prof["conv_max"] = max(_laz_prof["conv_max"], conv_s)
+
+
+def _laz_prof_resume(wall_s, n_dl_workers, laz_parallel):
+    """Résumé profiling R1#6 : cumuls download/conversion, temps-mur ACTUEL (pool
+    couplé) et borne théorique d'un modèle DÉCOUPLÉ pipeliné
+    max(dl/workers, conv/laz_parallel). Le rapport des deux = gain potentiel."""
+    if not _LAZ_PROFILE:
+        return
+    with _laz_prof_lock:
+        p = dict(_laz_prof)
+    if p["dl_n"] == 0 and p["conv_n"] == 0:
+        return
+    dl, conv = p["dl_s"], p["conv_s"]
+    borne = max(dl / max(n_dl_workers, 1), conv / max(laz_parallel, 1))
+    print(f"  [PROFILE R1#6] download {p['dl_n']} dalles, cumul {dl:.0f}s "
+          f"({dl / max(p['dl_n'], 1):.1f}s/dalle) | conversion {p['conv_n']}, "
+          f"cumul {conv:.0f}s ({conv / max(p['conv_n'], 1):.1f}s/dalle, "
+          f"max {p['conv_max']:.1f}s)")
+    print(f"  [PROFILE R1#6] mur actuel {wall_s:.0f}s @ {n_dl_workers} dl-workers, "
+          f"laz_parallel={laz_parallel} | borne découplé ~{borne:.0f}s "
+          f"(gain potentiel x{wall_s / max(borne, 1e-9):.1f})")
+
+
 def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=False):
     """Télécharge une dalle depuis son URL WMS fournie par le TMS IGN.
 
@@ -4239,8 +4285,10 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
                         print(f"  WARN pre_download {nom}: "
                               f"{type(_e_pre).__name__}: {_e_pre}", flush=True)
                 if not _materialise:
+                    _t_dl = time.time()
                     taille = _download_to_tmp(
                         url_wms, chemin_part, timeout=(10, 45))
+                    _laz_prof_add(dl_s=time.time() - _t_dl)   # R1#6 profiling
                     if taille == 0:
                         # 404 propre. Provider à découverte EXACTE (index WFS/
                         # STAC/registre : dalle promise) → erreur et retry.
@@ -4257,7 +4305,9 @@ def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=F
                             raise IOError(
                                 f"server error payload: {_head[:120]!r}")
                         return "absent"
+                    _t_cv = time.time()
                     _post_fetch_si_besoin(chemin_part)
+                    _laz_prof_add(conv_s=time.time() - _t_cv)   # R1#6 profiling
                 if not _valider_tif_dalle(chemin_part):
                     raise IOError(
                         "GeoTIFF invalide après écriture "
@@ -12651,6 +12701,7 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     if nb_total > 0:
         print()  # fin barre
         print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
+        _laz_prof_resume(time.time() - t0_dl, _dl_workers, _lp)   # R1#6 profiling
 
     # Invariant (miroir WMTS, revue 2026-07-10) : ne JAMAIS continuer sur une
     # couverture trouée. Sans ce garde, les ombrages/exports étaient générés
