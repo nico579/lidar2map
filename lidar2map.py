@@ -12212,6 +12212,14 @@ Examples:
                             resp.headers.get("content-length", 0))
                         chunk = 65536
                         while True:
+                            if _stop_event.is_set():
+                                # R2#42 : consulter l'event À CHAQUE bloc. Avant, la
+                                # boucle l'ignorait : sur un PBF de 4 Go (France
+                                # entière) le 1er Ctrl+C posait juste l'event puis le
+                                # download continuait ; il fallait un 2e Ctrl+C (sortie
+                                # sèche du handler, .part orphelin). Idiome _stop_event
+                                # des ~30 autres boucles interruptibles.
+                                raise KeyboardInterrupt("PBF Geofabrik download interrupted")
                             data = resp.read(chunk)
                             if not data:
                                 break
@@ -12245,6 +12253,15 @@ Examples:
                         pbf = None
                     else:
                         pbf_part.replace(pbf)
+                except KeyboardInterrupt:
+                    # R2#42 : nettoyer le .part partiel puis laisser l'interruption
+                    # remonter (arrêt propre du run, comme la branche OSError). Sans
+                    # ce cleanup, le .part serait laissé et un retry le verrait comme
+                    # une reprise valide (il est < seuil ou != content-length → il est
+                    # de toute façon jeté par la garde de complétude, mais autant ne
+                    # pas laisser de résidu).
+                    pbf_part.unlink(missing_ok=True)
+                    raise
                 except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e_dl:
                     print(f"\n  ERROR downloading PBF ({type(e_dl).__name__}) : {e_dl}")
                     pbf_part.unlink(missing_ok=True)
