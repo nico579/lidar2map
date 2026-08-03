@@ -10,7 +10,7 @@ A self-contained tool (standalone executables for Windows / macOS / Linux, no
 Python required; also runs as a single Python script) that downloads public
 national LiDAR, computes relief visualizations tuned for archaeological
 prospection, and generates offline smartphone maps (MBTiles, RMAP, SQLiteDB,
-Mapsforge). See the dedicated [LiDAR coverage and countries](#lidar-coverage--evaluated-sources)
+Mapsforge). See the dedicated [LiDAR coverage and countries](#lidar-coverage-and-evaluated-sources)
 chapter; IGN raster/vector maps remain France-only.
 
 ![Same place: satellite, OpenStreetMap, then LiDAR relief (SVF)](screenshots/hero.png)
@@ -19,7 +19,7 @@ chapter; IGN raster/vector maps remain France-only.
 
 > ⚠️ **Status**: personal project, publicly released. Heavily tested on Windows 10/11. Linux and macOS tested partially, known cases + cross-OS troubleshooting in the *Troubleshooting* section of [BUILD.md](BUILD.md). Feedback welcome via [GitHub issues](https://github.com/nico579/lidar2map/issues).
 >
-> **Note:** the GUI auto-detects your language (English/French, with a manual toggle) and the CLI flags and `--help` are in English. The former French flag names still work as aliases, so older example commands keep working.
+> **Note:** the GUI auto-detects your language (English/French, with a manual toggle); the CLI flags and `--help` are in English.
 
 ## Local use or a remote VM
 
@@ -41,12 +41,27 @@ choice, SSH connection, RDP account, long-running jobs, and supported platforms.
 
 ## Who is it for?
 
-- **Amateur archaeologists** interested in LiDAR prospection: the tool covers many [countries and national sources](#lidar-coverage--evaluated-sources), with the same relief computations (multi, SVF, openness, LRM, RRIM, VAT) from one provider to the next.
+- **Amateur archaeologists** interested in LiDAR prospection: the tool covers many [countries and national sources](#lidar-coverage-and-evaluated-sources), with the same relief computations (multi, SVF, openness, LRM, RRIM, VAT) from one provider to the next.
 - **French hikers** who want offline IGN topo maps on their phone (Locus Map Pro, OsmAnd+): the IGN raster/vector tabs remain France-only.
 - **Landscape surveyors** who combine historical orthophotos (1950-1995, France) with a DEM to spot human remains before agricultural land abandonment erases them.
 - **Cavers / explorers** who need accurate base maps in areas not covered by mainstream apps.
 
 The tool is **not** intended for metal detecting. The code strictly respects the open licenses involved (Etalab FR, CC BY 4.0 NO, CC-0 NL, BGDI CH).
+
+## Main features
+
+- **Integrated remote execution**: `rlidar2map_GUI` prepares the RDP desktop; `rlidar2map_CLI` runs headless jobs with monitoring, reconnection, and result synchronization.
+- **Automatic bootstrap**: the script installs its Python dependencies and mapping tools on demand.
+- **Memory streaming**: large areas are processed without loading all data into RAM.
+- **Clean stop and resume**: `Ctrl+C` can wait for the current chunk, and a manifest tracks completed chunks for resumption.
+- **Splitting and disk control**: `--split-width`, `--cleanup`, and `--min-free-gb` keep large jobs manageable.
+- **Crash-safe history**: each run remains visible with its state and logs.
+- **Multi-provider LiDAR**: national sources are isolated in `providers/<code>.py`; the [provider table](#available-providers) is the exhaustive list.
+- **Interactive GUI**: five processing types, validation, live log, history, and processing queue.
+- **Historical orthophotos**: compare current LiDAR relief with older landscapes.
+- **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps over local WiFi and displays a QR code. Nothing leaves the network. In Locus, use **Map Manager → Import map → system file manager**.
+- **Processing queue**: in the GUI, `＋ Queue` stacks several areas and `Run queue` processes them unattended; one failed job does not stop the following jobs.
+- **Index sheet**: every run creates a `<product>_planche.png` showing the extent and output cells. `--index-sheet DIRECTORY` rebuilds it from an existing project and `--no-index-map` disables it.
 
 ## What it produces
 
@@ -147,8 +162,8 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   | Rectangular building reappears (speckly) | Same walls, cleaner background |
 
   LiDAR sources: choose `--provider <code>` in the CLI or use the GUI provider
-  selector. The [LiDAR coverage](#lidar-coverage--evaluated-sources) and
-  [provider table](#lidar-providers--adding-a-country) are the single reference
+  selector. The [LiDAR coverage](#lidar-coverage-and-evaluated-sources) and
+  [provider table](#available-providers) are the single reference
   for countries, resolutions, CRS, access mechanisms, and API keys.
 
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
@@ -174,15 +189,9 @@ Mapsforge vector map, or interchange GeoJSON).
 
 References: [Locus — external formats](https://docs.locusmap.app/doku.php/manual%3Auser_guide%3Amaps_external), [OsmAnd — file formats](https://www.osmand.net/docs/technical/osmand-file-formats/), [TwoNav — RMAP](https://manual.twonav.com/manual/Manual_TwoNav_Tablet_22_en.pdf), [OruxMaps](https://www.oruxmaps.com/index_en.html), [AlpineQuest](https://www.alpinequest.net/en/help/v2/maps/file-based-select), [Guru Maps](https://gurumaps.app/docs/intro).
 
-- **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps on your local WiFi and shows a QR code. Scan and download: no cable, no cloud, nothing leaves your network. In Locus, the reliable method is **Map Manager → Import map → system file manager**; "Open with" may also work depending on Android. (Android may warn the download is insecure: choose Save, it is a plain local transfer.)
-
-- **Processing queue**: in the GUI, stack several zones with the `＋ Queue` button, then `Run queue` runs them one after another, unattended. A failed job doesn't stop the queue (each item shows its status), so you can line up a batch of areas and walk away. The CLI equivalent is chaining commands in a shell script.
-
-- **Index sheet**: each run drops a `<product>_planche.png` next to the deliverables, showing the coverage extent, the real department outline (with a locator inset when the view is zoomed in), and the numbered chunk cells when the area was split. One sheet per map product (each shading gets its own); the vector layers of a run share a single sheet. Built by scanning the actual files (mbtiles/sqlitedb/geojson), so you can also regenerate it for any existing project folder with `--index-sheet DIR`, without re-running anything. Disable per-run with `--no-index-map`.
-
 ---
 
-## Installation and usage
+## Installation
 
 **Quick start: download the standalone executable for your OS from the [Releases page](https://github.com/nico579/lidar2map/releases), extract, run. No Python, no dependencies, nothing to install.**
 
@@ -314,55 +323,160 @@ the twin project [gpxsolar](https://github.com/nico579/gpxsolar)):
 - **With arguments → command-line computation** (headless, no window).
   Handy for scripting, running on a server, or reproducing an exact render.
 
-For running lidar2map on a VM, the two remote clients match those same uses:
-
-- **`rlidar2map_GUI` → remote graphical interface**: prepares XFCE/xrdp on
-  Ubuntu 24.04/26.04, installs lidar2map, and opens the RDP desktop.
-- **`rlidar2map_CLI` → remote headless processing**: starts the run in `tmux`,
-  monitors it, and synchronizes results back to the local computer.
-
-See [Local use or a remote VM](#local-use-or-a-remote-vm) and the
-[rlidar2map guide](tools/README_rlidar2map.md).
-
 Everything below applies to the binary as well as the script, just replace
 `python lidar2map.py` with `lidar2map.exe` (Windows), `./lidar2map` (Linux) or
 `LIDAR2MAP.app` (macOS).
 
-### Command-line examples
+### Complete CLI parameter reference
 
-> The flags below are English. The former French flag names still work as aliases, so older commands keep working.
+The tables list the canonical options exposed by the actual parsers.
+`python lidar2map.py <mode> --help` also prints mode-specific help.
+
+#### Modes
+
+| Parameter | Function |
+|---|---|
+| *(no argument)* | Opens the graphical interface. |
+| `-h`, `--help` | Prints help for the selected mode. |
+| `--version` | Prints the version and exits. |
+| `--lidar` | Downloads/processes LiDAR, computes relief visualizations, and generates raster maps. |
+| `--raster` | Downloads a raster layer from the provider (`fr-ign`, or `us-tnm` with `naip`). |
+| `--osm` | Generates an OSM Mapsforge map, GeoJSON, or transparent raster overlay. |
+| `--merge` | Merges several GeoJSON files. Requires `--source`. |
+| `--split` | Splits an existing MBTiles after generation. Requires `--source`. |
+| `--serve` | Shares one project's deliverables on the LAN with a URL and QR code. |
+| `--index-sheet DIR` | Regenerates only the index sheet of an existing project. |
+
+#### Area, provider, and directories
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--provider CODE` | `fr-ign` | Selects the LiDAR/raster source; codes are in the [provider table](#available-providers). |
+| `--zone-city NAME` | — | Geocodes a town with Nominatim. |
+| `--zone-gps LAT,LON` | — | WGS84 centre, for example `43.3156,6.0423`. |
+| `--zone-bbox W,S,E,N` | — | WGS84 extent in degrees. |
+| `--zone-width KM` | `20` | Side of the square around a town/GPS point, not its radius. |
+| `--zone-name NAME` | automatic | Project name; required with `--zone-gps` and `--zone-bbox`. |
+| `--cache-dir PATH` | `cache/` | Root of persistent tile, WMTS, PBF, and discovery-index caches. |
+| `--production-dir PATH` | `production/` | Reusable computed artifacts, notably TIFFs generated from LAZ. |
+| `--output-dir PATH` | `Projets/` | Deliverable root; the remote CLI reserves it to isolate sessions. |
+| `--tiles-dir PATH` | below project | Separate LiDAR tile cache. LiDAR mode only. |
+| `--api-key KEY` | environment variable supported | Provider key when required by the source. |
+| `--workers N` | `8` (`4` for IGN vector) | Parallel connections/tasks. |
+
+#### LiDAR download and LAZ mode
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--download` | off | Downloads missing tiles. |
+| `--download-compress` / `--no-download-compress` | on | Enables or disables DEFLATE compression of cached tiles. |
+| `--download-force` | off | Downloads already-cached tiles again. |
+| `--download-overwrite` | off | Overwrites and downloads cached data again; equivalent to `--download-force` in LiDAR mode. |
+| `--laz` | off | Selects the `-laz` provider twin to reconstruct standing structures from point clouds. |
+| `--laz-hmin M` | `0.4` | Minimum reinjected height with the `classes` ground base. |
+| `--laz-hmax M` | `2.5` | Maximum reinjected height with the `classes` ground base. |
+| `--laz-classes LIST` | `1,2,3,4,9,66` | Participating comma-separated LAS classes. |
+| `--laz-ground classes\|csf` | `classes` | Producer-class ground base or Cloth Simulation Filter. |
+| `--laz-csf-threshold M` | `0.5` | CSF point-to-cloth absorption distance. |
+| `--laz-csf-resolution M` | `0.5` | CSF cloth grid size. |
+| `--laz-csf-rigidness 1\|2\|3` | `1` | CSF rigidity for steep, intermediate, or flat terrain. |
+| `--laz-parallel N` | `1` | Concurrent LAZ conversions; allow roughly 3 GB RAM per conversion. |
+
+#### Relief visualizations
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--shadings TYPE...` | interactive | Types: `lrm vat e4mstp svf opos oneg rrim multi 315 045 135 225 slope`, plus `all`/`none`. |
+| `--shading TYPE[:k=v,...]` | repeatable | Adds a parameterized instance such as `svf:dist=100,gamma=1.5` or `lrm:sigma=10`. |
+| `--shading-preset auto\|micro\|standard\|landscape` | off | Adds a resolution-tuned SVF, openness, LRM, multi, and slope stack. |
+| `--shading-elevation DEG` | `25` | Sun elevation for directional/multidirectional hillshades. |
+| `--svf-conv flux\|rvt` | `flux` | Sky-View Factor convention. |
+| `--svf-dist M` | `20` | Horizon radius for SVF, openness, and composites. |
+| `--svf-gamma G` | `2.0` | Final gamma for SVF, openness, and VAT. |
+| `--svf-sweep` / `--no-svf-sweep` | on | Enables or disables the accelerated SVF kernel. |
+| `--shadings-overwrite` | off | Recomputes existing relief TIFFs. |
+| `--shadings-compress` | off | Compresses existing raw relief TIFFs. |
+
+Parameters accepted by `--shading`: `elevation` for `multi/315/045/135/225`;
+`conv,dist,gamma,sweep` for `svf`; `dist,gamma` for `opos/oneg/vat/e4mstp`;
+`sigma` for `lrm/rrim`; none for `slope`.
+
+#### Formats, tiles, and conversions
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--file-formats FMT...` | mode-dependent | LiDAR/raster: `mbtiles rmap sqlitedb`; OSM/vector/merge: `map geojson gz transparent-raster`. |
+| `--source PATH...` | — | Existing source: TIFF to tiled raster, MBTiles to RMAP, PBF to OSM, or multiple GeoJSON files with `--merge`. |
+| `--zoom-min N` | `13` LiDAR, `10` raster | Minimum tiled-map zoom. |
+| `--zoom-max N` | `18` LiDAR, `16` raster | Maximum tiled-map zoom. |
+| `--image-format auto\|jpeg\|png` | `auto` | Raster tile encoding. Edge tiles may remain alpha PNG. |
+| `--image-quality Q` | `85` | JPEG quality from 1 to 100. |
+| `--tiles-overwrite` | off | Regenerates existing MBTiles, SQLiteDB, RMAP, or Mapsforge files. |
+| `--index-map` / `--no-index-map` | on | Enables or disables `<product>_planche.png`. |
+| `--layer TAGS...` with `--osm` | default selection | OSM tags such as `highway=* waterway=* natural=water`. |
+| `--vector-simplify M` | automatic | Douglas-Peucker tolerance for vector and merge outputs. |
+
+#### Splitting, resumption, and disk space
+
+| Parameter | Mode | Function |
+|---|---|---|
+| `--split-cols N` | LiDAR/raster | Number of columns for splitting before processing. |
+| `--split-rows N` | LiDAR/raster | Number of rows for splitting before processing. |
+| `--split-width KM` | LiDAR/raster or `--split` | Splits into squares approximately `KM` km wide. |
+| `--block i/M` | LiDAR | Processes only block `i` of `M` to distribute an area across machines. |
+| `--cleanup` | LiDAR/raster | Deletes intermediates after each successful chunk. |
+| `--cleanup-keep-tiles` | LiDAR | With `--cleanup`, preserves shared downloaded tiles. |
+| `--min-free-gb GB` | LiDAR/raster | Clean exit code 3 before a chunk when free space falls below the threshold. |
+| `--cols N`, `--rows N` | `--split` | Grid used to split an existing MBTiles after generation. |
+
+#### Merge, sharing, and maintenance
+
+| Parameter | Mode | Function |
+|---|---|---|
+| `--output-file FILE` | `--merge` | Name of the merged GeoJSON. |
+| `--no-gz` | `--merge` | Writes uncompressed `.geojson` instead of `.geojson.gz`. |
+| `--zone-name NAME` | `--serve` | Project to share on the LAN. |
+| `--tiles-purge-invalid` | LiDAR | Removes undersized or invalid cached tiles. |
+| `--tiles-migrate` | LiDAR | Migrates the old flat cache into per-column directories. |
+| `--tiles-rename` | LiDAR | Renames tiles from the old convention to the current one. |
+| `--tiles-purge-out-of-zone` | LiDAR | Removes cached tiles outside the requested area. |
+| `--bootstrap=auto\|pip\|none` | startup | Automatic venv, installation in the active environment, or no installation. |
+| `--help-bootstrap` | startup | Prints bootstrap help. |
+| `--installer-deps` | maintenance/build | Installs all dependencies, including optional ones, then exits. |
+| `--telecharger-outils` | maintenance/build | Downloads the JRE, osmosis, and mapwriter, then exits. |
+| `--desinstaller` | maintenance | Removes the venv and installed tools, but not the script/executable. |
+| `--smoketest` | validation | Runs the built-in validation of the main pipelines. |
+
+#### France-specific parameters
+
+| Parameter | Function |
+|---|---|
+| `--zone-department NUM` | French département. Accepts one number, a list (`30,35,75`), or a range (`1-10`). |
+| `--zone-region SLUG` | French Geofabrik region; with `--osm`, keeps the complete regional PBF. |
+| `--vector` | Downloads IGN WFS layers and produces `geojson`, `gz`, `map`, or `transparent-raster`. |
+| `--layer NAME...` with `--vector` | IGN layers: `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
+| `--raster --provider fr-ign` | IGN WMTS raster. Default public layer: `planign`. |
+| `--layer LAYER` with IGN raster | Public alias or full WMTS identifier; professional Scan layers require a key. |
+| `--api-key KEY` with IGN raster | `cartes.gouv.fr` key for `scan25`, `scan25tour`, `scan100`, and `scanoaci`; unnecessary for public layers. |
+
+### Command-line examples
 
 **SVF relief + IGN topo map over a town (2 km zone around Garéoult, France):**
 ```bash
 python lidar2map.py --lidar --zone-city Gareoult --zone-width 2 \
-    --shadings multi svf --file-formats mbtiles```
-
-**Relief over Amsterdam (Netherlands, AHN4):**
-```bash
-python lidar2map.py --provider nl-ahn --lidar --download \
-    --zone-bbox 120000,486000,122000,488000 --zone-name amsterdam \
-    --shadings multi --file-formats mbtiles```
-
-**Relief over Geneva (Switzerland, swissALTI3D):**
-```bash
-python lidar2map.py --provider ch-swisstopo --lidar --download \
-    --zone-city Geneve --zone-width 2 \
-    --shadings svf --file-formats mbtiles```
-
-**Relief over Oslo (Norway, Kartverket):**
-```bash
-python lidar2map.py --provider no-kartverket --lidar --download \
-    --zone-city Oslo --zone-width 2 \
-    --shadings multi --file-formats mbtiles```
+    --shadings multi svf --file-formats mbtiles
+```
 
 **Historical 1950-1965 orthophoto over an archaeological survey area:**
 ```bash
 python lidar2map.py --raster --zone-bbox 6.0,43.3,6.1,43.4 \
-    --layer ortho_1950 --zoom-min 14 --zoom-max 18```
+    --layer ortho_1950 --zoom-min 14 --zoom-max 18
+```
 
 **OSM vector map (Mapsforge .map) for Locus, whole département:**
 ```bash
-python lidar2map.py --osm --zone-department 83 --file-formats map```
+python lidar2map.py --osm --zone-department 83 --file-formats map
+```
 
 **Whole region (`--zone-region`), available for all modes:**
 ```bash
@@ -371,32 +485,20 @@ python lidar2map.py --osm --zone-department 83 --file-formats map```
 python lidar2map.py --osm --zone-region provence-alpes-cote-d-azur
 # IGN vector: paths/routes for the whole region as GeoJSON + Locus .map
 python lidar2map.py --vector --zone-region provence-alpes-cote-d-azur \
-    --layer chemins --file-formats gz map```
+    --layer chemins --file-formats gz map
+```
 The slug is the one from [Geofabrik France](https://download.geofabrik.de/europe/france.html) (old-style regions: `provence-alpes-cote-d-azur`, `bretagne`, `corse`, `rhone-alpes`…). In OSM the region is processed as one block (the Geofabrik file is already regional, no per-département geocoding); for the raster/vector/lidar modes the area is the bbox enclosing all the départements of the region. An unknown slug lists the available regions.
 
 **IGN BD TOPO map (roads + buildings) as compressed GeoJSON + Mapsforge .map:**
 ```bash
 python lidar2map.py --vector --zone-department 83 \
-    --layer routes batiments --file-formats gz map```
+    --layer routes batiments --file-formats gz map
+```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map; OsmAnd uses its own OBF vector format and cannot read Mapsforge files, but its built-in offline map already provides the vector layer, so on OsmAnd simply put the LiDAR raster on top as an overlay).
 
-### Remote use
+## LiDAR providers and coverage
 
-Both remote clients and all headless-run options are documented in the
-[rlidar2map guide](tools/README_rlidar2map.md).
-
-## LiDAR providers, adding a country
-
-The provider abstraction lets you add a national LiDAR source without touching the core of the pipeline. Each provider lives in `providers/<code>.py` (~50-200 lines) and exposes:
-
-```python
-NAME, CODE, COUNTRY, LICENSE          # metadata
-CRS_NATIF, RESOLUTION_M, DALLE_KM     # geometry
-discover_dalles(bbox_wgs, bbox_natif, cache)  # → {name: url}
-# + helpers: dalle_filename, dalle_url, subdir_from_name, dalles_pour_bbox
-```
-
-The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnostic: it consumes the GeoTIFFs returned by `discover_dalles`, regardless of the native CRS or the index format used upstream.
+### Available providers
 
 | Code | Country | Dataset | Res. | Native CRS | Access & specifics |
 |---|---|---|---|---|---|
@@ -445,25 +547,7 @@ The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is provider-agnos
 
 Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI. **This table is the single reference list of providers**, the features section links here instead of duplicating it.
 
-To add a new country: copy the provider closest in paradigm (WCS, STAC, ArcGIS ImageServer, direct COG, FeatureServer catalogue…) and adapt URLs/CRS/naming format. The first provider for a new paradigm takes ~½ day; subsequent ones with the same pattern take ~1-2 h. The [provider roadmap](docs/lidar_providers_roadmap.md) documents every evaluated source, integrated and set-aside, with the precise reason and a paradigm-by-paradigm cheat sheet.
-
-## Main features
-
-- **Integrated remote execution**: `rlidar2map_GUI` prepares an XFCE/xrdp
-  desktop on an Ubuntu VM and opens the RDP connection; `rlidar2map_CLI` runs
-  headless jobs in `tmux` with monitoring, reconnection, and verified result
-  synchronization. See [Local use or a remote VM](#local-use-or-a-remote-vm).
-- **Auto-bootstrap**: no pre-installed dependency required. The script downloads on demand: Python deps (Pillow, pyproj, numpy, scipy, rasterio, whose wheels embed their own GDAL), Temurin 21 JRE, osmosis, mapwriter.
-- **Memory streaming**: département-scale processing without saturating RAM (ijson, rasterio windowed reads, tile-by-tile MBTiles generation).
-- **Clean cancellation**: `Ctrl+C` once → stops after the current chunk. `Ctrl+C` twice → immediate stop.
-- **Resume after interruption**: the same command resumes where it stopped, via a `.json` manifest that tracks completed chunks.
-- **Up-front splitting**: for large areas, split into an N×N grid **or ~K km squares** (`--split-width`, bounded chunk size, recommended at national scale), useful so you don't have to regenerate the whole area if something crashes. Per-chunk disk cleanup (`--cleanup`) and a free-space guard (`--min-free-gb`) for very large coverage.
-- **Crash-safe history**: each run is recorded *at startup* (status "running") then finalized to "ok" or "ko". A hard crash (kill -9, power loss) leaves the entry visible in the UI, the trace is kept for debugging.
-- **Multi-provider LiDAR**: a `providers/<code>.py` abstraction that lets you plug in any LiDAR source. Shipped providers: **FR** (IGN), **NL** (AHN), **CH** (swisstopo), **NO** (Kartverket), **DE** (Bavaria, NRW, Lower Saxony), **AT** (Tyrol, East Tyrol), **GB** (England, Wales), **BE** (Flanders WCS), **FI** (NLS WCS), **DK** (Datafordeler WCS), **IE** (GSI catalogue), **CA** (NRCan STAC), **NZ** (LINZ S3), **AU** (Geoscience Australia WCS), **US** (3DEP 1m, no account), covering varied API paradigms (TMS PBF, JSON FeatureCollection, STAC, ArcGIS FeatureServer/ImageServer, Metalink/`index.json`, **per-tile WCS `GetCoverage`**, S3 public COG). Providers can also expose **pre-computed shadings** (`PROVIDES_SHADINGS`), the pipeline downloads them directly instead of computing from the DEM (e.g. BE Flanders SVF 25 cm, multi-hillshade 25 cm). Adding a country = ~100-150 lines (see *LiDAR coverage & evaluated sources* below).
-- **Interactive GUI**: 6 tabs (LiDAR, IGN raster, IGN vector, OSM, Merge, Splitting), provider selector at the top of the form (IGN Raster/Vector tabs hidden automatically for non-FR providers), history of the last 50 commands with status badges, parameter validation, live log, error modal, and a processing queue (`＋ Queue`) to run several zones back-to-back.
-- **Historical orthophoto maps**: a unique combo for archaeology, SVF 2024 (current LiDAR) + 1950 ortho (before land abandonment) → reveals structures still legible 70 years later.
-
-## LiDAR coverage & evaluated sources
+### LiDAR coverage and evaluated sources
 
 ![lidar2map LiDAR coverage map](coverage.png)
 
@@ -472,28 +556,40 @@ The colour map summarizes the available national coverage. Interactive version
 
 🗺️ **[Interactive coverage map](coverage.geojson)**, rendered directly by GitHub, or droppable into [geojson.io](https://geojson.io) / QGIS to test a point.
 
-**Countries on the map** (national bare-earth LiDAR): France · Netherlands · Switzerland · Norway · Germany (Bavaria · NRW · Lower Saxony · Thuringia) · Austria (Tyrol) · United Kingdom (England · Wales · Scotland) · Belgium (Flanders) · Luxembourg · Finland · Denmark · Ireland · Czechia · Spain *(5 m; Catalonia 0.5 m)* · Poland · New Zealand · Australia *(Queensland 0.5 m · NSW 5 m · national 5 m GA, scattered)*. Resolutions 0.5-1 m unless noted, see the provider list above for codes and details.
-
 The map is regenerated by `coverage_map.py`, which reads zone titles from `providers/*.py`, so the map and the GUI can't drift. Clicking a zone in the interactive GeoJSON shows its `NAME` and code(s).
 
 **🇺🇸 USA & 🇨🇦 Canada, supported and working, just not drawn.** `us-tnm` / `us-3dep` (3DEP 1 m) and `ca-nrcan` (HRDEM 1 m) are fully functional, but their coverage is **project/population-based** (not wall-to-wall national), so a full-country polygon would over-claim, hence the note rather than a shape. Check your US area on the [TNM Downloader](https://apps.nationalmap.gov/downloader/). The USGS 1 m tiles are 10×10 km COGs, **read windowed** to your bbox via `/vsicurl/`, no full-tile download.
 
-**🇧🇪 Belgium (Flanders)**: a bonus, the WCS also exposes `DHMV_II_SVF_25cm` (Sky-View Factor at 25 cm, 16 directions, r=2.5 m) and `DHMV_II_HILL_25cm` (multidirectional hillshade at 25 cm, pre-computed by Digitaal Vlaanderen). When one of those shadings is requested, lidar2map downloads it directly instead of computing it from the 1 m DEM, both faster and at higher resolution.
+### Adding a LiDAR provider
 
-A source plugs in cleanly when it exposes **deterministic tiles** (one URL per
-~1 km tile), **a WCS** (`GetCoverage` by bbox), **mosaic COGs** (windowed
-`/vsicurl/` read on the bbox, see `ca-nrcan`) or **LAZ/ZIP tiles** (`post_fetch`
-hook: unzip + point-cloud→GeoTIFF via `laspy`+`lazrs`, see `cz-cuzk`, `ie-gsi`).
-Still a poor fit: sources via **form/email order**, **WMS only** (rendered, no raw
-elevation) or **ASC without a CRS**.
+The provider abstraction adds a national or regional source without changing
+the core pipeline. Each `providers/<code>.py` module exposes at least its
+metadata, geometry, and discovery function:
 
-**Not covered yet, and why**: the full registry of evaluated-but-not-integrated sources (Wallonia, Saxony, Slovakia, Northern Ireland, Latvia, Hong Kong, Taiwan, Iceland, national Italy, national Germany, and more), each with the precise blocking reason and a re-check date, lives in the [provider roadmap](docs/lidar_providers_roadmap.md). Kept as a single file to avoid re-digging dead ends.
-| Africa · rest of Asia | ⛔ structural | no open national bare-earth LiDAR (global 30 m DEMs only). |
-| OpenTopography (global) | ⛔ structural | fine LiDAR = point cloud / async jobs; its simple raster API is 30 m satellite. |
+```python
+NAME, CODE, COUNTRY, LICENSE
+CRS_NATIF, RESOLUTION_M, DALLE_KM
 
-🔄 **pending** = open data but no per-bbox programmatic access *yet*, re-checked periodically (next review ~Dec 2026). ⛔ **structural** = blocked for now (data nonexistent, paid, classified, too coarse, or not bare-earth LiDAR).
+def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
+    ...  # returns {tile_name: URL_or_source}
+```
 
-**Live in one of these places? You may know a way in.** Most 🔄 cases just need a documented endpoint accessible *by bounding box*, a **WCS** `GetCoverage`, an **INSPIRE ATOM** feed, **STAC**, derivable **per-tile URLs**, or a public **S3** bucket. If you know one for your country/region, open an issue or PR, adding a provider is ~100-150 lines (copy the closest `providers/*.py`). Germany is in as far as cleanly possible (4 states: Bavaria, NRW, Lower Saxony, Thuringia).
+Optional hooks handle special cases, notably `post_fetch` for unpacking or
+converting LAZ/ZIP tiles to GeoTIFF. The downstream pipeline (relief
+visualizations, EPSG:3857 reprojection, tiling, and output formats) remains
+provider-agnostic: it consumes the discovered GeoTIFF files regardless of the
+native CRS or access mechanism.
+
+A source fits directly when it exposes **deterministic tile URLs**, a **WCS**
+(`GetCoverage` by extent), a **STAC** catalogue, window-readable mosaic
+**COGs**, an **ATOM/FeatureServer** index, or convertible **LAZ/ZIP** tiles.
+Form or email orders, rendered-only WMS services with no raw elevation, and
+files with no CRS require extra work or do not fit the current pipeline.
+
+The [provider roadmap](docs/lidar_providers_roadmap.md) centralizes every
+evaluated source—integrated or set aside—with its state and precise reason. To
+propose a new source, open an issue or PR and start from the existing provider
+whose access mechanism is the closest match.
 
 ## Screenshots
 
@@ -553,14 +649,15 @@ The header SVF and the triptych above (Rougiers area, dép. 83, France) were com
 
 ```bash
 python lidar2map.py \
-  --zone-gps <lat> <lon> --zone-width 2 --zone-name hero \
+  --zone-gps <lat>,<lon> --zone-width 2 --zone-name hero \
   --lidar --download --workers 8 \
   --shadings svf --shading-elevation 25 \
   --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
   --file-formats mbtiles --zoom-min 8 --zoom-max 18 \
-  --image-format jpeg --image-quality 85```
+  --image-format jpeg --image-quality 85
+```
 
-Replace `<lat> <lon>` with your own area; the SVF parameters above are the ones
+Replace `<lat>,<lon>` with your own area; the SVF parameters above are the ones
 used for the visual. The exact coordinates of a micro-relief are deliberately
 not published (ethics: do not guide anyone toward a specific site, see the
 anti-detecting disclaimer above).

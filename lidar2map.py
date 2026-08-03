@@ -14797,25 +14797,33 @@ def _overlay_style_key(props, layer_hint=""):
 
 
 def _overlay_sequences(geom):
-    """Decompose une geometrie GeoJSON en (sequences_lignes, sequences_anneaux).
+    """Decompose une geometrie GeoJSON en (lignes, polygones).
+    - lignes : liste de sequences ouvertes (LineString/MultiLineString).
+    - polygones : liste de polygones, chacun = [anneau_ext, trou1, trou2, ...].
+      Le GROUPEMENT ext/trous est preserve (R2#34) : un trou doit etre soustrait
+      du remplissage, pas peint comme un polygone plein. Avant, tous les anneaux
+      etaient aplatis en une liste plate -> chaque trou rendu plein (une cour
+      interieure de batiment se retrouvait comblee).
     Point/MultiPoint ignores (pas de trait a l'echelle overlay)."""
     gt = geom.get("type", "")
     co = geom.get("coordinates", [])
-    lignes, anneaux = [], []
+    lignes, polygones = [], []
     if gt == "LineString":
         lignes.append(co)
     elif gt == "MultiLineString":
         lignes.extend(co)
     elif gt == "Polygon":
-        anneaux.extend(co)
+        if co:
+            polygones.append(list(co))
     elif gt == "MultiPolygon":
         for poly in co:
-            anneaux.extend(poly)
+            if poly:
+                polygones.append(list(poly))
     elif gt == "GeometryCollection":
         for sub in geom.get("geometries", []):
-            sl, sa = _overlay_sequences(sub)
-            lignes.extend(sl); anneaux.extend(sa)
-    return lignes, anneaux
+            sl, sp = _overlay_sequences(sub)
+            lignes.extend(sl); polygones.extend(sp)
+    return lignes, polygones
 
 
 def _seg_inter_box(ax, ay, bx, by, x0, y0, x1, y1):
@@ -14847,6 +14855,60 @@ def _seg_inter_box(ax, ay, bx, by, x0, y0, x1, y1):
                 if r < t1:
                     t1 = r
     return True
+
+
+def _clip_polygone_rect(ring, x0, y0, x1, y1):
+    """Sutherland-Hodgman (1974) : clippe un anneau ferme contre le rectangle
+    axis-aligned [x0,x1]×[y0,y1] (ici en lon/lat). Retourne un anneau clippe
+    FERME qui suit les bords du rectangle la ou l'anneau en sort, [] si vide.
+
+    Corrige deux artefacts du splitter de lignes `_clip_seq` applique aux
+    polygones (R2#34) : (b) un anneau qui deborde la zone etait coupe en arcs
+    OUVERTS que `dr.polygon` refermait par une corde droite en travers de la
+    zone ; et un polygone CONTENANT la zone (sa frontiere loin, aucun segment
+    pres du bord) etait entierement jete -> aucun remplissage. Le clipping SH
+    contre le rectangle rend le premier sans corde (la fermeture longe le bord)
+    et le second comme le rectangle plein."""
+    pts = ring[:-1] if len(ring) >= 2 and ring[0] == ring[-1] else list(ring)
+    if len(pts) < 3:
+        return []
+
+    def _clip_bord(poly, dedans, inter):
+        # Un cote du rectangle : garde les sommets DEDANS, insere l'intersection
+        # a chaque traversee du bord (entree comme sortie).
+        out = []
+        for i in range(len(poly)):
+            cur, prv = poly[i], poly[i - 1]
+            c_in, p_in = dedans(cur), dedans(prv)
+            if c_in:
+                if not p_in:
+                    out.append(inter(prv, cur))
+                out.append(cur)
+            elif p_in:
+                out.append(inter(prv, cur))
+        return out
+
+    def _ix(a, b, t):
+        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+
+    # 4 demi-plans ; l'intersection interpole lineairement le point de traversee
+    # (le denominateur ne s'annule jamais : un segment qui traverse le bord a des
+    # extremites de part et d'autre, donc des coordonnees distinctes sur cet axe).
+    poly = _clip_bord(pts, lambda p: p[0] >= x0,
+                      lambda a, b: _ix(a, b, (x0 - a[0]) / (b[0] - a[0])))
+    if poly:
+        poly = _clip_bord(poly, lambda p: p[0] <= x1,
+                          lambda a, b: _ix(a, b, (x1 - a[0]) / (b[0] - a[0])))
+    if poly:
+        poly = _clip_bord(poly, lambda p: p[1] >= y0,
+                          lambda a, b: _ix(a, b, (y0 - a[1]) / (b[1] - a[1])))
+    if poly:
+        poly = _clip_bord(poly, lambda p: p[1] <= y1,
+                          lambda a, b: _ix(a, b, (y1 - a[1]) / (b[1] - a[1])))
+    if len(poly) < 3:
+        return []
+    poly.append(poly[0])   # refermer l'anneau
+    return poly
 
 
 def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
@@ -14949,7 +15011,20 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
             out.append(cur)
         return out
 
-    feats = []   # (color, width, fill, lignes[list of [lon,lat]], anneaux)
+    def _clip_poly(ring):
+        """Anneau de POLYGONE clippe a la zone (SH). Sans clip, ou anneau
+        entierement dans la zone+marge : renvoye tel quel (fast-path, sortie
+        bit-identique + pas de cout SH). Sinon clip Sutherland-Hodgman contre
+        le rectangle (anneau ferme, pas de corde). [] si hors zone."""
+        if _clip is None or len(ring) < 3:
+            return ring
+        cw, cs, ce, cn = _clip
+        xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
+        if min(xs) >= cw and max(xs) <= ce and min(ys) >= cs and max(ys) <= cn:
+            return ring
+        return _clip_polygone_rect(ring, cw, cs, ce, cn)
+
+    feats = []   # (color, width, fill, lignes[list of seq], polys[(ext, trous)])
     lon_min = lat_min = float("inf")
     lon_max = lat_max = float("-inf")
     for feat in _iter_features():
@@ -14961,24 +15036,53 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
         props = feat.get("properties") or {}
         color, width, fill = _OVERLAY_STYLE.get(
             _overlay_style_key(props, layer_hint), _OVERLAY_DEFAUT)
-        lignes, anneaux = _overlay_sequences(geom)
-        if not lignes and not anneaux:
+        lignes, polygones = _overlay_sequences(geom)
+        if not lignes and not polygones:
             continue
         # ijson rend les nombres en Decimal → caster en float une fois pour
         # toutes (sinon deg_to_tile plante sur Decimal + float), puis clip zone.
-        lignes  = [s for seq in lignes
-                   for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
-        anneaux = [s for seq in anneaux
-                   for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
-        if not lignes and not anneaux:
+        lignes = [s for seq in lignes
+                  for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
+        # Polygones : traitement selon le remplissage (R2#34).
+        # - fill=True (bâtiments) : anneaux fermés par SH (pas de corde) + trous
+        #   GROUPÉS avec leur extérieur pour un fill correct. Quasi toujours
+        #   fast-path (un bâtiment tient dans la zone+marge) → coût SH nul.
+        # - fill=False (landuse/natural/limites...) : contour SEUL → on garde le
+        #   splitter de lignes (arcs près de la zone, cheap, pas de fill donc pas
+        #   de corde). Bit-identique, aucune régression sur un gros polygone qui
+        #   enclot la zone (SH le rendrait en rectangle plein = tuiles inutiles).
+        polys = []
+        for poly in polygones:
+            rings = [[(float(c[0]), float(c[1])) for c in ring] for ring in poly]
+            if fill:
+                ext = _clip_poly(rings[0])
+                if len(ext) < 3:
+                    continue
+                trous = []
+                for h in rings[1:]:
+                    hc = _clip_poly(h)
+                    if len(hc) >= 3:
+                        trous.append(hc)
+                polys.append((ext, trous))
+            else:
+                for ring in rings:
+                    for s in _clip_seq(ring):
+                        polys.append((s, []))
+        if not lignes and not polys:
             continue
-        for seq in (*lignes, *anneaux):
+        for ext, _trous in polys:   # les trous sont inclus dans l'extérieur
+            for lon, lat in ext:
+                if lon < lon_min: lon_min = lon
+                if lon > lon_max: lon_max = lon
+                if lat < lat_min: lat_min = lat
+                if lat > lat_max: lat_max = lat
+        for seq in lignes:
             for lon, lat in seq:
                 if lon < lon_min: lon_min = lon
                 if lon > lon_max: lon_max = lon
                 if lat < lat_min: lat_min = lat
                 if lat > lat_max: lat_max = lat
-        feats.append((color, width, fill, lignes, anneaux))
+        feats.append((color, width, fill, lignes, polys))
 
     if not feats or lon_min > lon_max:
         # Cas fréquent en IGN : des features existent mais aucune ne traverse la
@@ -15055,7 +15159,7 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
             if gtx0 <= tx <= gtx1 and gty0 <= ty <= gty1:
                 buckets.setdefault((tx, ty), []).append(item)
 
-        for color, width, fill, lignes, anneaux in feats:
+        for color, width, fill, lignes, polys in feats:
             wpx = max(1, int(round(width * SS)))
             mg  = wpx + 2 * SS   # marge = demi-largeur du liseré
             for seq in lignes:
@@ -15079,12 +15183,15 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
                                               _bx0, ty * SCALE - mg,
                                               _bx1, ty * SCALE + SCALE + mg):
                                 _add(tx, ty, itm)
-            for ring in anneaux:
-                gp = [_proj_pt(lon, lat, z) for lon, lat in ring]
+            for ext, trous in polys:
+                gp = [_proj_pt(lon, lat, z) for lon, lat in ext]
                 if len(gp) < 2:
                     continue
+                # Trous projetés une fois ici (⊂ extérieur → même binning que gp).
+                trous_gp = [[_proj_pt(lon, lat, z) for lon, lat in h]
+                            for h in trous]
                 xs = [p[0] for p in gp]; ys = [p[1] for p in gp]
-                itm = ("pol", color, wpx, fill, gp)
+                itm = ("pol", color, wpx, fill, gp, trous_gp)
                 for tx in range(int((min(xs) - mg) // SCALE),
                                 int((max(xs) + mg) // SCALE) + 1):
                     for ty in range(int((min(ys) - mg) // SCALE),
@@ -15106,11 +15213,29 @@ def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_ma
             for it in items:
                 if it[0] != "pol":
                     continue
-                _, color, wpx, fill, gp = it
+                _, color, wpx, fill, gp, trous_gp = it
                 pts = [(x - ox, y - oy) for x, y in gp]
                 if fill:
-                    dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
+                    if trous_gp:
+                        # R2#34 : trous SOUSTRAITS. Masque L (ext=70, trous=0)
+                        # composé une fois → le fill leger suit la couronne, le
+                        # trou reste transparent (une cour de bâtiment n'est plus
+                        # comblée). Chemin lent réservé aux polygones à trou.
+                        mask = _Image.new("L", (SCALE, SCALE), 0)
+                        md = _ImageDraw.Draw(mask)
+                        md.polygon(pts, fill=70)
+                        for h in trous_gp:
+                            md.polygon([(x - ox, y - oy) for x, y in h], fill=0)
+                        layer = _Image.new("RGBA", (SCALE, SCALE),
+                                           (color[0], color[1], color[2], 0))
+                        layer.putalpha(mask)
+                        big.alpha_composite(layer)
+                    else:
+                        dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
                 dr.line(pts, fill=color, width=wpx, joint="curve")
+                for h in trous_gp:   # contour du trou aussi
+                    dr.line([(x - ox, y - oy) for x, y in h],
+                            fill=color, width=wpx, joint="curve")
             # Liserés blancs : segment + pastilles aux jonctions (traits continus
             # malgré le rendu segment par segment), sous tous les traits colorés...
             for it in items:

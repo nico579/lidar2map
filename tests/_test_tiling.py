@@ -203,3 +203,56 @@ im0 = Image.open(io.BytesIO(png0)).convert("RGBA")
 assert im0.size == (256, 256) and im0.getbbox() is not None, "tuile vide stockée"
 con_o.close()
 print(f"TRANSPARENT-RASTER OK ({n_o} tuiles, z{zmin_o}-{zmax_o}, {tn_o})")
+
+# ── R2#34 : clip Sutherland-Hodgman des polygones ────────────────────────────
+# (b) un polygone qui déborde/enclot la zone ne doit plus être coupé en corde
+# ni jeté. Test pur de la fonction contre le rectangle [0,0]×[10,10].
+_clip = l2m._clip_polygone_rect
+# polygone CONTENANT le rectangle → rectangle plein (avant : jeté).
+_r = _clip([(-5, -5), (15, -5), (15, 15), (-5, 15), (-5, -5)], 0, 0, 10, 10)
+assert _r, "clip du polygone contenant : vide"
+_xs = [p[0] for p in _r]; _ys = [p[1] for p in _r]
+assert (min(_xs), max(_xs), min(_ys), max(_ys)) == (0, 10, 0, 10), _r
+# triangle traversant deux bords → sommets ramenés dans le rectangle (pas de corde
+# hors zone), anneau non vide et fermé.
+_r2 = _clip([(5, 5), (15, 5), (5, 15), (5, 5)], 0, 0, 10, 10)
+assert _r2 and _r2[0] == _r2[-1], _r2
+assert all(-1e-9 <= x <= 10 + 1e-9 and -1e-9 <= y <= 10 + 1e-9 for x, y in _r2), _r2
+# polygone entièrement dehors → vide.
+assert _clip([(20, 20), (30, 20), (30, 30), (20, 30), (20, 20)], 0, 0, 10, 10) == []
+print("SH-CLIP OK (contenant→rectangle, traversant→clippé, dehors→vide)")
+
+# ── R2#34 : trou de polygone soustrait (pas comblé) ──────────────────────────
+# Un bâtiment DONUT (extérieur + un trou) doit garder son trou transparent. On
+# compare au même bâtiment PLEIN : le fill (alpha 70) doit couvrir moins de
+# pixels avec le trou (couronne) qu'en plein, et rester non nul.
+_ext = ("[[6.0455,43.3275],[6.0475,43.3275],[6.0475,43.3295],"
+        "[6.0455,43.3295],[6.0455,43.3275]]")
+_hole = ("[[6.0461,43.3281],[6.0469,43.3281],[6.0469,43.3289],"
+         "[6.0461,43.3289],[6.0461,43.3281]]")
+_tpl = ('{{"type":"FeatureCollection","features":[{{"type":"Feature",'
+        '"properties":{{"_cle":"building","building":"yes"}},'
+        '"geometry":{{"type":"Polygon","coordinates":[{}]}}}}]}}')
+_gjs = tmp / "bat_plein.geojson"
+_gjs.write_text(_tpl.format(_ext), encoding="utf-8")
+_gjd = tmp / "bat_donut.geojson"
+_gjd.write_text(_tpl.format(_ext + "," + _hole), encoding="utf-8")
+
+
+def _count_fill(dbpath, aval=70):
+    c = sqlite3.connect(str(dbpath)); n = 0
+    for (blob,) in c.execute("SELECT image FROM tiles"):
+        a = Image.open(io.BytesIO(blob)).convert("RGBA").getchannel("A")
+        n += int((np.asarray(a) == aval).sum())
+    c.close(); return n
+
+
+_os = l2m.rasteriser_geojson_transparent(_gjs, tmp / "bat_plein.sqlitedb",
+                                         17, 18, ecraser=True)
+_od = l2m.rasteriser_geojson_transparent(_gjd, tmp / "bat_donut.sqlitedb",
+                                         17, 18, ecraser=True)
+assert _os is not None and _od is not None, "donut/plein non généré"
+_ns, _nd = _count_fill(_os), _count_fill(_od)
+assert _ns > 0 and _nd > 0, (_ns, _nd)
+assert _nd < _ns, f"trou non soustrait : donut={_nd} >= plein={_ns}"
+print(f"TRANSPARENT-RASTER HOLES OK (fill plein={_ns}, donut={_nd})")
