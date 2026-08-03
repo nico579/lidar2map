@@ -4332,6 +4332,28 @@ def _cog_cache_couvre(chemin, bbox_natif):
 _MAX_COG_WINDOW_PX = 4096 * 4096
 
 
+# R1#10 : la conversion COPC-fenêtrée pose le CRS UTM PAR TUILE sur le provider
+# PARTAGÉ (set_crs → self.crs_epsg), lu ensuite par post_fetch (las_to_dfm). En
+# multi-UTM (couverture straddlant une frontière de zone UTM) deux tuiles
+# concurrentes se corrompaient → las_to_dfm plantait sur _verifie_crs_las (le
+# header LAS d'une tuile ne matche plus le CRS posé par l'autre). Ce lock rend le
+# couple set_crs + post_fetch ATOMIQUE ; le DOWNLOAD (hors lock, vrai goulot des
+# COPC = range-requests) reste parallèle. Ne sérialise QUE la conversion
+# COPC-fenêtrée (ca-nrcan/us-3dep) ; les providers mono-zone posent leur CRS une
+# fois à la découverte, hors de ce chemin.
+_copc_crs_lock = threading.Lock()
+
+
+def _copc_post_fetch_crs(epsg, chemin_part):
+    """Pose le CRS UTM de la tuile puis convertit, sous _copc_crs_lock (R1#10).
+    Extrait pour être testable (course de concurrence multi-UTM)."""
+    _set = getattr(PROVIDER, "set_crs", None)
+    with _copc_crs_lock:
+        if _set and epsg:
+            _set(int(epsg))
+        _post_fetch_si_besoin(chemin_part)
+
+
 def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
     """Lecture FENÊTRÉE d'un COPC distant (nuage LAZ octree, ex. ca-nrcan) :
     ne lit QUE les points de la bbox zone via range-requests, écrit le sous-
@@ -4359,12 +4381,11 @@ def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
                 _url, (lo1, la1, lo2, la2), chemin_part)
             if not n or n < 50_000:
                 return "absent"      # zone hors de ce COPC (ou quasi vide)
-            # CRS du run = la zone UTM du COPC.
-            _set = getattr(PROVIDER, "set_crs", None)
-            if _set and epsg:
-                _set(int(epsg))
-            # Le LAS puis sa conversion GeoTIFF restent dans le dossier .part.
-            _post_fetch_si_besoin(chemin_part)
+            # R1#10 : CRS du run = zone UTM de la tuile, posé + converti sous lock
+            # (self.crs_epsg est partagé ; 2 tuiles de zones UTM différentes le
+            # corrompaient en concurrence). Le LAS puis sa conversion GeoTIFF
+            # restent dans le dossier .part.
+            _copc_post_fetch_crs(epsg, chemin_part)
             if not _valider_tif_dalle(chemin_part):
                 raise IOError(
                     f"GeoTIFF COPC invalide après post_fetch ({nom})")

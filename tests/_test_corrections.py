@@ -1326,6 +1326,51 @@ _dc5 = tmp / "chunk_r110e"; _dc5.mkdir()
 check("R1#10 mbtiles demandé mais absent -> incomplet",
       l2m._chunk_livrable_complet(_dc5, _args(mbtiles=True)) is False)
 
+# -- R1#10 concurrence : lock CRS COPC multi-UTM -------------------------------
+# telecharger_copc_fenetre pose le CRS UTM PAR TUILE sur le PROVIDER partagé
+# (set_crs -> self.crs_epsg) puis convertit (post_fetch le lit). En multi-UTM,
+# 2 tuiles concurrentes se corrompaient. _copc_post_fetch_crs sérialise le couple
+# sous _copc_crs_lock. N threads d'EPSG distincts + fenêtre de course : chaque
+# conversion doit voir SON crs (sans lock, une voisine l'écraserait pendant le
+# sleep). Le PROVIDER et _post_fetch sont patchés (mêmes globals que le helper).
+import threading as _th, time as _tm
+_orig_prov = l2m.PROVIDER
+_orig_pf = l2m._post_fetch_si_besoin
+try:
+    class _MockProv:
+        def __init__(self):
+            self.crs_epsg = 0
+
+        def set_crs(self, e):
+            self.crs_epsg = int(e)
+
+    l2m.PROVIDER = _MockProv()
+    _vus = []
+    _barr = _th.Barrier(8)
+
+    def _pf_mock(chemin_part):
+        _attendu = int(str(chemin_part))   # chemin_part encode l'epsg attendu
+        _tm.sleep(0.003)                   # fenêtre de course
+        _vus.append((_attendu, l2m.PROVIDER.crs_epsg))
+
+    l2m._post_fetch_si_besoin = _pf_mock
+
+    def _work(epsg):
+        _barr.wait()
+        l2m._copc_post_fetch_crs(epsg, str(epsg))
+
+    _ths = [_th.Thread(target=_work, args=(32610 + i,)) for i in range(8)]
+    for _t in _ths:
+        _t.start()
+    for _t in _ths:
+        _t.join()
+    _mauvais = [(a, v) for a, v in _vus if a != v]
+    check("R1#10 lock CRS COPC : 8 tuiles UTM concurrentes voient chacune leur CRS",
+          len(_vus) == 8 and not _mauvais)
+finally:
+    l2m.PROVIDER = _orig_prov
+    l2m._post_fetch_si_besoin = _orig_pf
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)
