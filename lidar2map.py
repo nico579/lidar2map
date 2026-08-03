@@ -10746,52 +10746,87 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 
     chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
     chemin_pbf_part = _chemin_part(chemin_pbf_filtre)
+    # R2#28-v3 : PBF intermédiaires des 2 branches (ways / POI), fusionnés en P3.
+    chemin_ways_tmp = dossier_ville / f"{nom_zone}_ways.tmp.pbf"
+    chemin_poi_tmp  = dossier_ville / f"{nom_zone}_poi.tmp.pbf"
 
-    # R2#27 : une source .osm est du XML — osmosis exige --read-xml. Avant, tout
-    # passait par --read-pbf, qui plantait au parsing sur un .osm (accepté en
-    # entrée pourtant). Le PBF filtré réutilisé reste toujours .pbf → --read-pbf.
+    # R2#28-v3 : les POI NODES ISOLÉS (peak, source, ruine, village…) étaient
+    # jetés. `--tf accept-ways <tags> --used-node` ne garde que les nœuds
+    # RÉFÉRENCÉS par une way acceptée ; un POI standalone n'est utilisé par aucune
+    # way → supprimé, alors que le tag-mapping a une section <pois> prête. Fix =
+    # 3 passes LINÉAIRES fusionnées par fichiers (le split `--tee`→`--merge` en une
+    # invocation DEADLOCK de façon fiable — vérifié empiriquement ; l'idiome
+    # deadlock-free est la fusion de fichiers) :
+    #   P1  ways matchées + leurs nœuds        → ways.tmp.pbf
+    #   P2  nœuds POI isolés (sans ways/rels)   → poi.tmp.pbf
+    #   P3  merge(P1,P2) → mapfile-writer + PBF filtré (tee → 2 sinks, éprouvé)
+    # Coût : la source est lue 2× (P1, P2) — négligeable sur un extrait régional
+    # (cas courant), quelques minutes sur le PBF national 4 Go (cas rare).
+    _poi_tags = ["place=*", "natural=*", "historic=*", "man_made=*",
+                 "tourism=*", "amenity=*", "leisure=*"]
+    _valider_osm_tags(_poi_tags)   # même garde anti-injection (R2#1)
+
+    # R2#27 : une source .osm est du XML — osmosis exige --read-xml. Les PBF
+    # (filtré réutilisé + temps) restent toujours .pbf → --read-pbf.
     _osm_reader = ("--read-xml" if str(osm_pbf).lower().endswith(".osm")
                    else "--read-pbf")
-    cmd = [_osmosis_exe, _osm_reader, f"file={osm_pbf}"]
-    if not skip_bbox:
-        cmd += [
-            "--bounding-box",
-            f"left={lon_min:.4f}", f"right={lon_max:.4f}",
-            f"top={lat_max:.4f}", f"bottom={lat_min:.4f}",
-        ]
-    cmd += ["--tf", "accept-ways"]
-    cmd += osm_tags
-    cmd += [
-        "--used-node",
-        "--tee", "2",
+    _bbox_args = [] if skip_bbox else [
+        "--bounding-box",
+        f"left={lon_min:.4f}", f"right={lon_max:.4f}",
+        f"top={lat_max:.4f}", f"bottom={lat_min:.4f}",
+    ]
+    _mapwriter_args = [
         "--mapfile-writer",
         f"file={chemin_map_part}",
         "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
         "tag-values=true", "polygon-clipping=true",
         "way-clipping=true", "label-position=true",
-        "type=hd",   # HDTileBasedDataProcessor : écrit sur disque → pas de OutOfMemoryError
+        "type=hd",   # HDTileBasedDataProcessor : écrit sur disque → pas d'OOM
     ]
     if _tagmapping:
-        cmd.append(f"tag-conf-file={_tagmapping}")
-    cmd += ["--write-pbf", f"file={chemin_pbf_part}"]
+        _mapwriter_args.append(f"tag-conf-file={_tagmapping}")
 
-    # Injecter JAVA_HOME dans l'env avant de lancer
+    # P1 : ways filtrées + nœuds utilisés
+    cmd_p1 = ([_osmosis_exe, _osm_reader, f"file={osm_pbf}"] + _bbox_args
+              + ["--tf", "accept-ways"] + osm_tags
+              + ["--used-node", "--write-pbf", f"file={chemin_ways_tmp}"])
+    # P2 : nœuds POI isolés (retirer ways/relations pour ne pas dupliquer au merge)
+    cmd_p2 = ([_osmosis_exe, _osm_reader, f"file={osm_pbf}"] + _bbox_args
+              + ["--tf", "accept-nodes"] + _poi_tags
+              + ["--tf", "reject-ways", "--tf", "reject-relations",
+                 "--write-pbf", f"file={chemin_poi_tmp}"])
+    # P3 : fusion des 2 branches → .map + PBF filtré (tee → 2 sinks)
+    cmd_p3 = ([_osmosis_exe, "--read-pbf", f"file={chemin_ways_tmp}",
+               "--read-pbf", f"file={chemin_poi_tmp}", "--merge", "--tee", "2"]
+              + _mapwriter_args + ["--write-pbf", f"file={chemin_pbf_part}"])
+
     _shell = WINDOWS and str(_osmosis_exe).endswith(".bat")
-    if _shell:
-        cmd_str = " ".join(
-            f'"{a}"' if (" " in str(a) or "=" in str(a)) else str(a)
-            for a in cmd
-        )
-    _log_req(cmd)
+
+    def _lancer_osmosis(_cmd):
+        if _shell:
+            _cmd_x = " ".join(
+                f'"{a}"' if (" " in str(a) or "=" in str(a)) else str(a)
+                for a in _cmd)
+        else:
+            _cmd_x = _cmd
+        _log_req(_cmd)
+        return _run_osmosis_streaming(_cmd_x, shell=_shell, env=_env_osm)
+
+    rc, stderr_diag = 0, ""
     try:
-        rc, stderr_diag = _run_osmosis_streaming(
-            cmd_str if _shell else cmd,
-            shell=_shell, env=_env_osm,
-        )
+        for _i, _cmd in enumerate((cmd_p1, cmd_p2, cmd_p3), 1):
+            print(f"  osmosis pass {_i}/3...", flush=True)
+            rc, stderr_diag = _lancer_osmosis(_cmd)
+            if rc != 0:
+                break
     except BaseException:
         chemin_map_part.unlink(missing_ok=True)
         chemin_pbf_part.unlink(missing_ok=True)
         raise
+    finally:
+        # PBF intermédiaires inutiles après le merge (ou après un échec).
+        chemin_ways_tmp.unlink(missing_ok=True)
+        chemin_poi_tmp.unlink(missing_ok=True)
 
     sorties_valides = (
         rc == 0
