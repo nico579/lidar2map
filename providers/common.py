@@ -839,55 +839,55 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
         # les écarte avant tout binning (modes classes ET csf en profitent ; la
         # spec ASPRS LAS 1.4 dit que les withheld ne se traitent pas comme les
         # autres).
+        # DFM-opt (revue 2026-08-03) : masque de garde COMBINÉ (bruit/withheld +
+        # clip bornes + classes utiles) fondu en UN seul masque booléen, suivi
+        # d'UNE seule copie physique des 4 tableaux — au lieu de 3 copies
+        # successives. Baisse le pic RAM (~0,3 Go/dalle 45 M) et la pression GC
+        # (un masque bool = 1 o/pt vs 8 o/pt pour les coords float64). BIT-EXACT
+        # (array-equal, mode classes AVEC et SANS bounds) : la grille bounds=None
+        # reste dérivée du min/max des points NON bruités (garde AVANT l'ajout des
+        # classes) ; le clip float64 ABSOLU est inchangé (le CSF n'est PAS
+        # invariant au décalage/arrondi, float32 relatif rejeté 2026-07-18).
         bruit = np.isin(cls, (7, 18))
         if wh is not None:
             bruit = bruit | wh
-        if bruit.any():
-            garde = ~bruit
-            xs, ys, zs, cls = xs[garde], ys[garde], zs[garde], cls[garde]
-            if xs.size == 0:
-                raise ValueError(f"{Path(src_las).name}: que du bruit/withheld")
+        garde = ~bruit
+        del bruit
+        if not garde.any():
+            raise ValueError(f"{Path(src_las).name}: que du bruit/withheld")
 
         res = float(resolution)
         if bounds is not None:
             x0, y0, x1, y1 = (float(v) for v in bounds)
             nx = max(1, int(round((x1 - x0) / res)))
             ny = max(1, int(round((y1 - y0) / res)))
-            # Clip aux bornes. (a) SAUTÉ si tout est déjà dedans (la copie ne
-            # filtrerait rien, cas fréquent) ; (b) sinon dim par dim avec del
-            # progressif (jamais anciens+nouveaux des 4 tableaux en double : ce
-            # doublement momentané était le pic RAM mesuré, 3,2 Go/dalle 45M).
-            # Coords gardées en float64 ABSOLU : le CSF n'est PAS invariant en
-            # flottant au décalage/arrondi (float32 relatif essayé 2026-07-18 ->
-            # 8k cellules divergentes jusqu'à 3,3 m pour ~66 Mo, rejeté).
-            dedans = (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
-            if not dedans.all():
-                xs = xs[dedans]; ys = ys[dedans]; zs = zs[dedans]; cls = cls[dedans]
-                if xs.size == 0:
-                    raise ValueError(f"{Path(src_las).name}: aucun point dans les "
-                                     f"bornes nominales {bounds}")
-            del dedans
+            garde &= (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
+            if not garde.any():
+                raise ValueError(f"{Path(src_las).name}: aucun point dans les "
+                                 f"bornes nominales {bounds}")
         else:
-            x0, x1 = float(xs.min()), float(xs.max())
-            y0, y1 = float(ys.min()), float(ys.max())
+            # Grille = étendue des points NON bruités (garde AVANT les classes).
+            _xg = xs[garde]; _yg = ys[garde]
+            x0, x1 = float(_xg.min()), float(_xg.max())
+            y0, y1 = float(_yg.min()), float(_yg.max())
+            del _xg, _yg
             nx = int(np.floor((x1 - x0) / res)) + 1
             ny = int(np.floor((y1 - y0) / res)) + 1
             y1 = y0 + ny * res      # bord haut du raster = grille, pas max(ys)
-        # Mode classes : seules les classes qui entrent dans un binmin (sol
-        # `classes_ground`, référence `ref_ground`, candidates `classes_low`)
-        # comptent. Les autres — surtout la végétation haute (classe 5), souvent
-        # la moitié des points sous forêt — ne contribuent à AUCUN calcul en
-        # classes ; les jeter avant les index compacte à la fois les index ET
-        # les copies float64 de prépa (le pic RAM). Pixel-identique (aucune
-        # classe jetée n'alimentait un binmin). Le CSF a besoin de TOUS les
-        # points (le tissu ignore le producteur) → filtre STRICTEMENT classes-only.
+        # Mode classes : les classes qui n'entrent dans AUCUN binmin (surtout la
+        # végétation haute, classe 5, souvent la moitié des points sous forêt) ne
+        # contribuent à aucun calcul → fondues dans le masque. Le CSF, lui, a
+        # besoin de TOUS les points (le tissu ignore le producteur) → aucun filtre
+        # de classes en mode csf.
         if ground_method == "classes":
             _lut_u = np.zeros(256, dtype=bool)
             _lut_u[list(set(classes_ground) | set(ref_ground) | set(classes_low))] = True
-            _um = _lut_u[cls]
-            if not _um.all():
-                xs, ys, zs, cls = xs[_um], ys[_um], zs[_um], cls[_um]
-            del _um, _lut_u
+            garde &= _lut_u[cls]
+            del _lut_u
+        # UNE seule copie physique (sautée si tout est gardé).
+        if not garde.all():
+            xs, ys, zs, cls = xs[garde], ys[garde], zs[garde], cls[garde]
+        del garde
         # Index raster COMPACT : un seul `flat` int32 (ny*nx ≤ ~4 M sur une dalle
         # km, très en deçà de 2^31 → pas d'overflow), col/row jetés aussitôt (seul
         # flat sert ensuite ; l'ancien sol_ref[row,col] devient sol_ref.ravel()[flat]).
@@ -929,9 +929,11 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             res5 = 5.0
             n5x = max(1, int((x1 - x0) / res5) + 1)
             n5y = max(1, int((y1 - y0) / res5) + 1)
-            c5 = np.clip(((xs - x0) / res5).astype(np.int64), 0, n5x - 1)
-            r5 = np.clip(((y1 - ys) / res5).astype(np.int64), 0, n5y - 1)
-            f5 = r5 * n5x + c5
+            # int32 : n5x*n5y ~40k << 2^31 → valeurs identiques à int64, RAM/2
+            # sur ces index de pré-filtre (revue DFM 2026-08-03).
+            c5 = np.clip(((xs - x0) / res5).astype(np.int32), 0, n5x - 1)
+            r5 = np.clip(((y1 - ys) / res5).astype(np.int32), 0, n5y - 1)
+            f5 = r5 * np.int32(n5x) + c5
             g5 = np.full(n5y * n5x, np.inf)
             np.minimum.at(g5, f5, zs)
             keep = zs <= (g5[f5] + 3.5)
@@ -991,7 +993,11 @@ def las_to_dfm(src_las, tif_path, crs_epsg, resolution=0.5,
             low[np.flatnonzero(cand)[(h_cand >= hmin) & (h_cand <= hmax)]] = True
             low_min = _binmin(low)
 
-            dfm = sol_raw.copy()
+            # no-copy (revue DFM 2026-08-03) : sol_raw n'est jamais relu après ce
+            # point (sol_ref vient d'un _fill INDÉPENDANT plus haut) → on réintroduit
+            # les murs EN PLACE au lieu d'une copie profonde du raster final.
+            # Bit-exact (mêmes valeurs écrites) ; sol_raw muté mais mort ensuite.
+            dfm = sol_raw
             holes = ~np.isfinite(dfm)
             dfm[holes] = low_min[holes]                # murs réintroduits
             if classes_ground:

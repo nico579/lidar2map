@@ -21,22 +21,6 @@ chapter; IGN raster/vector maps remain France-only.
 >
 > **Note:** the GUI auto-detects your language (English/French, with a manual toggle); the CLI flags and `--help` are in English.
 
-## Local use or a remote VM
-
-lidar2map runs either on the user's computer or on a compute VM. All three
-programs are standalone on Windows, Linux and macOS:
-
-| Program | Use | How it works |
-|---|---|---|
-| `lidar2map` | Local processing | GUI or CLI on the current computer |
-| `rlidar2map_GUI` | Remote graphical desktop | prepares an Ubuntu 24.04/26.04 VM with XFCE + xrdp, installs lidar2map, then opens the RDP client |
-| `rlidar2map_CLI` | Headless remote processing | installs and starts lidar2map in `tmux`, monitors the run, and progressively synchronizes its results |
-
-The remote clients require no Python installation on the originating computer.
-They are published alongside lidar2map on the [Releases page](https://github.com/nico579/lidar2map/releases).
-The [Run lidar2map on a VM](tools/README_rlidar2map.md) guide covers the GUI/CLI
-choice, SSH connection, RDP account, long-running jobs, and supported platforms.
-
 ---
 
 ## Who is it for?
@@ -50,8 +34,8 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 
 ## Main features
 
-- **Integrated remote execution**: `rlidar2map_GUI` prepares the RDP desktop; `rlidar2map_CLI` runs headless jobs with monitoring, reconnection, and result synchronization.
-- **Automatic bootstrap**: the script installs its Python dependencies and mapping tools on demand.
+- **Standalone cross-platform executables**: `lidar2map` runs with no Python to install on Windows, macOS, and Linux (GUI or CLI on the current computer); this is the standard way to use it, see [Installation](#installation).
+- **Automatic bootstrap** (Python script): installs its dependencies and mapping tools on demand.
 - **Memory streaming**: large areas are processed without loading all data into RAM.
 - **Clean stop and resume**: `Ctrl+C` can wait for the current chunk, and a manifest tracks completed chunks for resumption.
 - **Splitting and disk control**: `--split-width`, `--cleanup`, and `--min-free-gb` keep large jobs manageable.
@@ -62,6 +46,7 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 - **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps over local WiFi and displays a QR code. Nothing leaves the network. In Locus, use **Map Manager → Import map → system file manager**.
 - **Processing queue**: in the GUI, `＋ Queue` stacks several areas and `Run queue` processes them unattended; one failed job does not stop the following jobs.
 - **Index sheet**: every run creates a `<product>_planche.png` showing the extent and output cells. `--index-sheet DIRECTORY` rebuilds it from an existing project and `--no-index-map` disables it.
+- **Remote execution and multi-VM sharding**: `rlidar2map_GUI` prepares a remote RDP desktop on a VM; `rlidar2map_CLI` runs headless jobs with monitoring, reconnection, and result synchronization; `--block i/M` splits one area across several VMs running in parallel for large surfaces (e.g. a département split into 3 blocks, one VM each). Details: [Remote execution](#remote-execution-on-a-vm).
 
 ## What it produces
 
@@ -77,10 +62,10 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   | `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
   | `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
   | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
-  | `lrm` | Simplified LRM (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
-  | `rrim` | lidar2map colour composite inspired by RRIM (Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
+  | `lrm` | Simplified **Local Relief Model** (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
+  | `rrim` | lidar2map colour composite inspired by the **Red Relief Image Map** (RRIM, Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
   | `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
-  | `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
+  | `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025, *enhanced version 4* of **MSTP**, *Multiscale Topographic Position*): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
 
   **[Detailed visualization guide: history, formulas, diagrams, strengths, limitations, and comparison workflow](docs/shadings.md).**
 
@@ -109,44 +94,36 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   instance has its own little parameter form.
   `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
-  > **Known limit — standing ruins.** National bare-earth DTMs *remove by design*
-  > walls still standing above ~1 m: the classifier files them as vegetation or
-  > "unclassified" (the IGN spec documents this for roofless ruined buildings),
-  > and the DTM interpolates straight through them. Typically (observed, not a
-  > guaranteed rule), a 40 cm enclosure wall survives (absorbed into the ground
-  > class) while a 1.5 m house ruin vanishes cleanly. No shading computed from
-  > the DTM can bring them back. For
-  > targeted prospection of standing structures in France, use
-  > [`tools/dfm_ruines.py`](tools/dfm_ruines.py): it rebuilds a DFM-style model
-  > (the *Digital Feature Model* concept is from Štular et al. 2021; the
-  > automatic point selection used here is a first-pass heuristic — the
-  > literature does this step by (semi-)manual reclassification) from the
-  > classified IGN LiDAR HD point cloud (COPC LAZ, ~205 MB/km²) by re-injecting
-  > low non-ground returns (0.4-2.5 m) into the ground-class gaps, and outputs
-  > georeferenced LRM-DTM / LRM-DFM / delta GeoTIFFs to
-  > drape over the orthophoto in QGIS. Walls show up as thin continuous lines;
-  > scrub shows as speckle — the eye does the final discrimination. The same DFM
-  > is also built into the pipeline: tick the **"DFM mode"** checkbox next to the
-  > provider (or CLI `--laz`) and all shadings (LRM, VAT…) run on the DFM instead
-  > of the DTM, at the point-cloud download cost — keep the area small. Height
-  > band and LAS classes are tunable per site (GUI fields / `--laz-hmin`,
-  > `--laz-hmax`, `--laz-classes`); the LAZ stays cached so retuning
-  > re-converts in ~20 s without re-downloading. Alternative ground base:
-  > `--laz-ground csf` (GUI "ground base" select) replaces the class-based
-  > re-injection with a **Cloth Simulation Filter** (Zhang et al. 2016): a
-  > soft simulated cloth absorbs low continuous structures into the ground
-  > while rejecting vegetation, entirely ignoring the producer's classes.
-  > Cleaner background (no speckle), same wall signal on the test sites;
-  > ~3 min/tile instead of ~20 s. The cloth is tunable per site with the
-  > standard CSF surface (`--laz-csf-threshold`, `--laz-csf-resolution`,
-  > `--laz-csf-rigidness` 1 steep / 2 / 3 flat; same fields in the GUI).
-  > DFM mode is not France-only: it also runs on Switzerland's swissSURFACE3D
-  > (`--provider ch-swisstopo --laz`, CSF ground base by default) and on Poland,
-  > Estonia, Flanders, Canada (NRCan + Quebec), the USA, Denmark and CRAIG
-  > (Auvergne), each via `--laz` on the parent (see the provider table and
-  > `docs/lidar_providers_roadmap.md`). Any provider that publishes a full, dense,
-  > classified point cloud can get a `_laz` twin; a bare-earth DTM raster or a
-  > ground-only cloud cannot.
+  LiDAR sources: choose `--provider <code>` in the CLI or use the GUI provider
+  selector. The [LiDAR coverage](#lidar-coverage-and-evaluated-sources) and
+  [provider table](#available-providers) are the single reference
+  for countries, resolutions, CRS, access mechanisms, and API keys.
+
+  > **Known limit: standing ruins.** National bare-earth DTMs *remove by
+  > design* walls still standing above ~1 m (the classifier files them as
+  > vegetation or "unclassified"), so no shading computed from the DTM can
+  > bring them back.
+  >
+  > Two ground bases built into the pipeline work around this: tick the
+  > **"DFM mode"** checkbox next to the provider (or CLI `--laz`) and every
+  > shading runs on a **DFM** (*Digital Feature Model*, Štular et al. 2021)
+  > computed from the classified point cloud instead of the DTM, with a
+  > choice between class-based re-injection (`--laz-ground classes`,
+  > default) or a **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et
+  > al. 2016: cleaner background, ~3 min/tile instead of ~20 s). Full
+  > parameter list (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) in the
+  > [provider table](#available-providers). Cost: downloads the full COPC
+  > LAZ point cloud (~205 MB/km²), so keep the area small.
+  >
+  > For targeted prospection outside the pipeline (manual comparison in
+  > QGIS), [`tools/dfm_ruines.py`](tools/dfm_ruines.py) rebuilds the same
+  > kind of model as a standalone script and outputs georeferenced
+  > LRM-DTM / LRM-DFM / delta GeoTIFFs to drape over the orthophoto.
+  >
+  > DFM mode is not France-only: it also runs on Switzerland's
+  > swissSURFACE3D and on any provider that publishes a full, dense,
+  > classified point cloud (see the provider table); a bare-earth DTM
+  > raster or a ground-only cloud cannot get it.
 
   A roofless house ruin (walls ~1.5 m, dép. 83, France), under scrub. The
   aerial photo barely hints at the walls; the classic LRM (from the DTM) shows
@@ -160,11 +137,6 @@ From a town, GPS coordinates, a bbox, a département or a whole region:
   | **DFM-LRM (class re-injection)** | **DFM-LRM (CSF cloth base)** |
   | ![DFM by class re-injection, walls reappear with speckle](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM with CSF cloth ground base, cleaner background](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
   | Rectangular building reappears (speckly) | Same walls, cleaner background |
-
-  LiDAR sources: choose `--provider <code>` in the CLI or use the GUI provider
-  selector. The [LiDAR coverage](#lidar-coverage-and-evaluated-sources) and
-  [provider table](#available-providers) are the single reference
-  for countries, resolutions, CRS, access mechanisms, and API keys.
 
 - **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
 - **USGS Imagery** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16), pairs with the 3DEP LiDAR (`us-tnm`).
@@ -207,7 +179,7 @@ Two ways to use lidar2map:
 
 ### A. Standalone executable
 
-No Python for the end user to install. The deliverable carries its own runtime (embedded Python, deps, JRE, osmosis).
+The deliverable carries its own runtime: Python, dependencies, JRE, osmosis.
 
 #### 1. Get the deliverable
 
@@ -316,8 +288,7 @@ Troubleshooting: the *Troubleshooting* section of [BUILD.md](BUILD.md) (includin
 
 ## Usage
 
-Two local modes, selected automatically based on the arguments (same logic as
-the twin project [gpxsolar](https://github.com/nico579/gpxsolar)):
+Two local modes, selected automatically based on the arguments:
 
 - **No argument → graphical interface** (pywebview / Qt). The common mode.
 - **With arguments → command-line computation** (headless, no window).
@@ -496,6 +467,24 @@ python lidar2map.py --vector --zone-department 83 \
 ```
 The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable by Locus Map; OsmAnd uses its own OBF vector format and cannot read Mapsforge files, but its built-in offline map already provides the vector layer, so on OsmAnd simply put the LiDAR raster on top as an overlay).
 
+## Remote execution on a VM
+
+For large surfaces (a whole département, several regions), lidar2map can run
+on a compute VM instead of the local computer, with multi-VM sharding via
+`--block i/M`. All three programs are standalone on Windows, Linux and macOS:
+
+| Program | Use | How it works |
+|---|---|---|
+| `lidar2map` | Local processing | GUI or CLI on the current computer |
+| `rlidar2map_GUI` | Remote graphical desktop | prepares an Ubuntu 24.04/26.04 VM with XFCE + xrdp, installs lidar2map, then opens the RDP client |
+| `rlidar2map_CLI` | Headless remote processing | installs and starts lidar2map in `tmux`, monitors the run, and progressively synchronizes its results |
+
+The remote clients require no Python installation on the originating computer.
+They are published alongside lidar2map on the [Releases page](https://github.com/nico579/lidar2map/releases).
+The [Run lidar2map on a VM](tools/README_rlidar2map.md) guide covers the GUI/CLI
+choice, SSH connection, RDP account, long-running jobs, splitting a job across
+multiple machines with `--block i/M`, and supported platforms.
+
 ## LiDAR providers and coverage
 
 ### Available providers
@@ -545,7 +534,7 @@ The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable 
 | `au-qld` · `au-nsw` | Australia (QLD 0.5 m · NSW 5 m) | LiDAR DEM | 0.5-5 m | EPSG:3857 | ArcGIS ImageServer (ELVIS), **per-state** coverage |
 | `au-ga` | Australia (national, scattered) | DEM derived from LiDAR | 5 m | EPSG:3857 (served as 4283) | WCS 1.0.0 GetCoverage (Geoscience Australia) → reprojected on download, ~245,000 km² across all states (coastal + Murray-Darling), opens SA/VIC/TAS/WA beyond QLD·NSW |
 
-Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI. **This table is the single reference list of providers**, the features section links here instead of duplicating it.
+Selection: `--provider <code>` flag (CLI), `LIDAR2MAP_PROVIDER` env var, or the dropdown at the top of the GUI.
 
 ### LiDAR coverage and evaluated sources
 
@@ -613,7 +602,7 @@ Send to phone: the 📲 button serves the generated maps over local WiFi. Scan t
 
 ![Send to phone (QR)](screenshots/GUI/phone.PNG)
 
-The index sheet dropped next to the deliverables: real department outline and numbered chunk cells (here a Var department VAT run split into 3×4 zones; the slight overlaps are the real shared edge tiles at low zooms).
+The index sheet dropped next to the deliverables: real department outline and numbered chunk cells (here a Var department VAT run split into 3×4 zones; the slight overlaps are the real shared edge tiles at low zooms). The index sheet itself works everywhere; the administrative-outline background is a best-effort touch (département in France, a geocoded equivalent elsewhere): offline or when no boundary resolves, the sheet is still generated, just with the extent and cells alone.
 
 ![Index sheet](screenshots/index_sheet.png)
 
@@ -631,7 +620,7 @@ LiDAR relief (LRM) as a semi-transparent Overlay map above the standard
 OsmAnd map (Configure map > Overlay map, transparency slider around the
 middle).
 
-![LRM overlay in OsmAnd](screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg)
+<p align="center"><img src="screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg" alt="LRM overlay in OsmAnd" width="380"></p>
 
 ### What SVF reveals, same area, three sources
 
