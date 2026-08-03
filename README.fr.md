@@ -38,6 +38,8 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 - **Streaming mémoire** : les grandes zones sont traitées sans charger toutes les données en RAM.
 - **Arrêt et reprise propres** : `Ctrl+C` peut attendre la fin du morceau courant et un manifeste permet de reprendre les morceaux terminés.
 - **Découpage et contrôle du disque** : `--split-width`, `--cleanup` et `--min-free-gb` encadrent les calculs de grande taille.
+- **Fusion de cartes vectorielles** : `--merge` combine plusieurs GeoJSON (glob accepté) en un seul fichier, par exemple les couches IGN et OSM d'une même zone, ou les exports de runs voisins ; peut produire directement une carte Mapsforge `.map` ou un overlay `transparent-raster` à partir du résultat fusionné.
+- **Redécoupage de cartes existantes** : `--split` redécoupe après coup un MBTiles déjà généré, en grille (`--cols`/`--rows`) ou en carrés d'une largeur donnée (`--split-width`), avec conversion optionnelle en RMAP ou SQLiteDB par morceau. Utile pour respecter la limite FAT32 de 4 Go, ou répartir un livrable entre plusieurs appareils.
 - **Historique résistant aux crashs** : chaque exécution reste visible avec son état et ses journaux.
 - **Multi-provider LiDAR** : les sources nationales sont isolées dans `providers/<code>.py` ; le [tableau des providers](#providers-disponibles) en donne la liste exhaustive.
 - **GUI interactive** : cinq types de traitement, validation, journal en direct, historique et file d'attente.
@@ -51,98 +53,103 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 À partir d'une commune, de coordonnées GPS, d'une bbox, d'un département ou d'une région entière :
 
-- **Ombrages archéo** depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
+### Ombrages archéologiques
 
-  | Type | Ce qu'il révèle | Paramètres |
-  |------|-----------------|------------|
-  | `multi` | Hillshade multidirectionnel (Mark 1992), relief général avec biais d'azimut réduit | `elevation` (° soleil, défaut 25, bas = micro-relief, 45 = usage général) |
-  | `315` `045` `135` `225` | Hillshades directionnels, accentuent les structures perpendiculaires à l'azimut choisi | `elevation` (idem) |
-  | `slope` | Pente 0-90° étalée sur 1-255, talus, ruptures, terrasses | (aucun) |
-  | `svf` | Sky-View Factor, fraction de ciel visible : fossés, restanques, enceintes en sombre | `conv` (`flux` = cos²γ contrasté, défaut ; `rvt` = 1−sin γ, standard archéo Kokalj/Hesse), `dist` (rayon d'horizon en m, défaut 20, 20 = micro-relief, 100 = enceintes/voiries), `gamma` (contraste, défaut 2.0) |
-  | `opos` | Openness positive (Yokoyama 2002), angle d'horizon moyen au-dessus de l'horizontale : crêtes, bosses, tumuli en clair | `dist`, `gamma` |
-  | `oneg` | Openness négative inversée, vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
-  | `lrm` | **Local Relief Model** simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut 15 px du provider) |
-  | `rrim` | Composite couleur lidar2map inspiré du **Red Relief Image Map** (RRIM, Chiba 2008) : pente en rouge, SLRM en clair/foncé | `sigma` (du SLRM interne) |
-  | `vat` | Composite lidar2map inspiré du **Visualization for Archaeological Topography** : SVF + openness positif + pente en niveaux de gris | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste final, défaut 2.0) |
-  | `e4mstp` | Variante lidar2map inspirée de l'**e4MSTP publié** (Kokalj 2025, *enhanced version 4* du **MSTP**, *Multiscale Topographic Position*) : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourde ; différente du preset RVT exact | `dist` (défaut 20), `gamma` (défaut 0,8) |
+Calculés depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
 
-  **[Guide détaillé des ombrages : histoire, formules, schémas, avantages, limites et méthode de comparaison](docs/shadings.fr.md).**
+| Type | Ce qu'il révèle | Paramètres |
+|------|-----------------|------------|
+| `multi` | Hillshade multidirectionnel (Mark 1992), relief général avec biais d'azimut réduit | `elevation` (° soleil, défaut 25, bas = micro-relief, 45 = usage général) |
+| `315` `045` `135` `225` | Hillshades directionnels, accentuent les structures perpendiculaires à l'azimut choisi | `elevation` (idem) |
+| `slope` | Pente 0-90° étalée sur 1-255, talus, ruptures, terrasses | (aucun) |
+| `svf` | Sky-View Factor, fraction de ciel visible : fossés, restanques, enceintes en sombre | `conv` (`flux` = cos²γ contrasté, défaut ; `rvt` = 1−sin γ, standard archéo Kokalj/Hesse), `dist` (rayon d'horizon en m, défaut 20, 20 = micro-relief, 100 = enceintes/voiries), `gamma` (contraste, défaut 2.0) |
+| `opos` | Openness positive (Yokoyama 2002), angle d'horizon moyen au-dessus de l'horizontale : crêtes, bosses, tumuli en clair | `dist`, `gamma` |
+| `oneg` | Openness négative inversée, vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
+| `lrm` | **Local Relief Model** simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut 15 px du provider) |
+| `rrim` | Composite couleur lidar2map inspiré du **Red Relief Image Map** (RRIM, Chiba 2008) : pente en rouge, SLRM en clair/foncé | `sigma` (du SLRM interne) |
+| `vat` | Composite lidar2map inspiré du **Visualization for Archaeological Topography** : SVF + openness positif + pente en niveaux de gris | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste final, défaut 2.0) |
+| `e4mstp` | Variante lidar2map inspirée de l'**e4MSTP publié** (Kokalj 2025, *enhanced version 4* du **MSTP**, *Multiscale Topographic Position*) : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourde ; différente du preset RVT exact | `dist` (défaut 20), `gamma` (défaut 0,8) |
 
-  Deux façons de les demander :
+**[Guide détaillé des ombrages : histoire, formules, schémas, avantages, limites et méthode de comparaison](docs/shadings.fr.md).**
 
-  ```bash
-  # Simple : liste de types, paramètres globaux partagés
-  --shadings multi svf oneg --svf-dist 20 --svf-gamma 2
+Deux façons de les demander :
 
-  # Instances paramétrées (répétable) : chaque occurrence porte SES paramètres
-  # → plusieurs instances du même type dans un seul run
-  --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
-  --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+```bash
+# Simple : liste de types, paramètres globaux partagés
+--shadings multi svf oneg --svf-dist 20 --svf-gamma 2
 
-  # Preset par résolution (opt-in) : un stack (svf + opos + lrm + multi + slope)
-  # dimensionné en MÈTRES pour la résolution du MNT, pour cibler la même échelle
-  # de structures que le MNT soit à 0,25 m ou 5 m. 'auto' choisit le palier selon
-  # le provider : micro (<=0,75 m) / standard (~1 m) / landscape (>=5 m)
-  --shading-preset auto
-  ```
+# Instances paramétrées (répétable) : chaque occurrence porte SES paramètres
+# → plusieurs instances du même type dans un seul run
+--shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
+--shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
 
-  Les paramètres explicites différents des défauts sont encodés dans le nom du
-  fichier produit (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`) :
-  pas de collision entre instances, et les ombrages déjà calculés sont réutilisés.
-  Dans la GUI, la liste « à traiter » (boutons +/−) fait la même chose : chaque
-  instance ajoutée a son propre mini-formulaire de paramètres.
-  `--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
+# Preset par résolution (opt-in) : un stack (svf + opos + lrm + multi + slope)
+# dimensionné en MÈTRES pour la résolution du MNT, pour cibler la même échelle
+# de structures que le MNT soit à 0,25 m ou 5 m. 'auto' choisit le palier selon
+# le provider : micro (<=0,75 m) / standard (~1 m) / landscape (>=5 m)
+--shading-preset auto
+```
 
-  Sources LiDAR : choisir `--provider <code>` en CLI ou le provider dans la GUI.
-  La [couverture LiDAR](#couverture-lidar-et-sources-évaluées) et le
-  [tableau des providers](#providers-disponibles) regroupent la liste
-  de référence, les résolutions, les CRS, les mécanismes d'accès et les clés API.
+Les paramètres explicites différents des défauts sont encodés dans le nom du
+fichier produit (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`) :
+pas de collision entre instances, et les ombrages déjà calculés sont réutilisés.
+Dans la GUI, la liste « à traiter » (boutons +/−) fait la même chose : chaque
+instance ajoutée a son propre mini-formulaire de paramètres.
+`--svf-sweep` / `--no-svf-sweep` (kernel sweep-horizon, SVF uniquement) reste global.
 
-  > **Limite connue : les ruines debout.** Les MNT sol-nu nationaux suppriment
-  > *par construction* les murs encore debout au-delà d'environ 1 m (le
-  > classificateur les range en végétation ou « non classé »), donc aucun
-  > ombrage calculé depuis le MNT ne peut les faire réapparaître.
-  >
-  > Deux socles intégrés au pipeline contournent cette limite : cocher
-  > **« mode LAZ »** à côté du provider (ou CLI `--laz`) fait tourner tous les
-  > ombrages sur un modèle **DFM** (*Digital Feature Model*, Štular et al.
-  > 2021) calculé depuis le nuage de points classé au lieu du MNT, avec le
-  > choix entre réinjection par classes (`--laz-ground classes`, défaut) ou
-  > **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et al. 2016 : fond
-  > plus propre, ~3 min/dalle au lieu de ~20 s). Détails et tous les
-  > paramètres (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) dans le
-  > [tableau des providers](#providers-disponibles). Coût : télécharge le
-  > nuage COPC LAZ complet (~205 Mo/km²), donc garder la zone petite.
-  >
-  > Pour une prospection ciblée hors pipeline (comparaison manuelle sous
-  > QGIS), [`tools/dfm_ruines.py`](tools/dfm_ruines.py) reconstruit le même
-  > type de modèle en script autonome et produit des GeoTIFF géoréférencés
-  > LRM-MNT / LRM-DFM / delta à draper sur l'orthophoto.
-  >
-  > Le mode LAZ n'est pas réservé à la France : il tourne aussi sur le nuage
-  > swissSURFACE3D suisse et sur tout provider publiant un nuage de points
-  > complet, dense et classé (voir le tableau des providers) ; un MNT raster
-  > bare-earth ou un nuage sol-seul ne peut pas en recevoir.
+Sources LiDAR : choisir `--provider <code>` en CLI ou le provider dans la GUI.
+La [couverture LiDAR](#couverture-lidar-et-sources-évaluées) et le
+[tableau des providers](#providers-disponibles) regroupent la liste
+de référence, les résolutions, les CRS, les mécanismes d'accès et les clés API.
 
-  Une ruine de maison sans toiture (murs ~1,5 m, dép. 83), sous le maquis.
-  L'orthophoto laisse à peine deviner les murs ; le LRM classique (depuis le
-  MNT) montre les restanques mais pas la ruine ; le DFM fait réapparaître
-  l'emprise du bâtiment, et le socle CSF nettoie le fond.
+> **Limite connue : les ruines debout.** Les MNT sol-nu nationaux suppriment
+> *par construction* les murs encore debout au-delà d'environ 1 m (le
+> classificateur les range en végétation ou « non classé »), donc aucun
+> ombrage calculé depuis le MNT ne peut les faire réapparaître.
+>
+> Deux socles intégrés au pipeline contournent cette limite : cocher
+> **« mode LAZ »** à côté du provider (ou CLI `--laz`) fait tourner tous les
+> ombrages sur un modèle **DFM** (*Digital Feature Model*, Štular et al.
+> 2021) calculé depuis le nuage de points classé au lieu du MNT, avec le
+> choix entre réinjection par classes (`--laz-ground classes`, défaut) ou
+> **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et al. 2016 : fond
+> plus propre, ~3 min/dalle au lieu de ~20 s). Détails et tous les
+> paramètres (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) dans la
+> [référence CLI du mode LAZ](#téléchargement-lidar-et-mode-laz). Coût :
+> télécharge le nuage COPC LAZ complet (~205 Mo/km²), donc garder la zone
+> petite.
+>
+> Pour une prospection ciblée hors pipeline (comparaison manuelle sous
+> QGIS), [`tools/dfm_ruines.py`](tools/dfm_ruines.py) reconstruit le même
+> type de modèle en script autonome et produit des GeoTIFF géoréférencés
+> LRM-MNT / LRM-DFM / delta à draper sur l'orthophoto.
+>
+> Le mode LAZ n'est pas réservé à la France : il tourne aussi sur le nuage
+> swissSURFACE3D suisse et sur tout provider publiant un nuage de points
+> complet, dense et classé (voir le [tableau des providers](#providers-disponibles)) ;
+> un MNT raster bare-earth ou un nuage sol-seul ne peut pas en recevoir.
 
-  | Orthophoto | LRM classique (depuis le MNT) |
-  |---|---|
-  | ![Orthophoto, murs cachés sous le maquis](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM depuis le MNT bare-earth, ruine invisible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
-  | Murs noyés dans la végétation | Les restanques ressortent, pas la ruine |
-  | **DFM-LRM (réinjection par classes)** | **DFM-LRM (socle tissu CSF)** |
-  | ![DFM par réinjection de classes, murs visibles avec mouchetis](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM avec socle tissu CSF, fond plus propre](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
-  | Le rectangle du bâtiment réapparaît (moucheté) | Mêmes murs, fond plus propre |
+Une ruine de maison sans toiture (murs ~1,5 m, dép. 83), sous le maquis.
+L'orthophoto laisse à peine deviner les murs ; le LRM classique (depuis le
+MNT) montre les restanques mais pas la ruine ; le DFM fait réapparaître
+l'emprise du bâtiment, et le socle CSF nettoie le fond.
 
-- **Cartes raster IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
-- **Imagerie USGS** *(USA, `--layer naip`)* : imagerie aérienne dérivée NAIP, domaine public (~1 m, cache complet jusqu'à z16), complément image du LiDAR 3DEP `us-tnm`.
+| Orthophoto | LRM classique (depuis le MNT) |
+|---|---|
+| ![Orthophoto, murs cachés sous le maquis](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM depuis le MNT bare-earth, ruine invisible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
+| Murs noyés dans la végétation | Les restanques ressortent, pas la ruine |
+| **DFM-LRM (réinjection par classes)** | **DFM-LRM (socle tissu CSF)** |
+| ![DFM par réinjection de classes, murs visibles avec mouchetis](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM avec socle tissu CSF, fond plus propre](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
+| Le rectangle du bâtiment réapparaît (moucheté) | Mêmes murs, fond plus propre |
 
-- **Cartes vectorielles** : OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*. Les deux se rendent aussi en **`transparent-raster`** : les couches choisies (chemins, routes, cours d'eau...) dessinées sur tuiles transparentes (.sqlitedb), à superposer au relief LiDAR dans OsmAnd (qui ne sait pas superposer du vectoriel nativement)
+### Cartes raster
 
-- **Sorties** : voir le tableau de compatibilité détaillé ci-dessous. Les formats produits par lidar2map ont des usages différents : MBTiles pour les cartes raster polyvalentes (notamment Locus), SQLiteDB pour OsmAnd, RMAP pour TwoNav/CompeGPS, Mapsforge `.map` pour les cartes vectorielles Locus/OruxMaps, et GeoJSON pour l'échange de données avec QGIS ou les applications qui acceptent les overlays GeoJSON.
+- **IGN** *(France uniquement)* : Plan IGN, Orthophotos (actuelles + historiques 1950, 1965, 1980), État-Major XIXᵉ, Pléiades satellite, IRC, etc.
+- **USGS** *(USA, `--layer naip`)* : imagerie aérienne dérivée NAIP, domaine public (~1 m, cache complet jusqu'à z16), complément image du LiDAR 3DEP `us-tnm`.
+
+### Cartes vectorielles
+
+OSM Mapsforge `.map` (international, via Geofabrik) ou IGN BD TOPO *(France uniquement)*. Les deux se rendent aussi en **`transparent-raster`** : les couches choisies (chemins, routes, cours d'eau...) dessinées sur tuiles transparentes (.sqlitedb), à superposer au relief LiDAR dans OsmAnd (qui ne sait pas superposer du vectoriel nativement).
 
 ### Formats de sortie et compatibilité
 
@@ -494,7 +501,7 @@ charge.
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign` + **mode LAZ** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode LAZ » dans la GUI (ou CLI `--laz`, avec `--laz-hmin/--laz-hmax/--laz-classes` pour ajuster par site) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis UN ensemble de classes (défaut `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres sont réinjectées dans les trous du sol, tranche 0,4-2,5 m). **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Socle alternatif `--laz-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016) : ignore totalement les classes du producteur, fond plus propre, ~3 min/dalle ; tissu réglable par site (`--laz-csf-threshold/-resolution/-rigidness`, surface CSF standard). (Retirer la classe 2 de l'ensemble = coupe, objets de la tranche seuls sur fond transparent ; rarement utile en pratique.) Le nom de zone est auto-suffixé (`_laz_dfm` / `_laz_csf` : `laz` = la source nuage de points, `dfm`/`csf` = la méthode ; le MNT par défaut reste sans marqueur) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode LAZ** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode LAZ » dans la GUI (ou CLI `--laz`) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis le socle par défaut `--laz-ground classes` (ensemble `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres réinjectées dans les trous du sol) ou `--laz-ground csf`. **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Tous les paramètres de réglage (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) : [référence CLI](#téléchargement-lidar-et-mode-laz). Nom de zone auto-suffixé (`_laz_dfm` / `_laz_csf`) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `ch-swisstopo` + **mode LAZ** | Suisse (**mode structures debout**, expérimental) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode LAZ » (ou CLI `--laz`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--laz-ground csf`, Cloth Simulation Filter) car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |

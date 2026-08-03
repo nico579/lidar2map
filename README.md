@@ -39,6 +39,8 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 - **Memory streaming**: large areas are processed without loading all data into RAM.
 - **Clean stop and resume**: `Ctrl+C` can wait for the current chunk, and a manifest tracks completed chunks for resumption.
 - **Splitting and disk control**: `--split-width`, `--cleanup`, and `--min-free-gb` keep large jobs manageable.
+- **Vector map merging**: `--merge` combines several GeoJSON files (glob accepted) into one, for example the IGN and OSM layers of one area, or the exports of neighbouring runs; can directly produce a Mapsforge `.map` or a `transparent-raster` overlay from the merged result.
+- **Re-splitting existing maps**: `--split` re-splits an already-generated MBTiles after the fact, into a grid (`--cols`/`--rows`) or squares of a given width (`--split-width`), with optional per-chunk conversion to RMAP or SQLiteDB. Handy for staying under FAT32's 4 GB limit, or spreading a deliverable across several devices.
 - **Crash-safe history**: each run remains visible with its state and logs.
 - **Multi-provider LiDAR**: national sources are isolated in `providers/<code>.py`; the [provider table](#available-providers) is the exhaustive list.
 - **Interactive GUI**: five processing types, validation, live log, history, and processing queue.
@@ -52,98 +54,103 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 
 From a town, GPS coordinates, a bbox, a département or a whole region:
 
-- **Archaeological relief** from national LiDAR (0.5 m to 1 m resolution depending on source):
+### Archaeological relief visualizations
 
-  | Type | What it reveals | Parameters |
-  |------|-----------------|------------|
-  | `multi` | Multidirectional hillshade (Mark 1992), general relief with reduced azimuth bias | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
-  | `315` `045` `135` `225` | Directional hillshades, emphasize structures perpendicular to the chosen azimuth | `elevation` (same) |
-  | `slope` | Slope 0-90° stretched to 1-255, banks, breaks, terraces | (none) |
-  | `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
-  | `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
-  | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
-  | `lrm` | Simplified **Local Relief Model** (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
-  | `rrim` | lidar2map colour composite inspired by the **Red Relief Image Map** (RRIM, Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
-  | `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
-  | `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025, *enhanced version 4* of **MSTP**, *Multiscale Topographic Position*): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
+Computed from national LiDAR (0.5 m to 1 m resolution depending on source):
 
-  **[Detailed visualization guide: history, formulas, diagrams, strengths, limitations, and comparison workflow](docs/shadings.md).**
+| Type | What it reveals | Parameters |
+|------|-----------------|------------|
+| `multi` | Multidirectional hillshade (Mark 1992), general relief with reduced azimuth bias | `elevation` (° sun, default 25, low = micro-relief, 45 = general use) |
+| `315` `045` `135` `225` | Directional hillshades, emphasize structures perpendicular to the chosen azimuth | `elevation` (same) |
+| `slope` | Slope 0-90° stretched to 1-255, banks, breaks, terraces | (none) |
+| `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
+| `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
+| `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
+| `lrm` | Simplified **Local Relief Model** (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
+| `rrim` | lidar2map colour composite inspired by the **Red Relief Image Map** (RRIM, Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
+| `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
+| `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025, *enhanced version 4* of **MSTP**, *Multiscale Topographic Position*): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
 
-  Two ways to request them:
+**[Detailed visualization guide: history, formulas, diagrams, strengths, limitations, and comparison workflow](docs/shadings.md).**
 
-  ```bash
-  # Simple: list of types, shared global parameters
-  --shadings multi svf oneg --svf-dist 20 --svf-gamma 2
+Two ways to request them:
 
-  # Parameterized instances (repeatable): each occurrence carries ITS OWN params
-  # → several instances of the same type in a single run
-  --shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
-  --shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
+```bash
+# Simple: list of types, shared global parameters
+--shadings multi svf oneg --svf-dist 20 --svf-gamma 2
 
-  # Resolution preset (opt-in): a stack (svf + opos + lrm + multi + slope) sized
-  # in METRES for the DEM resolution, so the same ground-scale features are
-  # targeted whether the DEM is 0.25 m or 5 m. 'auto' picks the tier per provider:
-  #   micro (<=0.75 m) / standard (~1 m) / landscape (>=5 m)
-  --shading-preset auto
-  ```
+# Parameterized instances (repeatable): each occurrence carries ITS OWN params
+# → several instances of the same type in a single run
+--shading svf:dist=20,gamma=2 --shading svf:dist=100,gamma=1.5 \
+--shading oneg:dist=20 --shading 315:elevation=20 --shading lrm:sigma=10
 
-  Explicit parameters that differ from the defaults are encoded in the output
-  filename (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`):
-  no collision between instances, and already-computed shadings are reused.
-  In the GUI, the "to process" list (+/− buttons) does the same: each added
-  instance has its own little parameter form.
-  `--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
+# Resolution preset (opt-in): a stack (svf + opos + lrm + multi + slope) sized
+# in METRES for the DEM resolution, so the same ground-scale features are
+# targeted whether the DEM is 0.25 m or 5 m. 'auto' picks the tier per provider:
+#   micro (<=0.75 m) / standard (~1 m) / landscape (>=5 m)
+--shading-preset auto
+```
 
-  LiDAR sources: choose `--provider <code>` in the CLI or use the GUI provider
-  selector. The [LiDAR coverage](#lidar-coverage-and-evaluated-sources) and
-  [provider table](#available-providers) are the single reference
-  for countries, resolutions, CRS, access mechanisms, and API keys.
+Explicit parameters that differ from the defaults are encoded in the output
+filename (`zone_svf_flux_100m_g1p5_ombrage.tif`, `zone_315_e20_ombrage.tif`):
+no collision between instances, and already-computed shadings are reused.
+In the GUI, the "to process" list (+/− buttons) does the same: each added
+instance has its own little parameter form.
+`--svf-sweep` / `--no-svf-sweep` (sweep-horizon kernel, SVF only) stays global.
 
-  > **Known limit: standing ruins.** National bare-earth DTMs *remove by
-  > design* walls still standing above ~1 m (the classifier files them as
-  > vegetation or "unclassified"), so no shading computed from the DTM can
-  > bring them back.
-  >
-  > Two ground bases built into the pipeline work around this: tick the
-  > **"DFM mode"** checkbox next to the provider (or CLI `--laz`) and every
-  > shading runs on a **DFM** (*Digital Feature Model*, Štular et al. 2021)
-  > computed from the classified point cloud instead of the DTM, with a
-  > choice between class-based re-injection (`--laz-ground classes`,
-  > default) or a **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et
-  > al. 2016: cleaner background, ~3 min/tile instead of ~20 s). Full
-  > parameter list (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) in the
-  > [provider table](#available-providers). Cost: downloads the full COPC
-  > LAZ point cloud (~205 MB/km²), so keep the area small.
-  >
-  > For targeted prospection outside the pipeline (manual comparison in
-  > QGIS), [`tools/dfm_ruines.py`](tools/dfm_ruines.py) rebuilds the same
-  > kind of model as a standalone script and outputs georeferenced
-  > LRM-DTM / LRM-DFM / delta GeoTIFFs to drape over the orthophoto.
-  >
-  > DFM mode is not France-only: it also runs on Switzerland's
-  > swissSURFACE3D and on any provider that publishes a full, dense,
-  > classified point cloud (see the provider table); a bare-earth DTM
-  > raster or a ground-only cloud cannot get it.
+LiDAR sources: choose `--provider <code>` in the CLI or use the GUI provider
+selector. The [LiDAR coverage](#lidar-coverage-and-evaluated-sources) and
+[provider table](#available-providers) are the single reference
+for countries, resolutions, CRS, access mechanisms, and API keys.
 
-  A roofless house ruin (walls ~1.5 m, dép. 83, France), under scrub. The
-  aerial photo barely hints at the walls; the classic LRM (from the DTM) shows
-  the terraces but not the ruin; the DFM brings the building footprint back,
-  and the CSF ground base cleans up the background.
+> **Known limit: standing ruins.** National bare-earth DTMs *remove by
+> design* walls still standing above ~1 m (the classifier files them as
+> vegetation or "unclassified"), so no shading computed from the DTM can
+> bring them back.
+>
+> Two ground bases built into the pipeline work around this: tick the
+> **"DFM mode"** checkbox next to the provider (or CLI `--laz`) and every
+> shading runs on a **DFM** (*Digital Feature Model*, Štular et al. 2021)
+> computed from the classified point cloud instead of the DTM, with a
+> choice between class-based re-injection (`--laz-ground classes`,
+> default) or a **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et
+> al. 2016: cleaner background, ~3 min/tile instead of ~20 s). Full
+> parameter list (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) in the
+> [CLI reference for LAZ mode](#lidar-download-and-laz-mode). Cost:
+> downloads the full COPC LAZ point cloud (~205 MB/km²), so keep the area
+> small.
+>
+> For targeted prospection outside the pipeline (manual comparison in
+> QGIS), [`tools/dfm_ruines.py`](tools/dfm_ruines.py) rebuilds the same
+> kind of model as a standalone script and outputs georeferenced
+> LRM-DTM / LRM-DFM / delta GeoTIFFs to drape over the orthophoto.
+>
+> DFM mode is not France-only: it also runs on Switzerland's
+> swissSURFACE3D and on any provider that publishes a full, dense,
+> classified point cloud (see the [provider table](#available-providers));
+> a bare-earth DTM raster or a ground-only cloud cannot get it.
 
-  | Aerial ortho | Classic LRM (from the DTM) |
-  |---|---|
-  | ![Aerial ortho, walls hidden under scrub](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM from the bare-earth DTM, ruin not visible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
-  | Walls lost under vegetation | Terraces show, the ruin does not |
-  | **DFM-LRM (class re-injection)** | **DFM-LRM (CSF cloth base)** |
-  | ![DFM by class re-injection, walls reappear with speckle](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM with CSF cloth ground base, cleaner background](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
-  | Rectangular building reappears (speckly) | Same walls, cleaner background |
+A roofless house ruin (walls ~1.5 m, dép. 83, France), under scrub. The
+aerial photo barely hints at the walls; the classic LRM (from the DTM) shows
+the terraces but not the ruin; the DFM brings the building footprint back,
+and the CSF ground base cleans up the background.
 
-- **IGN raster maps** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
-- **USGS Imagery** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16), pairs with the 3DEP LiDAR (`us-tnm`).
+| Aerial ortho | Classic LRM (from the DTM) |
+|---|---|
+| ![Aerial ortho, walls hidden under scrub](screenshots/LIDAR_Samples/Ruins/ortho.jpg) | ![LRM from the bare-earth DTM, ruin not visible](screenshots/LIDAR_Samples/Ruins/lrm.jpg) |
+| Walls lost under vegetation | Terraces show, the ruin does not |
+| **DFM-LRM (class re-injection)** | **DFM-LRM (CSF cloth base)** |
+| ![DFM by class re-injection, walls reappear with speckle](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM with CSF cloth ground base, cleaner background](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
+| Rectangular building reappears (speckly) | Same walls, cleaner background |
 
-- **Vector maps**: OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*. Both can also render as **`transparent-raster`**: the selected layers (paths, roads, rivers...) drawn on transparent tiles (.sqlitedb), to float above the LiDAR relief as an OsmAnd overlay (OsmAnd cannot overlay vector data natively)
+### Raster maps
 
-- **Outputs**: see the compatibility table below. lidar2map writes different formats for different uses: MBTiles for versatile tiled rasters (especially Locus), SQLiteDB for OsmAnd, RMAP for TwoNav/CompeGPS, Mapsforge `.map` for Locus/OruxMaps vector maps, and GeoJSON for QGIS or apps accepting GeoJSON overlays.
+- **IGN** *(France only)*: Plan IGN, orthophotos (current + historical 1950, 1965, 1980), 19th-century État-Major, Pléiades satellite, CIR, etc.
+- **USGS** *(USA, `--layer naip`)*: public-domain NAIP-derived aerial imagery (~1 m, cache complete to z16), pairs with the 3DEP LiDAR (`us-tnm`).
+
+### Vector maps
+
+OSM Mapsforge `.map` (international, via Geofabrik) or IGN BD TOPO *(France only)*. Both can also render as **`transparent-raster`**: the selected layers (paths, roads, rivers...) drawn on transparent tiles (.sqlitedb), to float above the LiDAR relief as an OsmAnd overlay (OsmAnd cannot overlay vector data natively).
 
 ### Output formats and compatibility
 
@@ -493,7 +500,7 @@ multiple machines with `--block i/M`, and supported platforms.
 |---|---|---|---|---|---|
 | `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage (mainland) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | WFS `IGNF_MNT-LIDAR-HD:dalle` index (each tile feature carries its direct download `url`), 0.5 m GeoTIFF, Licence Ouverte 2.0 (Martinique/Mayotte announced but WFS empty for now) |
-| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--laz`, with `--laz-hmin/--laz-hmax/--laz-classes` to tune per site): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from ONE class set (default `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others are re-injected into ground gaps within the 0.4-2.5 m height band). **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier — scrub comes back too; see "Known limit" box). Alternative ground base `--laz-ground csf` (**Cloth Simulation Filter**, Zhang et al. 2016): ignores the producer's classes entirely, cleaner background, ~3 min/tile; cloth tunable per site (`--laz-csf-threshold/-resolution/-rigidness`, standard CSF surface). (Removing class 2 from the set yields a slice, band objects only on a transparent background; rarely useful in practice.) The zone name is auto-suffixed (`_laz_dfm` / `_laz_csf`: `laz` = the point-cloud source, `dfm`/`csf` = the method; the DTM default stays unmarked), so point-cloud outputs land in their own project and never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
+| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--laz`): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from the default ground base `--laz-ground classes` (class set `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others re-injected into ground gaps) or `--laz-ground csf`. **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier: scrub comes back too; see "Known limit" box). Full tuning parameters (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`): [CLI reference](#lidar-download-and-laz-mode). Zone name auto-suffixed (`_laz_dfm` / `_laz_csf`), so point-cloud outputs never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
 | `ch-swisstopo` + **DFM mode** | Switzerland (**standing-structures mode**, experimental) | DFM from classified swissSURFACE3D point cloud | 0.5 m | EPSG:2056 (CH1903+/LV95) | GUI checkbox "DFM mode" (or CLI `--laz`) on the Swiss provider: downloads the **swissSURFACE3D `.las.zip`** tiles (~125 MB/km²) via the same STAC API, unzips the point cloud and rebuilds the standing-structures model. Default ground base is **CSF** (`--laz-ground csf`, Cloth Simulation Filter) since swisstopo's class codes are not guaranteed IGN-compatible; the `classes` mode is also available. Same per-site tuning and cache-then-retune behaviour as the France DFM (~6 min/tile). Targeted prospection, field validation recommended |
