@@ -6,8 +6,7 @@
 
 **Cartes offline LiDAR archéologique multi-pays + IGN raster/vecteur + OSM pour Locus Map / OsmAnd / TwoNav**
 
-Outil autonome (exécutables Windows / macOS / Linux sans Python à installer,
-ou script Python unique) qui télécharge le LiDAR public national, calcule des
+Outil autonome qui télécharge le LiDAR public national, calcule des
 ombrages spécialisés pour la prospection archéologique et génère des cartes
 hors-ligne pour smartphone (MBTiles, RMAP, SQLiteDB, Mapsforge). La
 [couverture LiDAR et la liste des pays](#couverture-lidar-et-sources-évaluées)
@@ -33,15 +32,17 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 
 ## Fonctionnalités principales
 
+- **Multi-provider LiDAR** : les sources nationales sont isolées dans `providers/<code>.py` ; le [tableau des providers](#providers-disponibles) en donne la liste exhaustive.
+- **Cartes raster** : IGN (France) et USGS NAIP (USA), voir [Cartes raster](#cartes-raster).
+- **Cartes vectorielles** : OSM Mapsforge (international) et IGN BD TOPO (France), voir [Cartes vectorielles](#cartes-vectorielles).
+- **Fusion de cartes vectorielles** : `--merge` combine plusieurs GeoJSON (glob accepté) en un seul fichier, par exemple les couches IGN et OSM d'une même zone, ou les exports de runs voisins ; peut produire directement une carte Mapsforge `.map` ou un overlay `transparent-raster` à partir du résultat fusionné.
+- **Découpage et contrôle du disque** : `--split-width`, `--cleanup` et `--min-free-gb` encadrent les calculs de grande taille.
+- **Découpage raster** : `--split` redécoupe après coup un MBTiles déjà généré, en grille (`--cols`/`--rows`) ou en carrés d'une largeur donnée (`--split-width`), avec conversion optionnelle en RMAP ou SQLiteDB par morceau. Utile pour respecter la limite FAT32 de 4 Go, ou répartir un livrable entre plusieurs appareils. Tous les formats possibles en sortie : [Formats de sortie et compatibilité](#formats-de-sortie-et-compatibilité).
 - **Exécutables autonomes multiplateformes** : `lidar2map` tourne sans Python à installer sur Windows, macOS et Linux (GUI ou CLI sur l'ordinateur courant) ; c'est l'usage standard, voir [Installation](#installation).
 - **Auto-bootstrap** (script Python) : installe à la demande ses dépendances et les outils cartographiques nécessaires.
 - **Streaming mémoire** : les grandes zones sont traitées sans charger toutes les données en RAM.
 - **Arrêt et reprise propres** : `Ctrl+C` peut attendre la fin du morceau courant et un manifeste permet de reprendre les morceaux terminés.
-- **Découpage et contrôle du disque** : `--split-width`, `--cleanup` et `--min-free-gb` encadrent les calculs de grande taille.
-- **Fusion de cartes vectorielles** : `--merge` combine plusieurs GeoJSON (glob accepté) en un seul fichier, par exemple les couches IGN et OSM d'une même zone, ou les exports de runs voisins ; peut produire directement une carte Mapsforge `.map` ou un overlay `transparent-raster` à partir du résultat fusionné.
-- **Redécoupage de cartes existantes** : `--split` redécoupe après coup un MBTiles déjà généré, en grille (`--cols`/`--rows`) ou en carrés d'une largeur donnée (`--split-width`), avec conversion optionnelle en RMAP ou SQLiteDB par morceau. Utile pour respecter la limite FAT32 de 4 Go, ou répartir un livrable entre plusieurs appareils.
 - **Historique résistant aux crashs** : chaque exécution reste visible avec son état et ses journaux.
-- **Multi-provider LiDAR** : les sources nationales sont isolées dans `providers/<code>.py` ; le [tableau des providers](#providers-disponibles) en donne la liste exhaustive.
 - **GUI interactive** : cinq types de traitement, validation, journal en direct, historique et file d'attente.
 - **Orthophotos historiques** : comparaison du relief LiDAR actuel avec les paysages anciens.
 - **Envoi vers le téléphone** : après génération, le bouton 📲 de la GUI (ou `--serve --zone-name X` en CLI) sert les cartes sur le WiFi local et affiche un QR code. Rien ne sort du réseau. Dans Locus, utiliser **Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers**.
@@ -141,6 +142,8 @@ l'emprise du bâtiment, et le socle CSF nettoie le fond.
 | **DFM-LRM (réinjection par classes)** | **DFM-LRM (socle tissu CSF)** |
 | ![DFM par réinjection de classes, murs visibles avec mouchetis](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM avec socle tissu CSF, fond plus propre](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
 | Le rectangle du bâtiment réapparaît (moucheté) | Mêmes murs, fond plus propre |
+
+En dehors du LiDAR, lidar2map produit aussi deux familles de cartes plus classiques, sans calcul d'ombrage :
 
 ### Cartes raster
 

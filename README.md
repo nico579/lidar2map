@@ -6,12 +6,11 @@
 
 **Offline archaeological LiDAR maps, multi-country + IGN raster/vector + OSM, for Locus Map / OsmAnd / TwoNav**
 
-A self-contained tool (standalone executables for Windows / macOS / Linux, no
-Python required; also runs as a single Python script) that downloads public
-national LiDAR, computes relief visualizations tuned for archaeological
-prospection, and generates offline smartphone maps (MBTiles, RMAP, SQLiteDB,
-Mapsforge). See the dedicated [LiDAR coverage and countries](#lidar-coverage-and-evaluated-sources)
-chapter; IGN raster/vector maps remain France-only.
+A self-contained tool that downloads public national LiDAR, computes relief
+visualizations tuned for archaeological prospection, and generates offline
+smartphone maps (MBTiles, RMAP, SQLiteDB, Mapsforge). See the dedicated
+[LiDAR coverage and countries](#lidar-coverage-and-evaluated-sources) chapter;
+IGN raster/vector maps remain France-only.
 
 ![Same place: satellite, OpenStreetMap, then LiDAR relief (SVF)](screenshots/hero.png)
 
@@ -34,15 +33,17 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 
 ## Main features
 
+- **Multi-provider LiDAR**: national sources are isolated in `providers/<code>.py`; the [provider table](#available-providers) is the exhaustive list.
+- **Raster maps**: IGN (France) and USGS NAIP (USA), see [Raster maps](#raster-maps).
+- **Vector maps**: OSM Mapsforge (international) and IGN BD TOPO (France), see [Vector maps](#vector-maps).
+- **Vector map merging**: `--merge` combines several GeoJSON files (glob accepted) into one, for example the IGN and OSM layers of one area, or the exports of neighbouring runs; can directly produce a Mapsforge `.map` or a `transparent-raster` overlay from the merged result.
+- **Splitting and disk control**: `--split-width`, `--cleanup`, and `--min-free-gb` keep large jobs manageable.
+- **Raster split**: `--split` re-splits an already-generated MBTiles after the fact, into a grid (`--cols`/`--rows`) or squares of a given width (`--split-width`), with optional per-chunk conversion to RMAP or SQLiteDB. Handy for staying under FAT32's 4 GB limit, or spreading a deliverable across several devices. All possible output formats: [Output formats and compatibility](#output-formats-and-compatibility).
 - **Standalone cross-platform executables**: `lidar2map` runs with no Python to install on Windows, macOS, and Linux (GUI or CLI on the current computer); this is the standard way to use it, see [Installation](#installation).
 - **Automatic bootstrap** (Python script): installs its dependencies and mapping tools on demand.
 - **Memory streaming**: large areas are processed without loading all data into RAM.
 - **Clean stop and resume**: `Ctrl+C` can wait for the current chunk, and a manifest tracks completed chunks for resumption.
-- **Splitting and disk control**: `--split-width`, `--cleanup`, and `--min-free-gb` keep large jobs manageable.
-- **Vector map merging**: `--merge` combines several GeoJSON files (glob accepted) into one, for example the IGN and OSM layers of one area, or the exports of neighbouring runs; can directly produce a Mapsforge `.map` or a `transparent-raster` overlay from the merged result.
-- **Re-splitting existing maps**: `--split` re-splits an already-generated MBTiles after the fact, into a grid (`--cols`/`--rows`) or squares of a given width (`--split-width`), with optional per-chunk conversion to RMAP or SQLiteDB. Handy for staying under FAT32's 4 GB limit, or spreading a deliverable across several devices.
 - **Crash-safe history**: each run remains visible with its state and logs.
-- **Multi-provider LiDAR**: national sources are isolated in `providers/<code>.py`; the [provider table](#available-providers) is the exhaustive list.
 - **Interactive GUI**: five processing types, validation, live log, history, and processing queue.
 - **Historical orthophotos**: compare current LiDAR relief with older landscapes.
 - **Send to phone**: after generating, the GUI's 📲 button (or `--serve --zone-name X` in CLI) serves the maps over local WiFi and displays a QR code. Nothing leaves the network. In Locus, use **Map Manager → Import map → system file manager**.
@@ -142,6 +143,8 @@ and the CSF ground base cleans up the background.
 | **DFM-LRM (class re-injection)** | **DFM-LRM (CSF cloth base)** |
 | ![DFM by class re-injection, walls reappear with speckle](screenshots/LIDAR_Samples/Ruins/dfm_lrm.jpg) | ![DFM with CSF cloth ground base, cleaner background](screenshots/LIDAR_Samples/Ruins/csf_lrm.jpg) |
 | Rectangular building reappears (speckly) | Same walls, cleaner background |
+
+Besides LiDAR, lidar2map also produces two more classic map families, with no relief computation:
 
 ### Raster maps
 
