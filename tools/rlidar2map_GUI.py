@@ -33,9 +33,22 @@ LOG_FILE_NAME = "rlidar2map_GUI.log"
 
 
 def bundled_resource(name: str) -> Path:
-    """Retourne une ressource voisine, y compris dans un onefile PyInstaller."""
-    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-    return bundle_root / name
+    """Retourne une ressource voisine, y compris dans un onefile PyInstaller.
+
+    En mode source (non frozen), le script vit dans tools/ mais certaines
+    ressources (l'icône commune) sont à la racine du projet, un niveau
+    au-dessus : repli sur ce parent si le fichier n'est pas à côté du
+    script. Sans ce repli, --remote-gui échouait en mode source avec
+    « Icône introuvable » (bug vécu 2026-08-04) : le fichier n'a jamais été
+    copié dans tools/, il n'existe qu'à la racine du dépôt et dans le
+    bundle frozen, où le .spec le place explicitement à côté de l'exe."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / name
+    here = Path(__file__).resolve().parent
+    candidate = here / name
+    if candidate.exists():
+        return candidate
+    return here.parent / name
 
 
 def normalized_lf_copy(source: Path, destination: Path) -> None:
@@ -69,13 +82,22 @@ def log_path() -> Path:
     raise SystemExit("Impossible de créer le fichier journal rlidar2map_GUI.log.")
 
 
-def run_with_log() -> int:
-    """Relance le programme en capturant aussi les sorties de ssh/scp."""
+def run_with_log(argv=None, *, relaunch=None) -> int:
+    """Relance le programme en capturant aussi les sorties de ssh/scp.
+
+    `relaunch` est la commande de base à réexécuter (sans les arguments) ;
+    par défaut, le programme se relance lui-même (usage standalone). Délégué
+    par lidar2map (--remote-gui), `relaunch` pointe vers lidar2map lui-même
+    pour que le processus journalisé retombe dans le même dispatch."""
+    argv = list(sys.argv[1:] if argv is None else argv)
     journal = log_path()
-    command = [sys.executable]
-    if not getattr(sys, "frozen", False):
-        command.append(str(Path(__file__).resolve()))
-    command.extend(sys.argv[1:])
+    if relaunch is not None:
+        command = list(relaunch)
+    else:
+        command = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            command.append(str(Path(__file__).resolve()))
+    command.extend(argv)
 
     environment = os.environ.copy()
     environment[LOG_CHILD_ENV] = "1"
@@ -328,7 +350,7 @@ def launch_rdp(ip: str, gui_user: str) -> None:
     print(f"Système non reconnu : ouvre un client RDP vers {address}.")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prépare une VM Ubuntu 24.04/26.04 avec XFCE et xrdp."
     )
@@ -349,11 +371,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="ne pas ouvrir le client RDP après l'installation",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv=None) -> int:
+    args = parse_args(argv)
     ip = ask_ip(args.ip)
     ssh_user = ask_ssh_user(args.ssh_user)
     gui_user = ask_username(args.user)
@@ -387,7 +409,14 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli_main(argv=None, *, relaunch=None) -> int:
+    """Point d'entrée unifié, appelé en standalone ou délégué par lidar2map
+    (--remote-gui) : capture les sorties dans rlidar2map_GUI.log via un
+    relaunch, sauf si on est déjà le processus enfant journalisé."""
     if os.environ.get(LOG_CHILD_ENV) == "1":
-        raise SystemExit(main())
-    raise SystemExit(run_with_log())
+        return main(argv)
+    return run_with_log(argv, relaunch=relaunch)
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli_main())

@@ -958,6 +958,27 @@ if getattr(sys, "frozen", False):
             sys.exit(_rc)
         # Pas de bundle.zip → exe onedir lancé directement → continuer.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# EXÉCUTION DISTANTE (rlidar2map_CLI / rlidar2map_GUI) — dispatch précoce
+# ─────────────────────────────────────────────────────────────────────────────
+# --remote-cli / --remote-gui délèguent immédiatement aux outils
+# d'orchestration SSH/RDP, avant le bootstrap (venv) et les imports lourds :
+# ce sont des scripts stdlib pur, sans dépendance vers le pipeline LiDAR.
+# Arguments propres à chaque mode : voir tools/README_rlidar2map.md.
+if len(sys.argv) > 1 and sys.argv[1] in ("--remote-cli", "--remote-gui"):
+    os.environ["LIDAR2MAP_REMOTE_MODE"] = "1"
+    _remote_argv = sys.argv[2:]
+    if sys.argv[1] == "--remote-cli":
+        from tools import rlidar2map_CLI as _remote_tool
+        sys.exit(_remote_tool.main(_remote_argv))
+    else:
+        from tools import rlidar2map_GUI as _remote_tool
+        _relaunch = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            _relaunch.append(__file__)
+        _relaunch.append("--remote-gui")
+        sys.exit(_remote_tool.cli_main(_remote_argv, relaunch=_relaunch))
+
 import queue
 import shutil
 import argparse
@@ -2221,7 +2242,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.31.6"
+VERSION      = "1.32.0"
 VERSION_DATE = "2026-08"
 
 
@@ -18535,6 +18556,13 @@ def lancer_gui():
                             cmd.append("--cleanup-keep-tiles")
                     if cfg.get("min_free_gb", 0) > 0:
                         cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
+                    # Sharding multi-VM : quelle tranche géographique CETTE
+                    # invocation traite (cf. section « Calcul distant » de
+                    # l'Exécution). Sans lien avec la case Découpage à
+                    # priori ci-dessus (un découpage interne au run), donc pas
+                    # gardé par cfg.get("decoupe").
+                    if cfg.get("remote_block"):
+                        cmd += ["--block", cfg["remote_block"]]
                 if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
                 if cfg.get("purger_zone"): cmd.append("--tiles-purge-out-of-zone")
 
@@ -18677,6 +18705,49 @@ def lancer_gui():
                 except Exception:
                     pass
 
+        # Compte SSH d'administration et compte RDP créé sur la VM : fixés en
+        # dur (pas de champ GUI). "root" est le défaut universel d'une VM
+        # cloud neuve (Hetzner, etc.) ; "userlidar" est un nom de compte
+        # interne créé à la volée par le script de déploiement, sans raison
+        # de varier. Les exposer n'apportait rien (retour utilisateur
+        # 2026-08-04) : qui a besoin d'un autre compte utilise directement
+        # rlidar2map_CLI/rlidar2map_GUI en standalone (--ssh-user/--user).
+        _REMOTE_SSH_USER = "root"
+        _REMOTE_RDP_USER = "userlidar"
+
+        def _wrap_remote_cmd(self, cmd, cfg):
+            """Enveloppe `cmd` (sortie de _build_cmd) pour l'exécuter sur une VM
+            via --remote-cli au lieu de localement. Le préfixe exécutable est
+            conservé tel quel (frozen : 1 élément ; source : 2), --remote-cli et
+            ses propres options s'insèrent juste après, puis `--` et les
+            arguments lidar2map inchangés. Toujours --bundle (pas de choix
+            source dans la GUI, comme --remote-gui qui n'en propose pas non
+            plus) : qui veut --source utilise rlidar2map_CLI en standalone."""
+            prefix_len = 1 if getattr(sys, "frozen", False) else 2
+            prefix, lidar_args = cmd[:prefix_len], cmd[prefix_len:]
+            remote_cmd = list(prefix) + ["--remote-cli", "--bundle"]
+            if cfg.get("remote_session"):
+                remote_cmd += ["--session", cfg["remote_session"]]
+            if cfg.get("remote_identity"):
+                remote_cmd += ["--identity", cfg["remote_identity"]]
+            remote_cmd.append("{}@{}".format(self._REMOTE_SSH_USER, cfg["remote_host"]))
+            remote_cmd.append("--")
+            remote_cmd += lidar_args
+            return remote_cmd
+
+        def _build_remote_gui_cmd(self, cfg):
+            """Construit la commande --remote-gui (bureau distant) : aucun des
+            paramètres du formulaire (zone, type...) ne s'applique, seules les
+            options de préparation de VM (rlidar2map_GUI) comptent."""
+            cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
+                   else [sys.executable, str(SCRIPT)])
+            cmd += ["--remote-gui", "--ip", cfg["remote_host"],
+                    "--ssh-user", self._REMOTE_SSH_USER,
+                    "--user", self._REMOTE_RDP_USER]
+            if cfg.get("remote_identity"):
+                cmd += ["--identity", cfg["remote_identity"]]
+            return cmd
+
         def launch(self, cfg):
             # Décision de lancement sous verrou : lire l'état, tuer l'ancien run
             # si « Arrêter puis Lancer », puis poser _launching AVANT de rendre
@@ -18710,7 +18781,19 @@ def lancer_gui():
             if self._reader_t and self._reader_t.is_alive():
                 self._reader_t.join(timeout=5)
             self._stop_t = None
-            cmd = self._build_cmd(cfg)
+            remote_choix = cfg.get("remote_choix", "local")
+            if remote_choix in ("cli", "gui") and not cfg.get("remote_host", "").strip():
+                with self._launch_lock:
+                    self._launching = False
+                return {"error": "Hôte manquant pour l'exécution distante (ex. 192.0.2.10)."}
+            if remote_choix == "gui":
+                # Bureau distant : aucun argument lidar2map, _build_cmd ne
+                # servirait à rien (cfg.type/zone n'ont pas été validés côté GUI).
+                cmd = self._build_remote_gui_cmd(cfg)
+            else:
+                cmd = self._build_cmd(cfg)
+                if remote_choix == "cli":
+                    cmd = self._wrap_remote_cmd(cmd, cfg)
             self._done = False
             self._retcode = None
             self._t_launch = time.time()
@@ -18722,35 +18805,42 @@ def lancer_gui():
             # tel_v, ecraser_tel_v, etc.) pour rappel exact via loadConfig().
             self._hist_run_id = f"{int(time.time()*1000)}-{os.getpid()}-gui"
             self._hist_saved  = False
-            # Calculer le dossier résultat attendu
-            t    = cfg.get("type", "lidar")
-            nom  = cfg.get("nom", "")
-            # Le pipeline CLI normalise le nom (slug ASCII minuscule) pour le
-            # nom de dossier : "Garéoult" → "gareoult". Sans cette normalisation
-            # ici, open_folder() pointerait vers un chemin inexistant.
-            nom_slug = normaliser_nom(nom) if nom else ""
-            base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-            # Le subprocess utilise --provider <code> → ecrit dans lidar/<country>.
-            # On reconstruit le meme path ici sinon open_folder pointe ailleurs.
-            _cfg_provider = cfg.get("provider", PROVIDER.CODE)
-            _cfg_country = "fr"
-            for _p in _discover_providers():
-                if _p["code"] == _cfg_provider:
-                    _cfg_country = _p.get("country", "fr")
-                    break
-            _lidar_subdir_cfg = f"lidar/{_cfg_country}"
-            _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
-                         "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
-            if t == "decoupe" and cfg.get("source_decoupe"):
-                self._result_dir = str(Path(cfg["source_decoupe"]).parent)
-            elif cfg.get("dossier"):
-                # --output-dir explicite : chaque main CLI l'utilise comme racine
-                # DIRECTE (racine = args.dossier), sans sous-dossier <nom>/<type>.
-                # Sans ce cas, open_folder visait dossier/nom/type inexistant et
-                # l'explorateur ouvrait Mes Documents. Miroir du CLI, tous types.
-                self._result_dir = str(Path(cfg["dossier"]))
+            if remote_choix == "gui":
+                # Bureau distant : pas de livrable local, rien à ouvrir à la
+                # fin (cfg.type/nom n'ont d'ailleurs pas été validés côté GUI,
+                # un calcul ici serait arbitraire, cf. open_folder qui ouvrait
+                # à tort Projets/ ou une racine sans rapport, bug vécu 2026-08-04).
+                self._result_dir = None
             else:
-                self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
+                # Calculer le dossier résultat attendu
+                t    = cfg.get("type", "lidar")
+                nom  = cfg.get("nom", "")
+                # Le pipeline CLI normalise le nom (slug ASCII minuscule) pour le
+                # nom de dossier : "Garéoult" → "gareoult". Sans cette normalisation
+                # ici, open_folder() pointerait vers un chemin inexistant.
+                nom_slug = normaliser_nom(nom) if nom else ""
+                base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
+                # Le subprocess utilise --provider <code> → ecrit dans lidar/<country>.
+                # On reconstruit le meme path ici sinon open_folder pointe ailleurs.
+                _cfg_provider = cfg.get("provider", PROVIDER.CODE)
+                _cfg_country = "fr"
+                for _p in _discover_providers():
+                    if _p["code"] == _cfg_provider:
+                        _cfg_country = _p.get("country", "fr")
+                        break
+                _lidar_subdir_cfg = f"lidar/{_cfg_country}"
+                _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
+                             "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
+                if t == "decoupe" and cfg.get("source_decoupe"):
+                    self._result_dir = str(Path(cfg["source_decoupe"]).parent)
+                elif cfg.get("dossier"):
+                    # --output-dir explicite : chaque main CLI l'utilise comme racine
+                    # DIRECTE (racine = args.dossier), sans sous-dossier <nom>/<type>.
+                    # Sans ce cas, open_folder visait dossier/nom/type inexistant et
+                    # l'explorateur ouvrait Mes Documents. Miroir du CLI, tous types.
+                    self._result_dir = str(Path(cfg["dossier"]))
+                else:
+                    self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
             while not self._log_queue.empty():
                 try: self._log_queue.get_nowait()
                 except queue.Empty: break
@@ -18831,10 +18921,27 @@ def lancer_gui():
                         # vérité et écrase le _result_dir précalculé — sinon
                         # open_folder ouvre l'ancien dossier (bug vécu
                         # 2026-07-16, même classe que le précédent bug country).
-                        if "Done! Folder:" in texte:
+                        # "[VM]" exclu : c'est le journal DISTANT relayé par
+                        # --remote-cli (print_remote_log_tail côté
+                        # rlidar2map_CLI), son "Done! Folder:" pointe vers un
+                        # chemin sur la VM, jamais valide en local (bug vécu
+                        # 2026-08-04 : open_folder ouvrait /root/... sur
+                        # Windows). Le cas distant est couvert juste après par
+                        # "  local :", imprimé par rlidar2map_CLI lui-même.
+                        if "Done! Folder:" in texte and "[VM]" not in texte:
                             _rd = texte.split("Done! Folder:", 1)[1].strip()
                             if _rd:
                                 self._result_dir = _rd
+                        # --remote-cli résume son run avec "  local : <racine
+                        # du run>" (rlidar2map_CLI.print_remote_hints) ; les
+                        # livrables synchronisés sont dans son sous-dossier
+                        # results/ (cf. VmController.sync_once), jamais à la
+                        # racine — sans le / "results", open_folder ouvrait le
+                        # dossier du run, pas celui des fichiers.
+                        elif "  local : " in texte:
+                            _rd = texte.split("  local : ", 1)[1].strip()
+                            if _rd:
+                                self._result_dir = str(Path(_rd) / "results")
                         is_err = _classify_err(texte)
                         with self._lock:
                             if is_err and len(self._err_lines) < 20:

@@ -274,47 +274,65 @@ if [[ -z "${LIDAR2MAP_URL}" || "${LIDAR2MAP_URL}" == "null" ]]; then
   exit 1
 fi
 
-# Le SHA256 attendu est publié dans le texte de la release (tableau de téléchargements) ;
-# on l'extrait au mieux, sans bloquer le script si le format venait à changer.
-LIDAR2MAP_SHA256=$(jq -r '.body // ""' <<< "${RELEASE_JSON}" \
-  | grep -iF "${LIDAR2MAP_ARCHIVE}" \
-  | grep -oE '[a-f0-9]{64}' \
-  | head -n1 || true)
-
 echo "Version détectée : ${LIDAR2MAP_VERSION}"
-echo "URL de téléchargement : ${LIDAR2MAP_URL}"
 
-echo "=== 6b/7 : Téléchargement ==="
-su - "${USERNAME}" -c "
-  set -e
-  cd ~
-  wget -q --https-only '${LIDAR2MAP_URL}' -O '${LIDAR2MAP_ARCHIVE}'
-"
-
-if [[ -n "${LIDAR2MAP_SHA256}" ]]; then
-  echo "=== 6c/7 : Vérification du checksum ==="
-  ACTUAL_SHA256=$(su - "${USERNAME}" -c "sha256sum ~/${LIDAR2MAP_ARCHIVE} | awk '{print \$1}'")
-  if [[ "${ACTUAL_SHA256}" != "${LIDAR2MAP_SHA256}" ]]; then
-    echo "ERREUR : checksum invalide !" >&2
-    echo "  Attendu : ${LIDAR2MAP_SHA256}" >&2
-    echo "  Obtenu  : ${ACTUAL_SHA256}" >&2
-    exit 1
-  fi
-  echo "Checksum OK."
-else
-  echo "Checksum non trouvé automatiquement dans la release, vérification ignorée."
-  echo "Tu peux comparer manuellement avec la valeur publiée sur :"
-  echo "https://github.com/${GITHUB_REPO}/releases/tag/${LIDAR2MAP_VERSION}"
+# Idempotence : redéployer sur une VM déjà à jour retéléchargeait et
+# réextrayait ~200-400 Mo à chaque fois, sans jamais rien changer (bug vécu
+# 2026-08-04, remonté après plusieurs --remote-gui de suite sur la même VM).
+# On compare à la version déjà installée AVANT de toucher au réseau.
+INSTALL_DIR="${USER_HOME}/lidar2map-linux-x86_64"
+INSTALLED_VERSION=""
+if [[ -x "${INSTALL_DIR}/lidar2map" ]]; then
+  INSTALLED_VERSION=$(su - "${USERNAME}" -c "'${INSTALL_DIR}/lidar2map' --version" 2>/dev/null \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)
 fi
 
-echo "=== 6d/7 : Extraction ==="
-INSTALL_DIR="${USER_HOME}/lidar2map-linux-x86_64"
-su - "${USERNAME}" -c "
-  set -e
-  cd ~
-  tar xzf '${LIDAR2MAP_ARCHIVE}'
-  rm '${LIDAR2MAP_ARCHIVE}'
-"
+if [[ -n "${INSTALLED_VERSION}" && "${INSTALLED_VERSION}" == "${LIDAR2MAP_VERSION#v}" ]]; then
+  echo "lidar2map ${INSTALLED_VERSION} déjà installé dans ${INSTALL_DIR}, téléchargement ignoré."
+else
+  # Le SHA256 attendu est publié dans le texte de la release (tableau de téléchargements) ;
+  # on l'extrait au mieux, sans bloquer le script si le format venait à changer.
+  LIDAR2MAP_SHA256=$(jq -r '.body // ""' <<< "${RELEASE_JSON}" \
+    | grep -iF "${LIDAR2MAP_ARCHIVE}" \
+    | grep -oE '[a-f0-9]{64}' \
+    | head -n1 || true)
+
+  echo "URL de téléchargement : ${LIDAR2MAP_URL}"
+
+  echo "=== 6b/7 : Téléchargement ==="
+  su - "${USERNAME}" -c "
+    set -e
+    cd ~
+    wget -q --https-only '${LIDAR2MAP_URL}' -O '${LIDAR2MAP_ARCHIVE}'
+  "
+
+  if [[ -n "${LIDAR2MAP_SHA256}" ]]; then
+    echo "=== 6c/7 : Vérification du checksum ==="
+    ACTUAL_SHA256=$(su - "${USERNAME}" -c "sha256sum ~/${LIDAR2MAP_ARCHIVE} | awk '{print \$1}'")
+    if [[ "${ACTUAL_SHA256}" != "${LIDAR2MAP_SHA256}" ]]; then
+      echo "ERREUR : checksum invalide !" >&2
+      echo "  Attendu : ${LIDAR2MAP_SHA256}" >&2
+      echo "  Obtenu  : ${ACTUAL_SHA256}" >&2
+      exit 1
+    fi
+    echo "Checksum OK."
+  else
+    echo "Checksum non trouvé automatiquement dans la release, vérification ignorée."
+    echo "Tu peux comparer manuellement avec la valeur publiée sur :"
+    echo "https://github.com/${GITHUB_REPO}/releases/tag/${LIDAR2MAP_VERSION}"
+  fi
+
+  # Pas de rm -rf de INSTALL_DIR avant l'extraction : Projets/, cache/ et
+  # logs/ vivent DEDANS (cf. logs d'exécution), tar écrase juste les fichiers
+  # du bundle en place et les préserve.
+  echo "=== 6d/7 : Extraction ==="
+  su - "${USERNAME}" -c "
+    set -e
+    cd ~
+    tar xzf '${LIDAR2MAP_ARCHIVE}'
+    rm '${LIDAR2MAP_ARCHIVE}'
+  "
+fi
 
 if [[ ! -x "${INSTALL_DIR}/lidar2map" ]]; then
   echo "ERREUR : exécutable lidar2map absent après extraction." >&2

@@ -13,8 +13,10 @@ name: Release (build 3 OS)
 #   lidar2map-linux-x86_64.tar.gz    (dossier : lidar2map   + lidar2map_bundle.zip)
 #   lidar2map-macos-arm64.zip        (LIDAR2MAP.app zippé via ditto, Apple Silicon)
 #   lidar2map-macos-x86_64.zip       (idem, Mac Intel)
-#   rlidar2map_GUI-{windows,linux,macos}-<arch>.<zip|tar.gz>
-#   rlidar2map_CLI-{windows,linux,macos}-<arch>.<zip|tar.gz>
+#
+# L'exécution distante (rlidar2map_CLI / rlidar2map_GUI) est embarquée dans
+# ces mêmes bundles : plus d'archives séparées. Voir --remote-cli /
+# --remote-gui et tools/README_rlidar2map.md.
 #
 # Deux runners macOS : macos-latest est Apple Silicon depuis 2024, il ne peut
 # donc plus produire de binaire Intel. macos-15-intel est le dernier runner
@@ -121,27 +123,6 @@ jobs:
           (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
             Out-File "$zip.sha256" -Encoding ascii -NoNewline
 
-      - name: Build remote clients (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pyi = "$env:USERPROFILE\.lidar2map\venv\Scripts\pyinstaller.exe"
-          foreach ($client in @("rlidar2map_GUI", "rlidar2map_CLI")) {
-            & $pyi "tools\$client.spec" --noconfirm --clean `
-              --distpath dist\remote-clients --workpath "build\remote-clients\$client"
-            if ($LASTEXITCODE -ne 0) {
-              throw "$client PyInstaller build failed"
-            }
-            $stage = "dist\$client-windows-x86_64"
-            New-Item -ItemType Directory -Force $stage | Out-Null
-            Copy-Item "dist\remote-clients\$client.exe" $stage\
-            Copy-Item lidar2map_icon.png $stage\
-            $zip = "dist\$client-windows-x86_64.zip"
-            Compress-Archive -Path $stage -DestinationPath $zip -Force
-            (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
-              Out-File "$zip.sha256" -Encoding ascii -NoNewline
-          }
-
       # ── Linux ────────────────────────────────────────────────────────────
       - name: Setup machine (Linux)
         if: runner.os == 'Linux'
@@ -165,24 +146,6 @@ jobs:
           sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
             > dist/lidar2map-linux-x86_64.tar.gz.sha256
 
-      - name: Build remote clients (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          PYI="$HOME/.lidar2map/venv/bin/pyinstaller"
-          for client in rlidar2map_GUI rlidar2map_CLI; do
-            "$PYI" "tools/$client.spec" --noconfirm --clean \
-              --distpath dist/remote-clients \
-              --workpath "build/remote-clients/$client"
-            stage="dist/$client-linux-x86_64"
-            mkdir -p "$stage"
-            cp "dist/remote-clients/$client" "$stage/"
-            cp lidar2map_icon.png "$stage/"
-            archive="dist/$client-linux-x86_64.tar.gz"
-            tar czf "$archive" -C dist "$client-linux-x86_64"
-            sha256sum "$archive" | awk '{print $1}' > "$archive.sha256"
-          done
-
       # ── macOS ────────────────────────────────────────────────────────────
       - name: Setup machine (macOS)
         if: runner.os == 'macOS'
@@ -201,35 +164,6 @@ jobs:
           zip=$(ls dist/lidar2map-macos-*.zip)
           shasum -a 256 "$zip" | awk '{print $1}' > "$zip.sha256"
 
-      - name: Build remote clients (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          PYI="$HOME/.lidar2map/venv/bin/pyinstaller"
-          PYTHON="$HOME/.lidar2map/venv/bin/python"
-          ARCH="$($PYTHON -c 'import platform; print(platform.machine())')"
-          IDENTITY="${LIDAR2MAP_CODESIGN_IDENTITY:--}"
-          for client in rlidar2map_GUI rlidar2map_CLI; do
-            "$PYI" "tools/$client.spec" --noconfirm --clean \
-              --distpath dist/remote-clients \
-              --workpath "build/remote-clients/$client"
-            BIN="dist/remote-clients/$client"
-            if [ "$IDENTITY" = "-" ]; then
-              codesign --force --sign - "$BIN"
-            else
-              codesign --force --timestamp --options runtime \
-                --sign "$IDENTITY" "$BIN"
-            fi
-            codesign --verify --strict --verbose=2 "$BIN"
-            STAGE="dist/$client-macos-$ARCH"
-            mkdir -p "$STAGE"
-            cp "$BIN" "$STAGE/"
-            cp lidar2map_icon.png "$STAGE/"
-            ZIP="dist/$client-macos-$ARCH.zip"
-            ditto -c -k --keepParent "$STAGE" "$ZIP"
-            shasum -a 256 "$ZIP" | awk '{print $1}' > "$ZIP.sha256"
-          done
-
       # ── Upload artefact (asset + .sha256) ────────────────────────────────
       - name: Upload artefact
         uses: actions/upload-artifact@v4
@@ -242,9 +176,6 @@ jobs:
             dist/lidar2map-*.zip
             dist/lidar2map-*.tar.gz
             dist/lidar2map-*.sha256
-            dist/rlidar2map_*.zip
-            dist/rlidar2map_*.tar.gz
-            dist/rlidar2map_*.sha256
 
   publish:
     name: publish release
@@ -270,7 +201,7 @@ jobs:
           set -euo pipefail
           # Collecter les assets (zip/tar.gz) et leurs SHA256
           ASSETS=()
-          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map et clients distants autonomes `rlidar2map_GUI` / `rlidar2map_CLI`. Python n’est pas requis sur le PC client.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`.\n\n| Fichier | SHA256 |\n|---|---|\n'
+          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`.\n\n| Fichier | SHA256 |\n|---|---|\n'
           while IFS= read -r sha; do
             asset="${sha%.sha256}"
             name="$(basename "$asset")"

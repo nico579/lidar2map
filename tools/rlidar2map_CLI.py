@@ -1177,9 +1177,14 @@ class RemoteState:
 
 
 def _parser() -> argparse.ArgumentParser:
-    frozen = getattr(sys, "frozen", False)
-    program_name = "rlidar2map_CLI" if frozen else "rlidar2map_CLI.py"
-    example_command = "rlidar2map_CLI" if frozen else "python tools/rlidar2map_CLI.py"
+    if os.environ.get("LIDAR2MAP_REMOTE_MODE") == "1":
+        # Délégué par lidar2map --remote-cli : refléter l'invocation réelle
+        # plutôt que le nom du script interne.
+        program_name = example_command = "lidar2map --remote-cli"
+    else:
+        frozen = getattr(sys, "frozen", False)
+        program_name = "rlidar2map_CLI" if frozen else "rlidar2map_CLI.py"
+        example_command = "rlidar2map_CLI" if frozen else "python tools/rlidar2map_CLI.py"
     parser = argparse.ArgumentParser(
         prog=program_name,
         add_help=False,
@@ -1452,6 +1457,10 @@ class VmController:
         self.options = options
         self.deps = deps or RuntimeDeps()
         self._warned_scp = False
+        # Octets déjà affichés du journal distant, par run_id : permet un tail
+        # incrémental (cf. print_remote_log_tail) sans retélécharger le fichier
+        # en entier à chaque cycle de surveillance.
+        self._log_offsets: Dict[str, int] = {}
 
     def _connection_options(self) -> List[str]:
         result = [
@@ -1482,6 +1491,36 @@ class VmController:
             + self._connection_options()
             + [self.options.vm, shlex.join(list(remote_command))]
         )
+
+    def print_remote_log_tail(self, state: "RemoteState") -> None:
+        """Affiche les nouvelles lignes du journal distant depuis le dernier
+        sondage (tail incrémental sur `state.log_path`, pas de
+        retéléchargement complet à chaque cycle : cf. le choix inverse dans
+        _sync_log, qui ne copie le fichier qu'une fois le run terminal).
+        Best-effort : une erreur SSH ici ne fait pas échouer le cycle de
+        surveillance, elle est juste ignorée (le prochain cycle réessaiera)."""
+        if not state.log_path:
+            return
+        key = state.run_id or self.options.session
+        offset = self._log_offsets.get(key, 0)
+        remote_command = ["tail", "-c", "+{}".format(offset + 1), state.log_path]
+        try:
+            completed = subprocess.run(
+                self._direct_ssh_command(remote_command),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=self.options.ssh_timeout,
+            )
+        except Exception:
+            return
+        data = completed.stdout or b""
+        if not data:
+            return
+        self._log_offsets[key] = offset + len(data)
+        for line in data.decode("utf-8", errors="replace").splitlines():
+            if line.strip():
+                print("  [VM] " + line, flush=True)
 
     def reset_host_key(self) -> None:
         host = self.options.vm.rsplit("@", 1)[-1]
@@ -2628,7 +2667,13 @@ class VmController:
 
     def reconnect_command(self) -> str:
         parts = [sys.executable]
-        if not getattr(sys, "frozen", False):
+        if os.environ.get("LIDAR2MAP_REMOTE_MODE") == "1":
+            # Délégué par lidar2map --remote-cli : la commande de reprise doit
+            # repasser par lidar2map, pas par ce script interne.
+            if not getattr(sys, "frozen", False):
+                parts.append(str(Path(__file__).resolve().parent.parent / "lidar2map.py"))
+            parts.append("--remote-cli")
+        elif not getattr(sys, "frozen", False):
             parts.append(str(Path(__file__).resolve()))
         parts.extend([
             "--session",
@@ -2873,6 +2918,7 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
             _display_state(state)
             last_status = state.status
 
+        controller.print_remote_log_tail(state)
         sync_ok, _method, local_dir = controller.sync_once(state)
         if state.terminal:
             if state.status == "succeeded" and sync_ok:

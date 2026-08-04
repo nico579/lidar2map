@@ -37,6 +37,14 @@ const I18N = {
     "f.cachedir":"Dossier cache", "ph.cachedir":"(auto)",
     "f.proddir":"Dossier production", "ph.proddir":"(auto)",
     "tip.pickdir":"Choisir le dossier (le sélecteur s'ouvre sur le dossier courant / auto)",
+    // Exécution distante
+    "sec.remote":"Exécution", "remote.where":"Où",
+    "remote.local":"Cet ordinateur", "remote.cli":"Calcul distant sans bureau (VM)", "remote.gui":"Bureau distant (VM)",
+    "remote.host":"Hôte", "remote.identity":"Clé SSH", "remote.session":"Session",
+    "remote.block":"Bloc", "tip.remoteblock":"Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.",
+    "remote.hint.cli":"Lance ce calcul dans tmux sur la VM et resynchronise progressivement les résultats (log distant inclus). « Arrêter » ne coupe que la surveillance locale, pas le calcul distant.",
+    "remote.hint.gui":"Installe un bureau XFCE + RDP sur la VM puis ouvre le client RDP. Les autres paramètres de ce formulaire sont ignorés.",
+    "req.remotehost":"Indiquez l'hôte de la VM distante.",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
     "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
@@ -182,6 +190,14 @@ const I18N = {
     "f.cachedir":"Cache folder", "ph.cachedir":"(auto)",
     "f.proddir":"Production folder", "ph.proddir":"(auto)",
     "tip.pickdir":"Pick the folder (dialog opens at the current / auto folder)",
+    // Remote execution
+    "sec.remote":"Execution", "remote.where":"Where",
+    "remote.local":"This computer", "remote.cli":"Headless remote processing (VM)", "remote.gui":"Remote desktop (VM)",
+    "remote.host":"Host", "remote.identity":"SSH key", "remote.session":"Session",
+    "remote.block":"Block", "tip.remoteblock":"Splits a geographic area across several VMs: each machine processes a different block (LiDAR only). Leave empty to process the whole area on this VM.",
+    "remote.hint.cli":"Runs this job in tmux on the VM and progressively syncs results back (remote log included). Stop only cancels local monitoring, not the remote job.",
+    "remote.hint.gui":"Installs an XFCE + RDP desktop on the VM then opens the RDP client. The rest of this form is ignored.",
+    "req.remotehost":"Enter the remote VM's host.",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
     "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
@@ -842,6 +858,32 @@ function _paysActif() {
 // tient sur la ligne des champs, cinq boutons non.
 function _modeActif() {
   return document.getElementById('f-mode')?.value || 'ville';
+}
+
+// Où faire tourner ce traitement : local (défaut), calcul distant sans
+// bureau (--remote-cli, enveloppe la commande locale telle quelle) ou bureau
+// distant (--remote-gui, ne prend AUCUN paramètre du reste du formulaire :
+// zone/type/ombrages sont donc masqués, ils seraient sans effet).
+function onRemoteChoixChange() {
+  const select = document.getElementById('f-remote-choix');
+  const choix = select?.value || 'local';
+  const isCli = choix === 'cli';
+  const isGui = choix === 'gui';
+  document.getElementById('row-remote-vm')?.classList.toggle('hidden', choix === 'local');
+  document.getElementById('row-remote-cli')?.classList.toggle('hidden', !isCli);
+  // Pas de champs propres au bureau distant (root/userlidar/bundle sont fixés
+  // côté Python) : l'infobulle du sélecteur porte l'explication à sa place.
+  if (select) select.title = isCli ? t('remote.hint.cli') : isGui ? t('remote.hint.gui') : '';
+  ['sec-projet', 'sec-zone', 'sec-type'].forEach(cls => {
+    document.querySelectorAll('.' + cls).forEach(el => el.classList.toggle('hidden', isGui));
+  });
+  if (isGui) {
+    ['sec-lidar', 'sec-scan', 'sec-vecteur', 'sec-fusion', 'sec-decoupe'].forEach(id => {
+      document.getElementById(id)?.classList.add('hidden');
+    });
+  } else if (typeof window.applyType === 'function') {
+    window.applyType();
+  }
 }
 
 // Un seul point d'entrée pour le changement de mode : bascule des champs,
@@ -1764,6 +1806,20 @@ function getConfig() {
     provider: g('f-provider')?.value || 'fr-ign',
     // Pays de la zone : cadre le géocodage et les listes. '' = aucun filtre.
     pays:     g('f-pays')?.value ?? '',
+    // Exécution : local (défaut), --remote-cli (enveloppe la commande
+    // construite ci-dessous) ou --remote-gui (ignore tout le reste du
+    // formulaire), cf. launch() côté Python.
+    remote_choix:    g('f-remote-choix')?.value || 'local',
+    remote_host:     g('f-remote-host')?.value.trim(),
+    remote_identity: g('f-remote-identity')?.value.trim(),
+    remote_session:  g('f-remote-session')?.value.trim(),
+    // Sharding multi-VM (--block i/M) : combiné en une seule chaîne ici, les
+    // deux champs numériques ne sont qu'une commodité de saisie côté GUI.
+    remote_block: (() => {
+      const bi = parseInt(g('f-remote-block-i')?.value, 10);
+      const bm = parseInt(g('f-remote-block-m')?.value, 10);
+      return (bi > 0 && bm > 0) ? `${bi}/${bm}` : '';
+    })(),
     // Dossier cache global (--cache-dir) : propriété d'installation, dans Projet.
     cache_dir: g('f-cache-dir')?.value.trim(),
     // Dossier production (--production-dir) : racine du .tif LAZ (produit).
@@ -1962,6 +2018,20 @@ function loadConfig(cfg) {
   s('f-cache-dir', cfg.cache_dir);
   s('f-production-dir', cfg.production_dir);
 
+  // Exécution
+  s('f-remote-choix',    cfg.remote_choix);
+  s('f-remote-host',     cfg.remote_host);
+  s('f-remote-identity', cfg.remote_identity);
+  s('f-remote-session',  cfg.remote_session);
+  if (cfg.remote_block && cfg.remote_block.includes('/')) {
+    const [bi, bm] = cfg.remote_block.split('/');
+    s('f-remote-block-i', bi);
+    s('f-remote-block-m', bm);
+  }
+  // onRemoteChoixChange() est rappelée tout en bas de cette fonction, pas ici :
+  // window.applyType()/applyMode() (plus bas) réaffichent sinon les sections
+  // qu'elle vient de masquer pour le bureau distant (bug vécu 2026-08-04).
+
   // Zone géo
   s('f-ville',   cfg.ville);
   s('f-gps',     cfg.gps);
@@ -2154,6 +2224,9 @@ function loadConfig(cfg) {
   s('f-zoom-max-s', cfg.zoom_max_s);
   s('f-zoom-min-l', cfg.zoom_min_l);
   s('f-zoom-max-l', cfg.zoom_max_l);
+  // EN TOUT DERNIER : after window.applyType()/applyMode() ci-dessus, sinon
+  // ils réaffichent les sections que le bureau distant doit garder masquées.
+  if (typeof onRemoteChoixChange === 'function') onRemoteChoixChange();
 }
 
 // ── Ombrages : liste d'instances paramétrées (shuttle list) ──────────────────
@@ -2410,9 +2483,17 @@ function labelPourCfg(cfg) {
 // Valide le formulaire courant ; renvoie la config, ou null (avec alerte) si
 // invalide. Partagé par « Lancer » (mode simple) et « Ajouter à la file ».
 function validerFormulaire() {
+  // Bureau distant (--remote-gui) : aucun paramètre lidar2map n'est utilisé,
+  // seule la VM compte. Sauter toute la validation locale (nom, zone...).
+  if (document.getElementById('f-remote-choix')?.value === 'gui') {
+    const cfg = getConfig();
+    if (!cfg.remote_host) { alert(t('req.remotehost')); return null; }
+    return cfg;
+  }
   const nom = document.getElementById('f-nom').value.trim();
   if (!nom) { alert(t('req.name')); return null; }
   const cfg = getConfig();
+  if (cfg.remote_choix === 'cli' && !cfg.remote_host) { alert(t('req.remotehost')); return null; }
   if (cfg.type === 'decoupe' && !cfg.source_decoupe) { alert(t('req.source')); return null; }
   if (cfg.type !== 'fusion' && cfg.type !== 'decoupe') {
     const zoneOk = (cfg.mode === 'ville'  && cfg.ville)  ||

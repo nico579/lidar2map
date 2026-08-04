@@ -91,6 +91,54 @@
 </div>
 <div id="form-inner">
 
+  <!-- Exécution : où faire tourner ce traitement. En tête de formulaire car
+       « Bureau distant » (--remote-gui) ne prend AUCUN des paramètres qui
+       suivent (zone, type, ombrages…) : ce n'est pas un calcul lidar2map,
+       juste la préparation d'une VM + ouverture RDP. « Calcul distant »
+       (--remote-cli), lui, a besoin du reste du formulaire : il enveloppe la
+       même commande que le lancement local. -->
+  <div class="section sec-remote">
+   <div class="section-hd" data-i18n="sec.remote">Exécution</div>
+   <div class="section-body">
+    <!-- Tout sur une ligne : les groupes spécifiques (VM / calcul distant /
+         bureau distant) sont des <span style="display:contents"> qui, tant
+         qu'ils ne sont pas .hidden, injectent leurs enfants directement dans
+         le flex de .row (donc sur la même ligne, avec retour à la ligne
+         seulement si la fenêtre est trop étroite). L'astuce est purement
+         visuelle : getConfig/onRemoteChoixChange ne changent pas. -->
+    <!-- Compte SSH (root) et compte RDP (userlidar) sont fixés côté Python
+         (_wrap_remote_cmd / _build_remote_gui_cmd) : ce sont les défauts
+         universels d'une VM cloud neuve et un nom de compte interne créé à
+         la volée sans raison de varier ; les exposer n'apportait rien.
+         Idem --bundle, toujours utilisé (pas de choix source, comme
+         --remote-gui qui n'en propose pas non plus). -->
+    <div class="row">
+     <label style="min-width:auto" data-i18n="remote.where">Où</label>
+     <select id="f-remote-choix" onchange="onRemoteChoixChange()" style="max-width:210px">
+      <option value="local" data-i18n="remote.local">Cet ordinateur</option>
+      <option value="cli" data-i18n="remote.cli">Calcul distant sans bureau (VM)</option>
+      <option value="gui" data-i18n="remote.gui">Bureau distant (VM)</option>
+     </select>
+     <span id="row-remote-vm" class="hidden" style="display:contents">
+      <label style="min-width:auto;margin-left:10px" data-i18n="remote.host">Hôte</label>
+      <input type="text" id="f-remote-host" placeholder="192.0.2.10" style="max-width:130px">
+      <label style="min-width:auto;margin-left:10px" data-i18n="remote.identity">Clé SSH</label>
+      <input type="text" id="f-remote-identity" placeholder="(auto)" style="max-width:110px">
+      <button class="btn btn-sm" onclick="pickFile('f-remote-identity',false,[])">…</button>
+     </span>
+     <span id="row-remote-cli" class="hidden" style="display:contents">
+      <label style="min-width:auto;margin-left:10px" data-i18n="remote.session">Session</label>
+      <input type="text" id="f-remote-session" placeholder="lidar" style="max-width:100px">
+      <label style="min-width:auto;margin-left:10px" data-i18n="remote.block"
+             data-i18n-title="tip.remoteblock" title="Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.">Bloc</label>
+      <input type="number" id="f-remote-block-i" min="1" placeholder="i" style="max-width:45px">
+      <span class="hint">/</span>
+      <input type="number" id="f-remote-block-m" min="1" placeholder="M" style="max-width:45px">
+     </span>
+    </div>
+   </div>
+  </div>
+
   <!-- Projet -->
   <div class="section sec-projet">
    <div class="section-hd" data-i18n="sec.projet">Projet</div>

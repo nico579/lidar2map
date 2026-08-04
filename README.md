@@ -353,6 +353,8 @@ Five types, selected by a mode:
 | `--split` | Splits an existing MBTiles after generation. Requires `--source`. |
 | `--serve` | Sends a project's deliverables to the phone: serves the folder on the local WiFi with a URL and QR code. |
 | `--index-sheet DIR` | Regenerates only the index sheet of an existing project. |
+| `--remote-cli ...` | Delegates to `rlidar2map_CLI` (headless remote processing on a VM), see [Remote execution](#remote-execution-on-a-vm). |
+| `--remote-gui ...` | Delegates to `rlidar2map_GUI` (remote graphical desktop on a VM), see [Remote execution](#remote-execution-on-a-vm). |
 
 `--source PATH...`: existing source to reuse, depending on the mode: TIFF to
 tiled raster, MBTiles to RMAP/SQLiteDB, PBF to OSM, or multiple GeoJSON files
@@ -580,16 +582,18 @@ The `map` format converts the IGN GeoJSON into a Mapsforge `.map` map (readable 
 
 For large surfaces (a whole département, several regions), lidar2map can run
 on a compute VM instead of the local computer, with multi-VM sharding via
-`--block i/M`. All three programs are standalone on Windows, Linux and macOS:
+`--block i/M`. All three modes live in the same executable, on Windows, Linux
+and macOS:
 
-| Program | Use | How it works |
+| Mode | Use | How it works |
 |---|---|---|
 | `lidar2map` | Local processing | GUI or CLI on the current computer |
-| `rlidar2map_GUI` | Remote graphical desktop | prepares an Ubuntu 24.04/26.04 VM with XFCE + xrdp, installs lidar2map, then opens the RDP client |
-| `rlidar2map_CLI` | Headless remote processing | installs and starts lidar2map in `tmux`, monitors the run, and progressively synchronizes its results |
+| `lidar2map --remote-gui` | Remote graphical desktop | prepares an Ubuntu 24.04/26.04 VM with XFCE + xrdp, installs lidar2map, then opens the RDP client |
+| `lidar2map --remote-cli` | Headless remote processing | installs and starts lidar2map in `tmux`, monitors the run, and progressively synchronizes its results |
 
-The remote clients require no Python installation on the originating computer.
-They are published alongside lidar2map on the [Releases page](https://github.com/nico579/lidar2map/releases).
+No separate download is needed: remote execution requires no Python
+installation on the originating computer, and ships inside the same
+executable published on the [Releases page](https://github.com/nico579/lidar2map/releases).
 The [Run lidar2map on a VM](tools/README_rlidar2map.md) guide covers the GUI/CLI
 choice, SSH connection, RDP account, long-running jobs, splitting a job across
 multiple machines with `--block i/M`, and supported platforms.

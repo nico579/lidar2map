@@ -9,6 +9,14 @@ quel que soit leur fournisseur, y compris une VM locale.
 - `rlidar2map_CLI` lance des calculs sans bureau dans `tmux`, les surveille et
   recopie progressivement les résultats sur l'ordinateur local.
 
+Depuis leur intégration, les deux clients sont embarqués dans l'exécutable
+lidar2map : plus d'archive séparée à télécharger. `lidar2map --remote-gui` et
+`lidar2map --remote-cli` acceptent exactement les mêmes arguments que les
+exemples ci-dessous (remplacer `rlidar2map_GUI`/`rlidar2map_CLI` par
+`lidar2map --remote-gui`/`lidar2map --remote-cli`). Les binaires autonomes
+`rlidar2map_GUI`/`rlidar2map_CLI` restent utilisables en standalone à partir
+des sources (`python tools/rlidar2map_CLI.py ...`) pour le développement.
+
 Les exécutables autonomes publiés dans les releases GitHub embarquent Python.
 Pour exécuter les sources, utiliser Python 3.8 ou plus récent.
 
@@ -29,6 +37,54 @@ Autoriser uniquement les ports nécessaires dans le pare-feu :
 - TCP 22 pour SSH dans les deux modes ;
 - TCP 3389 pour RDP dans le mode GUI, de préférence limité à l'adresse IP de
   l'ordinateur utilisateur.
+
+### Préparer une clé SSH selon la plateforme
+
+Le plus simple est d'ajouter la clé publique de l'ordinateur au moment de la
+création de la VM (la plupart des fournisseurs cloud le proposent). Sur une
+VM déjà en service, la préparation dépend de la plateforme d'où `rlidar2map_GUI`
+ou `rlidar2map_CLI` sont lancés.
+
+**Windows** : le client OpenSSH utilise par défaut la clé du profil
+utilisateur, généralement `%USERPROFILE%\.ssh\id_ed25519`. Si elle n'existe pas
+encore :
+
+```powershell
+ssh-keygen -t ed25519
+```
+
+**WSL (Ubuntu sous Windows)** : filesystem séparé de l'hôte Windows, la clé
+Windows n'y est pas visible directement. La copier dans le filesystem natif de
+WSL, pas juste la référencer via `/mnt/c/...` dont les permissions NTFS sont
+trop ouvertes pour SSH (erreur « UNPROTECTED PRIVATE KEY FILE ») :
+
+```bash
+mkdir -p ~/.ssh
+cp /mnt/c/Users/<utilisateur>/.ssh/id_ed25519     ~/.ssh/id_ed25519
+cp /mnt/c/Users/<utilisateur>/.ssh/id_ed25519.pub ~/.ssh/id_ed25519.pub
+chmod 600 ~/.ssh/id_ed25519
+chmod 644 ~/.ssh/id_ed25519.pub
+```
+
+**macOS / Linux natif** : machine physiquement distincte, préférer une
+nouvelle clé à la copie d'une clé privée existante d'un ordinateur à l'autre :
+
+```bash
+ssh-keygen -t ed25519
+ssh-copy-id root@<IP_DE_LA_VM>
+```
+
+`ssh-copy-id` fonctionne directement si le mot de passe root est encore actif
+sur la VM (il le demande une fois). S'il a été désactivé, ajouter la clé
+publique depuis un ordinateur déjà approuvé par la VM :
+
+```bash
+ssh root@<IP_DE_LA_VM> "echo '<contenu de id_ed25519.pub>' >> ~/.ssh/authorized_keys"
+```
+
+Dans les trois cas, une fois la clé en place à son emplacement par défaut,
+`rlidar2map_GUI`/`rlidar2map_CLI` la détectent automatiquement sans argument
+supplémentaire ; `--identity` ne sert que pour une clé à un autre emplacement.
 
 ## rlidar2map_GUI : bureau XFCE et RDP
 
@@ -184,20 +240,20 @@ le débit par adresse.
 
 ## Construction et publication GitHub
 
-La matrice de `.github/workflows/release.yml` construit les deux clients avec
-PyInstaller sur leurs systèmes natifs. Chaque release contient :
+`rlidar2map_CLI.py` et `rlidar2map_GUI.py` sont importés par `lidar2map.py`
+(dispatch `--remote-cli`/`--remote-gui`, avant le bootstrap et les imports
+lourds) et embarqués dans les mêmes specs PyInstaller que lidar2map lui-même
+(`lidar2map_win.spec`, `lidar2map_mac.spec`, réutilisée pour Linux). La
+matrice de `.github/workflows/release.yml` ne construit donc plus qu'un seul
+exécutable par OS/arch ; l'exécution distante est incluse d'office dans
+chaque archive `lidar2map-<os>-<arch>.<zip|tar.gz>`.
 
-- Windows x86-64 : `rlidar2map_GUI-windows-x86_64.zip` et
-  `rlidar2map_CLI-windows-x86_64.zip` ;
-- Linux x86-64 : `rlidar2map_GUI-linux-x86_64.tar.gz` et
-  `rlidar2map_CLI-linux-x86_64.tar.gz` ;
-- macOS Apple Silicon : `rlidar2map_GUI-macos-arm64.zip` et
-  `rlidar2map_CLI-macos-arm64.zip` ;
-- macOS Intel : `rlidar2map_GUI-macos-x86_64.zip` et
-  `rlidar2map_CLI-macos-x86_64.zip`.
+Les deux `.spec` dédiés (`tools/rlidar2map_CLI.spec`, `tools/rlidar2map_GUI.spec`)
+restent disponibles pour builder un binaire standalone en développement, mais
+ne sont plus invoqués par la release.
 
-L'icône commune `lidar2map_icon.png` est intégrée aux exécutables Windows et
-macOS, livrée dans toutes les archives et installée automatiquement sur le
-raccourci du bureau XFCE par `rlidar2map_GUI`.
+L'icône commune `lidar2map_icon.png` est intégrée à l'exécutable Windows et
+macOS, et installée automatiquement sur le raccourci du bureau XFCE par
+`rlidar2map_GUI`.
 
 La page de release affiche la somme SHA-256 de chaque archive.

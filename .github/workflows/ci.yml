@@ -7,6 +7,7 @@ on:
       - 'deploy.py'
       - 'tests/**'
       - 'providers/**'
+      - 'tools/**'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
   pull_request:
@@ -15,6 +16,7 @@ on:
       - 'deploy.py'
       - 'tests/**'
       - 'providers/**'
+      - 'tools/**'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
@@ -104,6 +106,16 @@ jobs:
 
       - name: help osm
         run: python lidar2map.py --osm --help
+
+      # Dispatch --remote-cli/--remote-gui : import de tools/rlidar2map_CLI.py
+      # et tools/rlidar2map_GUI.py (stdlib pur), avant le bootstrap. Valide
+      # les 3 OS sans VM ni secret : juste que le dispatch et l'import
+      # fonctionnent, pas une vraie connexion SSH.
+      - name: help remote-cli
+        run: python lidar2map.py --remote-cli --help
+
+      - name: help remote-gui
+        run: python lidar2map.py --remote-gui --help
 
       - name: _parser_departements
         run: |

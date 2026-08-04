@@ -139,6 +139,22 @@ if _providers_dir.exists():
             hiddenimports.append(f"providers.{_pf.stem}")
     hiddenimports.append("providers")
 
+# Exécution distante (--remote-cli / --remote-gui) : rlidar2map_CLI.py et
+# rlidar2map_GUI.py sont importés par lidar2map.py, embarqués comme les
+# providers ci-dessus (mêmes deux raisons : datas pour le source, hiddenimports
+# au cas où l'import ne serait pas détecté statiquement). dfm_ruines.py et
+# discover_providers.py restent hors bundle : scripts standalone, non importés.
+_tools_dir = SRC / "tools"
+if _tools_dir.exists():
+    for _tf in ("__init__.py", "rlidar2map_CLI.py", "rlidar2map_GUI.py"):
+        _tp = _tools_dir / _tf
+        if _tp.exists():
+            datas += [(str(_tp), "tools")]
+    hiddenimports += ["tools", "tools.rlidar2map_CLI", "tools.rlidar2map_GUI"]
+    _vm_script = _tools_dir / "rlidar2map_GUI_vm.sh"
+    if _vm_script.exists():
+        datas += [(str(_vm_script), ".")]
+
 if JRE_SRC and JRE_SRC.exists():
     datas += _add_tree(JRE_SRC, f"jre/{JRE_SRC.name}")
 else:
