@@ -66,7 +66,7 @@ Computed from national LiDAR (0.5 m to 1 m resolution depending on source):
 | `svf` | Sky-View Factor, fraction of visible sky: ditches, terraces, enclosures shown dark | `conv` (`flux` = cos²γ contrasted, default; `rvt` = 1−sin γ, the Kokalj/Hesse archaeology standard), `dist` (horizon radius in m, default 20, 20 = micro-relief, 100 = enclosures/roads), `gamma` (contrast, default 2.0) |
 | `opos` | Positive openness (Yokoyama 2002), mean horizon angle above the horizontal: ridges, mounds, barrows shown bright | `dist`, `gamma` |
 | `oneg` | Inverted negative openness, the "looking down" view: ditches, banks and hollow ways shown dark, the SVF's companion (inherently grainier: sensitive to DTM noise) | `dist`, `gamma` (applied mirrored: deepens hollows without darkening the background) |
-| `lrm` | Simplified **Local Relief Model** (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default 15 provider pixels) |
+| `lrm` | Simplified **Local Relief Model** (Gaussian SLRM), subtracting smoothed terrain to retain local anomalies. Fast and readable: the GUI default | `sigma` (Gaussian standard deviation in m; default `15 × provider resolution`, e.g. 7.5 m on 0.5 m IGN) |
 | `rrim` | lidar2map colour composite inspired by the **Red Relief Image Map** (RRIM, Chiba 2008): slope in red, SLRM as light/dark | `sigma` (of the internal SLRM) |
 | `vat` | lidar2map composite inspired by **Visualization for Archaeological Topography**: SVF + positive openness + slope in grayscale | `dist` (SVF/openness radius in m, default 20), `gamma` (final contrast, default 2.0) |
 | `e4mstp` | lidar2map variant inspired by the **published e4MSTP** (Kokalj 2025, *enhanced version 4* of **MSTP**, *Multiscale Topographic Position*): MSTP + SVF + O+/O− + slope + two SLRMs. Rich but expensive; differs from the exact RVT preset | `dist` (default 20), `gamma` (default 0.8) |
@@ -424,7 +424,7 @@ Parameters accepted by `--shading TYPE:k=v,...`, by relief type:
 | `gamma` | `svf opos oneg vat` | `[2.0]` | Final contrast applied to the result. |
 | `gamma` | `e4mstp` | `[0.8]` | Final contrast applied to the result. |
 | `sweep` | `svf` | boolean, `[on]` | Enables the accelerated SVF kernel (horizon sweep). |
-| `sigma` | `lrm rrim` | provider pixels, `[15]` | Gaussian smoothing standard deviation (SLRM); larger = wider relief retained. |
+| `sigma` | `lrm rrim` | metres, default `15 × provider resolution` (e.g. `7.5` on 0.5 m IGN) | Gaussian smoothing standard deviation (SLRM); larger = wider relief retained. |
 | *(none)* | `slope` | — | No tunable parameter. |
 
 **3.1.5 Generate the map**: zoom, image format, and file formats are shared

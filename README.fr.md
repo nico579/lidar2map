@@ -65,7 +65,7 @@ Calculés depuis le LiDAR national (résolution 0.5 m à 1 m selon source) :
 | `svf` | Sky-View Factor, fraction de ciel visible : fossés, restanques, enceintes en sombre | `conv` (`flux` = cos²γ contrasté, défaut ; `rvt` = 1−sin γ, standard archéo Kokalj/Hesse), `dist` (rayon d'horizon en m, défaut 20, 20 = micro-relief, 100 = enceintes/voiries), `gamma` (contraste, défaut 2.0) |
 | `opos` | Openness positive (Yokoyama 2002), angle d'horizon moyen au-dessus de l'horizontale : crêtes, bosses, tumuli en clair | `dist`, `gamma` |
 | `oneg` | Openness négative inversée, vue « vers le bas » : fossés, talus et chemins creux en sombre, le complément du SVF (plus granuleux par nature : sensible au bruit du MNT) | `dist`, `gamma` (appliqué en miroir : renforce les creux sans assombrir le fond) |
-| `lrm` | **Local Relief Model** simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut 15 px du provider) |
+| `lrm` | **Local Relief Model** simplifié (SLRM gaussien), soustrait le relief lissé : supprime collines et vallées, ne garde que les anomalies locales. Rapide et lisible : le défaut de la GUI | `sigma` (écart-type gaussien en m ; défaut `15 × résolution du provider`, ex. 7,5 m en IGN 0,5 m) |
 | `rrim` | Composite couleur lidar2map inspiré du **Red Relief Image Map** (RRIM, Chiba 2008) : pente en rouge, SLRM en clair/foncé | `sigma` (du SLRM interne) |
 | `vat` | Composite lidar2map inspiré du **Visualization for Archaeological Topography** : SVF + openness positif + pente en niveaux de gris | `dist` (rayon SVF/openness en m, défaut 20), `gamma` (contraste final, défaut 2.0) |
 | `e4mstp` | Variante lidar2map inspirée de l'**e4MSTP publié** (Kokalj 2025, *enhanced version 4* du **MSTP**, *Multiscale Topographic Position*) : MSTP + SVF + O+/O− + pente + deux SLRM. Très riche mais lourde ; différente du preset RVT exact | `dist` (défaut 20), `gamma` (défaut 0,8) |
@@ -424,7 +424,7 @@ Paramètres acceptés par `--shading TYPE:k=v,...`, par type d'ombrage :
 | `gamma` | `svf opos oneg vat` | `[2.0]` | Contraste final appliqué au résultat. |
 | `gamma` | `e4mstp` | `[0.8]` | Contraste final appliqué au résultat. |
 | `sweep` | `svf` | booléen, `[activé]` | Active le noyau SVF accéléré (sweep-horizon). |
-| `sigma` | `lrm rrim` | pixels du provider, `[15]` | Écart-type du lissage gaussien (SLRM) ; plus grand = relief plus large retenu. |
+| `sigma` | `lrm rrim` | mètres, défaut `15 × résolution du provider` (ex. `7.5` en IGN 0,5 m) | Écart-type du lissage gaussien (SLRM) ; plus grand = relief plus large retenu. |
 | *(aucun)* | `slope` | — | Pas de paramètre réglable. |
 
 **3.1.5 Générer la carte** : zoom, format d'image et formats de fichier sont
