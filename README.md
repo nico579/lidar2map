@@ -347,7 +347,8 @@ Five types, selected by a mode:
 | `--version` | Prints the version and exits. |
 | `--lidar` | Downloads/processes LiDAR, computes relief visualizations, and generates raster maps. |
 | `--raster` | Downloads a raster layer from the provider (`fr-ign`, or `us-tnm` with `naip`). |
-| `--osm` / `--vector` | Generates a vector map: `--osm` (OSM Mapsforge/GeoJSON/transparent overlay, international) or `--vector` (IGN WFS, France, see below). |
+| `--osm` | Generates a vector map: OSM Mapsforge, GeoJSON, or a transparent raster overlay (international). |
+| `--vector` | Generates a vector map from IGN WFS (France, see below). |
 | `--merge` | Merges several GeoJSON files. Requires `--source`. |
 | `--split` | Splits an existing MBTiles after generation. Requires `--source`. |
 | `--serve` | Sends a project's deliverables to the phone: serves the folder on the local WiFi with a URL and QR code. |
@@ -415,16 +416,16 @@ with `--merge`.
 
 Parameters accepted by `--shading TYPE:k=v,...`, by relief type:
 
-| Parameter | Applies to | Value / default |
-|---|---|---|
-| `elevation` | `multi 315 045 135 225` | degrees, `[25]` |
-| `conv` | `svf` | `[flux]\|rvt` |
-| `dist` | `svf opos oneg vat e4mstp` | metres, `[20]` |
-| `gamma` | `svf opos oneg vat` | `[2.0]` |
-| `gamma` | `e4mstp` | `[0.8]` |
-| `sweep` | `svf` | boolean, `[on]` |
-| `sigma` | `lrm rrim` | provider pixels, `[15]` |
-| *(none)* | `slope` | — |
+| Parameter | Applies to | Value / default | Function |
+|---|---|---|---|
+| `elevation` | `multi 315 045 135 225` | degrees, `[25]` | Sun elevation of the hillshade; low = grazing light/micro-relief, high = general use. |
+| `conv` | `svf` | `[flux]\|rvt` | Sky-View Factor calculation convention. |
+| `dist` | `svf opos oneg vat e4mstp` | metres, `[20]` | Horizon radius used for the calculation. |
+| `gamma` | `svf opos oneg vat` | `[2.0]` | Final contrast applied to the result. |
+| `gamma` | `e4mstp` | `[0.8]` | Final contrast applied to the result. |
+| `sweep` | `svf` | boolean, `[on]` | Enables the accelerated SVF kernel (horizon sweep). |
+| `sigma` | `lrm rrim` | provider pixels, `[15]` | Gaussian smoothing standard deviation (SLRM); larger = wider relief retained. |
+| *(none)* | `slope` | — | No tunable parameter. |
 
 **3.1.5 Generate the map**: zoom, image format, and file formats are shared
 across all types, see [Output format](#4-output-format).
@@ -461,7 +462,7 @@ across all types, see [Output format](#4-output-format).
 | `--vector` | — | IGN Géoplateforme source (WFS), France only. |
 | `--layer TAGS...` with `--osm` | default if omitted: `highway=* waterway=* boundary=administrative natural=water natural=coastline waterway=river waterway=stream waterway=canal` | OSM tags to include (free-form, any `key=value`). Catalogue offered by the GUI: `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. |
 | `--layer NAME...` with `--vector` | `[cadastre]` | IGN layers, full catalogue in [France-specific parameters](#6-france-specific-parameters). |
-| `--zone-region SLUG` with `--osm` | — | Keeps the complete regional PBF instead of clipping (France). |
+| `--zone-region SLUG` with `--osm` | — | The Geofabrik regional PBF already matches the administrative boundary: used as-is instead of being re-clipped to a rectangular bbox (faster, keeps the real outline, France). |
 
 **3.3.2 Download**
 
@@ -503,7 +504,7 @@ File formats: see [Output format](#4-output-format).
 
 | Parameter | Value / default | Function |
 |---|---|---|
-| `--file-formats FMT...` | LiDAR/raster: `mbtiles rmap sqlitedb`; vector/merge: `map geojson gz transparent-raster` | File formats to generate, mode-dependent. |
+| `--file-formats FMT...` | LiDAR/raster/split: `mbtiles rmap sqlitedb`; vector/merge: `map geojson gz transparent-raster` | File formats to generate, mode-dependent. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Minimum tiled-map zoom. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Maximum tiled-map zoom. |
 | `--image-format` | `[auto]\|jpeg\|png` | Raster tile encoding. Edge tiles may remain alpha PNG. |
@@ -531,7 +532,7 @@ File formats: see [Output format](#4-output-format).
 | Parameter | Value / default | Function |
 |---|---|---|
 | `--zone-department NUM` | — | French département. Accepts one number, a list (`30,35,75`), or a range (`1-10`). |
-| `--zone-region SLUG` | — | French Geofabrik region; with `--osm`, keeps the complete regional PBF. |
+| `--zone-region SLUG` | — | French Geofabrik region; with `--osm`, the regional PBF is used as-is (already at the region's boundary) instead of being re-clipped to a rectangular bbox. |
 | `--vector` | — | Downloads IGN WFS layers and produces `geojson`, `gz`, `map`, or `transparent-raster`. |
 | `--layer NAME...` with `--vector` | `[cadastre]` | IGN layers: `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
 | `--raster --provider fr-ign` | — | IGN WMTS raster. |

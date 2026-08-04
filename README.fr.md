@@ -347,7 +347,8 @@ Cinq types, sélectionnés par un mode :
 | `--version` | Affiche la version et quitte. |
 | `--lidar` | Télécharge/traite le relief LiDAR, calcule les ombrages et produit les cartes raster. |
 | `--raster` | Télécharge une couche raster du provider (`fr-ign`, ou `us-tnm` avec `naip`). |
-| `--osm` / `--vector` | Produit une carte vectorielle : `--osm` (OSM Mapsforge/GeoJSON/overlay transparent, international) ou `--vector` (IGN WFS, France, voir plus bas). |
+| `--osm` | Produit une carte vectorielle OSM Mapsforge, du GeoJSON ou un overlay raster transparent (international). |
+| `--vector` | Produit une carte vectorielle depuis l'IGN WFS (France, voir plus bas). |
 | `--merge` | Fusionne plusieurs GeoJSON. Requiert `--source`. |
 | `--split` | Découpe après coup un MBTiles existant. Requiert `--source`. |
 | `--serve` | Envoie les livrables d'un projet vers le téléphone : sert le dossier sur le WiFi local avec URL et QR code. |
@@ -415,16 +416,16 @@ avec `--merge`.
 
 Paramètres acceptés par `--shading TYPE:k=v,...`, par type d'ombrage :
 
-| Paramètre | Types concernés | Valeur / défaut |
-|---|---|---|
-| `elevation` | `multi 315 045 135 225` | degrés, `[25]` |
-| `conv` | `svf` | `[flux]\|rvt` |
-| `dist` | `svf opos oneg vat e4mstp` | mètres, `[20]` |
-| `gamma` | `svf opos oneg vat` | `[2.0]` |
-| `gamma` | `e4mstp` | `[0.8]` |
-| `sweep` | `svf` | booléen, `[activé]` |
-| `sigma` | `lrm rrim` | pixels du provider, `[15]` |
-| *(aucun)* | `slope` | — |
+| Paramètre | Types concernés | Valeur / défaut | Fonction |
+|---|---|---|---|
+| `elevation` | `multi 315 045 135 225` | degrés, `[25]` | Élévation solaire du hillshade ; bas = relief rasant/micro-relief, haut = usage général. |
+| `conv` | `svf` | `[flux]\|rvt` | Convention de calcul du Sky-View Factor. |
+| `dist` | `svf opos oneg vat e4mstp` | mètres, `[20]` | Rayon d'horizon utilisé pour le calcul. |
+| `gamma` | `svf opos oneg vat` | `[2.0]` | Contraste final appliqué au résultat. |
+| `gamma` | `e4mstp` | `[0.8]` | Contraste final appliqué au résultat. |
+| `sweep` | `svf` | booléen, `[activé]` | Active le noyau SVF accéléré (sweep-horizon). |
+| `sigma` | `lrm rrim` | pixels du provider, `[15]` | Écart-type du lissage gaussien (SLRM) ; plus grand = relief plus large retenu. |
+| *(aucun)* | `slope` | — | Pas de paramètre réglable. |
 
 **3.1.5 Générer la carte** : zoom, format d'image et formats de fichier sont
 communs à tous les types, voir [Format de sortie](#4-format-de-sortie).
@@ -461,7 +462,7 @@ sans `--block` ni `--cleanup-keep-tiles`.
 | `--vector` | — | Source IGN Géoplateforme (WFS), France uniquement. |
 | `--layer TAGS...` avec `--osm` | défaut si omis : `highway=* waterway=* boundary=administrative natural=water natural=coastline waterway=river waterway=stream waterway=canal` | Tags OSM à inclure (libre, n'importe quel `clé=valeur`). Catalogue proposé par la GUI : `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. |
 | `--layer NAME...` avec `--vector` | `[cadastre]` | Couches IGN, catalogue complet dans [Paramètres propres à la France](#6-paramètres-propres-à-la-france). |
-| `--zone-region SLUG` avec `--osm` | — | Conserve le PBF régional complet au lieu de découper (France). |
+| `--zone-region SLUG` avec `--osm` | — | Le PBF Geofabrik régional colle déjà aux limites administratives : utilisé tel quel au lieu d'être redécoupé sur une bbox rectangulaire (plus rapide, contour réel conservé, France). |
 
 **3.3.2 Télécharger**
 
@@ -503,7 +504,7 @@ Formats de fichier : voir [Format de sortie](#4-format-de-sortie).
 
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
-| `--file-formats FMT...` | LiDAR/raster : `mbtiles rmap sqlitedb` ; vecteur/fusion : `map geojson gz transparent-raster` | Formats de fichier à générer, selon le mode. |
+| `--file-formats FMT...` | LiDAR/raster/découpage : `mbtiles rmap sqlitedb` ; vecteur/fusion : `map geojson gz transparent-raster` | Formats de fichier à générer, selon le mode. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Zoom minimal des cartes tuilées. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Zoom maximal des cartes tuilées. |
 | `--image-format` | `[auto]\|jpeg\|png` | Encodage des tuiles raster. Les bords peuvent rester en PNG avec alpha. |
@@ -531,7 +532,7 @@ Formats de fichier : voir [Format de sortie](#4-format-de-sortie).
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
 | `--zone-department NUM` | — | Département français. Accepte un numéro, une liste (`30,35,75`) ou une plage (`1-10`). |
-| `--zone-region SLUG` | — | Région Geofabrik française ; avec `--osm`, conserve le PBF régional complet. |
+| `--zone-region SLUG` | — | Région Geofabrik française ; avec `--osm`, le PBF régional est utilisé tel quel (déjà aux limites de la région) au lieu d'être redécoupé sur une bbox rectangulaire. |
 | `--vector` | — | Télécharge les couches IGN WFS et produit `geojson`, `gz`, `map` ou `transparent-raster`. |
 | `--layer NAME...` avec `--vector` | `[cadastre]` | Couches IGN : `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
 | `--raster --provider fr-ign` | — | Raster IGN WMTS. |
