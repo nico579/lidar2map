@@ -116,7 +116,7 @@ de référence, les résolutions, les CRS, les mécanismes d'accès et les clés
 > **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et al. 2016 : fond
 > plus propre, ~3 min/dalle au lieu de ~20 s). Détails et tous les
 > paramètres (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) dans la
-> [référence CLI du mode LAZ](#téléchargement-lidar-et-mode-laz). Coût :
+> [référence CLI du mode LAZ](#1-lidar). Coût :
 > télécharge le nuage COPC LAZ complet (~205 Mo/km²), donc garder la zone
 > petite.
 >
@@ -312,7 +312,33 @@ Les tableaux reprennent les options canoniques réellement exposées par le
 parseur. `python lidar2map.py <mode> --help` affiche également l'aide propre à
 chaque mode.
 
-#### Modes
+Classés dans l'ordre du formulaire GUI : dossiers du projet, zone géographique,
+type de calcul (cinq types, dans l'ordre des onglets), format de sortie, puis
+partage/maintenance et particularités françaises.
+
+#### Dossiers et projet
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--zone-name NOM` | automatique | Nom du projet ; obligatoire avec `--zone-gps` et `--zone-bbox`. |
+| `--output-dir PATH` | `Projets/` | Racine des livrables ; le remote CLI la réserve pour isoler ses sessions. |
+| `--cache-dir PATH` | `cache/` | Racine des caches persistants : dalles, WMTS, PBF et index. |
+| `--production-dir PATH` | `production/` | Artefacts calculés réutilisables, notamment les TIF issus des LAZ. |
+
+#### Zone géographique
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--zone-city NOM` | — | Géocode une commune avec Nominatim. |
+| `--zone-gps LAT,LON` | — | Centre WGS84, par exemple `43.3156,6.0423`. |
+| `--zone-bbox W,S,E,N` | — | Emprise WGS84 en degrés. |
+| `--zone-width KM` | `20` | Côté du carré autour d'une ville ou d'un point GPS, pas son rayon. |
+
+Département et région (France) : voir [Paramètres propres à la France](#paramètres-propres-à-la-france).
+
+#### Type de calcul
+
+Cinq types, sélectionnés par un mode :
 
 | Paramètre | Fonction |
 |---|---|
@@ -321,48 +347,58 @@ chaque mode.
 | `--version` | Affiche la version et quitte. |
 | `--lidar` | Télécharge/traite le relief LiDAR, calcule les ombrages et produit les cartes raster. |
 | `--raster` | Télécharge une couche raster du provider (`fr-ign`, ou `us-tnm` avec `naip`). |
-| `--osm` | Produit une carte OSM Mapsforge, du GeoJSON ou un overlay raster transparent. |
+| `--osm` | Produit une carte OSM Mapsforge, du GeoJSON ou un overlay raster transparent. `--vector` fait de même avec l'IGN (France, voir plus bas). |
 | `--merge` | Fusionne plusieurs GeoJSON. Requiert `--source`. |
 | `--split` | Découpe après coup un MBTiles existant. Requiert `--source`. |
 | `--serve` | Partage les livrables d'un projet sur le réseau local avec URL et QR code. |
 | `--index-sheet DIR` | Régénère uniquement la planche d'assemblage d'un projet existant. |
 
-#### Zone, provider et dossiers
+`--source PATH...` : source existante à réutiliser selon le mode : TIF vers
+raster tuilé, MBTiles vers RMAP/SQLiteDB, PBF vers OSM, ou plusieurs GeoJSON
+avec `--merge`.
+
+#### 1. LiDAR
+
+**Source des données**
 
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
-| `--provider CODE` | `fr-ign` | Choisit la source LiDAR/raster ; codes dans le [tableau des providers](#providers-disponibles). |
-| `--zone-city NOM` | — | Géocode une commune avec Nominatim. |
-| `--zone-gps LAT,LON` | — | Centre WGS84, par exemple `43.3156,6.0423`. |
-| `--zone-bbox W,S,E,N` | — | Emprise WGS84 en degrés. |
-| `--zone-width KM` | `20` | Côté du carré autour d'une ville ou d'un point GPS, pas son rayon. |
-| `--zone-name NOM` | automatique | Nom du projet ; obligatoire avec `--zone-gps` et `--zone-bbox`. |
-| `--cache-dir PATH` | `cache/` | Racine des caches persistants : dalles, WMTS, PBF et index. |
-| `--production-dir PATH` | `production/` | Artefacts calculés réutilisables, notamment les TIF issus des LAZ. |
-| `--output-dir PATH` | `Projets/` | Racine des livrables ; le remote CLI la réserve pour isoler ses sessions. |
-| `--tiles-dir PATH` | sous le projet | Cache de dalles LiDAR séparé. Mode LiDAR uniquement. |
+| `--provider CODE` | `fr-ign` | Source LiDAR ; codes dans le [tableau des providers](#providers-disponibles). |
 | `--api-key KEY` | variable d'environnement possible | Clé du provider lorsque la source l'exige. |
-| `--workers N` | `8` (`4` en vecteur IGN) | Connexions/tâches parallèles. |
-
-#### Téléchargement LiDAR et mode LAZ
-
-| Paramètre | Valeur / défaut | Fonction |
-|---|---|---|
-| `--download` | désactivé | Télécharge les dalles manquantes. |
-| `--download-compress` / `--no-download-compress` | activé | Active ou désactive la compression DEFLATE des dalles en cache. |
-| `--download-force` | désactivé | Retélécharge les dalles déjà présentes. |
-| `--download-overwrite` | désactivé | Écrase et retélécharge les données en cache ; équivalent de `--download-force` en LiDAR. |
 | `--laz` | désactivé | Utilise le provider jumeau `-laz` pour reconstruire les structures debout depuis le nuage de points. |
+| `--laz-ground classes\|csf` | `classes` | Socle issu des classes producteur ou d'un Cloth Simulation Filter. |
 | `--laz-hmin M` | `0.4` | Hauteur minimale réinjectée avec le socle `classes`. |
 | `--laz-hmax M` | `2.5` | Hauteur maximale réinjectée avec le socle `classes`. |
 | `--laz-classes LISTE` | `1,2,3,4,9,66` | Classes LAS participantes, séparées par des virgules. |
-| `--laz-ground classes\|csf` | `classes` | Socle issu des classes producteur ou d'un Cloth Simulation Filter. |
 | `--laz-csf-threshold M` | `0.5` | Distance d'absorption point-tissu du CSF. |
 | `--laz-csf-resolution M` | `0.5` | Taille de maille du tissu CSF. |
 | `--laz-csf-rigidness 1\|2\|3` | `1` | Rigidité CSF : terrain pentu, intermédiaire ou plat. |
 | `--laz-parallel N` | `1` | Conversions LAZ simultanées ; prévoir environ 3 Go de RAM par conversion. |
 
-#### Ombrages
+**0 - Découpage à priori (grandes zones)**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--split-cols N` | `1` | Colonnes du découpage avant calcul. |
+| `--split-rows N` | `1` | Lignes du découpage avant calcul. |
+| `--split-width KM` | — | Découpe en carrés d'environ `KM` km de côté, alternative à la grille. |
+| `--block i/M` | — | Ne traite que le bloc `i` parmi `M`, pour répartir la zone sur plusieurs machines. |
+| `--cleanup` | désactivé | Supprime les intermédiaires après chaque morceau réussi. |
+| `--cleanup-keep-tiles` | désactivé | Avec `--cleanup`, conserve les dalles téléchargées partagées. |
+| `--min-free-gb GB` | désactivé | Arrêt propre, code 3, avant un morceau si l'espace libre passe sous le seuil. |
+
+**1 - Télécharger**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--download` | désactivé | Télécharge les dalles manquantes. |
+| `--workers N` | `8` | Connexions simultanées. |
+| `--download-compress` / `--no-download-compress` | activé | Active ou désactive la compression DEFLATE des dalles en cache. |
+| `--download-force` | désactivé | Retélécharge les dalles déjà présentes. |
+| `--download-overwrite` | désactivé | Écrase et retélécharge les données en cache ; équivalent de `--download-force`. |
+| `--tiles-dir PATH` | sous le projet | Cache de dalles séparé, prioritaire sur `--cache-dir`. |
+
+**2 - Calculer les ombrages**
 
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
@@ -381,41 +417,102 @@ Paramètres acceptés par `--shading` : `elevation` pour `multi/315/045/135/225`
 `conv,dist,gamma,sweep` pour `svf` ; `dist,gamma` pour `opos/oneg/vat/e4mstp` ;
 `sigma` pour `lrm/rrim` ; aucun pour `slope`.
 
-#### Formats, tuiles et conversions
+**3 - Générer la carte** : zoom, format d'image et formats de fichier sont
+communs à tous les types, voir [Format de sortie](#format-de-sortie).
+
+#### 2. Raster
+
+**Source des données**
 
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
-| `--file-formats FMT...` | selon le mode | LiDAR/raster : `mbtiles rmap sqlitedb` ; OSM/vecteur/fusion : `map geojson gz transparent-raster`. |
-| `--source PATH...` | — | Source existante : TIF vers raster tuilé, MBTiles vers RMAP, PBF vers OSM, ou GeoJSON multiples avec `--merge`. |
+| `--provider CODE` | `fr-ign` | `fr-ign` (France, WMTS) ou `us-tnm` (USA, avec `--layer naip`). |
+| `--layer LAYER` | `planign` | Alias ou identifiant WMTS complet ; catalogue complet dans [Paramètres propres à la France](#paramètres-propres-à-la-france). |
+| `--api-key KEY` | — | Clé `cartes.gouv.fr`, requise seulement pour les couches Scan professionnelles IGN. |
+
+**0 - Découpage à priori** : mêmes paramètres que pour le LiDAR ci-dessus
+(`--split-cols`, `--split-rows`, `--split-width`, `--cleanup`, `--min-free-gb`),
+sans `--block` ni `--cleanup-keep-tiles`.
+
+**1 - Télécharger**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--workers N` | `8` | Connexions simultanées. |
+
+**2 - Générer la carte** : voir [Format de sortie](#format-de-sortie).
+
+#### 3. Vectoriel
+
+**Source des données**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--osm` | — | Source OSM / Geofabrik (PBF), international. |
+| `--vector` | — | Source IGN Géoplateforme (WFS), France uniquement. |
+| `--layer TAGS...` avec `--osm` | voir ci-dessous | Thèmes proposés par la GUI : `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. Le CLI accepte en réalité n'importe quel tag OSM `clé=valeur`, pas seulement ce catalogue. |
+| `--layer NAME...` avec `--vector` | `cadastre` | Couches IGN, catalogue complet dans [Paramètres propres à la France](#paramètres-propres-à-la-france). |
+| `--zone-region SLUG` avec `--osm` | — | Conserve le PBF régional complet au lieu de découper (France). |
+
+Si `--layer` est omis avec `--osm`, le CLI retient en réalité `highway=*
+waterway=* boundary=administrative natural=water natural=coastline
+waterway=river waterway=stream waterway=canal`, une sélection plus fine que
+le catalogue de la GUI ci-dessus.
+
+**1 - Télécharger**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--workers N` | `4` | Connexions simultanées ; le WFS IGN limite à 4, au-delà les couches commencent à échouer. |
+
+**2 - Générer la carte**
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--vector-simplify M` | automatique | Tolérance Douglas-Peucker en mètres des sorties vectorielles. |
+
+Formats de fichier : voir [Format de sortie](#format-de-sortie).
+
+#### 4. Fusion vectorielle
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--source PATH...` | requis | GeoJSON à fusionner, glob accepté. |
+| `--output-file FILE` | automatique | Nom du GeoJSON fusionné. |
+| `--no-gz` | désactivé | Produit un `.geojson` non compressé au lieu de `.geojson.gz`. |
+| `--vector-simplify M` | automatique | Tolérance Douglas-Peucker en mètres du résultat fusionné. |
+
+Formats de fichier : voir [Format de sortie](#format-de-sortie).
+
+#### 5. Découpage raster
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--source PATH` | requis | MBTiles à redécouper. |
+| `--cols N` | `1` | Colonnes de la grille de découpage. |
+| `--rows N` | `1` | Lignes de la grille de découpage. |
+| `--split-width KM` | — | Découpe en carrés d'environ `KM` km de côté, alternative à la grille. |
+
+Formats de fichier : voir [Format de sortie](#format-de-sortie).
+
+#### Format de sortie
+
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--file-formats FMT...` | selon le mode | LiDAR/raster : `mbtiles rmap sqlitedb` ; vecteur/fusion : `map geojson gz transparent-raster`. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Zoom minimal des cartes tuilées. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Zoom maximal des cartes tuilées. |
 | `--image-format auto\|jpeg\|png` | `auto` | Encodage des tuiles raster. Les bords peuvent rester en PNG avec alpha. |
 | `--image-quality Q` | `85` | Qualité JPEG de 1 à 100. |
 | `--tiles-overwrite` | désactivé | Régénère les MBTiles, SQLiteDB, RMAP ou Mapsforge existants. |
 | `--index-map` / `--no-index-map` | activé | Active ou désactive `<produit>_planche.png`. |
-| `--layer TAGS...` avec `--osm` | sélection par défaut | Tags OSM, par exemple `highway=* waterway=* natural=water`. |
-| `--vector-simplify M` | automatique | Tolérance Douglas-Peucker des sorties vectorielles (`--vector` et `--merge`). |
 
-#### Découpage, reprise et espace disque
+#### Partage et maintenance
 
 | Paramètre | Mode | Fonction |
 |---|---|---|
-| `--split-cols N` | LiDAR/raster | Nombre de colonnes du découpage avant calcul. |
-| `--split-rows N` | LiDAR/raster | Nombre de lignes du découpage avant calcul. |
-| `--split-width KM` | LiDAR/raster ou `--split` | Découpe en carrés d'environ `KM` km de côté. |
-| `--block i/M` | LiDAR | Ne traite que le bloc `i` parmi `M`, pour répartir une zone sur plusieurs machines. |
-| `--cleanup` | LiDAR/raster | Supprime les intermédiaires après chaque morceau réussi. |
-| `--cleanup-keep-tiles` | LiDAR | Avec `--cleanup`, conserve les dalles téléchargées partagées. |
-| `--min-free-gb GB` | LiDAR/raster | Arrêt propre, code 3, avant un morceau si l'espace libre passe sous le seuil. |
-| `--cols N`, `--rows N` | `--split` | Grille du découpage après coup d'un MBTiles. |
-
-#### Fusion, partage et maintenance
-
-| Paramètre | Mode | Fonction |
-|---|---|---|
-| `--output-file FILE` | `--merge` | Nom du GeoJSON fusionné. |
-| `--no-gz` | `--merge` | Produit un `.geojson` non compressé au lieu de `.geojson.gz`. |
-| `--zone-name NOM` | `--serve` | Projet à partager sur le réseau local. |
+| `--serve` | — | Partage les livrables d'un projet sur le réseau local avec URL et QR code. |
+| `--zone-name NOM` | avec `--serve` | Projet à partager sur le réseau local. |
 | `--tiles-purge-invalid` | LiDAR | Supprime les dalles de cache trop petites ou invalides. |
 | `--tiles-migrate` | LiDAR | Migre l'ancien cache plat vers les sous-dossiers par colonne. |
 | `--tiles-rename` | LiDAR | Renomme les dalles de l'ancienne convention vers la convention actuelle. |
@@ -434,9 +531,9 @@ Paramètres acceptés par `--shading` : `elevation` pour `multi/315/045/135/225`
 | `--zone-department NUM` | Département français. Accepte un numéro, une liste (`30,35,75`) ou une plage (`1-10`). |
 | `--zone-region SLUG` | Région Geofabrik française ; avec `--osm`, conserve le PBF régional complet. |
 | `--vector` | Télécharge les couches IGN WFS et produit `geojson`, `gz`, `map` ou `transparent-raster`. |
-| `--layer NAME...` avec `--vector` | Couches IGN : `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
+| `--layer NAME...` avec `--vector` | Couches IGN (défaut `cadastre`) : `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
 | `--raster --provider fr-ign` | Raster IGN WMTS. Couche publique par défaut : `planign`. |
-| `--layer LAYER` avec le raster IGN | Alias public ou identifiant WMTS complet ; les couches Scan professionnelles exigent une clé. |
+| `--layer LAYER` avec le raster IGN | Topo publique : `planign etatmajor40 etatmajor10 pentes`. Imagerie publique : `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Thématique publique : `cadastre ombrage`. Professionnel, clé requise : `scan25 scan25tour scan100 scanoaci`. |
 | `--api-key KEY` avec le raster IGN | Clé `cartes.gouv.fr` pour `scan25`, `scan25tour`, `scan100` et `scanoaci`; inutile pour les couches publiques. |
 
 ### Exemples en ligne de commande
@@ -504,7 +601,7 @@ charge.
 |---|---|---|---|---|---|
 | `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de download direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign` + **mode LAZ** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode LAZ » dans la GUI (ou CLI `--laz`) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis le socle par défaut `--laz-ground classes` (ensemble `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres réinjectées dans les trous du sol) ou `--laz-ground csf`. **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Tous les paramètres de réglage (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) : [référence CLI](#téléchargement-lidar-et-mode-laz). Nom de zone auto-suffixé (`_laz_dfm` / `_laz_csf`) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode LAZ** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode LAZ » dans la GUI (ou CLI `--laz`) : télécharge les dalles **COPC LAZ** (~205 Mo/km² !) et reconstruit le modèle depuis le socle par défaut `--laz-ground classes` (ensemble `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres réinjectées dans les trous du sol) ou `--laz-ground csf`. **Peut réintroduire les retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi ; cf. encadré « Limite connue »). Tous les paramètres de réglage (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) : [référence CLI](#1-lidar). Nom de zone auto-suffixé (`_laz_dfm` / `_laz_csf`) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
 | `ch-swisstopo` + **mode LAZ** | Suisse (**mode structures debout**, expérimental) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode LAZ » (ou CLI `--laz`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--laz-ground csf`, Cloth Simulation Filter) car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |

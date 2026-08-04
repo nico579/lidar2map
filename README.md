@@ -117,7 +117,7 @@ for countries, resolutions, CRS, access mechanisms, and API keys.
 > default) or a **Cloth Simulation Filter** (`--laz-ground csf`, Zhang et
 > al. 2016: cleaner background, ~3 min/tile instead of ~20 s). Full
 > parameter list (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`) in the
-> [CLI reference for LAZ mode](#lidar-download-and-laz-mode). Cost:
+> [CLI reference for LAZ mode](#1-lidar). Cost:
 > downloads the full COPC LAZ point cloud (~205 MB/km²), so keep the area
 > small.
 >
@@ -313,7 +313,33 @@ Everything below applies to the binary as well as the script, just replace
 The tables list the canonical options exposed by the actual parsers.
 `python lidar2map.py <mode> --help` also prints mode-specific help.
 
-#### Modes
+Ordered like the GUI form: project directories, geographic area, processing
+type (five types, in tab order), output format, then sharing/maintenance and
+France-specific parameters.
+
+#### Project directories
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--zone-name NAME` | automatic | Project name; required with `--zone-gps` and `--zone-bbox`. |
+| `--output-dir PATH` | `Projets/` | Deliverable root; the remote CLI reserves it to isolate sessions. |
+| `--cache-dir PATH` | `cache/` | Root of persistent tile, WMTS, PBF, and discovery-index caches. |
+| `--production-dir PATH` | `production/` | Reusable computed artifacts, notably TIFFs generated from LAZ. |
+
+#### Geographic area
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--zone-city NAME` | — | Geocodes a town with Nominatim. |
+| `--zone-gps LAT,LON` | — | WGS84 centre, for example `43.3156,6.0423`. |
+| `--zone-bbox W,S,E,N` | — | WGS84 extent in degrees. |
+| `--zone-width KM` | `20` | Side of the square around a town/GPS point, not its radius. |
+
+Département and region (France): see [France-specific parameters](#france-specific-parameters).
+
+#### Processing type
+
+Five types, selected by a mode:
 
 | Parameter | Function |
 |---|---|
@@ -322,48 +348,58 @@ The tables list the canonical options exposed by the actual parsers.
 | `--version` | Prints the version and exits. |
 | `--lidar` | Downloads/processes LiDAR, computes relief visualizations, and generates raster maps. |
 | `--raster` | Downloads a raster layer from the provider (`fr-ign`, or `us-tnm` with `naip`). |
-| `--osm` | Generates an OSM Mapsforge map, GeoJSON, or transparent raster overlay. |
+| `--osm` | Generates an OSM Mapsforge map, GeoJSON, or transparent raster overlay. `--vector` does the same with IGN (France, see below). |
 | `--merge` | Merges several GeoJSON files. Requires `--source`. |
 | `--split` | Splits an existing MBTiles after generation. Requires `--source`. |
 | `--serve` | Shares one project's deliverables on the LAN with a URL and QR code. |
 | `--index-sheet DIR` | Regenerates only the index sheet of an existing project. |
 
-#### Area, provider, and directories
+`--source PATH...`: existing source to reuse, depending on the mode: TIFF to
+tiled raster, MBTiles to RMAP/SQLiteDB, PBF to OSM, or multiple GeoJSON files
+with `--merge`.
+
+#### 1. LiDAR
+
+**Data source**
 
 | Parameter | Value / default | Function |
 |---|---|---|
-| `--provider CODE` | `fr-ign` | Selects the LiDAR/raster source; codes are in the [provider table](#available-providers). |
-| `--zone-city NAME` | — | Geocodes a town with Nominatim. |
-| `--zone-gps LAT,LON` | — | WGS84 centre, for example `43.3156,6.0423`. |
-| `--zone-bbox W,S,E,N` | — | WGS84 extent in degrees. |
-| `--zone-width KM` | `20` | Side of the square around a town/GPS point, not its radius. |
-| `--zone-name NAME` | automatic | Project name; required with `--zone-gps` and `--zone-bbox`. |
-| `--cache-dir PATH` | `cache/` | Root of persistent tile, WMTS, PBF, and discovery-index caches. |
-| `--production-dir PATH` | `production/` | Reusable computed artifacts, notably TIFFs generated from LAZ. |
-| `--output-dir PATH` | `Projets/` | Deliverable root; the remote CLI reserves it to isolate sessions. |
-| `--tiles-dir PATH` | below project | Separate LiDAR tile cache. LiDAR mode only. |
+| `--provider CODE` | `fr-ign` | LiDAR source; codes are in the [provider table](#available-providers). |
 | `--api-key KEY` | environment variable supported | Provider key when required by the source. |
-| `--workers N` | `8` (`4` for IGN vector) | Parallel connections/tasks. |
-
-#### LiDAR download and LAZ mode
-
-| Parameter | Value / default | Function |
-|---|---|---|
-| `--download` | off | Downloads missing tiles. |
-| `--download-compress` / `--no-download-compress` | on | Enables or disables DEFLATE compression of cached tiles. |
-| `--download-force` | off | Downloads already-cached tiles again. |
-| `--download-overwrite` | off | Overwrites and downloads cached data again; equivalent to `--download-force` in LiDAR mode. |
 | `--laz` | off | Selects the `-laz` provider twin to reconstruct standing structures from point clouds. |
+| `--laz-ground classes\|csf` | `classes` | Producer-class ground base or Cloth Simulation Filter. |
 | `--laz-hmin M` | `0.4` | Minimum reinjected height with the `classes` ground base. |
 | `--laz-hmax M` | `2.5` | Maximum reinjected height with the `classes` ground base. |
 | `--laz-classes LIST` | `1,2,3,4,9,66` | Participating comma-separated LAS classes. |
-| `--laz-ground classes\|csf` | `classes` | Producer-class ground base or Cloth Simulation Filter. |
 | `--laz-csf-threshold M` | `0.5` | CSF point-to-cloth absorption distance. |
 | `--laz-csf-resolution M` | `0.5` | CSF cloth grid size. |
 | `--laz-csf-rigidness 1\|2\|3` | `1` | CSF rigidity for steep, intermediate, or flat terrain. |
 | `--laz-parallel N` | `1` | Concurrent LAZ conversions; allow roughly 3 GB RAM per conversion. |
 
-#### Relief visualizations
+**0 - Pre-split (large areas)**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--split-cols N` | `1` | Number of columns for splitting before processing. |
+| `--split-rows N` | `1` | Number of rows for splitting before processing. |
+| `--split-width KM` | — | Splits into squares approximately `KM` km wide, alternative to the grid. |
+| `--block i/M` | — | Processes only block `i` of `M`, to distribute an area across machines. |
+| `--cleanup` | off | Deletes intermediates after each successful chunk. |
+| `--cleanup-keep-tiles` | off | With `--cleanup`, preserves shared downloaded tiles. |
+| `--min-free-gb GB` | off | Clean exit code 3 before a chunk when free space falls below the threshold. |
+
+**1 - Download**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--download` | off | Downloads missing tiles. |
+| `--workers N` | `8` | Parallel connections. |
+| `--download-compress` / `--no-download-compress` | on | Enables or disables DEFLATE compression of cached tiles. |
+| `--download-force` | off | Downloads already-cached tiles again. |
+| `--download-overwrite` | off | Overwrites and downloads cached data again; equivalent to `--download-force`. |
+| `--tiles-dir PATH` | below project | Separate tile cache, takes priority over `--cache-dir`. |
+
+**2 - Compute relief visualizations**
 
 | Parameter | Value / default | Function |
 |---|---|---|
@@ -382,41 +418,102 @@ Parameters accepted by `--shading`: `elevation` for `multi/315/045/135/225`;
 `conv,dist,gamma,sweep` for `svf`; `dist,gamma` for `opos/oneg/vat/e4mstp`;
 `sigma` for `lrm/rrim`; none for `slope`.
 
-#### Formats, tiles, and conversions
+**3 - Generate the map**: zoom, image format, and file formats are shared
+across all types, see [Output format](#output-format).
+
+#### 2. Raster
+
+**Data source**
 
 | Parameter | Value / default | Function |
 |---|---|---|
-| `--file-formats FMT...` | mode-dependent | LiDAR/raster: `mbtiles rmap sqlitedb`; OSM/vector/merge: `map geojson gz transparent-raster`. |
-| `--source PATH...` | — | Existing source: TIFF to tiled raster, MBTiles to RMAP, PBF to OSM, or multiple GeoJSON files with `--merge`. |
+| `--provider CODE` | `fr-ign` | `fr-ign` (France, WMTS) or `us-tnm` (USA, with `--layer naip`). |
+| `--layer LAYER` | `planign` | Alias or full WMTS identifier; full catalogue in [France-specific parameters](#france-specific-parameters). |
+| `--api-key KEY` | — | `cartes.gouv.fr` key, required only for professional IGN Scan layers. |
+
+**0 - Pre-split**: same parameters as LiDAR above (`--split-cols`,
+`--split-rows`, `--split-width`, `--cleanup`, `--min-free-gb`), without
+`--block` or `--cleanup-keep-tiles`.
+
+**1 - Download**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--workers N` | `8` | Parallel connections. |
+
+**2 - Generate the map**: see [Output format](#output-format).
+
+#### 3. Vector
+
+**Data source**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--osm` | — | OSM / Geofabrik source (PBF), international. |
+| `--vector` | — | IGN Géoplateforme source (WFS), France only. |
+| `--layer TAGS...` with `--osm` | see below | Themes offered by the GUI: `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. The CLI actually accepts any OSM `key=value` tag, not just this catalogue. |
+| `--layer NAME...` with `--vector` | `cadastre` | IGN layers, full catalogue in [France-specific parameters](#france-specific-parameters). |
+| `--zone-region SLUG` with `--osm` | — | Keeps the complete regional PBF instead of clipping (France). |
+
+If `--layer` is omitted with `--osm`, the CLI actually falls back to
+`highway=* waterway=* boundary=administrative natural=water natural=coastline
+waterway=river waterway=stream waterway=canal`, a finer selection than the
+GUI catalogue above.
+
+**1 - Download**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--workers N` | `4` | Parallel connections; the IGN WFS caps concurrency at 4, beyond which layers start failing. |
+
+**2 - Generate the map**
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--vector-simplify M` | automatic | Douglas-Peucker tolerance in metres for vector outputs. |
+
+File formats: see [Output format](#output-format).
+
+#### 4. Vector merge
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--source PATH...` | required | GeoJSON files to merge, glob accepted. |
+| `--output-file FILE` | automatic | Name of the merged GeoJSON. |
+| `--no-gz` | off | Writes uncompressed `.geojson` instead of `.geojson.gz`. |
+| `--vector-simplify M` | automatic | Douglas-Peucker tolerance in metres for the merged result. |
+
+File formats: see [Output format](#output-format).
+
+#### 5. Raster split
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--source PATH` | required | MBTiles to re-split. |
+| `--cols N` | `1` | Columns of the splitting grid. |
+| `--rows N` | `1` | Rows of the splitting grid. |
+| `--split-width KM` | — | Splits into squares approximately `KM` km wide, alternative to the grid. |
+
+File formats: see [Output format](#output-format).
+
+#### Output format
+
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--file-formats FMT...` | mode-dependent | LiDAR/raster: `mbtiles rmap sqlitedb`; vector/merge: `map geojson gz transparent-raster`. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Minimum tiled-map zoom. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Maximum tiled-map zoom. |
 | `--image-format auto\|jpeg\|png` | `auto` | Raster tile encoding. Edge tiles may remain alpha PNG. |
 | `--image-quality Q` | `85` | JPEG quality from 1 to 100. |
 | `--tiles-overwrite` | off | Regenerates existing MBTiles, SQLiteDB, RMAP, or Mapsforge files. |
 | `--index-map` / `--no-index-map` | on | Enables or disables `<product>_planche.png`. |
-| `--layer TAGS...` with `--osm` | default selection | OSM tags such as `highway=* waterway=* natural=water`. |
-| `--vector-simplify M` | automatic | Douglas-Peucker tolerance for vector and merge outputs. |
 
-#### Splitting, resumption, and disk space
+#### Sharing and maintenance
 
 | Parameter | Mode | Function |
 |---|---|---|
-| `--split-cols N` | LiDAR/raster | Number of columns for splitting before processing. |
-| `--split-rows N` | LiDAR/raster | Number of rows for splitting before processing. |
-| `--split-width KM` | LiDAR/raster or `--split` | Splits into squares approximately `KM` km wide. |
-| `--block i/M` | LiDAR | Processes only block `i` of `M` to distribute an area across machines. |
-| `--cleanup` | LiDAR/raster | Deletes intermediates after each successful chunk. |
-| `--cleanup-keep-tiles` | LiDAR | With `--cleanup`, preserves shared downloaded tiles. |
-| `--min-free-gb GB` | LiDAR/raster | Clean exit code 3 before a chunk when free space falls below the threshold. |
-| `--cols N`, `--rows N` | `--split` | Grid used to split an existing MBTiles after generation. |
-
-#### Merge, sharing, and maintenance
-
-| Parameter | Mode | Function |
-|---|---|---|
-| `--output-file FILE` | `--merge` | Name of the merged GeoJSON. |
-| `--no-gz` | `--merge` | Writes uncompressed `.geojson` instead of `.geojson.gz`. |
-| `--zone-name NAME` | `--serve` | Project to share on the LAN. |
+| `--serve` | — | Shares one project's deliverables on the LAN with a URL and QR code. |
+| `--zone-name NAME` | with `--serve` | Project to share on the LAN. |
 | `--tiles-purge-invalid` | LiDAR | Removes undersized or invalid cached tiles. |
 | `--tiles-migrate` | LiDAR | Migrates the old flat cache into per-column directories. |
 | `--tiles-rename` | LiDAR | Renames tiles from the old convention to the current one. |
@@ -435,9 +532,9 @@ Parameters accepted by `--shading`: `elevation` for `multi/315/045/135/225`;
 | `--zone-department NUM` | French département. Accepts one number, a list (`30,35,75`), or a range (`1-10`). |
 | `--zone-region SLUG` | French Geofabrik region; with `--osm`, keeps the complete regional PBF. |
 | `--vector` | Downloads IGN WFS layers and produces `geojson`, `gz`, `map`, or `transparent-raster`. |
-| `--layer NAME...` with `--vector` | IGN layers: `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
+| `--layer NAME...` with `--vector` | IGN layers (default `cadastre`): `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
 | `--raster --provider fr-ign` | IGN WMTS raster. Default public layer: `planign`. |
-| `--layer LAYER` with IGN raster | Public alias or full WMTS identifier; professional Scan layers require a key. |
+| `--layer LAYER` with IGN raster | Public topo: `planign etatmajor40 etatmajor10 pentes`. Public imagery: `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Public thematic: `cadastre ombrage`. Professional, key required: `scan25 scan25tour scan100 scanoaci`. |
 | `--api-key KEY` with IGN raster | `cartes.gouv.fr` key for `scan25`, `scan25tour`, `scan100`, and `scanoaci`; unnecessary for public layers. |
 
 ### Command-line examples
@@ -503,7 +600,7 @@ multiple machines with `--block i/M`, and supported platforms.
 |---|---|---|---|---|---|
 | `fr-ign` | France *(default)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, national coverage (mainland) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | WFS `IGNF_MNT-LIDAR-HD:dalle` index (each tile feature carries its direct download `url`), 0.5 m GeoTIFF, Licence Ouverte 2.0 (Martinique/Mayotte announced but WFS empty for now) |
-| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--laz`): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from the default ground base `--laz-ground classes` (class set `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others re-injected into ground gaps) or `--laz-ground csf`. **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier: scrub comes back too; see "Known limit" box). Full tuning parameters (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`): [CLI reference](#lidar-download-and-laz-mode). Zone name auto-suffixed (`_laz_dfm` / `_laz_csf`), so point-cloud outputs never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
+| `fr-ign` + **DFM mode** | France (**standing-ruins mode**, experimental) | DFM from classified LiDAR HD point cloud | 0.5 m | EPSG:2154 (Lambert-93) | GUI checkbox "DFM mode" (or CLI `--laz`): downloads the **COPC LAZ** tiles (~205 MB/km²!) and rebuilds the model from the default ground base `--laz-ground classes` (class set `1,2,3,4,9,66`: classes 2/9/66 = terrain base as in the official DTM, the others re-injected into ground gaps) or `--laz-ground csf`. **Can re-introduce returns compatible with standing walls** that the DTM erases (candidates, not a wall classifier: scrub comes back too; see "Known limit" box). Full tuning parameters (`--laz-hmin/-hmax/-classes`, `--laz-csf-*`): [CLI reference](#1-lidar). Zone name auto-suffixed (`_laz_dfm` / `_laz_csf`), so point-cloud outputs never mix with DTM ones. The LAZ is kept in the tile cache: changing the settings re-converts without re-downloading. Targeted prospection of a few km², not large maps |
 | `nl-ahn` | Netherlands | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, national coverage |
 | `ch-swisstopo` | Switzerland | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC REST API, national coverage |
 | `ch-swisstopo` + **DFM mode** | Switzerland (**standing-structures mode**, experimental) | DFM from classified swissSURFACE3D point cloud | 0.5 m | EPSG:2056 (CH1903+/LV95) | GUI checkbox "DFM mode" (or CLI `--laz`) on the Swiss provider: downloads the **swissSURFACE3D `.las.zip`** tiles (~125 MB/km²) via the same STAC API, unzips the point cloud and rebuilds the standing-structures model. Default ground base is **CSF** (`--laz-ground csf`, Cloth Simulation Filter) since swisstopo's class codes are not guaranteed IGN-compatible; the `classes` mode is also available. Same per-site tuning and cache-then-retune behaviour as the France DFM (~6 min/tile). Targeted prospection, field validation recommended |
