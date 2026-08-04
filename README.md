@@ -350,7 +350,7 @@ Five types, selected by a mode:
 | `--osm` / `--vector` | Generates a vector map: `--osm` (OSM Mapsforge/GeoJSON/transparent overlay, international) or `--vector` (IGN WFS, France, see below). |
 | `--merge` | Merges several GeoJSON files. Requires `--source`. |
 | `--split` | Splits an existing MBTiles after generation. Requires `--source`. |
-| `--serve` | Shares one project's deliverables on the LAN with a URL and QR code. |
+| `--serve` | Sends a project's deliverables to the phone: serves the folder on the local WiFi with a URL and QR code. |
 | `--index-sheet DIR` | Regenerates only the index sheet of an existing project. |
 
 `--source PATH...`: existing source to reuse, depending on the mode: TIFF to
@@ -365,14 +365,14 @@ with `--merge`.
 |---|---|---|
 | `--provider CODE` | `fr-ign` | LiDAR source; codes are in the [provider table](#available-providers). |
 | `--api-key KEY` | environment variable supported | Provider key when required by the source. |
-| `--laz` | off | Selects the `-laz` provider twin to reconstruct standing structures from point clouds. |
-| `--laz-ground classes\|csf` | `classes` | Producer-class ground base or Cloth Simulation Filter. |
+| `--laz` | off (computes from the DTM) | Switches to the classified point cloud (LAZ) to reconstruct standing structures; without it, lidar2map computes from the provider's official DTM. |
+| `--laz-ground` | `[classes]\|csf` | Producer-class ground base or Cloth Simulation Filter. |
 | `--laz-hmin M` | `0.4` | Minimum reinjected height with the `classes` ground base. |
 | `--laz-hmax M` | `2.5` | Maximum reinjected height with the `classes` ground base. |
 | `--laz-classes LIST` | `1,2,3,4,9,66` | Participating comma-separated LAS classes. |
 | `--laz-csf-threshold M` | `0.5` | CSF point-to-cloth absorption distance. |
 | `--laz-csf-resolution M` | `0.5` | CSF cloth grid size. |
-| `--laz-csf-rigidness 1\|2\|3` | `1` | CSF rigidity for steep, intermediate, or flat terrain. |
+| `--laz-csf-rigidness` | `[1]\|2\|3` | CSF rigidity for steep, intermediate, or flat terrain. |
 | `--laz-parallel N` | `1` | Concurrent LAZ conversions; allow roughly 3 GB RAM per conversion. |
 
 **3.1.2 Pre-split (large areas)**
@@ -393,7 +393,7 @@ with `--merge`.
 |---|---|---|
 | `--download` | off | Downloads missing tiles. |
 | `--workers N` | `8` | Parallel connections. |
-| `--download-compress` / `--no-download-compress` | on | Enables or disables DEFLATE compression of cached tiles. |
+| `--download-compress` | on | DEFLATE compression of cached tiles. |
 | `--download-force` | off | Downloads already-cached tiles again. |
 | `--download-overwrite` | off | Overwrites and downloads cached data again; equivalent to `--download-force`. |
 | `--tiles-dir PATH` | below project | Separate tile cache, takes priority over `--cache-dir`. |
@@ -403,19 +403,28 @@ with `--merge`.
 | Parameter | Value / default | Function |
 |---|---|---|
 | `--shadings TYPE...` | interactive | Types: `lrm vat e4mstp svf opos oneg rrim multi 315 045 135 225 slope`, plus `all`/`none`. |
-| `--shading TYPE[:k=v,...]` | repeatable | Adds a parameterized instance such as `svf:dist=100,gamma=1.5` or `lrm:sigma=10`. |
-| `--shading-preset auto\|micro\|standard\|landscape` | off | Adds a resolution-tuned SVF, openness, LRM, multi, and slope stack. |
+| `--shading TYPE[:k=v,...]` | repeatable | Adds a parameterized instance, for example `svf:dist=100,gamma=1.5`. Per-type parameters below. |
+| `--shading-preset` | off; `auto`\|`micro`\|`standard`\|`landscape` | Adds a resolution-tuned SVF, openness, LRM, multi, and slope stack. |
 | `--shading-elevation DEG` | `25` | Sun elevation for directional/multidirectional hillshades. |
-| `--svf-conv flux\|rvt` | `flux` | Sky-View Factor convention. |
+| `--svf-conv` | `[flux]\|rvt` | Sky-View Factor convention. |
 | `--svf-dist M` | `20` | Horizon radius for SVF, openness, and composites. |
 | `--svf-gamma G` | `2.0` | Final gamma for SVF, openness, and VAT. |
 | `--svf-sweep` / `--no-svf-sweep` | on | Enables or disables the accelerated SVF kernel. |
 | `--shadings-overwrite` | off | Recomputes existing relief TIFFs. |
 | `--shadings-compress` | off | Compresses existing raw relief TIFFs. |
 
-Parameters accepted by `--shading`: `elevation` for `multi/315/045/135/225`;
-`conv,dist,gamma,sweep` for `svf`; `dist,gamma` for `opos/oneg/vat/e4mstp`;
-`sigma` for `lrm/rrim`; none for `slope`.
+Parameters accepted by `--shading TYPE:k=v,...`, by relief type:
+
+| Parameter | Applies to | Value / default |
+|---|---|---|
+| `elevation` | `multi 315 045 135 225` | degrees, `[25]` |
+| `conv` | `svf` | `[flux]\|rvt` |
+| `dist` | `svf opos oneg vat e4mstp` | metres, `[20]` |
+| `gamma` | `svf opos oneg vat` | `[2.0]` |
+| `gamma` | `e4mstp` | `[0.8]` |
+| `sweep` | `svf` | boolean, `[on]` |
+| `sigma` | `lrm rrim` | provider pixels, `[15]` |
+| *(none)* | `slope` | — |
 
 **3.1.5 Generate the map**: zoom, image format, and file formats are shared
 across all types, see [Output format](#4-output-format).
@@ -450,14 +459,9 @@ across all types, see [Output format](#4-output-format).
 |---|---|---|
 | `--osm` | — | OSM / Geofabrik source (PBF), international. |
 | `--vector` | — | IGN Géoplateforme source (WFS), France only. |
-| `--layer TAGS...` with `--osm` | see below | Themes offered by the GUI: `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. The CLI actually accepts any OSM `key=value` tag, not just this catalogue. |
-| `--layer NAME...` with `--vector` | `cadastre` | IGN layers, full catalogue in [France-specific parameters](#6-france-specific-parameters). |
+| `--layer TAGS...` with `--osm` | default if omitted: `highway=* waterway=* boundary=administrative natural=water natural=coastline waterway=river waterway=stream waterway=canal` | OSM tags to include (free-form, any `key=value`). Catalogue offered by the GUI: `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. |
+| `--layer NAME...` with `--vector` | `[cadastre]` | IGN layers, full catalogue in [France-specific parameters](#6-france-specific-parameters). |
 | `--zone-region SLUG` with `--osm` | — | Keeps the complete regional PBF instead of clipping (France). |
-
-If `--layer` is omitted with `--osm`, the CLI actually falls back to
-`highway=* waterway=* boundary=administrative natural=water natural=coastline
-waterway=river waterway=stream waterway=canal`, a finer selection than the
-GUI catalogue above.
 
 **3.3.2 Download**
 
@@ -499,25 +503,23 @@ File formats: see [Output format](#4-output-format).
 
 | Parameter | Value / default | Function |
 |---|---|---|
-| `--file-formats FMT...` | mode-dependent | LiDAR/raster: `mbtiles rmap sqlitedb`; vector/merge: `map geojson gz transparent-raster`. |
+| `--file-formats FMT...` | LiDAR/raster: `mbtiles rmap sqlitedb`; vector/merge: `map geojson gz transparent-raster` | File formats to generate, mode-dependent. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Minimum tiled-map zoom. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Maximum tiled-map zoom. |
-| `--image-format auto\|jpeg\|png` | `auto` | Raster tile encoding. Edge tiles may remain alpha PNG. |
+| `--image-format` | `[auto]\|jpeg\|png` | Raster tile encoding. Edge tiles may remain alpha PNG. |
 | `--image-quality Q` | `85` | JPEG quality from 1 to 100. |
 | `--tiles-overwrite` | off | Regenerates existing MBTiles, SQLiteDB, RMAP, or Mapsforge files. |
-| `--index-map` / `--no-index-map` | on | Enables or disables `<product>_planche.png`. |
+| `--index-map` | on | Generates `<product>_planche.png` (extent, split grid, numbered cells). |
 
 #### 5. Sharing and maintenance
 
 | Parameter | Mode | Function |
 |---|---|---|
-| `--serve` | — | Shares one project's deliverables on the LAN with a URL and QR code. |
-| `--zone-name NAME` | with `--serve` | Project to share on the LAN. |
+| `--serve` | — | Sends a project's deliverables to the phone: serves the folder on the local WiFi with a URL and QR code. |
+| `--zone-name NAME` | with `--serve` | Project to send to the phone. |
 | `--tiles-purge-invalid` | LiDAR | Removes undersized or invalid cached tiles. |
-| `--tiles-migrate` | LiDAR | Migrates the old flat cache into per-column directories. |
-| `--tiles-rename` | LiDAR | Renames tiles from the old convention to the current one. |
 | `--tiles-purge-out-of-zone` | LiDAR | Removes cached tiles outside the requested area. |
-| `--bootstrap=auto\|pip\|none` | startup | Automatic venv, installation in the active environment, or no installation. |
+| `--bootstrap` | `[auto]\|pip\|none` | Startup: automatic venv, installation in the active environment, or no installation. |
 | `--help-bootstrap` | startup | Prints bootstrap help. |
 | `--installer-deps` | maintenance/build | Installs all dependencies, including optional ones, then exits. |
 | `--telecharger-outils` | maintenance/build | Downloads the JRE, osmosis, and mapwriter, then exits. |
@@ -526,15 +528,15 @@ File formats: see [Output format](#4-output-format).
 
 #### 6. France-specific parameters
 
-| Parameter | Function |
-|---|---|
-| `--zone-department NUM` | French département. Accepts one number, a list (`30,35,75`), or a range (`1-10`). |
-| `--zone-region SLUG` | French Geofabrik region; with `--osm`, keeps the complete regional PBF. |
-| `--vector` | Downloads IGN WFS layers and produces `geojson`, `gz`, `map`, or `transparent-raster`. |
-| `--layer NAME...` with `--vector` | IGN layers (default `cadastre`): `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
-| `--raster --provider fr-ign` | IGN WMTS raster. Default public layer: `planign`. |
-| `--layer LAYER` with IGN raster | Public topo: `planign etatmajor40 etatmajor10 pentes`. Public imagery: `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Public thematic: `cadastre ombrage`. Professional, key required: `scan25 scan25tour scan100 scanoaci`. |
-| `--api-key KEY` with IGN raster | `cartes.gouv.fr` key for `scan25`, `scan25tour`, `scan100`, and `scanoaci`; unnecessary for public layers. |
+| Parameter | Value / default | Function |
+|---|---|---|
+| `--zone-department NUM` | — | French département. Accepts one number, a list (`30,35,75`), or a range (`1-10`). |
+| `--zone-region SLUG` | — | French Geofabrik region; with `--osm`, keeps the complete regional PBF. |
+| `--vector` | — | Downloads IGN WFS layers and produces `geojson`, `gz`, `map`, or `transparent-raster`. |
+| `--layer NAME...` with `--vector` | `[cadastre]` | IGN layers: `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
+| `--raster --provider fr-ign` | — | IGN WMTS raster. |
+| `--layer LAYER` with IGN raster | `[planign]` | Public topo: `planign etatmajor40 etatmajor10 pentes`. Public imagery: `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Public thematic: `cadastre ombrage`. Professional, key required: `scan25 scan25tour scan100 scanoaci`. |
+| `--api-key KEY` with IGN raster | — | `cartes.gouv.fr` key for `scan25`, `scan25tour`, `scan100`, and `scanoaci`; unnecessary for public layers. |
 
 ### Command-line examples
 

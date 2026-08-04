@@ -230,9 +230,6 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
     --dalles-purger-invalides   Supprimer les dalles < 2 Mo (mer, erreurs partielles)
     --dalles-purger-hors-zone   Supprimer du cache les dalles hors zone courante
                                   (libère la place prise par d'autres départements)
-    --dalles-migrer             Réorganiser les dalles en sous-dossiers par colonne X
-    --dalles-renommer           Renommer les dalles de l'ancienne convention (x2)
-                                  vers la nouvelle (x1), une seule fois
 
   Arborescence de sortie :
     Projets/<nom>/
@@ -10943,49 +10940,6 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                 print(f"  {stderr_diag.strip()[-600:]}")
         return None
 
-def _migrer_dalles_colonnes(dossier_dalles):
-    """Déplace les dalles à plat de la racine du cache vers les sous-dossiers
-    par colonne X (ex: 0958/LHD_FXX_0958_...). Migration one-shot de
-    l'ancienne structure ; ne touche qu'à la racine (glob non récursif),
-    les dalles déjà migrées sont ignorées. Factorise les deux appels de
-    main() (mode migration pure et migration combinée à un run)."""
-    a_migrer = [f for f in dossier_dalles.glob("*.tif")]
-    if not a_migrer:
-        print("  No tile to migrate (root folder already empty or structure OK).")
-        return
-    print(f"  Migration : {len(a_migrer)} tile(s) -> subfolders by column X...")
-    migres = erreurs = 0
-    for f in sorted(a_migrer):
-        m = re.match(r"LHD_FXX_(\d+)_", f.name)
-        if not m:
-            continue
-        dest_dir = dossier_dalles / m.group(1)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f.name
-        if dest.exists():
-            f.unlink()   # doublon déjà migré
-        else:
-            deplace = False
-            for _tentative in range(5):
-                try:
-                    f.replace(dest)
-                    deplace = True
-                    break
-                except PermissionError:
-                    time.sleep(0.2)  # attendre que l'antivirus relâche le fichier
-                except Exception:
-                    break
-            if not deplace:
-                erreurs += 1
-                continue
-        migres += 1
-        if migres % 500 == 0:
-            pct_mig = migres * 100 // max(len(a_migrer), 1)
-            print(f"\r  Migration : {pct_mig:3d}%  {migres}/{len(a_migrer)}...",
-                  end="", flush=True)
-    print(f"\r  Migration done: {migres} tiles moved, {erreurs} errors.")
-
-
 def _resoudre_choix_ombrages(args):
     """Résout --shadings/--shading en (choix, instances) : 'tous' →
     SHADING_TOUS, 'aucun' → rien du tout (instances comprises), et les types
@@ -11240,13 +11194,6 @@ Examples:
                         dest="dalles_purger_invalides",
                         help="Delete cache tiles < 2 MB (sea tiles, partial errors). "
                              "Omit --download to purge without re-downloading.")
-    parser.add_argument("--tiles-migrate", "--dalles-migrer", action="store_true", dest="dalles_migrer",
-                        help="Reorganise existing tiles into per-column-X subfolders "
-                             "(e.g. D:/Lidar/Dalles/0958/LHD_FXX_0958_....tif). "
-                             "Run once to migrate the old flat structure.")
-    parser.add_argument("--tiles-rename", "--dalles-renommer", action="store_true", dest="dalles_renommer",
-                        help="Rename tiles from the old convention (x2, e.g. 0456_3107) "
-                             "to the new one (x1, e.g. 0912_6214). Run once.")
     parser.add_argument("--tiles-purge-out-of-zone", "--dalles-purger-hors-zone", action="store_true",
                         dest="dalles_purger_hors_zone",
                         help="Delete from cache the tiles outside the current zone (bbox/department). "
@@ -11445,11 +11392,6 @@ Examples:
     # -------------------------------------------------------
     # Sélection de zone → liste de dalles
     # -------------------------------------------------------
-    # Si --dalles-migrer sans aucune info de zone : pas besoin de géocodage
-    _migrer_seul = (getattr(args, 'dalles_migrer', False) and
-                    not args.telechargement and not args.ombrages and
-                    not args.mbtiles)
-
     # --source .tif nécessite une zone pour la bbox
     _source_tif_sans_zone = (
         args.source and Path(args.source).suffix.lower() in (".tif", ".tiff") and
@@ -11459,13 +11401,6 @@ Examples:
     if _source_tif_sans_zone:
         print("  ERROR: --source TIF requires a zone: --zone-city/--zone-width, --zone-bbox, --zone-department or --zone-region")
         sys.exit(1)
-    if _migrer_seul and not args.zone_departement and not args.zone_bbox and not args.zone_ville and not args.zone_gps and not getattr(args, "zone_region", None):
-        # Mode migration pure : on n'a besoin que de dossier_dalles
-        racine        = Path(args.dossier).resolve() if args.dossier else Path(str(DOSSIER_TRAVAIL / LIDAR_SUBDIR))
-        dossier_dalles = _dossier_dalles_actif(args)
-        dossier_dalles.mkdir(parents=True, exist_ok=True)
-        _migrer_dalles_colonnes(dossier_dalles)
-        sys.exit(0)
 
     cx = cy = 0.0
     if getattr(args, "zone_region", None):
@@ -11755,47 +11690,6 @@ Examples:
         if _est_laz and not args.dossier_dalles:
             print(f"  Cloud   : {DOSSIER_CACHE / LIDAR_SUBDIR}  (downloaded .laz kept in cache)")
         print(f"  Zone    : {dossier_ville}")
-
-    # -------------------------------------------------------
-    # Renommage dalles ancienne convention → nouvelle
-    # -------------------------------------------------------
-    if args.dalles_renommer and dossier_dalles.exists():
-        renommes = 0; ignores = 0
-        tous = _rglob_tif_robuste(dossier_dalles)
-        print(f"  {len(tous)} .tif files found in {dossier_dalles}")
-        if tous:
-            print(f"  Exemple : {tous[0].name}")
-        for f in sorted(tous):
-            m = re.match(
-                r'LHD_FXX_(\d+)_(\d+)_(MNT_O_0M50_LAMB93.*)', f.name)
-            if not m:
-                continue
-            x_old, y_old = int(m.group(1)), int(m.group(2))
-            reste = m.group(3)
-            # Détecter l'ancienne convention : x_old < 600 (max Lambert93/2000≈600)
-            # Dans la nouvelle convention x_old > 600 (coordonnées km réelles)
-            if x_old >= 600:
-                ignores += 1
-                continue
-            x_new = x_old * 2
-            y_new = y_old * 2
-            nouveau = f.parent / f"LHD_FXX_{x_new:04d}_{y_new:04d}_{reste}"
-            if not nouveau.exists():
-                f.replace(nouveau)
-                renommes += 1
-            else:
-                f.unlink()  # doublon
-                renommes += 1
-        print(f"  Renaming: {renommes} tiles renamed, {ignores} skipped")
-
-    # -------------------------------------------------------
-    # Migration dalles à plat → sous-dossiers par colonne X
-    # -------------------------------------------------------
-    # NB : l'ancien code testait getattr(args, 'migrer_dalles') alors que la
-    # dest argparse est 'dalles_migrer' : ce bloc était mort (le getattr avec
-    # défaut masquait l'erreur). Idem 'renommer_dalles' ci-dessus.
-    if args.dalles_migrer and dossier_dalles.exists():
-        _migrer_dalles_colonnes(dossier_dalles)
 
     # -------------------------------------------------------
     # Purge des dalles invalides (< 2 MB = mer, erreurs)

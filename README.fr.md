@@ -350,7 +350,7 @@ Cinq types, sélectionnés par un mode :
 | `--osm` / `--vector` | Produit une carte vectorielle : `--osm` (OSM Mapsforge/GeoJSON/overlay transparent, international) ou `--vector` (IGN WFS, France, voir plus bas). |
 | `--merge` | Fusionne plusieurs GeoJSON. Requiert `--source`. |
 | `--split` | Découpe après coup un MBTiles existant. Requiert `--source`. |
-| `--serve` | Partage les livrables d'un projet sur le réseau local avec URL et QR code. |
+| `--serve` | Envoie les livrables d'un projet vers le téléphone : sert le dossier sur le WiFi local avec URL et QR code. |
 | `--index-sheet DIR` | Régénère uniquement la planche d'assemblage d'un projet existant. |
 
 `--source PATH...` : source existante à réutiliser selon le mode : TIF vers
@@ -365,14 +365,14 @@ avec `--merge`.
 |---|---|---|
 | `--provider CODE` | `fr-ign` | Source LiDAR ; codes dans le [tableau des providers](#providers-disponibles). |
 | `--api-key KEY` | variable d'environnement possible | Clé du provider lorsque la source l'exige. |
-| `--laz` | désactivé | Utilise le provider jumeau `-laz` pour reconstruire les structures debout depuis le nuage de points. |
-| `--laz-ground classes\|csf` | `classes` | Socle issu des classes producteur ou d'un Cloth Simulation Filter. |
+| `--laz` | désactivé (calcul depuis le MNT) | Bascule sur le nuage de points classé (LAZ) pour reconstruire les structures debout ; sans cette option, lidar2map calcule depuis le MNT officiel du provider. |
+| `--laz-ground` | `[classes]\|csf` | Socle issu des classes producteur ou d'un Cloth Simulation Filter. |
 | `--laz-hmin M` | `0.4` | Hauteur minimale réinjectée avec le socle `classes`. |
 | `--laz-hmax M` | `2.5` | Hauteur maximale réinjectée avec le socle `classes`. |
 | `--laz-classes LISTE` | `1,2,3,4,9,66` | Classes LAS participantes, séparées par des virgules. |
 | `--laz-csf-threshold M` | `0.5` | Distance d'absorption point-tissu du CSF. |
 | `--laz-csf-resolution M` | `0.5` | Taille de maille du tissu CSF. |
-| `--laz-csf-rigidness 1\|2\|3` | `1` | Rigidité CSF : terrain pentu, intermédiaire ou plat. |
+| `--laz-csf-rigidness` | `[1]\|2\|3` | Rigidité CSF : terrain pentu, intermédiaire ou plat. |
 | `--laz-parallel N` | `1` | Conversions LAZ simultanées ; prévoir environ 3 Go de RAM par conversion. |
 
 **3.1.2 Découpage à priori (grandes zones)**
@@ -393,7 +393,7 @@ avec `--merge`.
 |---|---|---|
 | `--download` | désactivé | Télécharge les dalles manquantes. |
 | `--workers N` | `8` | Connexions simultanées. |
-| `--download-compress` / `--no-download-compress` | activé | Active ou désactive la compression DEFLATE des dalles en cache. |
+| `--download-compress` | activé | Compression DEFLATE des dalles en cache. |
 | `--download-force` | désactivé | Retélécharge les dalles déjà présentes. |
 | `--download-overwrite` | désactivé | Écrase et retélécharge les données en cache ; équivalent de `--download-force`. |
 | `--tiles-dir PATH` | sous le projet | Cache de dalles séparé, prioritaire sur `--cache-dir`. |
@@ -403,19 +403,28 @@ avec `--merge`.
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
 | `--shadings TYPE...` | interactif | Types parmi `lrm vat e4mstp svf opos oneg rrim multi 315 045 135 225 slope`, ainsi que `all`/`none`. |
-| `--shading TYPE[:k=v,...]` | répétable | Ajoute une instance paramétrée : `svf:dist=100,gamma=1.5`, `lrm:sigma=10`, etc. |
-| `--shading-preset auto\|micro\|standard\|landscape` | désactivé | Ajoute un ensemble SVF, openness, LRM, multi et pente adapté à la résolution. |
+| `--shading TYPE[:k=v,...]` | répétable | Ajoute une instance paramétrée, par exemple `svf:dist=100,gamma=1.5`. Paramètres par type ci-dessous. |
+| `--shading-preset` | désactivé ; `auto`\|`micro`\|`standard`\|`landscape` | Ajoute un ensemble SVF, openness, LRM, multi et pente adapté à la résolution. |
 | `--shading-elevation DEG` | `25` | Élévation solaire des hillshades directionnels/multidirectionnels. |
-| `--svf-conv flux\|rvt` | `flux` | Convention du Sky-View Factor. |
+| `--svf-conv` | `[flux]\|rvt` | Convention du Sky-View Factor. |
 | `--svf-dist M` | `20` | Rayon d'horizon du SVF, de l'openness et des composites. |
 | `--svf-gamma G` | `2.0` | Gamma final du SVF, de l'openness et du VAT. |
 | `--svf-sweep` / `--no-svf-sweep` | activé | Active ou désactive le noyau SVF accéléré. |
 | `--shadings-overwrite` | désactivé | Recalcule les ombrages existants. |
 | `--shadings-compress` | désactivé | Compresse les TIF d'ombrage bruts existants. |
 
-Paramètres acceptés par `--shading` : `elevation` pour `multi/315/045/135/225` ;
-`conv,dist,gamma,sweep` pour `svf` ; `dist,gamma` pour `opos/oneg/vat/e4mstp` ;
-`sigma` pour `lrm/rrim` ; aucun pour `slope`.
+Paramètres acceptés par `--shading TYPE:k=v,...`, par type d'ombrage :
+
+| Paramètre | Types concernés | Valeur / défaut |
+|---|---|---|
+| `elevation` | `multi 315 045 135 225` | degrés, `[25]` |
+| `conv` | `svf` | `[flux]\|rvt` |
+| `dist` | `svf opos oneg vat e4mstp` | mètres, `[20]` |
+| `gamma` | `svf opos oneg vat` | `[2.0]` |
+| `gamma` | `e4mstp` | `[0.8]` |
+| `sweep` | `svf` | booléen, `[activé]` |
+| `sigma` | `lrm rrim` | pixels du provider, `[15]` |
+| *(aucun)* | `slope` | — |
 
 **3.1.5 Générer la carte** : zoom, format d'image et formats de fichier sont
 communs à tous les types, voir [Format de sortie](#4-format-de-sortie).
@@ -450,14 +459,9 @@ sans `--block` ni `--cleanup-keep-tiles`.
 |---|---|---|
 | `--osm` | — | Source OSM / Geofabrik (PBF), international. |
 | `--vector` | — | Source IGN Géoplateforme (WFS), France uniquement. |
-| `--layer TAGS...` avec `--osm` | voir ci-dessous | Thèmes proposés par la GUI : `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. Le CLI accepte en réalité n'importe quel tag OSM `clé=valeur`, pas seulement ce catalogue. |
-| `--layer NAME...` avec `--vector` | `cadastre` | Couches IGN, catalogue complet dans [Paramètres propres à la France](#6-paramètres-propres-à-la-france). |
+| `--layer TAGS...` avec `--osm` | défaut si omis : `highway=* waterway=* boundary=administrative natural=water natural=coastline waterway=river waterway=stream waterway=canal` | Tags OSM à inclure (libre, n'importe quel `clé=valeur`). Catalogue proposé par la GUI : `highway=* waterway=* natural=water natural=* boundary=administrative landuse=* building=* historic=*`. |
+| `--layer NAME...` avec `--vector` | `[cadastre]` | Couches IGN, catalogue complet dans [Paramètres propres à la France](#6-paramètres-propres-à-la-france). |
 | `--zone-region SLUG` avec `--osm` | — | Conserve le PBF régional complet au lieu de découper (France). |
-
-Si `--layer` est omis avec `--osm`, le CLI retient en réalité `highway=*
-waterway=* boundary=administrative natural=water natural=coastline
-waterway=river waterway=stream waterway=canal`, une sélection plus fine que
-le catalogue de la GUI ci-dessus.
 
 **3.3.2 Télécharger**
 
@@ -499,25 +503,23 @@ Formats de fichier : voir [Format de sortie](#4-format-de-sortie).
 
 | Paramètre | Valeur / défaut | Fonction |
 |---|---|---|
-| `--file-formats FMT...` | selon le mode | LiDAR/raster : `mbtiles rmap sqlitedb` ; vecteur/fusion : `map geojson gz transparent-raster`. |
+| `--file-formats FMT...` | LiDAR/raster : `mbtiles rmap sqlitedb` ; vecteur/fusion : `map geojson gz transparent-raster` | Formats de fichier à générer, selon le mode. |
 | `--zoom-min N` | `13` LiDAR, `10` raster | Zoom minimal des cartes tuilées. |
 | `--zoom-max N` | `18` LiDAR, `16` raster | Zoom maximal des cartes tuilées. |
-| `--image-format auto\|jpeg\|png` | `auto` | Encodage des tuiles raster. Les bords peuvent rester en PNG avec alpha. |
+| `--image-format` | `[auto]\|jpeg\|png` | Encodage des tuiles raster. Les bords peuvent rester en PNG avec alpha. |
 | `--image-quality Q` | `85` | Qualité JPEG de 1 à 100. |
 | `--tiles-overwrite` | désactivé | Régénère les MBTiles, SQLiteDB, RMAP ou Mapsforge existants. |
-| `--index-map` / `--no-index-map` | activé | Active ou désactive `<produit>_planche.png`. |
+| `--index-map` | activé | Génère `<produit>_planche.png` (emprise, découpage, cellules numérotées). |
 
 #### 5. Partage et maintenance
 
 | Paramètre | Mode | Fonction |
 |---|---|---|
-| `--serve` | — | Partage les livrables d'un projet sur le réseau local avec URL et QR code. |
-| `--zone-name NOM` | avec `--serve` | Projet à partager sur le réseau local. |
+| `--serve` | — | Envoie les livrables d'un projet vers le téléphone : sert le dossier sur le WiFi local avec URL et QR code. |
+| `--zone-name NOM` | avec `--serve` | Projet à envoyer vers le téléphone. |
 | `--tiles-purge-invalid` | LiDAR | Supprime les dalles de cache trop petites ou invalides. |
-| `--tiles-migrate` | LiDAR | Migre l'ancien cache plat vers les sous-dossiers par colonne. |
-| `--tiles-rename` | LiDAR | Renomme les dalles de l'ancienne convention vers la convention actuelle. |
 | `--tiles-purge-out-of-zone` | LiDAR | Supprime du cache les dalles hors de la zone demandée. |
-| `--bootstrap=auto\|pip\|none` | démarrage | Venv automatique, installation dans l'environnement courant, ou aucune installation. |
+| `--bootstrap` | `[auto]\|pip\|none` | Démarrage : venv automatique, installation dans l'environnement courant, ou aucune installation. |
 | `--help-bootstrap` | démarrage | Affiche l'aide du bootstrap. |
 | `--installer-deps` | maintenance/build | Installe toutes les dépendances, y compris optionnelles, puis quitte. |
 | `--telecharger-outils` | maintenance/build | Télécharge le JRE, osmosis et mapwriter, puis quitte. |
@@ -526,15 +528,15 @@ Formats de fichier : voir [Format de sortie](#4-format-de-sortie).
 
 #### 6. Paramètres propres à la France
 
-| Paramètre | Fonction |
-|---|---|
-| `--zone-department NUM` | Département français. Accepte un numéro, une liste (`30,35,75`) ou une plage (`1-10`). |
-| `--zone-region SLUG` | Région Geofabrik française ; avec `--osm`, conserve le PBF régional complet. |
-| `--vector` | Télécharge les couches IGN WFS et produit `geojson`, `gz`, `map` ou `transparent-raster`. |
-| `--layer NAME...` avec `--vector` | Couches IGN (défaut `cadastre`) : `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
-| `--raster --provider fr-ign` | Raster IGN WMTS. Couche publique par défaut : `planign`. |
-| `--layer LAYER` avec le raster IGN | Topo publique : `planign etatmajor40 etatmajor10 pentes`. Imagerie publique : `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Thématique publique : `cadastre ombrage`. Professionnel, clé requise : `scan25 scan25tour scan100 scanoaci`. |
-| `--api-key KEY` avec le raster IGN | Clé `cartes.gouv.fr` pour `scan25`, `scan25tour`, `scan100` et `scanoaci`; inutile pour les couches publiques. |
+| Paramètre | Valeur / défaut | Fonction |
+|---|---|---|
+| `--zone-department NUM` | — | Département français. Accepte un numéro, une liste (`30,35,75`) ou une plage (`1-10`). |
+| `--zone-region SLUG` | — | Région Geofabrik française ; avec `--osm`, conserve le PBF régional complet. |
+| `--vector` | — | Télécharge les couches IGN WFS et produit `geojson`, `gz`, `map` ou `transparent-raster`. |
+| `--layer NAME...` avec `--vector` | `[cadastre]` | Couches IGN : `cadastre cours_eau troncons_eau plans_eau detail_hydro batiments constructions cimetieres routes chemins lignes_orog detail_orog forets reserves lieux_dits communes rpg`. |
+| `--raster --provider fr-ign` | — | Raster IGN WMTS. |
+| `--layer LAYER` avec le raster IGN | `[planign]` | Topo publique : `planign etatmajor40 etatmajor10 pentes`. Imagerie publique : `ortho ortho_1950 ortho_1965 ortho_1980 ortho_irc pleiades spot edugeo_marseille_1969 edugeo_marseille_1980 edugeo_marseille_1987 edugeo_marseille_1988 edugeo_marseille_2010 edugeo_toulon_1972`. Thématique publique : `cadastre ombrage`. Professionnel, clé requise : `scan25 scan25tour scan100 scanoaci`. |
+| `--api-key KEY` avec le raster IGN | — | Clé `cartes.gouv.fr` pour `scan25`, `scan25tour`, `scan100` et `scanoaci` ; inutile pour les couches publiques. |
 
 ### Exemples en ligne de commande
 
