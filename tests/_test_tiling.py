@@ -30,7 +30,7 @@ with rasterio.open(str(src), "w", **prof) as ds:
 
 mbt = l2m.generer_mbtiles_lidar(src, tmp, "zone_svf_ombrage",
                                 zoom_min=15, zoom_max=17,
-                                format_tuiles="auto", bbox_l93=bbox,
+                                format_tuiles="auto", bbox_natif=bbox,
                                 tile_workers=2)
 con = sqlite3.connect(str(mbt))
 n = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
@@ -78,7 +78,7 @@ with rasterio.open(str(srcj), "w", **profj) as ds:
     ds.write(arrj, 1)
 mbt_j = l2m.generer_mbtiles_lidar(srcj, tmp, "zone_hillshade_multi",
                                   zoom_min=14, zoom_max=17,
-                                  format_tuiles="auto", bbox_l93=bboxj,
+                                  format_tuiles="auto", bbox_natif=bboxj,
                                   tile_workers=2)
 con_j = sqlite3.connect(str(mbt_j))
 fmt_j = dict(con_j.execute("SELECT name, value FROM metadata"))["format"]

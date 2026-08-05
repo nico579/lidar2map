@@ -2971,7 +2971,7 @@ def _load_provider():
         )
         # discover_dalles : retourne {} — les call sites font déjà `or {}`
         # et le téléchargement est sauté si dalles_dict est vide.
-        _p.discover_dalles = lambda bbox, bbox_l93, cache: {}
+        _p.discover_dalles = lambda bbox_wgs84, bbox_natif, cache_path, workers=1: {}
         # subdir_from_name : None → chemin_dalle retombe sur la racine (ok)
         _p.subdir_from_name = lambda nom: None
         # post_download / set_apikey : no-op silencieux
@@ -5753,7 +5753,10 @@ def _get_numba_svf_sweep_kernel():
 
         @_nb.njit(parallel=True, fastmath=True)
         def _svf_sweep_kernel(dem, n_dir, max_r, res, conv):
-            # conv : 0 = flux cos²γ ; 1 = RVT 1−sin γ (cf. _svf_kernel).
+            # conv : 0 = flux cos²γ ; 1 = RVT 1−sin γ ; 2 = openness+ ; 3 =
+            # openness− (min sur le même deque plutôt qu'un hull séparé, cf.
+            # commentaire "max_tan porte l'extremum..." dans la requête plus
+            # bas). Formules identiques à _svf_kernel.
             h, w = dem.shape
             PI2 = 2.0 * _math.pi
             out = _np.zeros((h, w), dtype=_np.float32)
@@ -5815,7 +5818,17 @@ def _get_numba_svf_sweep_kernel():
                                 head = (head + 1) % DEQ_CAP
 
                             # Query : max slope du hull vers (step_idx, z_curr)
-                            max_tan = 0.0
+                            # max_tan porte l'extremum utile à conv (nom
+                            # conservé du cas SVF pour ne pas tout renommer) :
+                            # conv 3 (openness-) veut le MIN (angle le plus
+                            # descendant, hull du dessous) ; conv 2 (openness+)
+                            # veut le MAX non clampé (peut être négatif sur une
+                            # crête) ; 0/1 (SVF) veulent le MAX clampé >= 0
+                            # (obstruction), d'où l'init à 0.0 sinon. Même
+                            # deque pour les deux sens : seuls la direction de
+                            # l'extremum ici et le sens du pop arrière plus
+                            # bas changent (cf. commentaire associé).
+                            max_tan = 1e38 if conv == 3 else (-1e38 if conv == 2 else 0.0)
                             idx = head
                             while idx != tail:
                                 past_step = deque_step[idx]
@@ -5823,8 +5836,12 @@ def _get_numba_svf_sweep_kernel():
                                 dist = (step_idx - past_step) * step_dist
                                 if dist > 0.0:
                                     tan_a = (past_z - z_curr) / dist
-                                    if tan_a > max_tan:
-                                        max_tan = tan_a
+                                    if conv == 3:
+                                        if tan_a < max_tan:
+                                            max_tan = tan_a
+                                    else:
+                                        if tan_a > max_tan:
+                                            max_tan = tan_a
                                 idx = (idx + 1) % DEQ_CAP
 
                             # Pop arrière : maintien upper convex hull
@@ -5839,15 +5856,22 @@ def _get_numba_svf_sweep_kernel():
                                 tm2 = (tail - 2) % DEQ_CAP
                                 s2 = deque_step[tm1]; z2 = deque_z[tm1]
                                 s1 = deque_step[tm2]; z1 = deque_z[tm2]
-                                # Upper hull : s2 doit être au-DESSUS de la droite (s1,z1)→(step_idx,z_curr)
-                                # i.e. (z2 - z1) * (step_idx - s1) > (s2 - s1) * (z_curr - z1)
+                                # Upper hull (conv != 3) : s2 doit être au-DESSUS
+                                # de la droite (s1,z1)→(step_idx,z_curr), sinon
+                                # dominé (pop). Lower hull (conv == 3) : même
+                                # test, sens inversé (s2 doit être EN DESSOUS).
                                 lhs = (z2 - z1) * (step_idx - s1)
                                 rhs = (s2 - s1) * (z_curr - z1)
-                                if lhs <= rhs:
-                                    # s2 sous la droite → dominé, pop
-                                    tail = tm1
+                                if conv == 3:
+                                    if lhs >= rhs:
+                                        tail = tm1
+                                    else:
+                                        break
                                 else:
-                                    break
+                                    if lhs <= rhs:
+                                        tail = tm1
+                                    else:
+                                        break
 
                             # Push (step_idx, z_curr)
                             deque_step[tail] = step_idx
@@ -5855,11 +5879,17 @@ def _get_numba_svf_sweep_kernel():
                             tail = (tail + 1) % DEQ_CAP
 
                             # Accumulation SVF
-                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan = tan γ ≥ 0)
+                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan
+                            # = tan γ ≥ 0) ; conv 2/3 = openness +/- (Yokoyama
+                            # 2002), même formule appliquée à max_tan (extremum
+                            # déjà orienté max/min par la requête du hull plus
+                            # haut) — identique à _get_numba_svf_kernel.
                             if conv == 0:
                                 out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
-                            else:
+                            elif conv == 1:
                                 out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
+                            else:
+                                out[r, c] += 0.5 - _math.atan(max_tan) / _math.pi
                 else:
                     # ── Direction y-dominante : scan-lines balaient en y ──────
                     sy = 1 if ddy > 0 else -1
@@ -5901,7 +5931,17 @@ def _get_numba_svf_sweep_kernel():
                             while head != tail and (step_idx - deque_step[head]) > max_steps_back:
                                 head = (head + 1) % DEQ_CAP
 
-                            max_tan = 0.0
+                            # max_tan porte l'extremum utile à conv (nom
+                            # conservé du cas SVF pour ne pas tout renommer) :
+                            # conv 3 (openness-) veut le MIN (angle le plus
+                            # descendant, hull du dessous) ; conv 2 (openness+)
+                            # veut le MAX non clampé (peut être négatif sur une
+                            # crête) ; 0/1 (SVF) veulent le MAX clampé >= 0
+                            # (obstruction), d'où l'init à 0.0 sinon. Même
+                            # deque pour les deux sens : seuls la direction de
+                            # l'extremum ici et le sens du pop arrière plus
+                            # bas changent (cf. commentaire associé).
+                            max_tan = 1e38 if conv == 3 else (-1e38 if conv == 2 else 0.0)
                             idx = head
                             while idx != tail:
                                 past_step = deque_step[idx]
@@ -5909,8 +5949,12 @@ def _get_numba_svf_sweep_kernel():
                                 dist = (step_idx - past_step) * step_dist
                                 if dist > 0.0:
                                     tan_a = (past_z - z_curr) / dist
-                                    if tan_a > max_tan:
-                                        max_tan = tan_a
+                                    if conv == 3:
+                                        if tan_a < max_tan:
+                                            max_tan = tan_a
+                                    else:
+                                        if tan_a > max_tan:
+                                            max_tan = tan_a
                                 idx = (idx + 1) % DEQ_CAP
 
                             while True:
@@ -5921,22 +5965,35 @@ def _get_numba_svf_sweep_kernel():
                                 tm2 = (tail - 2) % DEQ_CAP
                                 s2 = deque_step[tm1]; z2 = deque_z[tm1]
                                 s1 = deque_step[tm2]; z1 = deque_z[tm2]
+                                # cf. branche x-dominante : hull inversé si conv == 3.
                                 lhs = (z2 - z1) * (step_idx - s1)
                                 rhs = (s2 - s1) * (z_curr - z1)
-                                if lhs <= rhs:
-                                    tail = tm1
+                                if conv == 3:
+                                    if lhs >= rhs:
+                                        tail = tm1
+                                    else:
+                                        break
                                 else:
-                                    break
+                                    if lhs <= rhs:
+                                        tail = tm1
+                                    else:
+                                        break
 
                             deque_step[tail] = step_idx
                             deque_z[tail]    = z_curr
                             tail = (tail + 1) % DEQ_CAP
 
-                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan = tan γ ≥ 0)
+                            # conv 0 = flux cos²γ ; conv 1 = RVT 1−sin γ (max_tan
+                            # = tan γ ≥ 0) ; conv 2/3 = openness +/- (Yokoyama
+                            # 2002), même formule appliquée à max_tan (extremum
+                            # déjà orienté max/min par la requête du hull plus
+                            # haut) — identique à _get_numba_svf_kernel.
                             if conv == 0:
                                 out[r, c] += 1.0 / (1.0 + max_tan * max_tan)
-                            else:
+                            elif conv == 1:
                                 out[r, c] += 1.0 - max_tan / _math.sqrt(1.0 + max_tan * max_tan)
+                            else:
+                                out[r, c] += 0.5 - _math.atan(max_tan) / _math.pi
 
             # Normalisation : moyenne sur n_dir
             inv_n = 1.0 / n_dir
@@ -6555,12 +6612,9 @@ def _svf_chunked(src_path, dst_path, max_dist_px, n_directions=16,
     # Kernel SVF mutualisé entre _svf_numpy et _svf_chunked (factory + cache).
     # Évite la double compilation Numba (~20 s × 2 au premier appel).
     # Si use_sweep : variante nearest-neighbor sans bilinéaire (~×2-3 plus rapide).
-    # Openness (conv ≥ 2) : ray-cast obligatoire — le sweep ne maintient qu'un
-    # running max clampé via upper hull (pas de min, pas d'angles négatifs).
-    if use_sweep and conv >= 2:
-        print("  Openness: sweep kernel not applicable, ray-cast used.",
-              flush=True)
-        use_sweep = False
+    # Openness +/- (conv == 2/3) : géré par le sweep désormais (hull non
+    # clampé pour +, lower hull/min pour -, même deque, cf. _svf_sweep_kernel).
+    # Plus aucun gate ray-cast forcé ici.
     _kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _kernel is None:
         print("  numba missing - SVF chunked unavailable", flush=True)
@@ -6793,9 +6847,7 @@ def _svf_numpy(dem, max_dist_px, n_directions=16, resolution=0.5, use_sweep=Fals
     # ── Tentative Numba ──────────────────────────────────────────────────────
     # Kernel mutualisé via _get_numba_svf_kernel() — partagé avec _svf_chunked
     # pour éviter la double compilation (~20 s × 2 au premier appel).
-    # Openness (conv ≥ 2) : ray-cast obligatoire (cf. _svf_chunked).
-    if use_sweep and conv >= 2:
-        use_sweep = False
+    # Openness +/- (conv == 2/3) : géré par le sweep désormais, cf. _svf_chunked.
     _numba_ok = False
     _svf_kernel = _get_numba_svf_sweep_kernel() if use_sweep else _get_numba_svf_kernel()
     if _svf_kernel is not None:
@@ -8632,6 +8684,13 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         # avec des zooms différents sur le même TIF source.
         warped = dossier_ville / f"{tif_source.stem}_tuilage_z{zoom_max}.tif"
         lbl    = warped.name
+        # Masque de couverture séparé (cf. bloc de reproject plus bas) :
+        # un rectangle du CRS natif (ex. Lambert93) ne reste pas axis-aligné
+        # une fois reprojeté en Web Mercator, donc warped lui-même contient
+        # des coins hors de la vraie empreinte, remplis à 0 par le warp faute
+        # de nodata. Fichier séparé (pas une bande de plus dans warped) pour
+        # ne pas perturber la détection RGBA existante basée sur _w_count.
+        warped_cov = dossier_ville / f"{tif_source.stem}_tuilage_z{zoom_max}_cov.tif"
 
         # Si la source est déjà en EPSG:3857 (ex: _warped_*.tif réutilisé),
         # pas besoin de re-warper — on l'utilise directement comme warped.
@@ -8645,10 +8704,14 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             # sinon les tuiles resserviraient l'ancien rendu. + validation du
             # cache (CRS 3857 + dims + lecture) : sinon un warpé tronqué mais
             # récent était réutilisé comme valide (#4).
+            # warped_cov.exists() : un cache warpé écrit AVANT ce fix (masque
+            # de couverture séparé) n'a pas de fichier _cov → sans ce test,
+            # il serait réutilisé tel quel, coins noirs jamais corrigés.
             warp_deja_fait = (warped.exists() and warped.stat().st_size > 1_000_000
                               and not ecraser_tuiles
                               and warped.stat().st_mtime >= tif_source.stat().st_mtime
-                              and _warped_3857_valide(warped))
+                              and _warped_3857_valide(warped)
+                              and warped_cov.exists())
             if warp_deja_fait:
                 print(f"  Warped cache: {warped.name}  "
                       f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
@@ -8833,6 +8896,34 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
                                 num_threads   = 0)  # 0 = tous les CPUs
+
+                    # Masque de couverture (cf. commentaire à la définition de
+                    # warped_cov) : reprojette une source constante à 255 avec
+                    # EXACTEMENT le même transform/CRS que les bandes réelles
+                    # ci-dessus, dst_nodata=0 — capture la vraie empreinte
+                    # pivotée (GDAL sait la calculer, nous non sans réinventer
+                    # la géométrie de reprojection). Fichier à part : ne
+                    # change pas le nombre de bandes de warped_3857.tif, donc
+                    # ne perturbe pas la détection RGBA existante (_w_count).
+                    import numpy as _np_cov
+                    cov_part = _chemin_part(warped_cov)
+                    cov_profile = dst_profile.copy()
+                    cov_profile.update(count=1, dtype="uint8", nodata=None,
+                                       compress="deflate", predictor=1)
+                    with _rio_w.open(str(cov_part), "w", **cov_profile) as dst_cov:
+                        _cov_src = _np_cov.full((src.height, src.width), 255,
+                                                dtype=_np_cov.uint8)
+                        _reproject(
+                            source        = _cov_src,
+                            destination   = _rio_w.band(dst_cov, 1),
+                            src_transform = src.transform,
+                            src_crs       = src.crs,
+                            dst_transform = dst_transform,
+                            dst_crs       = "EPSG:3857",
+                            dst_nodata    = 0,
+                            resampling    = _Resampling.nearest,
+                            num_threads   = 0)
+                    cov_part.replace(warped_cov)
                 # Les overviews font partie du fichier : les construire sur le
                 # .part avant publication. Une interruption ne peut alors pas
                 # altérer l'ancien cache final.
@@ -8928,6 +9019,18 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             for z in range(zoom_min, zoom_max + 1)
         ))
 
+        # Masque de couverture optionnel (absent si source_already_warped, ou
+        # cache écrit avant ce fix mais alors warp_deja_fait=False donc
+        # régénéré) : ouvert à part de `with _ds` pour ne pas réindenter toute
+        # la boucle de tuilage dans un bloc `with` imbriqué ; fermé
+        # explicitement après (cf. `_ds_cov.close()` en sortie de boucle).
+        _ds_cov = None
+        if warped_cov.exists():
+            try:
+                _ds_cov = _rio.open(str(warped_cov))
+            except Exception:
+                _ds_cov = None
+
         with _rio.open(str(warped)) as _ds:
             _w_orig_x = _ds.transform.c   # xmin Mercator
             _w_orig_y = _ds.transform.f   # ymax Mercator
@@ -9014,6 +9117,20 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                     (TILE_SIZE, cw_band_w), dtype=_np.uint8)
                                 alpha_band[dst_y:dst_y+arr.shape[1],
                                            dst_x:dst_x+arr.shape[2]] = 255
+                            if _ds_cov is not None:
+                                # Coins hors de la vraie empreinte pivotée
+                                # (cf. warped_cov) : intersection avec le
+                                # masque ci-dessus, PAS un remplacement — les
+                                # deux exclusions (géométrie de fenêtre, hors
+                                # empreinte réelle) sont indépendantes.
+                                _cov_arr = _ds_cov.read(
+                                    1, window=win, out_shape=(out_h, out_w),
+                                    resampling=_rio.enums.Resampling.nearest)
+                                _cov_canvas = _np.zeros(
+                                    (TILE_SIZE, cw_band_w), dtype=_np.uint8)
+                                _cov_canvas[dst_y:dst_y+_cov_arr.shape[0],
+                                           dst_x:dst_x+_cov_arr.shape[1]] = _cov_arr
+                                alpha_band = _np.minimum(alpha_band, _cov_canvas)
                             # Contenu SANS alpha : monobande conservée en "L" (PNG
                             # grayscale 2-3× plus petit), sinon RGB. Plus de
                             # composite gris JPEG pour la source RGBA : une tuile
@@ -9079,6 +9196,9 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
             con.commit()
             batch.clear()
+
+        if _ds_cov is not None:
+            _ds_cov.close()
 
         # warped conservé dans dossier_ville/ pour réutilisation future
         taille_w = warped.stat().st_size / 1e6 if warped.exists() else 0
@@ -19053,12 +19173,13 @@ def lancer_gui():
                         cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
                     if cfg.get("ecraser_omb"): cmd.append("--shadings-overwrite")
                     # BooleanOptionalAction : émettre explicitement on/off.
-                    # Le sweep ne concerne que le SVF (l'openness retombe de
-                    # toute façon sur le ray-cast). N'émettre le flag global que
-                    # si une instance SVF est présente : sinon il fuit sur un
-                    # run openness-only et déclenche un message "sweep not
-                    # applicable" trompeur (le GUI n'expose pas de sweep hors SVF).
-                    if any(str(s).startswith("svf") for s in cfg.get("shading_specs", []) or []):
+                    # Le sweep concerne désormais svf/opos/oneg (plus aucun
+                    # gate ray-cast forcé côté kernel). N'émettre le flag
+                    # global que si une de ces instances est présente : sinon
+                    # il fuit sur un run sans aucune d'elles (ex. hillshade
+                    # seul) et polluerait la commande sans effet utile.
+                    if any(str(s).startswith(("svf", "opos", "oneg"))
+                           for s in cfg.get("shading_specs", []) or []):
                         cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
                 fmts = []
                 if cfg.get("mbtiles_l"): fmts.append("mbtiles")
@@ -19273,6 +19394,9 @@ def lancer_gui():
                 remote_cmd.append("--resume")
             if cfg.get("remote_identity"):
                 remote_cmd += ["--identity", cfg["remote_identity"]]
+            _sync_only = cfg.get("remote_sync_only")
+            if _sync_only and _sync_only != "tout":
+                remote_cmd += ["--sync-only", _sync_only]
             remote_cmd.append("{}@{}".format(self._REMOTE_SSH_USER, cfg["remote_host"]))
             remote_cmd.append("--")
             remote_cmd += lidar_args

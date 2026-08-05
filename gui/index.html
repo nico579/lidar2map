@@ -136,6 +136,13 @@
        <option value="resume" data-i18n="remote.mode.resume">Reprendre (garde le cache)</option>
        <option value="restart" data-i18n="remote.mode.restart">Relancer depuis zéro</option>
       </select>
+      <label style="min-width:auto;margin-left:10px" data-i18n="remote.sync.label"
+             data-i18n-title="tip.remotesync" title="Quels fichiers rapatrier localement au fur et à mesure : tout (défaut), seulement la carte finale (mbtiles/rmap/sqlitedb) ou seulement les ombrages intermédiaires (.tif).">Résultats</label>
+      <select id="f-remote-sync-only">
+       <option value="tout" data-i18n="remote.sync.tout">Tout</option>
+       <option value="carte" data-i18n="remote.sync.carte">Carte seule</option>
+       <option value="ombrages" data-i18n="remote.sync.ombrages">Ombrages seuls</option>
+      </select>
       <label style="min-width:auto;margin-left:10px" data-i18n="remote.block"
              data-i18n-title="tip.remoteblock" title="Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.">Bloc</label>
       <input type="number" id="f-remote-block-i" min="1" placeholder="i" style="max-width:45px">

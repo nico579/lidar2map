@@ -288,6 +288,14 @@ DEFAULT_INTERVAL = 30.0
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 TERMINAL_STATES = frozenset(("succeeded", "failed"))
+# --sync-only : extensions rapatriées par catégorie. "ombrages" = TIF
+# intermédiaires (produits par lidar2map, jamais le livrable final) ;
+# "carte" = les formats de sortie tuilés (--file-formats). "tout" (défaut)
+# ne filtre rien, cf. _sync_only_excludes.
+SYNC_ONLY_EXTENSIONS = {
+    "ombrages": (".tif",),
+    "carte": (".mbtiles", ".rmap", ".sqlitedb"),
+}
 ACTIVE_STATES = frozenset(("provisioning", "starting", "running"))
 PURGE_PENDING_MARKER = ".rlidar2map-purge-pending.json"
 PURGED_MARKER = ".rlidar2map-purged.json"
@@ -1192,6 +1200,7 @@ class Options:
     local_dir: Optional[Path]
     interval: float
     sync_method: str
+    sync_only: str
     ssh_timeout: int
     ssh_options: List[str]
     identity: Optional[Path]
@@ -1298,6 +1307,16 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "optionnel, défaut auto ; transport (auto préfère rsync ; ssh et "
             "scp utilisent le flux SSH incrémental)"
+        ),
+    )
+    parser.add_argument(
+        "--sync-only",
+        choices=("ombrages", "carte", "tout"),
+        default="tout",
+        help=(
+            "optionnel, défaut tout ; quels résultats rapatrier localement : "
+            "ombrages (.tif intermédiaires), carte (.mbtiles/.rmap/.sqlitedb) "
+            "ou tout"
         ),
     )
     parser.add_argument(
@@ -1419,6 +1438,7 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
         local_dir=ns.local_dir,
         interval=ns.interval,
         sync_method=ns.sync_method,
+        sync_only=ns.sync_only,
         ssh_timeout=ns.ssh_timeout,
         ssh_options=list(ns.ssh_option),
         identity=ns.identity,
@@ -1575,10 +1595,19 @@ class VmController:
         retéléchargement complet à chaque cycle : cf. le choix inverse dans
         _sync_log, qui ne copie le fichier qu'une fois le run terminal).
         Best-effort : une erreur SSH ici ne fait pas échouer le cycle de
-        surveillance, elle est juste ignorée (le prochain cycle réessaiera)."""
+        surveillance, elle est juste ignorée (le prochain cycle réessaiera).
+
+        L'offset est repris depuis rlidar2map.json (log_tail_offset) au
+        premier appel pour une clé donnée : sans ça, chaque reconnexion
+        (nouveau process --remote-cli = self._log_offsets vide en mémoire)
+        retéléchargeait et réimprimait tout le run.log distant depuis le
+        début, provoquant un burst de plusieurs milliers de lignes [VM] qui
+        figeait le panneau de log du GUI (bug vécu 2026-08-05)."""
         if not state.log_path:
             return
         key = state.run_id or self.options.session
+        if key not in self._log_offsets:
+            self._log_offsets[key] = self._load_persisted_log_offset(state)
         offset = self._log_offsets.get(key, 0)
         remote_command = ["tail", "-c", "+{}".format(offset + 1), state.log_path]
         try:
@@ -1598,6 +1627,24 @@ class VmController:
         for line in data.decode("utf-8", errors="replace").splitlines():
             if line.strip():
                 print("  [VM] " + line, flush=True)
+
+    def _load_persisted_log_offset(self, state: "RemoteState") -> int:
+        """Relit log_tail_offset dans le rlidar2map.json local (écrit par
+        _write_manifest à chaque cycle) pour reprendre le tail où le
+        process --remote-cli précédent s'est arrêté, plutôt que de repartir
+        de 0 à chaque reconnexion. Absent/illisible -> 0, comportement
+        d'avant ce fix, jamais pire."""
+        try:
+            path = self.local_run_dir(state) / "rlidar2map.json"
+            if not path.exists():
+                return 0
+            payload = self._read_json_object(path)
+        except Exception:
+            return 0
+        raw = payload.get("log_tail_offset")
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+            return raw
+        return 0
 
     def reset_host_key(self) -> None:
         host = self.options.vm.rsplit("@", 1)[-1]
@@ -1995,6 +2042,12 @@ class VmController:
                 "remote_run_dir": effective_state.run_dir,
                 "remote_results_dir": effective_state.results_dir,
                 "remote_log_path": effective_state.log_path,
+                # Reprise du tail [VM] entre deux process --remote-cli (cf.
+                # print_remote_log_tail / _load_persisted_log_offset) : sans
+                # ce champ, une reconnexion repart de l'octet 0 du run.log
+                # distant et fige le panneau de log du GUI (bug 2026-08-05).
+                "log_tail_offset": self._log_offsets.get(
+                    effective_state.run_id or self.options.session, 0),
                 "sync_method": effective_method,
                 "sync_pending": effective_sync_pending,
                 "remote_purged": remote_purged,
@@ -2156,6 +2209,19 @@ class VmController:
             list(self.deps.ssh_prefix) + self._connection_options()
         )
 
+    def _sync_only_excludes(self) -> Tuple[str, ...]:
+        """Extensions à exclure du rapatriement selon --sync-only : les
+        catégories non demandées (cf. SYNC_ONLY_EXTENSIONS). "tout" (défaut)
+        -> rien à exclure, comportement inchangé."""
+        wanted = self.options.sync_only
+        if wanted == "tout":
+            return ()
+        excluded: List[str] = []
+        for categorie, extensions in SYNC_ONLY_EXTENSIONS.items():
+            if categorie != wanted:
+                excluded.extend(extensions)
+        return tuple(excluded)
+
     def _sync_results_rsync(
         self, state: RemoteState, local_results: Path
     ) -> bool:
@@ -2169,6 +2235,9 @@ class VmController:
             "--exclude=*.part-wal",
             "--exclude=*.part-shm",
             "--exclude=*.part-journal",
+        ] + [
+            "--exclude=*{}".format(ext) for ext in self._sync_only_excludes()
+        ] + [
             "-e",
             self._rsync_ssh_shell(),
             remote,
@@ -2202,6 +2271,13 @@ class VmController:
         local_run_dir = local_results.parent
         try:
             inventory = self._remote_results_inventory(state)
+            excludes = self._sync_only_excludes()
+            if excludes:
+                inventory = {
+                    relative: entry
+                    for relative, entry in inventory.items()
+                    if not relative.endswith(excludes)
+                }
             observed, copied = self._load_scp_index(
                 state, local_run_dir
             )

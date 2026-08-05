@@ -235,11 +235,102 @@ d_on = np.abs(on_bowl[sl_c, sl_c] - on_bowl_np[sl_c, sl_c]).max()
 check("opos numba == numpy (±0.02)", d_op < 0.02, f"max diff {d_op:.4f}")
 check("oneg numba == numpy (±0.02)", d_on < 0.02, f"max diff {d_on:.4f}")
 
-# Chunked + garde sweep : use_sweep=True doit être ignoré pour l'openness
-dst_on = tmp / "oneg.tif"
-ok = l2m._svf_chunked(src_svf, dst_on, max_dist_px=20, n_directions=8,
-                      resolution=0.5, gamma=2.0, use_sweep=True, conv=3)
-check("openness chunked (sweep forcé off) réussit", ok)
+# Sweep vs ray-cast pour openness+ (conv=2) : même formule (0.5 - atan(max_tan)/π,
+# non clampé) portée dans _svf_sweep_kernel. Le cône à 45° (bowl/peak) est un
+# cas géométrique pathologique pour TOUT sweep (nearest-neighbor le long
+# d'une scan-line vs ray-cast bilinéaire) : mesuré, le conv=0 (SVF) déjà en
+# prod et non touché par ce fix affiche le MÊME ordre de grandeur d'écart
+# sur ce cône (~0.17-0.22). Comparaison RELATIVE plutôt qu'un seuil absolu
+# arbitraire : ce qui compte est que conv=2 ne soit pas significativement
+# pire que conv=0 sur le même terrain, pas qu'il soit parfait dans l'absolu.
+op_bowl_sw = l2m._svf_numpy(bowl, 10, 8, 0.5, use_sweep=True, conv=2)
+op_peak_sw = l2m._svf_numpy(peak, 10, 8, 0.5, use_sweep=True, conv=2)
+svf_bowl_rc = l2m._svf_numpy(bowl, 10, 8, 0.5, conv=0)
+svf_bowl_sw = l2m._svf_numpy(bowl, 10, 8, 0.5, use_sweep=True, conv=0)
+d_op_bowl_sw  = np.abs(op_bowl[sl_c, sl_c] - op_bowl_sw[sl_c, sl_c]).max()
+d_op_peak_sw  = np.abs(op_peak[sl_c, sl_c] - op_peak_sw[sl_c, sl_c]).max()
+d_svf_bowl_sw = np.abs(svf_bowl_rc[sl_c, sl_c] - svf_bowl_sw[sl_c, sl_c]).max()
+check("opos sweep pas pire que SVF sweep sur le même cône (marge ×2)",
+      d_op_bowl_sw < d_svf_bowl_sw * 2.0,
+      f"opos diff={d_op_bowl_sw:.4f} vs SVF diff={d_svf_bowl_sw:.4f}")
+check("opos sweep sommet : écart raisonnable (< 0.10)",
+      d_op_peak_sw < 0.10, f"max diff {d_op_peak_sw:.4f}")
+# Garde spécifique anti-régression du clamp : avant fix, l'init max_tan=0.0
+# du sweep aurait donné 0.5 pile sur un sommet (angle négatif clampé à 0) au
+# lieu de ≈0.75 (formule non clampée) — cf. bug analysé le 2026-08-05.
+check("opos sweep sommet non clampé (>0.6, attendu ≈0.75)",
+      op_peak_sw[cc, cc] > 0.6, f"{op_peak_sw[cc,cc]:.3f}")
+
+# Terrain réaliste (sinusoïde douce, pas le cône pathologique ci-dessus) :
+# l'écart sweep/ray-cast doit rester faible en pratique (mesuré : moyenne
+# ~0.006, p95 ~0.017 sur ce terrain, contre 0.0018/0.0049 pour le SVF conv=0
+# déjà en prod — même ordre de grandeur, cohérent avec une statistique
+# extrémale (max_tan→atan) plus sensible qu'une moyenne/intégrale sur les
+# 16 directions).
+dem_doux = (3.0 * np.sin(xx2[:400, :400] / 25.0) * np.sin(yy2[:400, :400] / 25.0)).astype(np.float32)
+op_doux_rc = l2m._svf_numpy(dem_doux, 40, 16, 0.5, conv=2)
+op_doux_sw = l2m._svf_numpy(dem_doux, 40, 16, 0.5, use_sweep=True, conv=2)
+sl_d = slice(60, 340)
+d_doux = np.abs(op_doux_rc[sl_d, sl_d] - op_doux_sw[sl_d, sl_d])
+check("opos sweep == ray-cast sur terrain réaliste (moyenne < 0.02)",
+      d_doux.mean() < 0.02, f"moyenne {d_doux.mean():.4f}")
+check("opos sweep == ray-cast sur terrain réaliste (p95 < 0.05)",
+      np.percentile(d_doux, 95) < 0.05, f"p95 {np.percentile(d_doux, 95):.4f}")
+
+# Sweep vs ray-cast pour openness- (conv=3) : même mécanisme que conv=2,
+# lower hull (min) sur le MÊME deque (cf. _svf_sweep_kernel), pas de
+# structure séparée. Le cône bowl/peak est dégénéré pour CE test précis :
+# sur une pente radiale à tan constant, max_tan == min_tan par direction
+# (pas de courbure le long d'un rayon), donc il ne peut pas à lui seul
+# discriminer un bug max/min — cf. le terrain réaliste plus bas pour ça.
+# Comparaison relative à conv=0 gardée pour la cohérence de grandeur.
+on_bowl_sw = l2m._svf_numpy(bowl, 10, 8, 0.5, use_sweep=True, conv=3)
+on_peak_sw = l2m._svf_numpy(peak, 10, 8, 0.5, use_sweep=True, conv=3)
+d_on_bowl_sw = np.abs(on_bowl[sl_c, sl_c] - on_bowl_sw[sl_c, sl_c]).max()
+d_on_peak_sw = np.abs(on_peak[sl_c, sl_c] - on_peak_sw[sl_c, sl_c]).max()
+check("oneg sweep pas pire que SVF sweep sur le même cône (marge ×3)",
+      d_on_bowl_sw < d_svf_bowl_sw * 3.0,
+      f"oneg diff={d_on_bowl_sw:.4f} vs SVF diff={d_svf_bowl_sw:.4f}")
+check("oneg sweep sommet : écart raisonnable (< 0.20)",
+      d_on_peak_sw < 0.20, f"max diff {d_on_peak_sw:.4f}")
+check("oneg sweep sommet clair (>0.6, attendu ≈0.75)",
+      on_peak_sw[cc, cc] > 0.6, f"{on_peak_sw[cc,cc]:.3f}")
+
+# Terrain réaliste (même sinusoïde que pour opos+, courbure locale réelle :
+# discrimine vraiment un bug min/max, contrairement au cône ci-dessus).
+on_doux_rc = l2m._svf_numpy(dem_doux, 40, 16, 0.5, conv=3)
+on_doux_sw = l2m._svf_numpy(dem_doux, 40, 16, 0.5, use_sweep=True, conv=3)
+d_doux_on = np.abs(on_doux_rc[sl_d, sl_d] - on_doux_sw[sl_d, sl_d])
+check("oneg sweep == ray-cast sur terrain réaliste (moyenne < 0.02)",
+      d_doux_on.mean() < 0.02, f"moyenne {d_doux_on.mean():.4f}")
+check("oneg sweep == ray-cast sur terrain réaliste (p95 < 0.05)",
+      np.percentile(d_doux_on, 95) < 0.05, f"p95 {np.percentile(d_doux_on, 95):.4f}")
+
+# Chunked + gate ouvert : conv=3 (oneg) doit maintenant passer par le sweep
+# quand use_sweep=True (plus aucun conv ne force le ray-cast désormais).
+dst_on_sw = tmp / "oneg_sweep.tif"
+ok = l2m._svf_chunked(src_svf, dst_on_sw, max_dist_px=20, n_directions=8,
+                      resolution=0.5, gamma=1.0, use_sweep=True, conv=3)
+check("oneg chunked (sweep) réussit", ok)
+if ok:
+    with rasterio.open(str(dst_on_sw)) as ds:
+        on_sw_out = ds.read(1)
+    east = on_sw_out[100:900, 600:1000]
+    check("oneg chunked sweep : dynamique non délavée (médiane < 250)",
+          np.median(east) < 250, f"médiane {np.median(east)}")
+
+# Chunked + gate ouvert : conv=2 (opos) doit maintenant passer par le sweep
+# quand use_sweep=True (gate restreint à conv >= 3 désormais, cf. ci-dessus).
+dst_op_sw = tmp / "opos_sweep.tif"
+ok = l2m._svf_chunked(src_svf, dst_op_sw, max_dist_px=20, n_directions=8,
+                      resolution=0.5, gamma=1.0, use_sweep=True, conv=2)
+check("opos chunked (sweep) réussit", ok)
+if ok:
+    with rasterio.open(str(dst_op_sw)) as ds:
+        op_sw_out = ds.read(1)
+    east = op_sw_out[100:900, 600:1000]
+    check("opos chunked sweep : dynamique non délavée (médiane < 250)",
+          np.median(east) < 250, f"médiane {np.median(east)}")
 
 # Gamma miroir oneg : le fond doit rester CLAIR (le x^γ direct donnait une
 # image globalement sombre — médiane fond ~68/255 au lieu de ~195).
@@ -755,7 +846,7 @@ with tempfile.TemporaryDirectory() as _td19:
         _d.write(_arr32, 1)
     _res = l2m.generer_mbtiles_lidar(_f32, Path(_td19), "dem_float",
                                      zoom_min=14, zoom_max=14,
-                                     bbox_l93=(650000, 6299936, 650064, 6300000))
+                                     bbox_natif=(650000, 6299936, 650064, 6300000))
     check("R2#19 source float32 refusée (return None, pas de mbtiles tronqué)",
           _res is None)
     check("R2#19 aucun .mbtiles produit depuis la source float",

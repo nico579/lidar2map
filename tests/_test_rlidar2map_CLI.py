@@ -662,6 +662,85 @@ class TransportTests(unittest.TestCase):
             self.assertIn("--exclude=*.part-wal", calls[0])
             self.assertNotEqual(calls[0][0], "scp")
 
+    def test_sync_only_excludes_mapping(self):
+        for value, expected in (
+            ("tout", ()),
+            ("ombrages", (".mbtiles", ".rmap", ".sqlitedb")),
+            ("carte", (".tif",)),
+        ):
+            parsed = rlidar2map_cli.parse_options(
+                ["--sync-only", value, "vm.example"]
+            )
+            controller = rlidar2map_cli.VmController(parsed)
+            self.assertEqual(
+                set(controller._sync_only_excludes()), set(expected),
+                msg="--sync-only {}".format(value),
+            )
+
+    def test_sync_only_adds_rsync_excludes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parsed = rlidar2map_cli.parse_options(
+                ["--local-dir", tmp, "--sync-method", "auto",
+                 "--sync-only", "carte", "vm.example"]
+            )
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: "rsync")
+            controller = rlidar2map_cli.VmController(parsed, deps)
+            state = remote_state(rsync=True)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(list(command))
+                return subprocess.CompletedProcess(command, 0, b"", b"")
+
+            with mock.patch.object(rlidar2map_cli.subprocess, "run", fake_run):
+                ok, method, _local_dir = controller.sync_once(state)
+
+            self.assertTrue(ok)
+            self.assertEqual(method, "rsync")
+            # carte : garde mbtiles/rmap/sqlitedb, exclut les .tif intermédiaires.
+            self.assertIn("--exclude=*.tif", calls[0])
+            self.assertNotIn("--exclude=*.mbtiles", calls[0])
+            self.assertNotIn("--exclude=*.rmap", calls[0])
+            self.assertNotIn("--exclude=*.sqlitedb", calls[0])
+
+    def test_sync_only_filters_scp_inventory_before_transfer(self):
+        # --sync-only carte sur un inventaire 100% .tif : équivalent à un
+        # inventaire vide une fois filtré (cf. test_scp_fallback_writes_manifest,
+        # même assertion calls == []) -> prouve que le filtre retire bien TOUT
+        # avant que la boucle de copie SCP ne s'exécute.
+        with tempfile.TemporaryDirectory() as tmp:
+            parsed = rlidar2map_cli.parse_options(
+                ["--local-dir", tmp, "--sync-method", "auto",
+                 "--sync-only", "carte", "vm.example"]
+            )
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: None)
+            controller = rlidar2map_cli.VmController(parsed, deps)
+            state = remote_state()
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append((list(command), kwargs))
+                return subprocess.CompletedProcess(command, 0, b"", b"")
+
+            encoded = rlidar2map_cli.base64.b64encode(
+                b"gar9_001x001_svf_flux.tif"
+            ).decode("ascii")
+            tif_only_inventory = {
+                "gar9_001x001_svf_flux.tif": (encoded, (1, 2, 3, 4)),
+            }
+            with mock.patch.object(
+                rlidar2map_cli.subprocess, "run", fake_run
+            ), mock.patch.object(
+                    controller,
+                    "_remote_results_inventory",
+                    return_value=tif_only_inventory,
+            ):
+                ok, method, _local_dir = controller.sync_once(state)
+
+            self.assertTrue(ok)
+            self.assertEqual(method, "ssh")
+            self.assertEqual(calls, [])
+
 
 class ControllerTests(unittest.TestCase):
     def _controller_mock(self, states, sync_results):

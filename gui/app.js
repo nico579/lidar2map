@@ -44,6 +44,9 @@ const I18N = {
     "remote.mode.label":"Reprise", "remote.mode.reconnect":"Se rebrancher",
     "remote.mode.resume":"Reprendre (garde le cache)", "remote.mode.restart":"Relancer depuis zéro",
     "tip.remotemode":"Que faire si la session existe déjà : « Se rebrancher » surveille le run en cours ou déjà terminé sans rien relancer ; « Reprendre » relance le même calcul dans la session en gardant les dalles déjà en cache (ne retélécharge que celles manquantes ou en erreur) ; « Relancer depuis zéro » archive l'état existant puis redémarre tout le calcul, cache compris.",
+    "remote.sync.label":"Résultats", "remote.sync.tout":"Tout",
+    "remote.sync.carte":"Carte seule", "remote.sync.ombrages":"Ombrages seuls",
+    "tip.remotesync":"Quels fichiers rapatrier localement au fur et à mesure : tout (défaut), seulement la carte finale (mbtiles/rmap/sqlitedb) ou seulement les ombrages intermédiaires (.tif).",
     "remote.block":"Bloc", "tip.remoteblock":"Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.",
     "remote.hint.cli":"Lance ce calcul dans tmux sur la VM et resynchronise progressivement les résultats (log distant inclus). « Arrêter » ne coupe que la surveillance locale, pas le calcul distant.",
     "remote.hint.gui":"Installe un bureau XFCE + RDP sur la VM puis ouvre le client RDP. Les autres paramètres de ce formulaire sont ignorés.",
@@ -200,6 +203,9 @@ const I18N = {
     "remote.mode.label":"Resume", "remote.mode.reconnect":"Reattach only",
     "remote.mode.resume":"Resume (keep cache)", "remote.mode.restart":"Restart from scratch",
     "tip.remotemode":"What to do if the session already exists: “Reattach only” just monitors the run in progress or already finished, without relaunching anything; “Resume” reruns the same job in the same session keeping already-cached tiles (only re-downloads missing or failed ones); “Restart from scratch” archives the existing state then restarts the whole job, cache included.",
+    "remote.sync.label":"Results", "remote.sync.tout":"Everything",
+    "remote.sync.carte":"Map only", "remote.sync.ombrages":"Shadings only",
+    "tip.remotesync":"Which files to sync back locally as they are produced: everything (default), only the final map (mbtiles/rmap/sqlitedb), or only the intermediate shadings (.tif).",
     "remote.block":"Block", "tip.remoteblock":"Splits a geographic area across several VMs: each machine processes a different block (LiDAR only). Leave empty to process the whole area on this VM.",
     "remote.hint.cli":"Runs this job in tmux on the VM and progressively syncs results back (remote log included). Stop only cancels local monitoring, not the remote job.",
     "remote.hint.gui":"Installs an XFCE + RDP desktop on the VM then opens the RDP client. The rest of this form is ignored.",
@@ -376,7 +382,7 @@ function setLang(code, persist){
 }
 
 // ── Panneau de log ───────────────────────────────────────────────────────────
-function ajouterLigneLog(text, tag) {
+function ajouterLigneLog(text, tag, deferScroll) {
   const c = document.getElementById('log-content');
   if (!c) return;
   // Sémantique \r du terminal : la ligne de progression temporaire (barres
@@ -388,21 +394,33 @@ function ajouterLigneLog(text, tag) {
   span.className = 'log-' + (tag || 'ok');
   span.textContent = text;
   c.appendChild(span);
-  // Auto-scroll si l'utilisateur est déjà en bas (à 30 px près)
+  // deferScroll=true : appelant en boucle sur un lot (cf. poll_log) — le
+  // scroll/purge est fait une seule fois après la boucle via finaliserLog(),
+  // pas à chaque ligne (chaque lecture de scrollHeight force un reflow
+  // synchrone ; sur un burst de plusieurs milliers de lignes d'un coup,
+  // reconnexion VM notamment, ça figeait le panneau, bug vécu 2026-08-05).
+  if (!deferScroll) finaliserLog();
+}
+
+// Auto-scroll (si déjà en bas, 30 px près) + purge (~5000 lignes, évite de
+// saturer le DOM sur les longs runs). Appelé une seule fois par lot de
+// poll_log plutôt qu'à chaque ligne/repaint de progression : cf.
+// ajouterLigneLog/majLigneProgression.
+function finaliserLog() {
+  const c = document.getElementById('log-content');
+  if (!c) return;
   const isAtBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 30;
   if (isAtBottom) c.scrollTop = c.scrollHeight;
-  // Limiter à ~5000 lignes pour éviter de saturer le DOM sur les longs runs
   while (c.children.length > 5000) c.removeChild(c.firstChild);
 }
 
 // Ligne de progression "en place" dans le panneau de log : équivalent du \r
 // terminal. Sans elle, pendant un long download le panneau paraît figé (la
 // barre ne vivait que dans le footer) : constaté sur un download Lyon de 3 min.
-function majLigneProgression(label) {
+function majLigneProgression(label, deferScroll) {
   const c = document.getElementById('log-content');
   if (!c || !label) return;
   let el = document.getElementById('log-progress-line');
-  const atBottom = (c.scrollHeight - c.scrollTop - c.clientHeight) < 30;
   if (!el) {
     el = document.createElement('span');
     el.id = 'log-progress-line';
@@ -410,7 +428,7 @@ function majLigneProgression(label) {
     c.appendChild(el);
   }
   el.textContent = label;
-  if (atBottom) c.scrollTop = c.scrollHeight;
+  if (!deferScroll) finaliserLog();
 }
 
 function viderLog() {
@@ -1823,6 +1841,9 @@ function getConfig() {
     // garde le cache), "restart" = archiver puis repartir de zéro (--restart)
     // côté rlidar2map_CLI ; cf. _wrap_remote_cmd côté Python.
     remote_mode:     g('f-remote-mode')?.value || '',
+    // "tout" (défaut, comportement inchangé) ; "carte"/"ombrages" limitent
+    // le rapatriement (--sync-only) côté rlidar2map_CLI, cf. _wrap_remote_cmd.
+    remote_sync_only: g('f-remote-sync-only')?.value || 'tout',
     // Sharding multi-VM (--block i/M) : combiné en une seule chaîne ici, les
     // deux champs numériques ne sont qu'une commodité de saisie côté GUI.
     remote_block: (() => {
@@ -2034,6 +2055,7 @@ function loadConfig(cfg) {
   s('f-remote-identity', cfg.remote_identity);
   s('f-remote-session',  cfg.remote_session);
   s('f-remote-mode',     cfg.remote_mode);
+  s('f-remote-sync-only', cfg.remote_sync_only || 'tout');
   if (cfg.remote_block && cfg.remote_block.includes('/')) {
     const [bi, bm] = cfg.remote_block.split('/');
     s('f-remote-block-i', bi);
@@ -2591,20 +2613,26 @@ function executerCfg(cfg, silent) {
       polling = setInterval(async () => {
         const r = await pywebview.api.poll_log();
         if (r.items) {
+          // deferScroll=true partout dans la boucle : un seul reflow/scroll
+          // via finaliserLog() pour tout le lot, pas un par ligne (cf.
+          // ajouterLigneLog) — sinon un burst de milliers d'items d'un coup
+          // (reconnexion VM notamment) fige le panneau le temps de tout
+          // digérer.
           r.items.forEach(item => {
-            if (item.line !== undefined) ajouterLigneLog(item.line, item.tag || 'ok');
+            if (item.line !== undefined) ajouterLigneLog(item.line, item.tag || 'ok', true);
             if (item.pct !== undefined && item.pct >= 0) {
               setLogProgress(item.pct, '');
               document.getElementById('footer-status').textContent =
                 item.pct + '%  ' + (item.label || '').substring(0, 80);
-              majLigneProgression(item.label);
+              majLigneProgression(item.label, true);
             }
             if (item.pct === -1 && item.label) {
               document.getElementById('footer-status').textContent =
                 item.label.substring(0, 100);
-              majLigneProgression(item.label);
+              majLigneProgression(item.label, true);
             }
           });
+          if (r.items.length) finaliserLog();
         }
         if (r.done) {
           clearInterval(polling); polling = null;
