@@ -19124,6 +19124,8 @@ def lancer_gui():
             remote_cmd = list(prefix) + ["--remote-cli", "--bundle"]
             if cfg.get("remote_session"):
                 remote_cmd += ["--session", cfg["remote_session"]]
+            if cfg.get("remote_restart"):
+                remote_cmd.append("--restart")
             if cfg.get("remote_identity"):
                 remote_cmd += ["--identity", cfg["remote_identity"]]
             remote_cmd.append("{}@{}".format(self._REMOTE_SSH_USER, cfg["remote_host"]))

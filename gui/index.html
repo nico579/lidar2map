@@ -129,6 +129,10 @@
      <span id="row-remote-cli" class="hidden" style="display:contents">
       <label style="min-width:auto;margin-left:10px" data-i18n="remote.session">Session</label>
       <input type="text" id="f-remote-session" placeholder="lidar" style="max-width:100px">
+      <label style="min-width:auto;margin-left:10px" data-i18n-title="tip.remoterestart"
+             title="Archive l'état existant de cette session (si présent) et redémarre le calcul depuis zéro, au lieu de se rebrancher sur le run en cours ou déjà terminé.">
+       <input type="checkbox" id="f-remote-restart"> <span data-i18n="remote.restart">Relancer depuis zéro</span>
+      </label>
       <label style="min-width:auto;margin-left:10px" data-i18n="remote.block"
              data-i18n-title="tip.remoteblock" title="Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.">Bloc</label>
       <input type="number" id="f-remote-block-i" min="1" placeholder="i" style="max-width:45px">
