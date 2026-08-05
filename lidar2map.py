@@ -19715,6 +19715,18 @@ def lancer_gui():
         except Exception:
             pass
         print("  GUI window closed - exiting.", flush=True)
+        # Publier le log AVANT le os._exit ci-dessous : lui saute aussi les
+        # handlers atexit (dont celui qui renomme <log>.part -> <log>), donc
+        # sans cet appel explicite le fichier restait bloqué en .part à
+        # chaque fermeture normale de la fenêtre (vécu 2026-08-05 : 4/4 logs
+        # GUI orphelins, tous terminés proprement sur ce même message). Pur
+        # I/O Python (flush + close + rename) : aucun risque de réintroduire
+        # le fail-fast Qt que os._exit évite.
+        try:
+            if isinstance(sys.stdout, _TeeLogger):
+                sys.stdout.close()
+        except Exception:
+            pass
         # os._exit : sortie inconditionnelle AVANT le teardown Qt (évite le
         # fail-fast et les threads non-daemon qui retiennent le process).
         # Les écritures critiques (historique, préférences) sont atomiques
