@@ -154,6 +154,11 @@ def fake_ssh():
     )
     if helper_action in ("inventory", "copy"):
         kind = helper_action
+    elif remote_tokens[:1] == ["tail"]:
+        # print_remote_log_tail : pas de payload (aucun input piped), donc
+        # sans ce cas explicite elle tombait dans le repli "launch" ci-dessous
+        # (n'importe quel payload sans STATUS=) à chaque cycle de sondage.
+        kind = "log_tail"
     else:
         kind = (
             "query"
@@ -178,6 +183,8 @@ def fake_ssh():
     if kind == "copy":
         remote_copy(payload)
         return 0
+    if kind == "log_tail":
+        return 0   # pas de nouvelles données -> no-op, cf. print_remote_log_tail
     if kind == "launch":
         return 0
     data = load_state()

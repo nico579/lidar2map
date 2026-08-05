@@ -1452,6 +1452,22 @@ def _safe_component(value: str) -> str:
     return cleaned or "vm"
 
 
+_HOST_KEY_CHANGED_MARKERS = (
+    b"Host key verification failed",
+    b"REMOTE HOST IDENTIFICATION HAS CHANGED",
+)
+
+
+def _is_host_key_changed(stderr_bytes: Optional[bytes]) -> bool:
+    """True si un stderr SSH signale une clé hote qui a CHANGE (pas juste
+    une machine jamais vue : StrictHostKeyChecking=accept-new, deja pose
+    dans _connection_options, accepte deja celle-la sans broncher). Le cas
+    courant avec une VM ephemere (Hetzner...) reconstruite/reinstallee
+    depuis la derniere connexion, pas une anomalie."""
+    data = stderr_bytes or b""
+    return any(marker in data for marker in _HOST_KEY_CHANGED_MARKERS)
+
+
 class VmController:
     def __init__(self, options: Options, deps: Optional[RuntimeDeps] = None):
         self.options = options
@@ -1528,6 +1544,16 @@ class VmController:
         if completed.returncode not in (0, 1):
             raise RunOnVmError("impossible de supprimer l'ancienne clé SSH")
 
+    def _auto_reset_host_key(self) -> None:
+        """Appelé UNIQUEMENT après un échec SSH confirmé (_is_host_key_changed)
+        avant de retenter une fois : annonce toujours l'action (rien de
+        silencieux), même si elle est automatique."""
+        host = self.options.vm.rsplit("@", 1)[-1]
+        print(f"  SSH: host key for {host} has changed (VM rebuilt/reinstalled?) "
+              f"- clearing the stale known_hosts entry and retrying once...",
+              flush=True)
+        self.reset_host_key()
+
     def query_state(self) -> RemoteState:
         completed = subprocess.run(
             self._ssh_command([self.options.session]),
@@ -1536,6 +1562,15 @@ class VmController:
             stderr=subprocess.PIPE,
             check=False,
         )
+        if completed.returncode != 0 and _is_host_key_changed(completed.stderr):
+            self._auto_reset_host_key()
+            completed = subprocess.run(
+                self._ssh_command([self.options.session]),
+                input=REMOTE_QUERY_SCRIPT.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
         if completed.returncode != 0:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()
             raise SshError(
@@ -1566,9 +1601,19 @@ class VmController:
         completed = subprocess.run(
             self._ssh_command(remote_args),
             input=REMOTE_LAUNCH_SCRIPT.encode("utf-8"),
+            stderr=subprocess.PIPE,
             check=False,
         )
+        if completed.returncode != 0 and _is_host_key_changed(completed.stderr):
+            self._auto_reset_host_key()
+            completed = subprocess.run(
+                self._ssh_command(remote_args),
+                input=REMOTE_LAUNCH_SCRIPT.encode("utf-8"),
+                stderr=subprocess.PIPE,
+                check=False,
+            )
         if completed.returncode != 0:
+            sys.stderr.buffer.write(completed.stderr or b"")
             raise RunOnVmError(
                 "le lancement distant a échoué (code {})".format(
                     completed.returncode
