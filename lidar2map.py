@@ -236,7 +236,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
       ign_lidar/
         dalles_zone.txt             liste dalles (# bbox:x1,y1,x2,y2 en tête)
         manifeste.json              état de reprise (découpage à priori)
-        <nom>_multi_ombrage.tif     ombrage L93, 0.5 m/px
+        <nom>_multi_ombrage.tif     ombrage CRS natif du provider, 0.5 m/px
         <nom>_multi_ombrage_tuilage_z18.tif  cache Mercator (réutilisable)
         <nom>_multi_ombrage_z13-18.mbtiles
         <nom>_multi_ombrage_z13-18.rmap
@@ -3624,10 +3624,9 @@ def geocoder_ville_wgs84(nom_ville):
     return lat, lon
 
 
-def geocoder_ville_l93(nom_ville):
+def geocoder_ville_natif(nom_ville):
     """Géocode une ville → (x, y) dans le CRS natif du provider (pipeline LiDAR).
-    Retourne (None, None) si échec. Nom historique « _l93 » : le CRS vient du
-    provider (paramétrage), ce n'est pas forcément du Lambert 93."""
+    Retourne (None, None) si échec."""
     lat, lon = geocoder_ville_wgs84(nom_ville)
     if lat is None:
         return None, None
@@ -8304,7 +8303,7 @@ def _warped_3857_valide(chemin):
 
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
-                    jpeg_quality=85, bbox_l93=None,
+                    jpeg_quality=85, bbox_natif=None, tampon_coin_max_m=0,
                     source_already_warped=False, ecraser_tuiles=False,
                     tile_workers=8):
     """
@@ -8409,10 +8408,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     res_max = 2 * EARTH_CIRC / (TILE_SIZE * 2 ** zoom_max)
 
-    # Bbox source en Lambert93 — fournie directement par main() si connue
-    # (évite gdalinfo qui peut échouer sans proj.db sur certaines installations)
-    if bbox_l93 is not None:
-        bb_src = bbox_l93
+    # Bbox source dans le CRS natif du provider, fournie directement par
+    # main() si connue (évite gdalinfo qui peut échouer sans proj.db sur
+    # certaines installations)
+    if bbox_natif is not None:
+        bb_src = bbox_natif
     else:
         bb_src = _bbox_depuis_gdalinfo(tif_source)
     if bb_src:
@@ -8459,15 +8459,15 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
     # bounds : requis par la spec MBTiles et par Locus pour positionner la carte
     # "left,bottom,right,top" en degrés WGS84
-    if bbox_l93 is not None:
-        # Enveloppe des 4 coins — même règle que pour l'étendue du warp plus
-        # bas : un rectangle L93 ne reste pas axis-aligné après reprojection,
-        # min/max sur 2 coins opposés sous-estimerait l'emprise.
+    if bbox_natif is not None:
+        # Enveloppe des 4 coins : un rectangle dans le CRS natif ne reste pas
+        # axis-aligné après reprojection, min/max sur 2 coins opposés
+        # sous-estimerait l'emprise.
         _pts4 = [_natif_vers_wgs84(cx4, cy4)
-                 for cx4, cy4 in ((bbox_l93[0], bbox_l93[1]),
-                                  (bbox_l93[2], bbox_l93[1]),
-                                  (bbox_l93[2], bbox_l93[3]),
-                                  (bbox_l93[0], bbox_l93[3]))]
+                 for cx4, cy4 in ((bbox_natif[0], bbox_natif[1]),
+                                  (bbox_natif[2], bbox_natif[1]),
+                                  (bbox_natif[2], bbox_natif[3]),
+                                  (bbox_natif[0], bbox_natif[3]))]
         _lons = [p[0] for p in _pts4]
         _lats = [p[1] for p in _pts4]
         _bounds = f"{min(_lons):.6f},{min(_lats):.6f},{max(_lons):.6f},{max(_lats):.6f}"
@@ -8581,21 +8581,84 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 
         if bb_src is not None:
             x0, _y0, x1, _y1 = bb_src
-            # Enveloppe Mercator des 4 coins : un rectangle L93 ne reste pas
-            # axis-aligné après reprojection (la grille tourne légèrement),
-            # donc min/max sur 2 coins opposés sous-estimerait l'étendue et
-            # rognerait quelques pixels en bordure. gdalwarp -te procède de
-            # même (enveloppe des 4 coins).
-            corners = [(x0, _y0), (x1, _y0), (x1, _y1), (x0, _y1)]
+            # Un rectangle dans le CRS natif du provider ne reste pas
+            # axis-aligné après reprojection (la grille tourne légèrement) :
+            # chaque côté devient une ligne très légèrement inclinée en
+            # Mercator. Milieu de CHAQUE côté (moyenne des 2 coins qui le
+            # bornent), PAS min/max des 4 coins du bloc : l'enveloppe min/max
+            # publiait systématiquement plus que le rectangle nominal sur
+            # chaque côté (~265 m mesuré sur un bloc 5 km à cette latitude,
+            # cf. gdalwarp -te, conservateur par design pour une zone isolée).
+            # Deux blocs voisins directs (même rangée ou même colonne)
+            # partagent EXACTEMENT les 2 coins de leur frontière commune :
+            # ils moyennent les 2 mêmes points → même frontière des deux
+            # côtés, aucune incidence pour une zone seule.
+            #
+            # ESSAYÉ ET ABANDONNÉ : faire porter cette moyenne sur l'étendue
+            # de la zone ENTIÈRE (pas les bornes propres du bloc) pour aussi
+            # réconcilier le coin partagé par 4 blocs (diagonaux, découpage
+            # à priori) — supprime bien le petit trou/carré blanc au centre,
+            # MAIS pour un bloc loin du bord opposé de la zone (ex. rangée
+            # nord utilisant le bord sud de la zone), la droite obtenue
+            # dérive du bord LOCAL réel du bloc suffisamment pour que le
+            # pixel de destination corresponde, une fois reprojeté en sens
+            # inverse, à une coordonnée hors de la couverture de la dalle
+            # source de CE bloc → vraies zones sans données (triangle noir,
+            # mesuré 2026-08-05 : ~90 m de dérive dès le bord nord d'un bloc
+            # 5 km, largement au-delà du sous-pixel). Pire que le défaut que
+            # ça devait corriger. Reverti : le petit trou au coin partagé par
+            # 4 blocs (borné, ~265 m, un point isolé) reste un residu connu,
+            # préférable à une perte de données réelle.
             try:
                 _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
-                pts = [_t.transform(cx, cy) for cx, cy in corners]
+                _tr = _t.transform
             except Exception:
-                pts = [_natif_to_merc(cx, cy) for cx, cy in corners]
-            xs = [p[0] for p in pts]
-            ys = [p[1] for p in pts]
-            te_xmin, te_xmax = min(xs), max(xs)
-            te_ymin, te_ymax = min(ys), max(ys)
+                _tr = _natif_to_merc
+            corners = [(x0, _y0), (x1, _y0), (x1, _y1), (x0, _y1)]  # SO SE NE NO
+            p_so, p_se, p_ne, p_no = [_tr(cx, cy) for cx, cy in corners]
+            te_xmin = (p_so[0] + p_no[0]) / 2   # côté ouest
+            te_xmax = (p_se[0] + p_ne[0]) / 2   # côté est
+            te_ymin = (p_so[1] + p_se[1]) / 2   # côté sud
+            te_ymax = (p_no[1] + p_ne[1]) / 2   # côté nord
+            if tampon_coin_max_m:
+                # Ferme le petit trou qui reste au coin partagé par 4 blocs
+                # (découpage à priori) : le milieu de bord ci-dessus rend
+                # chaque frontière exacte avec les voisins directs, mais le
+                # coin diagonal reste calculé différemment par chacun des 4
+                # blocs (cf. discussion). PAS de retour à un calcul
+                # zone-globale (tenté et reverti : dérive au-delà de la
+                # dalle source, nodata) : ici on élargit juste la fenêtre
+                # publiée par CE bloc, en pixels RÉELS, pas inventés —
+                # l'appelant garantit une couverture d'au moins
+                # tampon_coin_max_m au-delà de cette bbox (marge de
+                # téléchargement fixe pour --block, ou VRT avec les vrais
+                # voisins sinon).
+                #
+                # Tampon CALCULÉ, pas une constante à ajuster à la main :
+                # l'écart au coin dépend de la latitude et de la taille du
+                # bloc (via le cisaillement de la reprojection), et l'outil
+                # gère des providers du monde entier avec des tailles de
+                # bloc au choix de l'utilisateur — une constante calée sur
+                # un seul cas (mesuré 2026-08-05 : ~192-265 m en France,
+                # blocs 5 km) serait tantôt trop courte tantôt inutilement
+                # large ailleurs. Dérivation : pour un bloc voisin direct
+                # partageant EXACTEMENT 2 de mes coins, son propre calcul de
+                # bord ne diffère du mien que par l'AUTRE coin qu'il moyenne
+                # (le sien, à une largeur/hauteur de bloc plus loin) ; half
+                # de cet écart = l'ampleur réelle du coin manquant, sans
+                # avoir besoin des données du voisin, juste sa position
+                # géométrique connue (grille régulière).
+                largeur = x1 - x0
+                hauteur = _y1 - _y0
+                _pt_e = _tr(x1 + largeur, _y1)   # coin NE d'1 largeur plus loin
+                _pt_n = _tr(x0, _y1 + hauteur)   # coin NO d'1 hauteur plus loin
+                gap_ns = abs(p_no[1] - _pt_e[1]) / 2
+                gap_ew = abs(p_so[0] - _pt_n[0]) / 2
+                tampon_coin_m = min(max(gap_ns, gap_ew), tampon_coin_max_m)
+                te_xmin -= tampon_coin_m
+                te_xmax += tampon_coin_m
+                te_ymin -= tampon_coin_m
+                te_ymax += tampon_coin_m
         # Si bb_src est None, te_* restent None et le warp retombe proprement
         # sur calculate_default_transform (étendue auto depuis la source).
 
@@ -8614,19 +8677,36 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                 from rasterio.warp import calculate_default_transform as _calc_tr
                 from rasterio.warp import reproject as _reproject
                 from rasterio.warp import Resampling as _Resampling
-                from rasterio.transform import from_bounds as _from_bounds
+                from rasterio.transform import from_origin as _from_origin
 
                 with _rio_w.open(str(tif_source)) as src:
                     # Si te_xmin/etc. fournis : on impose la bbox cible.
                     # Sinon : calculate_default_transform calcule l'étendue
                     # automatiquement à partir des bounds de la source.
                     if te_xmin is not None:
-                        # Dimensions cible à partir de la bbox + résolution
-                        dst_width  = int(round((te_xmax - te_xmin) / res_max))
-                        dst_height = int(round((te_ymax - te_ymin) / res_max))
-                        dst_transform = _from_bounds(
-                            te_xmin, te_ymin, te_xmax, te_ymax,
-                            dst_width, dst_height)
+                        # Coin haut-gauche calé sur la grille WebMercator
+                        # GLOBALE (référence -EARTH_CIRC/+EARTH_CIRC, même
+                        # convention que merc_to_tile/tile_bounds ci-dessus),
+                        # résolution EXACTEMENT res_max, arrondi VERS
+                        # L'EXTÉRIEUR (équivalent de gdalwarp -tap, target
+                        # aligned pixels). Avant ce calage, dst_width/height
+                        # étaient arrondis indépendamment par bloc puis
+                        # from_bounds() répartissait l'écart d'arrondi sur
+                        # toute la largeur : la résolution réelle dérivait
+                        # légèrement d'un bloc à l'autre et deux blocs voisins
+                        # (découpage à priori) n'avaient plus la garantie que
+                        # leurs grilles de pixels coïncident à la jonction →
+                        # couture visible dans le MBTiles, identique quel que
+                        # soit l'ombrage (lrm ET multi affectés, TIF source
+                        # intact).
+                        snap_x0 = -EARTH_CIRC + math.floor(
+                            (te_xmin + EARTH_CIRC) / res_max) * res_max
+                        snap_y1 = EARTH_CIRC - math.floor(
+                            (EARTH_CIRC - te_ymax) / res_max) * res_max
+                        dst_width  = int(math.ceil((te_xmax - snap_x0) / res_max))
+                        dst_height = int(math.ceil((snap_y1 - te_ymin) / res_max))
+                        dst_transform = _from_origin(
+                            snap_x0, snap_y1, res_max, res_max)
                     else:
                         dst_transform, dst_width, dst_height = _calc_tr(
                             src.crs, "EPSG:3857",
@@ -10997,12 +11077,16 @@ def _lister_tifs_ombrages(dossier_ville, tifs_run):
 
 
 def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
-                          decoupe_sortie=True, verbose=False):
+                          decoupe_sortie=True, verbose=False, tampon_coin_max_m=0):
     """Tuile chaque TIF d'ombrage (make-like via _mbtiles_a_regenerer :
     détecte aussi mbtiles corrompu/vide et TIF plus récent) puis applique les
     conversions RMAP/SQLiteDB. Partagé par main() (decoupe_sortie=True) et
     _traiter_bbox_lidar (False : le découpage est déjà fait par les chunks).
-    Ce bloc était dupliqué entre les deux mains, avec du drift déjà mordu."""
+    Ce bloc était dupliqué entre les deux mains, avec du drift déjà mordu.
+
+    tampon_coin_max_m : cf. generer_mbtiles_lidar. 0 (défaut, cas non
+    découpé) : aucune incidence, cette zone n'a pas de coin partagé avec un
+    voisin."""
     for tif in tifs:
         if verbose:
             print("  " + tif.name)
@@ -11017,7 +11101,7 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
                 zoom_min=args.zoom_min, zoom_max=args.zoom_max,
                 format_tuiles=args.formats_image,
                 jpeg_quality=args.qualite_image,
-                bbox_l93=bbox,
+                bbox_natif=bbox, tampon_coin_max_m=tampon_coin_max_m,
                 ecraser_tuiles=args.tuiles_ecraser,
                 tile_workers=args.workers)
         else:
@@ -11401,7 +11485,7 @@ Examples:
                     print("  Source TIF EPSG:3857 detected -> direct tiling (no warp)")
                 else:
                     args._source_already_warped = False
-                    print(f"  Source TIF EPSG:{_epsg} -> L93->Mercator warp required")
+                    print(f"  Source TIF EPSG:{_epsg} -> Mercator warp required")
             except Exception as _e_crs:
                 print(f"  WARNING CRS not detected ({_e_crs}) — warp applied by default")
                 args._source_already_warped = False
@@ -11532,8 +11616,8 @@ Examples:
         nom_zone = normaliser_nom(args.zone_nom)
         if not nom_zone:
             sys.exit(1)
-        # BUGFIX : la conversion GPS→L93 doit se faire dans TOUS les cas, pas
-        # uniquement quand --telechargement est absent. Sans cela, cx=cy=0.0
+        # BUGFIX : la conversion GPS->CRS natif doit se faire dans TOUS les cas,
+        # pas uniquement quand --telechargement est absent. Sans cela, cx=cy=0.0
         # (init ligne 5056) et la grille calculée par calculer_grille() est
         # centrée sur l'origine Lambert 93 (au large du Maroc), produisant
         # une bbox Mercator vide et un MBTiles à 0 tuiles.
@@ -11544,7 +11628,7 @@ Examples:
     elif args.zone_ville:
         nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
         print(f"  Geocoding '{args.zone_ville}'...")
-        cx, cy = geocoder_ville_l93(args.zone_ville)
+        cx, cy = geocoder_ville_natif(args.zone_ville)
         if cx is None:
             sys.exit(1)
 
@@ -11634,12 +11718,22 @@ Examples:
             def _entete_lidar(c):
                 bx1, by1, bx2, by2 = c
                 surface = (bx2-bx1)/1000 * (by2-by1)/1000
-                return (f"BBox L93 : {bx1:.0f},{by1:.0f} → "
+                return (f"BBox natif : {bx1:.0f},{by1:.0f} → "
                         f"{bx2:.0f},{by2:.0f}  (~{surface:.0f} km²)")
-            def _chunk_lidar(coords, nom_z, cle, manifeste):
-                _traiter_bbox_lidar(args, coords, nom_z, nom_zone, manifeste, cle)
-            _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
-                              _overwrite_actif, _entete_lidar, _chunk_lidar, t_debut)
+            if _blk:
+                # --block : machines séparées, pas de disque partagé entre
+                # voisins -> marge fixe garantie (_traiter_bbox_lidar), seul
+                # mode qui la justifie (cf. discussion "mode rare, ne doit
+                # pas justifier un mouton à 5 pattes pour le cas majoritaire").
+                def _chunk_lidar(coords, nom_z, cle, manifeste):
+                    _traiter_bbox_lidar(args, coords, nom_z, nom_zone, manifeste, cle)
+                _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
+                                  _overwrite_actif, _entete_lidar, _chunk_lidar, t_debut)
+            else:
+                # Cas majoritaire : VRT-voisins glissant, zéro téléchargement
+                # supplémentaire (cf. _run_split_priori_lidar_glissant).
+                _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
+                                                 _overwrite_actif, _entete_lidar, t_debut)
             return
         print("  A-priori splitting: zone too small -> single pass")
 
@@ -12069,7 +12163,7 @@ Examples:
             _tif_src = Path(args.source).resolve()
             print_etape(f"{'RMAP' if args.rmap and not args.mbtiles else 'MBTiles'} depuis {_tif_src.name}")
             print(f"  Source : {_tif_src}")
-            print(f"  Zone   : bbox L93 {bbox[0]:.0f},{bbox[1]:.0f} → {bbox[2]:.0f},{bbox[3]:.0f}")
+            print(f"  Zone   : bbox natif {bbox[0]:.0f},{bbox[1]:.0f} → {bbox[2]:.0f},{bbox[3]:.0f}")
             # Nom basé sur nom_zone + type d'ombrage détecté dans le nom du fichier
             _SUFFIXES = ("multi_ombrage", "315_ombrage", "045_ombrage",
                          "135_ombrage", "225_ombrage", "slope_ombrage",
@@ -12088,7 +12182,7 @@ Examples:
                                            zoom_min=args.zoom_min, zoom_max=args.zoom_max,
                                            format_tuiles=args.formats_image,
                                            jpeg_quality=args.qualite_image,
-                                           bbox_l93=bbox,
+                                           bbox_natif=bbox,
                                            source_already_warped=getattr(args, "_source_already_warped", False),
                                            ecraser_tuiles=_ecraser_l,
                                            tile_workers=args.workers)
@@ -13226,11 +13320,13 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     ajouté d'un seul côté. Les deux points de variation légitimes passent en
     callbacks :
       entete_chunk(coords) -> str : ligne « BBox ... (~N km²) » (unités et CRS
-                                    propres au pipeline : L93 m vs WGS84°).
+                                    propres au pipeline : CRS natif du
+                                    provider en m pour LiDAR, WGS84° pour WMTS).
       traiter_chunk(coords, nom_z, cle, manifeste) : le travail par chunk
                                     (_traiter_bbox_lidar / _traiter_bbox_wmts).
 
-    coords = tuple bbox de la sous-zone (L93 pour LiDAR, WGS84 pour WMTS), opaque
+    coords = tuple bbox de la sous-zone (CRS natif du provider pour LiDAR,
+    WGS84 pour WMTS), opaque
     pour la boucle : seuls les callbacks l'interprètent. Suppose len(sous_zones)>1
     (les appelants font le garde-fou et le message « single pass »).
 
@@ -13350,14 +13446,14 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     _planche_depuis_dossier(racine_pr, args, nom_zone)
 
 
-def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
+def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
     """
     Traite un morceau LiDAR directement en Python (sans subprocess).
     Appelé par la boucle à priori dans main().
     nom_zone_base : nom du projet parent (ex: gareoult2).
     nom_z         : nom du morceau   (ex: gareoult2_001x001).
     """
-    bx1, by1, bx2, by2 = bbox_l93
+    bx1, by1, bx2, by2 = bbox_natif
 
     # Sauvegarder / restaurer les args modifiés temporairement
     _bbox_orig = args.zone_bbox
@@ -13365,9 +13461,27 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
     args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
     args.zone_nom  = nom_z
 
+    # Halo (cf. calcul par blocs / ghost cells) : ce morceau télécharge et
+    # calcule ses ombrages sur une emprise élargie d'une marge GARANTIE,
+    # au-delà de sa bbox nominale — pas seulement le débord accidentel de
+    # l'arrondi aux dalles entières (mesuré 100-900 m selon l'endroit, jamais
+    # garanti). generer_mbtiles_lidar CALCULE ensuite (pas une constante,
+    # cf. son commentaire) l'ampleur exacte à publier en plus pour fermer le
+    # petit trou qui reste au coin partagé par 4 blocs, bornée par cette
+    # marge. Toujours de vrais pixels : la marge est dans les dalles
+    # réellement téléchargées pour CE morceau, jamais une extrapolation.
+    #
+    # Proportionnelle à la taille du bloc (10 %, plancher 300 m), pas une
+    # constante fixe : --block sert des providers du monde entier avec des
+    # tailles de bloc au choix de l'utilisateur, et l'ampleur du trou de
+    # coin (cisaillement de la reprojection) croît avec la taille du bloc.
+    MARGE_HALO_M = max(300.0, 0.1 * min(bx2 - bx1, by2 - by1))
+
     try:
         with _contexte_manifeste(manifeste, cle):
             bbox = (bx1, by1, bx2, by2)
+            bbox_marge = (bx1 - MARGE_HALO_M, by1 - MARGE_HALO_M,
+                          bx2 + MARGE_HALO_M, by2 + MARGE_HALO_M)
             # Structure : <racine>/<nom_zone_base>/ign_lidar/<nom_z>/
             # (tous les morceaux sont sous-dossiers du même projet parent)
             racine_base = (Path(args.dossier).resolve() if args.dossier
@@ -13382,10 +13496,11 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             # combinant index officiel (TMS pour FR, JSON pour NL, etc.) et
             # éventuel fallback grille interne au provider. Le pipeline reste
             # provider-agnostique : il ne suppose ni grille (x_km, y_km) ni
-            # protocole d'accès particulier.
+            # protocole d'accès particulier. bbox_marge (pas bbox) pour le
+            # filtre géométrique : voir MARGE_HALO_M ci-dessus.
             _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
             _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
-                _t.transform, bx1, by1, bx2, by2)
+                _t.transform, *bbox_marge)
             bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
             cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
             # discover_dalles : None = échec réseau/endpoint, {} = pas de
@@ -13396,7 +13511,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             # re-run rejoue le chunk. {} = hors-couverture légitime -> le chunk
             # se termine vide et fait, comme une cellule mer.
             try:
-                _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
+                _d = PROVIDER.discover_dalles(bbox_wgs, bbox_marge, cache_discover)
             except Exception as _e_disc:
                 raise RuntimeError(
                     f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
@@ -13408,7 +13523,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
             dalles_dict = _d
 
             if args.telechargement:
-                _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
+                _telecharger_dalles_zone(dalles_dict, bbox_marge, dossier_dalles, dossier_ville, args)
 
             # tifs_run hoisté HORS du `if args.ombrages` : un run tuiles-seules
             # chunké (mbtiles sans --shadings) levait NameError sur tifs_run.
@@ -13417,7 +13532,7 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                 choix, _spec_i = _resoudre_choix_ombrages(args)
                 if choix or _spec_i:
                     dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
-                                                          dossier_ville, bbox)
+                                                          dossier_ville, bbox_marge)
                     elev = (args.ombrages_elevation if args.ombrages_elevation is not None
                             else ELEVATION_SOLEIL)
                     tifs_run = generer_ombrages(dalles_ombrages, dossier_ville, choix,
@@ -13426,18 +13541,299 @@ def _traiter_bbox_lidar(args, bbox_l93, nom_z, nom_zone_base, manifeste, cle):
                                      use_sweep=args.sweep_horizon,
                                      svf_gamma=args.svf_gamma,
                                      svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                                     bbox_natif=tuple(bbox),
+                                     bbox_natif=tuple(bbox_marge),
                                      instances=_spec_i or None)
 
             if args.mbtiles or args.rmap or args.sqlitedb:
                 # Glob/filtre/tuilage factorisés avec le site jumeau de main()
-                # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages).
+                # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages). bbox
+                # (nominale, PAS bbox_marge) pour la frontière exacte avec les
+                # voisins directs ; tampon_coin_max_m borne le calcul du
+                # tampon de coin dans la marge halo ci-dessus.
                 _tuiler_tifs_ombrages(
                     args, _lister_tifs_ombrages(dossier_ville, tifs_run),
-                    dossier_ville, nom_z, bbox, decoupe_sortie=False)
+                    dossier_ville, nom_z, bbox, decoupe_sortie=False,
+                    tampon_coin_max_m=MARGE_HALO_M)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
+
+
+def _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon):
+    """Chemins des dossiers voisins (jusqu'à 8, diagonales incluses) d'un
+    morceau de découpage à priori, filtrés aux indices valides de la grille.
+    N'exige PAS que le dossier existe déjà (le voisin peut ne pas avoir
+    encore passé l'étape ombrage) — à l'appelant de vérifier le contenu."""
+    voisins = []
+    for di in (-1, 0, 1):
+        for dj in (-1, 0, 1):
+            if di == 0 and dj == 0:
+                continue
+            vi, vj = i_lat + di, i_lon + dj
+            if 0 <= vi < n_lat and 0 <= vj < n_lon:
+                voisins.append(racine / f"{nom_zone_base}_{vi+1:03d}x{vj+1:03d}")
+    return voisins
+
+
+def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
+    """
+    Étape 1/2 du découpage à priori LiDAR SANS --block (VRT-voisins glissant,
+    cf. _run_split_priori_lidar_glissant) : téléchargement + calcul
+    d'ombrage SEUL, sur la bbox EXACTE de ce morceau. Pas de marge de
+    téléchargement supplémentaire ici : le contexte de bord viendra du VRT
+    avec les TIF d'ombrage réels des voisins à l'étape 2 (_tuilage), pas
+    d'un débord de dalles payé par CE morceau (cf. --block : seul mode où
+    la marge fixe de _traiter_bbox_lidar se justifie, aucun voisin
+    accessible entre machines séparées).
+
+    Les dalles brutes sont nettoyées ICI (sous-scope manifeste dédié), tout
+    de suite après le calcul, indépendamment des voisins : jamais réutilisées
+    par personne d'autre, contrairement au TIF d'ombrage produit (nettoyé
+    plus tard par l'appelant, une fois les voisins passés à l'étape 2 —
+    cf. _purger_rangee dans _run_split_priori_lidar_glissant).
+    """
+    bx1, by1, bx2, by2 = bbox_natif
+    _bbox_orig = args.zone_bbox
+    _nom_orig  = args.zone_nom
+    args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
+    args.zone_nom  = nom_z
+    try:
+        bbox = (bx1, by1, bx2, by2)
+        racine = (Path(args.dossier).resolve() if args.dossier
+                  else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
+        dossier_ville = racine / nom_z
+        dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
+        dossier_ville.mkdir(parents=True, exist_ok=True)
+        dossier_dalles.mkdir(parents=True, exist_ok=True)
+
+        cle_dl = cle + "_dl"
+        with _contexte_manifeste(manifeste, cle_dl):
+            _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+            _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, *bbox)
+            bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
+            cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
+            try:
+                _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
+            except Exception as _e_disc:
+                raise RuntimeError(
+                    f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
+                    " - rerun to resume this chunk") from _e_disc
+            if _d is None:
+                raise RuntimeError(
+                    "tile discovery unavailable (network/endpoint)"
+                    " - rerun to resume this chunk")
+            dalles_dict = _d
+            if args.telechargement:
+                _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
+
+        if args.ombrages:
+            choix, _spec_i = _resoudre_choix_ombrages(args)
+            if choix or _spec_i:
+                with _contexte_manifeste(manifeste, cle):
+                    dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
+                                                          dossier_ville, bbox)
+                    elev = (args.ombrages_elevation if args.ombrages_elevation is not None
+                            else ELEVATION_SOLEIL)
+                    generer_ombrages(dalles_ombrages, dossier_ville, choix,
+                                     elevation_soleil=elev, nom_zone=nom_z,
+                                     ecraser_ombrages=args.ombrages_ecraser,
+                                     use_sweep=args.sweep_horizon,
+                                     svf_gamma=args.svf_gamma,
+                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist,
+                                     bbox_natif=tuple(bbox),
+                                     instances=_spec_i or None)
+
+        if args.telechargement and getattr(args, "nettoyage", False):
+            if getattr(args, "nettoyage_garder_dalles", False):
+                _keep = [_dossier_dalles_actif(args)]
+                _cloud_cache = getattr(args, "_cloud_cache_dir", None)
+                if _cloud_cache is not None:
+                    _keep.append(_cloud_cache)
+            else:
+                _keep = None
+            _supprimer_fichiers(manifeste.fichiers_morceau(cle_dl), _keep)
+    finally:
+        args.zone_bbox = _bbox_orig
+        args.zone_nom  = _nom_orig
+
+
+def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
+                                i_lat, i_lon, n_lat, n_lon):
+    """
+    Étape 2/2 (cf. _traiter_bbox_lidar_ombrage) : pour chaque TIF d'ombrage
+    de CE morceau, fusionne en VRT avec le même TIF de ses voisins DÉJÀ
+    passés par l'étape 1 (jusqu'à 8, diagonales incluses — le coin partagé
+    par 4 blocs a besoin du voisin diagonal, pas seulement N/S/E/O), puis
+    warp + tuile depuis ce VRT. generer_mbtiles_lidar CALCULE l'ampleur du
+    tampon de coin nécessaire (pas une constante) ; ici on ne borne que le
+    MAXIMUM sûr, généreux puisque de vrais voisins couvrent déjà largement
+    plus qu'un simple coin (contrairement à la marge de téléchargement
+    fixe de l'étape 1 / --block).
+    """
+    bx1, by1, bx2, by2 = bbox_natif
+    TAMPON_MAX_M = min(bx2 - bx1, by2 - by1) / 3.0
+    _bbox_orig = args.zone_bbox
+    _nom_orig  = args.zone_nom
+    args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
+    args.zone_nom  = nom_z
+    try:
+        if not (args.mbtiles or args.rmap or args.sqlitedb):
+            return
+        bbox = (bx1, by1, bx2, by2)
+        racine = (Path(args.dossier).resolve() if args.dossier
+                  else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
+        dossier_ville = racine / nom_z
+        voisins = _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon)
+
+        cle_t = cle + "_t"
+        with _contexte_manifeste(manifeste, cle_t):
+            for tif in _lister_tifs_ombrages(dossier_ville, None):
+                stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
+                suffix = stem[len(nom_z) + 1:] if stem.startswith(nom_z + "_") else stem
+                nom_base = f"{nom_z}_{suffix}"
+
+                _cogs = [tif]
+                for vd in voisins:
+                    vf = vd / f"{vd.name}_{suffix}.tif"
+                    if vf.exists():
+                        _cogs.append(vf)
+
+                if len(_cogs) > 1:
+                    import rasterio as _rio_vres
+                    with _rio_vres.open(str(tif)) as _ds_res:
+                        _res = _ds_res.transform.a
+                    vrt_path = dossier_ville / f"_voisins_{suffix}.vrt"
+                    _build_vrt_xml(_cogs, vrt_path, _res)
+                    _creer_fichier(vrt_path)
+                    tif_source = vrt_path
+                else:
+                    tif_source = tif   # bord de zone sans voisin encore prêt
+
+                mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
+                mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
+                if mbt_neuf:
+                    mbt_out = generer_mbtiles_lidar(
+                        tif_source, dossier_ville, nom_base,
+                        zoom_min=args.zoom_min, zoom_max=args.zoom_max,
+                        format_tuiles=args.formats_image,
+                        jpeg_quality=args.qualite_image,
+                        bbox_natif=bbox, tampon_coin_max_m=TAMPON_MAX_M,
+                        ecraser_tuiles=args.tuiles_ecraser,
+                        tile_workers=args.workers)
+                else:
+                    print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
+                    mbt_out = mbt_path
+                _convertir_formats(mbt_out, args, decoupe_sortie=False, mbtiles_neuf=mbt_neuf)
+
+            if getattr(args, "nettoyage", False):
+                _supprimer_fichiers(manifeste.fichiers_morceau(cle_t), None)
+    finally:
+        args.zone_bbox = _bbox_orig
+        args.zone_nom  = _nom_orig
+
+
+def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
+                                     overwrite_actif, entete_chunk, t_debut):
+    """
+    Boucle à priori LiDAR SANS --block : VRT-voisins glissant par rangée
+    (cf. discussion "--block, mode rare, ne doit pas justifier un mouton à
+    5 pattes pour le cas majoritaire" — la marge fixe de _traiter_bbox_lidar
+    reste le choix pour --block, seul mode sans disque partagé entre
+    voisins). Remplace _run_split_priori (squelette partagé LiDAR/WMTS à 1
+    étape, toujours utilisé par WMTS et par --block) pour ce cas précis :
+    ici il faut 2 étapes décalées d'une rangée — calcul d'ombrage rangée R,
+    PUIS warp+tuilage rangée R-1 (qui a alors ses 3 rangées de voisines
+    calculées : R-2, R-1, R). Une rangée n'est purgée qu'une fois son
+    dernier consommateur (le tuilage de la rangée suivante) terminé : au
+    pic, 3 rangées de TIF d'ombrage coexistent, jamais le département
+    entier (les dalles brutes, elles, restent purgées immédiatement après
+    leur propre calcul dans _traiter_bbox_lidar_ombrage — c'est leur volume
+    qui domine, pas celui des TIF calculés).
+    """
+    manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
+    if manifeste.verifier_signature(_signature_config(args, sous_zones)):
+        print("  ⚠ Output config changed since last run "
+              "(bbox/split/zoom/format/shading): reprocessing all chunks.")
+        if hasattr(args, "tuiles_ecraser"):
+            args.tuiles_ecraser = True
+        if hasattr(args, "ombrages_ecraser"):
+            args.ombrages_ecraser = True
+        overwrite_actif = True
+
+    n_total = len(sous_zones)
+    n_lat = max(z[0] for z in sous_zones) + 1
+    n_lon = max(z[1] for z in sous_zones) + 1
+    rangees = [[] for _ in range(n_lat)]
+    for sz in sous_zones:
+        rangees[sz[0]].append(sz)
+    for r in rangees:
+        r.sort(key=lambda z: z[1])
+
+    print(f"\n  ══ A-priori splitting (VRT voisins glissant): {n_lat} rangée(s), "
+          f"{n_total} chunk(s) ══")
+    print(f"  Manifeste : {manifeste.path}")
+
+    racine = (Path(args.dossier).resolve() if args.dossier
+              else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
+
+    def _cle(sz):
+        return f"{sz[0]+1:03d}x{sz[1]+1:03d}"
+
+    def _etape_ombrage(sz):
+        cle = _cle(sz)
+        if manifeste.deja_traite(cle) and not overwrite_actif:
+            return
+        nom_z = f"{nom_zone}_{cle}"
+        _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
+                      cle, 0, n_total)
+        print(f"\n  ── Ombrage {cle}  {nom_z} ──")
+        print(f"     {entete_chunk(tuple(sz[2:]))}")
+        manifeste.debut_morceau(cle, nom_z)
+        t0 = time.time()
+        _traiter_bbox_lidar_ombrage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle)
+        manifeste.fin_morceau(cle, int(time.time() - t0))
+        print(f"  [{cle}] ombrage done in {_hms(int(time.time() - t0))}")
+
+    def _etape_tuilage(sz):
+        cle = _cle(sz)
+        cle_t = cle + "_t"
+        if manifeste.deja_traite(cle_t) and not overwrite_actif:
+            return
+        nom_z = f"{nom_zone}_{cle}"
+        manifeste.debut_morceau(cle_t, nom_z)
+        t0 = time.time()
+        _traiter_bbox_lidar_tuilage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,
+                                    sz[0], sz[1], n_lat, n_lon)
+        if _chunk_livrable_complet(racine / nom_z, args):
+            manifeste.fin_morceau(cle_t, int(time.time() - t0))
+            print(f"  [{cle}] tuilage done in {_hms(int(time.time() - t0))}")
+        else:
+            print(f"  [{cle}] ⚠ tuilage INCOMPLETE - not marked done, rerun to complete")
+
+    def _purger_rangee(r):
+        if not getattr(args, "nettoyage", False):
+            return
+        for sz in rangees[r]:
+            _supprimer_fichiers(manifeste.fichiers_morceau(_cle(sz)), None)
+
+    for r in range(n_lat):
+        for sz in rangees[r]:
+            _etape_ombrage(sz)
+        if r >= 1:
+            for sz in rangees[r - 1]:
+                _etape_tuilage(sz)
+            if r >= 2:
+                _purger_rangee(r - 2)
+    for sz in rangees[n_lat - 1]:
+        _etape_tuilage(sz)
+    if n_lat >= 2:
+        _purger_rangee(n_lat - 2)
+    _purger_rangee(n_lat - 1)
+
+    elapsed = int(time.time() - t_debut)
+    print(f"\n  ══ A-priori splitting done: {n_total} chunks ══")
+    print(f"  Total time: {_hms(elapsed)}")
+    _planche_depuis_dossier(racine_pr, args, nom_zone)
 
 
 def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img_fmt, fmt_ext,
