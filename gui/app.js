@@ -41,7 +41,9 @@ const I18N = {
     "sec.remote":"Exécution", "remote.where":"Où",
     "remote.local":"Cet ordinateur", "remote.cli":"Calcul distant sans bureau (VM)", "remote.gui":"Bureau distant (VM)",
     "remote.host":"Hôte", "remote.identity":"Clé SSH", "remote.session":"Session",
-    "remote.restart":"Relancer depuis zéro", "tip.remoterestart":"Archive l'état existant de cette session (si présent) et redémarre le calcul depuis zéro, au lieu de se rebrancher sur le run en cours ou déjà terminé.",
+    "remote.mode.label":"Reprise", "remote.mode.reconnect":"Se rebrancher",
+    "remote.mode.resume":"Reprendre (garde le cache)", "remote.mode.restart":"Relancer depuis zéro",
+    "tip.remotemode":"Que faire si la session existe déjà : « Se rebrancher » surveille le run en cours ou déjà terminé sans rien relancer ; « Reprendre » relance le même calcul dans la session en gardant les dalles déjà en cache (ne retélécharge que celles manquantes ou en erreur) ; « Relancer depuis zéro » archive l'état existant puis redémarre tout le calcul, cache compris.",
     "remote.block":"Bloc", "tip.remoteblock":"Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.",
     "remote.hint.cli":"Lance ce calcul dans tmux sur la VM et resynchronise progressivement les résultats (log distant inclus). « Arrêter » ne coupe que la surveillance locale, pas le calcul distant.",
     "remote.hint.gui":"Installe un bureau XFCE + RDP sur la VM puis ouvre le client RDP. Les autres paramètres de ce formulaire sont ignorés.",
@@ -195,7 +197,9 @@ const I18N = {
     "sec.remote":"Execution", "remote.where":"Where",
     "remote.local":"This computer", "remote.cli":"Headless remote processing (VM)", "remote.gui":"Remote desktop (VM)",
     "remote.host":"Host", "remote.identity":"SSH key", "remote.session":"Session",
-    "remote.restart":"Restart from scratch", "tip.remoterestart":"Archives the existing state of this session (if any) and restarts the job from scratch, instead of reattaching to the run in progress or already finished.",
+    "remote.mode.label":"Resume", "remote.mode.reconnect":"Reattach only",
+    "remote.mode.resume":"Resume (keep cache)", "remote.mode.restart":"Restart from scratch",
+    "tip.remotemode":"What to do if the session already exists: “Reattach only” just monitors the run in progress or already finished, without relaunching anything; “Resume” reruns the same job in the same session keeping already-cached tiles (only re-downloads missing or failed ones); “Restart from scratch” archives the existing state then restarts the whole job, cache included.",
     "remote.block":"Block", "tip.remoteblock":"Splits a geographic area across several VMs: each machine processes a different block (LiDAR only). Leave empty to process the whole area on this VM.",
     "remote.hint.cli":"Runs this job in tmux on the VM and progressively syncs results back (remote log included). Stop only cancels local monitoring, not the remote job.",
     "remote.hint.gui":"Installs an XFCE + RDP desktop on the VM then opens the RDP client. The rest of this form is ignored.",
@@ -1815,9 +1819,10 @@ function getConfig() {
     remote_host:     g('f-remote-host')?.value.trim(),
     remote_identity: g('f-remote-identity')?.value.trim(),
     remote_session:  g('f-remote-session')?.value.trim(),
-    // Archive l'état existant de la session et redémarre depuis zéro au
-    // lieu de se rebrancher dessus (--restart côté rlidar2map_CLI).
-    remote_restart:  g('f-remote-restart')?.checked,
+    // "" = se rebrancher (défaut), "resume" = reprendre en place (--resume,
+    // garde le cache), "restart" = archiver puis repartir de zéro (--restart)
+    // côté rlidar2map_CLI ; cf. _wrap_remote_cmd côté Python.
+    remote_mode:     g('f-remote-mode')?.value || '',
     // Sharding multi-VM (--block i/M) : combiné en une seule chaîne ici, les
     // deux champs numériques ne sont qu'une commodité de saisie côté GUI.
     remote_block: (() => {
@@ -2028,7 +2033,7 @@ function loadConfig(cfg) {
   s('f-remote-host',     cfg.remote_host);
   s('f-remote-identity', cfg.remote_identity);
   s('f-remote-session',  cfg.remote_session);
-  s('f-remote-restart',  cfg.remote_restart);
+  s('f-remote-mode',     cfg.remote_mode);
   if (cfg.remote_block && cfg.remote_block.includes('/')) {
     const [bi, bm] = cfg.remote_block.split('/');
     s('f-remote-block-i', bi);

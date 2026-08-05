@@ -18,7 +18,16 @@ vers le PC au fur et à mesure.
   Ctrl-C arrête uniquement le contrôleur local, jamais le tmux ni lidar2map.
   Relancer la même commande avec la même VM et --session reprend la surveillance
   et la synchronisation sans démarrer un second calcul. Une session terminée
-  n'est pas relancée implicitement : utiliser --restart ou un nouveau nom.
+  n'est pas relancée implicitement : utiliser --resume, --restart, ou un
+  nouveau nom.
+
+  --resume relance les MÊMES arguments lidar2map dans la session terminée SANS
+  toucher à ses résultats : les dalles déjà téléchargées restent en cache
+  (seules celles manquantes ou en erreur sont retéléchargées), utile après un
+  échec réseau ponctuel (cf. invariant "jamais de trou de couverture"). Ne
+  s'applique qu'à une session terminée (échec ou succès), jamais active.
+  --restart, lui, ARCHIVE l'état existant (résultats compris) puis redémarre
+  tout depuis zéro : à réserver à un vrai changement de paramètres.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   LANCEMENT ET SYNCHRONISATION
@@ -150,6 +159,21 @@ vers le PC au fur et à mesure.
                                  --ombrages lrm --shading lrm:sigma=3 \
                                  --formats-fichier mbtiles
 
+  --resume                   [OPTIONNEL, défaut : désactivé]
+                             Relance la session terminée SANS archiver ses
+                             résultats : les dalles déjà en cache sont gardées,
+                             seules celles manquantes ou en erreur sont
+                             retéléchargées. Prérequis : doc-gareoult-lrm3 doit
+                             être terminé (échec ou succès), jamais actif.
+                             Ex. : reprendre après une erreur réseau ponctuelle,
+                             mêmes arguments que le lancement d'origine :
+                             python tools/rlidar2map_CLI.py --resume \
+                                 -s doc-gareoult-lrm3 root@192.0.2.10 -- \
+                                 --ignlidar --zone-ville gareoult --zone-width 5 \
+                                 --zone-nom doc_gareoult_lrm3 --telechargement \
+                                 --ombrages lrm --shading lrm:sigma=3 \
+                                 --formats-fichier mbtiles
+
   --purge-remote             [OPTIONNEL, défaut : désactivé]
                              Synchronise puis purge les données du run terminé.
                              Prérequis : doc-gareoult-lrm3 doit être terminé.
@@ -180,14 +204,15 @@ vers le PC au fur et à mesure.
                              Sépare les options du contrôleur des arguments
                              transmis tels quels à lidar2map. Ces arguments
                              sont obligatoires pour créer un run absent ou avec
-                             --restart, et doivent être omis pour une reprise ou
-                             --purge-remote.
+                             --restart/--resume, et doivent être omis pour une
+                             reprise de surveillance ou --purge-remote.
                              Ex. : la commande de référence sépare
                              root@192.0.2.10 de --ignlidar avec « -- ».
 
-  Contraintes : --source et --bundle sont mutuellement exclusifs ; --restart
-  et --purge-remote aussi. --detach et --once ne peuvent pas être combinés,
-  et aucun des deux n'est accepté avec --purge-remote.
+  Contraintes : --source et --bundle sont mutuellement exclusifs ; --restart,
+  --resume et --purge-remote aussi (un seul des trois à la fois). --detach et
+  --once ne peuvent pas être combinés, et aucun des deux n'est accepté avec
+  --purge-remote.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   PURGE ET ARCHIVAGE
@@ -197,7 +222,8 @@ vers le PC au fur et à mesure.
   puis supprime uniquement l'état, le journal et les résultats de ce run sur la
   VM. Les dossiers partagés cache/, production/, le dépôt, le venv et le
   runtime ne sont jamais supprimés. --restart archive l'état terminé avant de
-  lancer un nouveau run sous le même nom de session.
+  lancer un nouveau run sous le même nom de session ; --resume relance dans le
+  MÊME run sans rien archiver (dalles déjà en cache conservées).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   EXEMPLES
@@ -425,7 +451,8 @@ MODE="${1:-}"
 SESSION="${2:-}"
 NEED_RSYNC="${3:-0}"
 RESTART="${4:-0}"
-shift 4
+RESUME="${5:-0}"
+shift 5
 LIDAR_ARGS=("$@")
 
 if [ "$MODE" != "source" ] && [ "$MODE" != "bundle" ]; then
@@ -521,7 +548,7 @@ if command -v tmux >/dev/null 2>&1 && tmux has-session -t "=$SESSION" 2>/dev/nul
   TMUX_ALIVE=1
 fi
 if [ "$TMUX_ALIVE" -eq 1 ]; then
-  if [ -d "$RUN_DIR" ] && [ "$RESTART" != "1" ]; then
+  if [ -d "$RUN_DIR" ] && [ "$RESTART" != "1" ] && [ "$RESUME" != "1" ]; then
     echo "Managed run '$SESSION' was started concurrently; attaching to it."
     exit 0
   fi
@@ -530,34 +557,58 @@ if [ "$TMUX_ALIVE" -eq 1 ]; then
 fi
 
 if [ -d "$RUN_DIR" ]; then
-  if [ "$RESTART" != "1" ]; then
+  if [ "$RESTART" = "1" ]; then
+    mkdir -p -- "$ARCHIVE_DIR"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    archive_target="$ARCHIVE_DIR/${SESSION}-${stamp}"
+    suffix=0
+    while [ -e "$archive_target" ]; do
+      suffix=$((suffix + 1))
+      archive_target="$ARCHIVE_DIR/${SESSION}-${stamp}-${suffix}"
+    done
+    mv -- "$RUN_DIR" "$archive_target"
+    echo "Archived previous run in $archive_target"
+  elif [ "$RESUME" = "1" ]; then
+    # Reprise en place : contrairement à --restart, RUN_DIR (donc
+    # results/, avec les dalles déjà téléchargées) n'est PAS déplacé.
+    # Seule la comptabilité du run est réinitialisée ; le bootstrap
+    # neuf ci-dessous est sauté (cf. `if [ ! -d "$RUN_DIR" ]`) puisque
+    # RUN_DIR existe encore. lidar2map.py retélécharge alors uniquement
+    # les dalles manquantes/en erreur (cache par dalle + manifeste).
+    echo "Resuming '$SESSION' in place (cached tiles kept)."
+    mkdir -p -- "$RUN_DIR/results"
+    rm -f -- "$RUN_DIR/exit_code" "$RUN_DIR/app_exit_code" \
+            "$RUN_DIR/tee_exit_code" "$RUN_DIR/finished_at"
+    : > "$RUN_DIR/reason"
+    # run_id INCHANGÉ (contrairement à --restart) : c'est toujours logiquement
+    # le même run qui continue, pas un nouveau. Ça évite qu'un client local
+    # (--remote-cli) resynchronise les dalles déjà en cache dans un DEUXIÈME
+    # dossier local (vu que local_run_dir() dérive le chemin du run_id), et ça
+    # reste cohérent avec la détection de changement de run côté sync/purge
+    # (expected_run_id, cf. REMOTE_FILE_SYNC_HELPER) : rien n'a changé d'identité.
+    RUN_ID="$(cat -- "$RUN_DIR/run_id")"
+    write_value "$RUN_DIR/bootstrap_pid" "$$"
+    write_value "$RUN_DIR/status" "provisioning"
+  else
     echo "Run '$SESSION' already has persistent state; it will not be relaunched."
     exit 0
   fi
-  mkdir -p -- "$ARCHIVE_DIR"
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  archive_target="$ARCHIVE_DIR/${SESSION}-${stamp}"
-  suffix=0
-  while [ -e "$archive_target" ]; do
-    suffix=$((suffix + 1))
-    archive_target="$ARCHIVE_DIR/${SESSION}-${stamp}-${suffix}"
-  done
-  mv -- "$RUN_DIR" "$archive_target"
-  echo "Archived previous run in $archive_target"
 fi
 
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-INIT_DIR="$BASE/.init-${SESSION}-${RUN_ID}"
-mkdir -- "$INIT_DIR"
-mkdir -- "$INIT_DIR/results"
-write_value "$INIT_DIR/run_id" "$RUN_ID"
-write_value "$INIT_DIR/mode" "$MODE"
-write_value "$INIT_DIR/created_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-write_value "$INIT_DIR/bootstrap_pid" "$$"
-: > "$INIT_DIR/reason"
-write_value "$INIT_DIR/status" "provisioning"
-mv -- "$INIT_DIR" "$RUN_DIR"
-INIT_DIR=""
+if [ ! -d "$RUN_DIR" ]; then
+  RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  INIT_DIR="$BASE/.init-${SESSION}-${RUN_ID}"
+  mkdir -- "$INIT_DIR"
+  mkdir -- "$INIT_DIR/results"
+  write_value "$INIT_DIR/run_id" "$RUN_ID"
+  write_value "$INIT_DIR/mode" "$MODE"
+  write_value "$INIT_DIR/created_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  write_value "$INIT_DIR/bootstrap_pid" "$$"
+  : > "$INIT_DIR/reason"
+  write_value "$INIT_DIR/status" "provisioning"
+  mv -- "$INIT_DIR" "$RUN_DIR"
+  INIT_DIR=""
+fi
 
 LOCK_HELD=0
 HANDOFF=0
@@ -1146,6 +1197,7 @@ class Options:
     identity: Optional[Path]
     reset_host_key: bool
     restart: bool
+    resume: bool
     purge_remote: bool
     detach: bool
     once: bool
@@ -1270,6 +1322,14 @@ def _parser() -> argparse.ArgumentParser:
         help="optionnel, désactivé par défaut ; archive puis redémarre un run terminé",
     )
     lifecycle.add_argument(
+        "--resume", action="store_true",
+        help=(
+            "optionnel, désactivé par défaut ; relance un run terminé dans la "
+            "même session SANS archiver ses résultats (dalles déjà en cache "
+            "conservées, seules celles manquantes/en erreur sont retéléchargées)"
+        ),
+    )
+    lifecycle.add_argument(
         "--purge-remote", action="store_true",
         help=(
             "optionnel, désactivé par défaut ; pour un run terminé, synchronise "
@@ -1364,6 +1424,7 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
         identity=ns.identity,
         reset_host_key=ns.reset_host_key,
         restart=ns.restart,
+        resume=ns.resume,
         purge_remote=ns.purge_remote,
         detach=ns.detach,
         once=ns.once,
@@ -1597,6 +1658,7 @@ class VmController:
             self.options.session,
             "1" if need_rsync else "0",
             "1" if self.options.restart else "0",
+            "1" if self.options.resume else "0",
         ] + self.options.lidar_args
         completed = subprocess.run(
             self._ssh_command(remote_args),
@@ -2797,6 +2859,7 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
     if (
         options.purge_remote
         or options.restart
+        or options.resume
         or (not state.exists and bool(options.lidar_args))
     ):
         pending = controller.load_remote_purge_pending()
@@ -2925,6 +2988,20 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
                     "la session est encore active ; utilisez un autre nom ou attendez sa fin"
                 )
             print("==> Archivage puis redémarrage de '{}'.".format(options.session))
+            controller.launch()
+            state = controller.query_state()
+        elif options.resume:
+            if not options.lidar_args:
+                raise RunOnVmError("--resume exige les arguments lidar2map")
+            if state.status in ACTIVE_STATES and state.tmux:
+                raise RunOnVmError(
+                    "la session est encore active ; utilisez --restart, un "
+                    "autre nom, ou attendez sa fin"
+                )
+            print(
+                "==> Reprise de '{}' en place (dalles déjà en cache "
+                "conservées).".format(options.session)
+            )
             controller.launch()
             state = controller.query_state()
         else:
