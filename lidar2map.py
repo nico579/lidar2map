@@ -2303,6 +2303,11 @@ class Manifeste:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._data = self._charger()
+        # Verrou : le préchargement glissant (_PrefetchDalles) écrit depuis un
+        # thread de fond pendant que le thread principal calcule l'ombrage du
+        # morceau courant -> deux threads mutent self._data en parallèle sans
+        # ça (aucun autre verrou n'existe dans le pipeline aujourd'hui).
+        self._lock = _threading.Lock()
 
     def _charger(self):
         if self.path.exists():
@@ -2323,7 +2328,8 @@ class Manifeste:
         return {"morceaux": {}, "fichiers": {}}
 
     def deja_traite(self, cle: str) -> bool:
-        return self._data["morceaux"].get(cle, {}).get("termine", False)
+        with self._lock:
+            return self._data["morceaux"].get(cle, {}).get("termine", False)
 
     def verifier_signature(self, sig: str) -> bool:
         """Compare la signature de config du run courant à celle stockée (R1#4).
@@ -2334,56 +2340,62 @@ class Manifeste:
         Sans ce garde, changer --split-width/--zoom-max/--image-format/--shading
         en gardant le même projet sautait les chunks calculés sous l'ancienne
         config = sortie fausse en silence."""
-        ancienne = self._data.get("config_sig")
-        self._data["config_sig"] = sig
-        if ancienne is None or ancienne == sig:
-            if ancienne is None:      # première pose : mémoriser sans reset
-                self._sauver()
-            return False
-        # Config changée : la reprise porte sur une autre sortie → repartir clean.
-        self._data["morceaux"] = {}
-        self._data["fichiers"] = {}
-        self._sauver()
-        return True
+        with self._lock:
+            ancienne = self._data.get("config_sig")
+            self._data["config_sig"] = sig
+            if ancienne is None or ancienne == sig:
+                if ancienne is None:      # première pose : mémoriser sans reset
+                    self._sauver()
+                return False
+            # Config changée : la reprise porte sur une autre sortie → repartir clean.
+            self._data["morceaux"] = {}
+            self._data["fichiers"] = {}
+            self._sauver()
+            return True
 
     def debut_morceau(self, cle: str, nom: str):
         # termine=False remis EXPLICITEMENT : une relance avec écrasement qui
         # démarre un morceau puis échoue avant fin_morceau laissait sinon
         # l'ancien termine=True actif -> le morceau (re)cassé passait pour fait.
-        self._data["morceaux"].setdefault(cle, {}).update(
-            {"debut": time.strftime("%Y-%m-%dT%H:%M:%S"), "nom": nom,
-             "termine": False})
-        self._sauver()
+        with self._lock:
+            self._data["morceaux"].setdefault(cle, {}).update(
+                {"debut": time.strftime("%Y-%m-%dT%H:%M:%S"), "nom": nom,
+                 "termine": False})
+            self._sauver()
 
     def fin_morceau(self, cle: str, duree_s: int):
-        self._data["morceaux"][cle].update({"termine": True, "duree_s": duree_s})
-        self._sauver()
+        with self._lock:
+            self._data["morceaux"][cle].update({"termine": True, "duree_s": duree_s})
+            self._sauver()
 
     def enregistrer_fichier(self, path, cle: str):
         p = str(Path(path).resolve())
-        lst = self._data["fichiers"].setdefault(cle, [])
-        if p not in lst:
-            lst.append(p)
-        self._sauver()
+        with self._lock:
+            lst = self._data["fichiers"].setdefault(cle, [])
+            if p not in lst:
+                lst.append(p)
+            self._sauver()
 
     def enregistrer_fichiers(self, paths, cle: str):
         """Version en LOT : une seule sauvegarde pour N fichiers. L'unitaire
         réécrit tout le JSON + fsync PAR fichier — O(n²) octets sur un chunk
         de milliers de dalles (dizaines de secondes perdues par chunk)."""
-        lst = self._data["fichiers"].setdefault(cle, [])
-        vus = set(lst)
-        ajout = False
-        for path in paths:
-            p = str(Path(path).resolve())
-            if p not in vus:
-                lst.append(p)
-                vus.add(p)
-                ajout = True
-        if ajout:
-            self._sauver()
+        with self._lock:
+            lst = self._data["fichiers"].setdefault(cle, [])
+            vus = set(lst)
+            ajout = False
+            for path in paths:
+                p = str(Path(path).resolve())
+                if p not in vus:
+                    lst.append(p)
+                    vus.add(p)
+                    ajout = True
+            if ajout:
+                self._sauver()
 
     def fichiers_morceau(self, cle: str) -> list:
-        return list(self._data["fichiers"].get(cle, []))
+        with self._lock:
+            return list(self._data["fichiers"].get(cle, []))
 
     def eta_global(self, n_total: int):
         """ETA *grossier* du run, à partir des duree_s déjà stockées par
@@ -2394,8 +2406,9 @@ class Manifeste:
         (chunk en mer ≈ 0, chunk en relief dense très cher), une moyenne plate
         donnerait un ETA sauvage en début de run. La médiane absorbe ces
         outliers. Reste un ordre de grandeur — étiqueté 'coarse' à l'affichage."""
-        durees = sorted(m["duree_s"] for m in self._data["morceaux"].values()
-                        if m.get("termine") and isinstance(m.get("duree_s"), (int, float)))
+        with self._lock:
+            durees = sorted(m["duree_s"] for m in self._data["morceaux"].values()
+                            if m.get("termine") and isinstance(m.get("duree_s"), (int, float)))
         if not durees:
             return 0, None
         n = len(durees)
@@ -2584,6 +2597,82 @@ def _garde_disque(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int):
         print(f"  Stopping cleanly before chunk {cle}: {nb_ok}/{n_total} chunks done. "
               f"Free space and relaunch to resume.")
         sys.exit(EXIT_DISK_LOW)
+
+
+class _PrefetchDalles:
+    """Précharge en tâche de fond la découverte+download des dalles du
+    morceau SUIVANT pendant que l'ombrage (LRM/SVF/opos) du morceau courant
+    tourne (_run_split_priori_lidar_glissant) — recouvre le download (réseau,
+    throttle IGN) avec le calcul (CPU), qui peut être du même ordre de
+    grandeur que le download sur un shading lourd (SVF sweep, opos).
+
+    Profondeur 1 strictement : jamais plus d'un morceau d'avance (lancer()
+    est un no-op si un préchargement est déjà en vol). Best-effort : toute
+    erreur réseau/disque dans le thread de fond est avalée avec un message,
+    le morceau se retéléchargera normalement à son tour (recuperer() renvoie
+    None, chemin identique à si aucun préchargement n'avait été tenté).
+
+    N'appelle jamais debut_morceau : le préchargement est invisible à la
+    machine à états de reprise (Manifeste), seul le thread principal marque
+    un morceau comme démarré/fini. Un crash pendant un préchargement laisse
+    juste des dalles orphelines en cache, retrouvées comme cache-hit par le
+    téléchargement normal au tour de ce morceau (aucune perte, aucune
+    incohérence de reprise)."""
+
+    def __init__(self):
+        self._thread = None
+        self._cle = None
+        self._resultat = None
+
+    def lancer(self, args, manifeste, racine_pr, nom_zone, sz, cle):
+        if self._thread is not None:
+            return  # profondeur 1 : un préchargement déjà en vol
+        seuil = getattr(args, "min_free_gb", 0.0) or 0.0
+        if seuil > 0 and _espace_libre_go(racine_pr) < 2 * seuil:
+            # Marge insuffisante pour tenir DEUX morceaux à la fois sur le
+            # disque (le courant, pas encore nettoyé, + celui-ci en approche).
+            # Dégradation silencieuse vers le comportement synchrone existant.
+            return
+        nom_z = f"{nom_zone}_{cle}"
+        bbox = tuple(sz[2:])
+
+        def _travail():
+            try:
+                # nom_zone sert de nom_zone_base : même convention que
+                # l'appel synchrone (_etape_ombrage -> _traiter_bbox_lidar_ombrage).
+                self._resultat = _decouvrir_et_telecharger_ombrage(
+                    args, bbox, nom_z, nom_zone, manifeste, cle)
+            except Exception as e:
+                print(f"  ⚠ Prefetch {cle}: {type(e).__name__}: {e} "
+                      f"(ignoré, retéléchargement normal à son tour)")
+                self._resultat = None
+
+        self._cle = cle
+        self._resultat = None
+        self._thread = _threading.Thread(target=_travail, daemon=True)
+        self._thread.start()
+
+    def recuperer(self, cle):
+        """Rejoint le préchargement en vol s'il correspond à cle et renvoie
+        son résultat, sinon None (pas de préchargement en cours pour ce
+        morceau, ou il a échoué) — le chemin synchrone normal prend le relais."""
+        if self._thread is None or self._cle != cle:
+            return None
+        self._thread.join()
+        resultat = self._resultat
+        self._thread = None
+        self._cle = None
+        self._resultat = None
+        return resultat
+
+    def purger(self):
+        """Rejoint un éventuel préchargement résiduel (fin de run) : évite un
+        thread de fond qui traînerait après le retour de la boucle glissante."""
+        if self._thread is not None:
+            self._thread.join()
+            self._thread = None
+            self._cle = None
+            self._resultat = None
 
 # ============================================================
 # CONFIGURATION
@@ -13575,7 +13664,47 @@ def _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon):
     return voisins
 
 
-def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
+def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
+    """Découverte + téléchargement des dalles d'un morceau glissant (cle_dl
+    dédié) — factorisé hors de _traiter_bbox_lidar_ombrage pour être appelable
+    à la fois en synchrone (chemin normal) et en préchargement tâche de fond
+    (_PrefetchDalles) sans dupliquer la logique de découverte/download.
+
+    Retourne (dalles_dict, dossier_dalles, dossier_ville).
+    """
+    bx1, by1, bx2, by2 = bbox_natif
+    bbox = (bx1, by1, bx2, by2)
+    racine = (Path(args.dossier).resolve() if args.dossier
+              else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
+    dossier_ville = racine / nom_z
+    dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
+    dossier_ville.mkdir(parents=True, exist_ok=True)
+    dossier_dalles.mkdir(parents=True, exist_ok=True)
+
+    cle_dl = cle + "_dl"
+    with _contexte_manifeste(manifeste, cle_dl):
+        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, *bbox)
+        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
+        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
+        try:
+            _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
+        except Exception as _e_disc:
+            raise RuntimeError(
+                f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
+                " - rerun to resume this chunk") from _e_disc
+        if _d is None:
+            raise RuntimeError(
+                "tile discovery unavailable (network/endpoint)"
+                " - rerun to resume this chunk")
+        dalles_dict = _d
+        if args.telechargement:
+            _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
+    return dalles_dict, dossier_dalles, dossier_ville
+
+
+def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
+                                dalles_precharge=None, on_download_done=None):
     """
     Étape 1/2 du découpage à priori LiDAR SANS --block (VRT-voisins glissant,
     cf. _run_split_priori_lidar_glissant) : téléchargement + calcul
@@ -13591,6 +13720,12 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
     par personne d'autre, contrairement au TIF d'ombrage produit (nettoyé
     plus tard par l'appelant, une fois les voisins passés à l'étape 2 —
     cf. _purger_rangee dans _run_split_priori_lidar_glissant).
+
+    dalles_precharge : résultat déjà obtenu par _PrefetchDalles pendant le
+    calcul du morceau PRÉCÉDENT (recouvrement download/calcul) — si fourni,
+    saute la découverte+download (déjà faits en tâche de fond). on_download_done
+    est appelé dès que ce morceau a ses dalles en main (fraîches ou préchargées) :
+    signal pour lancer le préchargement du morceau SUIVANT.
     """
     bx1, by1, bx2, by2 = bbox_natif
     _bbox_orig = args.zone_bbox
@@ -13599,32 +13734,13 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
     args.zone_nom  = nom_z
     try:
         bbox = (bx1, by1, bx2, by2)
-        racine = (Path(args.dossier).resolve() if args.dossier
-                  else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
-        dossier_ville = racine / nom_z
-        dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
-        dossier_ville.mkdir(parents=True, exist_ok=True)
-        dossier_dalles.mkdir(parents=True, exist_ok=True)
-
-        cle_dl = cle + "_dl"
-        with _contexte_manifeste(manifeste, cle_dl):
-            _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-            _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, *bbox)
-            bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-            cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
-            try:
-                _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
-            except Exception as _e_disc:
-                raise RuntimeError(
-                    f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
-                    " - rerun to resume this chunk") from _e_disc
-            if _d is None:
-                raise RuntimeError(
-                    "tile discovery unavailable (network/endpoint)"
-                    " - rerun to resume this chunk")
-            dalles_dict = _d
-            if args.telechargement:
-                _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
+        if dalles_precharge is not None:
+            dalles_dict, dossier_dalles, dossier_ville = dalles_precharge
+        else:
+            dalles_dict, dossier_dalles, dossier_ville = _decouvrir_et_telecharger_ombrage(
+                args, bbox, nom_z, nom_zone_base, manifeste, cle)
+        if on_download_done:
+            on_download_done()
 
         if args.ombrages:
             choix, _spec_i = _resoudre_choix_ombrages(args)
@@ -13651,7 +13767,9 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
                     _keep.append(_cloud_cache)
             else:
                 _keep = None
-            _supprimer_fichiers(manifeste.fichiers_morceau(cle_dl), _keep)
+            # cle_dl : même sous-clé que _decouvrir_et_telecharger_ombrage (download,
+            # fraîchement fait ou préchargé en tâche de fond, cf. dalles_precharge).
+            _supprimer_fichiers(manifeste.fichiers_morceau(cle + "_dl"), _keep)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
@@ -13779,6 +13897,26 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
     def _cle(sz):
         return f"{sz[0]+1:03d}x{sz[1]+1:03d}"
 
+    # Ordre EXACT de traitement de l'ombrage (rangée par rangée, gauche à
+    # droite dans chaque rangée) : sert de référence pour savoir quel morceau
+    # précharger pendant le calcul du morceau courant (recouvrement
+    # download/calcul, cf. _PrefetchDalles). Simple aparté au flux existant :
+    # ne change ni l'ordre ni le résultat du traitement, juste QUAND le
+    # download du morceau suivant démarre.
+    flat_ombrage = [sz for r in rangees for sz in r]
+    _idx_ombrage = {_cle(sz): i for i, sz in enumerate(flat_ombrage)}
+    prefetch = _PrefetchDalles()
+
+    def _lancer_prefetch_suivant(cle_courant):
+        idx = _idx_ombrage[cle_courant] + 1
+        if idx >= len(flat_ombrage):
+            return
+        sz_suiv = flat_ombrage[idx]
+        cle_suiv = _cle(sz_suiv)
+        if manifeste.deja_traite(cle_suiv) and not overwrite_actif:
+            return  # déjà fait (reprise) : rien à précharger
+        prefetch.lancer(args, manifeste, racine_pr, nom_zone, sz_suiv, cle_suiv)
+
     def _etape_ombrage(sz):
         cle = _cle(sz)
         if manifeste.deja_traite(cle) and not overwrite_actif:
@@ -13790,7 +13928,10 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
         print(f"     {entete_chunk(tuple(sz[2:]))}")
         manifeste.debut_morceau(cle, nom_z)
         t0 = time.time()
-        _traiter_bbox_lidar_ombrage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle)
+        dalles_precharge = prefetch.recuperer(cle)
+        _traiter_bbox_lidar_ombrage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,
+                                    dalles_precharge=dalles_precharge,
+                                    on_download_done=lambda: _lancer_prefetch_suivant(cle))
         manifeste.fin_morceau(cle, int(time.time() - t0))
         print(f"  [{cle}] ombrage done in {_hms(int(time.time() - t0))}")
 
@@ -13829,6 +13970,7 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
     if n_lat >= 2:
         _purger_rangee(n_lat - 2)
     _purger_rangee(n_lat - 1)
+    prefetch.purger()  # filet défensif : pas de thread de fond résiduel au retour
 
     elapsed = int(time.time() - t_debut)
     print(f"\n  ══ A-priori splitting done: {n_total} chunks ══")
