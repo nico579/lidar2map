@@ -1202,6 +1202,24 @@ with _tf.TemporaryDirectory() as _d:
     check("sans keep-tiles : tout est supprimé (comportement historique)",
           not _dalle.exists() and not _inter.exists())
 
+# R1#5/#9 : noms_garder épargne une dalle de bord réclamée par le morceau
+# SUIVANT (glissant, profondeur 1), indépendamment de tout dossier de cache —
+# vécu en pratique : un chunk a re-téléchargé ~2000 dalles fraîches parce que
+# son voisin venait de les purger juste avant que son propre calcul ne démarre.
+with _tf.TemporaryDirectory() as _d:
+    _dalle_partagee = Path(_d) / "fr_dalle_0949_6245.tif"; _dalle_partagee.write_bytes(b"x")
+    _dalle_propre   = Path(_d) / "fr_dalle_0913_6212.tif"; _dalle_propre.write_bytes(b"x")
+    l2m._supprimer_fichiers([str(_dalle_partagee), str(_dalle_propre)], None,
+                            noms_garder={_dalle_partagee.name})
+    check("noms_garder : dalle de bord épargnée, dalle propre au chunk supprimée",
+          _dalle_partagee.exists() and not _dalle_propre.exists())
+check("wiring R1#5/#9 : lookahead calculé avant le cleanup du morceau glissant",
+      "def _dalles_zone_lookahead(" in _src
+      and "def _noms_dalles_morceau_suivant(" in _src
+      and "noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle)" in _src
+      and "noms_dalles_a_garder=None" in _src   # _traiter_bbox_lidar_ombrage
+      and "noms_garder=noms_dalles_a_garder" in _src)
+
 # Mode LAZ : le nuage .laz vit dans un cache SÉPARÉ du .tif produit. Sans
 # --cleanup-keep-tiles il doit être purgé (le disque saturait sinon : bug 2026-07-27) ;
 # avec, dalles ET nuages sont épargnés → dossiers_garder accepte une LISTE.

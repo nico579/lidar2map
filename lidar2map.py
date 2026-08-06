@@ -2483,7 +2483,7 @@ def _creer_fichiers(paths):
     m.enregistrer_fichiers(paths, cle)
 
 
-def _supprimer_fichiers(fichiers: list, dossiers_garder=None):
+def _supprimer_fichiers(fichiers: list, dossiers_garder=None, noms_garder=None):
     """
     Supprime tous les fichiers créés par un morceau (--nettoyage).
     Cela inclut : dalles LiDAR, nuages .laz cachés, tuiles WMTS, TIF ombrages,
@@ -2493,15 +2493,16 @@ def _supprimer_fichiers(fichiers: list, dossiers_garder=None):
     chaque morceau libère son espace avant que le suivant démarre.
 
     Sont supprimés TOUS les fichiers enregistrés au manifest pour ce morceau via
-    _creer_fichier. ATTENTION (R1#5/#9) : cela inclut désormais une dalle ou un
-    nuage .laz qui PRÉEXISTAIT (run antérieur, ou dalle de bord partagée avec un
-    morceau voisin) — depuis que le cleanup .laz les enregistre pour libérer le
-    disque, la garantie « les fichiers préexistants ne sont pas touchés » ne tient
-    PLUS. Conséquence : un morceau voisin peut re-télécharger une dalle de bord.
-    Compromis assumé (le disque saturé était le vrai problème) ; l'amélioration
-    serait de ne purger une dalle que si plus AUCUN morceau restant n'en a besoin
-    (analyse de dépendances, non faite). --cleanup-keep-tiles épargne le cache
-    entièrement pour contourner.
+    _creer_fichier. ATTENTION (R1#5/#9) : cela inclut une dalle ou un nuage .laz
+    qui PRÉEXISTAIT (run antérieur, ou dalle de bord partagée avec un morceau
+    voisin) — depuis que le cleanup .laz les enregistre pour libérer le disque,
+    la garantie « les fichiers préexistants ne sont pas touchés » ne tient plus
+    en général. Le cas du morceau SUIVANT immédiat (glissant, profondeur 1) est
+    couvert par *noms_garder* (analyse de dépendance minimale, cf.
+    _noms_dalles_morceau_suivant dans _run_split_priori_lidar_glissant) : au-delà
+    de ce voisin direct, un morceau plus lointain peut toujours re-télécharger une
+    dalle de bord. --cleanup-keep-tiles épargne le cache entièrement pour
+    contourner ce cas résiduel.
 
     *dossiers_garder* non nul (--cleanup-keep-tiles) : un dossier OU un itérable
     de dossiers dont les fichiers sont ÉPARGNÉS (le cache de dalles, et en mode
@@ -2509,10 +2510,16 @@ def _supprimer_fichiers(fichiers: list, dossiers_garder=None):
     supprimés normalement. Sert quand une tâche ultérieure de la même file
     retraite la même zone : sans ça elle re-télécharge (ou reconvertit) des
     dalles qu'on vient d'effacer.
+
+    *noms_garder* non nul (R1#5/#9) : ensemble de BASENAMES (indépendant du
+    dossier) épargnés en plus de *dossiers_garder* — sert à protéger une
+    dalle de bord dont le morceau SUIVANT (glissant) a encore besoin, sans
+    épargner tout le cache comme le ferait --cleanup-keep-tiles.
     """
     suppr = 0
     gardees = 0
     dirs_a_verifier = set()
+    _noms_garder = noms_garder or ()
     # Normaliser en liste de racines résolues à épargner (accepte Path unique,
     # itérable, ou None). None dans l'itérable = ignoré (provider sans cache LAZ).
     if dossiers_garder is None:
@@ -2523,6 +2530,9 @@ def _supprimer_fichiers(fichiers: list, dossiers_garder=None):
         _caches = [Path(d).resolve() for d in dossiers_garder if d is not None]
     for chemin in fichiers:
         p = Path(chemin)
+        if p.name in _noms_garder:
+            gardees += 1
+            continue          # réclamé par le morceau suivant → gardé
         if _caches:
             _epargne = False
             for _c in _caches:
@@ -13792,6 +13802,28 @@ def _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon):
     return voisins
 
 
+def _dalles_zone_lookahead(bbox_natif):
+    """Découverte SEULE (pas de téléchargement) des noms de dalles d'une
+    zone — sert à savoir, AVANT le cleanup d'un morceau, quelles dalles le
+    morceau SUIVANT va réclamer (cf. _supprimer_fichiers, R1#5/#9 : une
+    dalle de bord partagée entre deux morceaux adjacents ne doit pas être
+    effacée par le cleanup du premier si le second en a encore besoin —
+    observé en pratique : un chunk peut re-télécharger ~2000 dalles déjà
+    fraîches parce que son voisin venait de les purger). Best-effort :
+    toute erreur renvoie None, jamais fatal (le cleanup se rabat alors sur
+    son comportement d'avant ce garde-fou, pas de régression possible)."""
+    try:
+        bx1, by1, bx2, by2 = bbox_natif
+        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
+        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, bx1, by1, bx2, by2)
+        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
+        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
+        _d = PROVIDER.discover_dalles(bbox_wgs, (bx1, by1, bx2, by2), cache_discover)
+        return set(_d.keys()) if _d else None
+    except Exception:
+        return None
+
+
 def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
     """Découverte + téléchargement des dalles d'un morceau glissant (cle_dl
     dédié) — factorisé hors de _traiter_bbox_lidar_ombrage pour être appelable
@@ -13832,7 +13864,8 @@ def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, ma
 
 
 def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
-                                dalles_precharge=None, on_download_done=None):
+                                dalles_precharge=None, on_download_done=None,
+                                noms_dalles_a_garder=None):
     """
     Étape 1/2 du découpage à priori LiDAR SANS --block (VRT-voisins glissant,
     cf. _run_split_priori_lidar_glissant) : téléchargement + calcul
@@ -13844,10 +13877,12 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
     accessible entre machines séparées).
 
     Les dalles brutes sont nettoyées ICI (sous-scope manifeste dédié), tout
-    de suite après le calcul, indépendamment des voisins : jamais réutilisées
-    par personne d'autre, contrairement au TIF d'ombrage produit (nettoyé
-    plus tard par l'appelant, une fois les voisins passés à l'étape 2 —
-    cf. _purger_rangee dans _run_split_priori_lidar_glissant).
+    de suite après le calcul. noms_dalles_a_garder (R1#5/#9) épargne les
+    dalles de bord dont le morceau SUIVANT a encore besoin (une dalle de
+    bord straddle parfois la frontière de deux morceaux adjacents) ; le
+    reste n'est jamais réutilisé, contrairement au TIF d'ombrage produit
+    (nettoyé plus tard par l'appelant, une fois les voisins passés à
+    l'étape 2 — cf. _purger_rangee dans _run_split_priori_lidar_glissant).
 
     dalles_precharge : résultat déjà obtenu par _PrefetchDalles pendant le
     calcul du morceau PRÉCÉDENT (recouvrement download/calcul) — si fourni,
@@ -13897,7 +13932,8 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
                 _keep = None
             # cle_dl : même sous-clé que _decouvrir_et_telecharger_ombrage (download,
             # fraîchement fait ou préchargé en tâche de fond, cf. dalles_precharge).
-            _supprimer_fichiers(manifeste.fichiers_morceau(cle + "_dl"), _keep)
+            _supprimer_fichiers(manifeste.fichiers_morceau(cle + "_dl"), _keep,
+                               noms_garder=noms_dalles_a_garder)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
@@ -14045,6 +14081,19 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
             return  # déjà fait (reprise) : rien à précharger
         prefetch.lancer(args, manifeste, racine_pr, nom_zone, sz_suiv, cle_suiv)
 
+    def _noms_dalles_morceau_suivant(cle_courant):
+        """Noms des dalles que le morceau SUIVANT va réclamer (R1#5/#9) —
+        appelé juste avant le cleanup du morceau courant pour épargner une
+        dalle de bord partagée. Best-effort (cf. _dalles_zone_lookahead) :
+        ne bloque jamais le cleanup normal."""
+        idx = _idx_ombrage[cle_courant] + 1
+        if idx >= len(flat_ombrage):
+            return None
+        sz_suiv = flat_ombrage[idx]
+        if manifeste.deja_traite(_cle(sz_suiv)) and not overwrite_actif:
+            return None
+        return _dalles_zone_lookahead(tuple(sz_suiv[2:]))
+
     def _etape_ombrage(sz):
         # Filet de sécurité (cf. _run_split_priori) : même process pour tous
         # les chunks d'une rangée, gc.collect() en bordure de chunk contre un
@@ -14064,7 +14113,8 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
         dalles_precharge = prefetch.recuperer(cle)
         _traiter_bbox_lidar_ombrage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,
                                     dalles_precharge=dalles_precharge,
-                                    on_download_done=lambda: _lancer_prefetch_suivant(cle))
+                                    on_download_done=lambda: _lancer_prefetch_suivant(cle),
+                                    noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle))
         manifeste.fin_morceau(cle, int(time.time() - t0))
         print(f"  [{cle}] ombrage done in {_hms(int(time.time() - t0))}")
 
