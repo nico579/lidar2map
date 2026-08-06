@@ -40,7 +40,7 @@ L'outil n'est **pas** destiné à la détection métallique. Le code respecte st
 - **Découpage raster** : `--split` redécoupe après coup un MBTiles déjà généré, en grille (`--cols`/`--rows`) ou en carrés d'une largeur donnée (`--split-width`), avec conversion optionnelle en RMAP ou SQLiteDB par morceau. Utile pour respecter la limite FAT32 de 4 Go, ou répartir un livrable entre plusieurs appareils. Tous les formats possibles en sortie : [Formats de sortie et compatibilité](#formats-de-sortie-et-compatibilité).
 - **Exécutables autonomes multiplateformes** : `lidar2map` tourne sans Python à installer sur Windows, macOS et Linux (GUI ou CLI sur l'ordinateur courant) ; c'est l'usage standard, voir [Installation](#installation).
 - **Auto-bootstrap** (script Python) : installe à la demande ses dépendances et les outils cartographiques nécessaires.
-- **Streaming mémoire** : les grandes zones sont traitées sans charger toutes les données en RAM.
+- **Streaming mémoire** : les grandes zones sont traitées par morceaux, sans charger toute la zone en RAM d'un coup. Le calcul d'ombrage (SVF, openness) reste RAM-intensif par morceau : viser des chunks ≤ 600 km² sur une machine à 32 Go de RAM (~1150 km² à 64 Go) via `--split-width`, sous peine d'être tué pour dépassement mémoire (OOM killer sous Linux, ralentissement via le fichier d'échange sous Windows).
 - **Arrêt et reprise propres** : `Ctrl+C` peut attendre la fin du morceau courant et un manifeste permet de reprendre les morceaux terminés.
 - **Historique résistant aux crashs** : chaque exécution reste visible avec son état et ses journaux.
 - **GUI interactive** : cinq types de traitement, validation, journal en direct, historique et file d'attente.

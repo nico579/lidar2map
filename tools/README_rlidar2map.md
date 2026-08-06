@@ -238,6 +238,25 @@ son propre bloc pour limiter l'espace disque. Des IP distinctes permettent aussi
 de multiplier les téléchargements parallèles lorsque le portail national limite
 le débit par adresse.
 
+### RAM et taille des chunks (--split-cols/--split-rows/--split-width)
+
+Sur un `--lidar` grande zone (département entier), le pic de RAM du calcul
+d'ombrage (SVF, openness) suit approximativement la surface d'un chunk après
+découpage. Constaté : un chunk d'environ 1150 km² (découpage 3×3 sur un
+département) peut atteindre ~31 Go de RSS avec SVF+openness séparés,
+suffisant pour déclencher l'OOM killer sur une VM à 32 Go. Repère empirique,
+pas une formule garantie (le composite VAT/e4MSTP, qui fusionne SVF+openness
+en un seul passage, tolère mieux le même découpage) :
+
+| RAM de la VM | Taille de chunk visée |
+|---|---|
+| 32 Go | ≤ ~600 km² (découpage plus fin, ex. 4×4 pour un département) |
+| 64 Go | ~1150 km² (le 3×3 par défaut passe généralement) |
+
+Un découpage plus fin coûte du temps (passes TMS/VRT/percentiles et coutures
+répétées par chunk en plus), pas seulement de la marge RAM — c'est un
+compromis, pas un réglage à mettre au maximum par défaut.
+
 ## Construction et publication GitHub
 
 `rlidar2map_CLI.py` et `rlidar2map_GUI.py` sont importés par `lidar2map.py`

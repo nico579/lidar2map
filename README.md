@@ -41,7 +41,7 @@ The tool is **not** intended for metal detecting. The code strictly respects the
 - **Raster split**: `--split` re-splits an already-generated MBTiles after the fact, into a grid (`--cols`/`--rows`) or squares of a given width (`--split-width`), with optional per-chunk conversion to RMAP or SQLiteDB. Handy for staying under FAT32's 4 GB limit, or spreading a deliverable across several devices. All possible output formats: [Output formats and compatibility](#output-formats-and-compatibility).
 - **Standalone cross-platform executables**: `lidar2map` runs with no Python to install on Windows, macOS, and Linux (GUI or CLI on the current computer); this is the standard way to use it, see [Installation](#installation).
 - **Automatic bootstrap** (Python script): installs its dependencies and mapping tools on demand.
-- **Memory streaming**: large areas are processed without loading all data into RAM.
+- **Memory streaming**: large areas are processed chunk by chunk, without loading the whole area into RAM at once. Shading (SVF, openness) stays RAM-intensive per chunk: aim for chunks ≤ 600 km² on a 32 GB machine (~1150 km² at 64 GB) via `--split-width`, or risk being killed for exceeding memory (OOM killer on Linux, slowdown via the page file on Windows).
 - **Clean stop and resume**: `Ctrl+C` can wait for the current chunk, and a manifest tracks completed chunks for resumption.
 - **Crash-safe history**: each run remains visible with its state and logs.
 - **Interactive GUI**: five processing types, validation, live log, history, and processing queue.

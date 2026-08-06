@@ -704,6 +704,40 @@ if [ "$need_packages" -eq 1 ]; then
     apt-get install -y -qq "${packages[@]}"
 fi
 
+ensure_swap() {
+  # Cloud Ubuntu images ship with 0 swap. Large shading chunks (SVF,
+  # openness) can exceed RAM and trigger the OOM killer instead of just
+  # slowing down. Size a dedicated swapfile to match RAM as a safety net.
+  local ram_kb swap_kb target_mb swapfile avail_kb need_kb existing_kb
+  ram_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+  swap_kb=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo)
+  if [ "$swap_kb" -ge "$ram_kb" ]; then
+    return
+  fi
+  swapfile="/swapfile_lidar2map"
+  target_mb=$(( (ram_kb + 1023) / 1024 ))
+  existing_kb=0
+  [ -f "$swapfile" ] && existing_kb=$(du -k "$swapfile" 2>/dev/null | cut -f1)
+  need_kb=$(( target_mb * 1024 - existing_kb ))
+  avail_kb=$(df --output=avail -k / | tail -n1)
+  if [ "$avail_kb" -lt $(( need_kb + 2097152 )) ]; then
+    echo "Not enough free disk to size swap to ${target_mb}M, skipping." >&2
+    return
+  fi
+  echo "Sizing swap to ${target_mb}M (was $((swap_kb / 1024))M) to avoid OOM kills on large shading chunks..."
+  if [ -f "$swapfile" ] && swapon --show=NAME --noheadings 2>/dev/null | grep -qx "$swapfile"; then
+    "${SUDO[@]}" swapoff "$swapfile"
+  fi
+  "${SUDO[@]}" fallocate -l "${target_mb}M" "$swapfile" 2>/dev/null ||
+    "${SUDO[@]}" dd if=/dev/zero of="$swapfile" bs=1M count="$target_mb" status=none
+  "${SUDO[@]}" chmod 600 "$swapfile"
+  "${SUDO[@]}" mkswap "$swapfile" >/dev/null
+  "${SUDO[@]}" swapon "$swapfile"
+  grep -q "^$swapfile " /etc/fstab 2>/dev/null ||
+    echo "$swapfile none swap sw 0 0" | "${SUDO[@]}" tee -a /etc/fstab >/dev/null
+}
+ensure_swap
+
 RESULTS="$RUN_DIR/results"
 COMMAND=()
 if [ "$MODE" = "bundle" ]; then
