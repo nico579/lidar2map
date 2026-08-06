@@ -2032,6 +2032,14 @@ class _TeeLogger:
         # de tuiles, workers). Sans lui, la machine à états _buf/_cr_buf
         # s'entrelace entre threads → lignes de log corrompues.
         self._lock = threading.Lock()
+        self._chunk_actuel = None   # cf. definir_chunk
+
+    def definir_chunk(self, cle):
+        """Marque le chunk en cours (découpage à priori) : préfixe chaque
+        ligne de log qui suit, pour qu'un extrait du log soit auto-suffisant
+        sans avoir à remonter chercher le dernier « ── Ombrage XXX ── »."""
+        with self._lock:
+            self._chunk_actuel = cle
 
     def _log_line(self, line):
         """Écrit une ligne dans le fichier log avec horodatage."""
@@ -2041,7 +2049,8 @@ class _TeeLogger:
         line = line.strip()
         if line:
             ts = time.strftime("%H:%M:%S")
-            self._log.write(f"[{ts}] {line}\n")
+            _cle = f"[{self._chunk_actuel}] " if self._chunk_actuel else ""
+            self._log.write(f"[{ts}] {_cle}{line}\n")
 
     def write(self, msg):
         # ── Terminal ─────────────────────────────────────────────────────────
@@ -2235,6 +2244,15 @@ def _activer_log():
     print(f"  Log : {log_path} (publication atomique à la fin)")
 
 _activer_log()
+
+
+def _definir_chunk_log(cle):
+    """Signale à _TeeLogger le chunk en cours (découpage à priori), pour
+    préfixer chaque ligne du log qui suit (cf. _TeeLogger.definir_chunk).
+    No-op si le log n'est pas actif (tests, sys.stdout non remplacé)."""
+    _t = sys.stdout
+    if isinstance(_t, _TeeLogger):
+        _t.definir_chunk(cle)
 
 # ── Requêtes HTTP via urllib (stdlib, zéro dépendance) ──────────────────────
 _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
@@ -8453,6 +8471,17 @@ def _warped_3857_valide(chemin):
         return False
 
 
+def _tile_workers_defaut():
+    """Parallélisme de l'encodage de tuiles (JPEG/PNG, Pillow libère le GIL,
+    cf. le pool dans generer_mbtiles_lidar) : DÉCOUPLÉ de --workers, qui
+    plafonne les téléchargements réseau (throttle IGN ~3 en simultané, cf.
+    --laz-parallel pour la même logique côté conversion LAZ). L'encodage est
+    100% CPU local, sans lien avec ce plafond réseau : le limiter au nombre
+    de workers de download le bridait sans raison (ex. --workers 3 sur une
+    VM à 16 vCPU = 13 coeurs inutilisés pendant tout le tuilage)."""
+    return os.cpu_count() or 4
+
+
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
                     jpeg_quality=85, bbox_natif=None, tampon_coin_max_m=0,
@@ -11323,7 +11352,7 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
                 jpeg_quality=args.qualite_image,
                 bbox_natif=bbox, tampon_coin_max_m=tampon_coin_max_m,
                 ecraser_tuiles=args.tuiles_ecraser,
-                tile_workers=args.workers)
+                tile_workers=_tile_workers_defaut())
         else:
             print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
             mbt_out = mbt_path
@@ -12405,7 +12434,7 @@ Examples:
                                            bbox_natif=bbox,
                                            source_already_warped=getattr(args, "_source_already_warped", False),
                                            ecraser_tuiles=_ecraser_l,
-                                           tile_workers=args.workers)
+                                           tile_workers=_tile_workers_defaut())
             elif _mbt_path.exists():
                 print(f"  Existing MBTiles: {_mbt_path.name}, direct split/conversion")
                 _mbt_out = _mbt_path
@@ -13603,6 +13632,7 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
 
         print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
         print(f"     {entete_chunk(coords)}")
+        _definir_chunk_log(cle)
         manifeste.debut_morceau(cle, nom_z)
         t0_z = time.time()
         try:
@@ -14001,7 +14031,7 @@ def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifest
                         jpeg_quality=args.qualite_image,
                         bbox_natif=bbox, tampon_coin_max_m=TAMPON_MAX_M,
                         ecraser_tuiles=args.tuiles_ecraser,
-                        tile_workers=args.workers)
+                        tile_workers=_tile_workers_defaut())
                 else:
                     print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
                     mbt_out = mbt_path
@@ -14108,6 +14138,7 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
                       cle, 0, n_total)
         print(f"\n  ── Ombrage {cle}  {nom_z} ──")
         print(f"     {entete_chunk(tuple(sz[2:]))}")
+        _definir_chunk_log(cle)
         manifeste.debut_morceau(cle, nom_z)
         t0 = time.time()
         dalles_precharge = prefetch.recuperer(cle)
@@ -14124,6 +14155,7 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
         if manifeste.deja_traite(cle_t) and not overwrite_actif:
             return
         nom_z = f"{nom_zone}_{cle}"
+        _definir_chunk_log(cle_t)
         manifeste.debut_morceau(cle_t, nom_z)
         t0 = time.time()
         _traiter_bbox_lidar_tuilage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,

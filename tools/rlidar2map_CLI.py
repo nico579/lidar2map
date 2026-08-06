@@ -276,6 +276,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -296,7 +297,16 @@ SYNC_ONLY_EXTENSIONS = {
     "ombrages": (".tif",),
     "carte": (".mbtiles", ".rmap", ".sqlitedb"),
 }
+# Jamais utiles en local, quel que soit --sync-only : intermédiaires purs
+# (VRT de fusion voisins pour le tuilage, cf. _traiter_bbox_lidar_tuilage).
+# Exclus inconditionnellement, pas seulement selon la catégorie demandée.
+ALWAYS_EXCLUDED_EXTENSIONS = (".vrt",)
 ACTIVE_STATES = frozenset(("provisioning", "starting", "running"))
+# Cadence de rafraîchissement du tail de log PENDANT un sync en fond (cf.
+# _sync_once_with_live_log_tail) : plus court que --interval, juste pour que
+# l'affichage continue de bouger sur un gros transfert, pas pour re-sonder
+# l'état du run (ça reste au rythme normal, après le sync).
+_LOG_TAIL_POLL_INTERVAL_S = 3.0
 PURGE_PENDING_MARKER = ".rlidar2map-purge-pending.json"
 PURGED_MARKER = ".rlidar2map-purged.json"
 PURGE_SUPERSEDED_MARKER = ".rlidar2map-purge-superseded.json"
@@ -1152,7 +1162,17 @@ def copy_files():
             os.fsencode(results_dir), *relative.split(b"/")
         )
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(full_path, flags)
+        try:
+            descriptor = os.open(full_path, flags)
+        except FileNotFoundError:
+            # Le pipeline distant peut purger un intermediaire (VRT voisin,
+            # etc.) pendant que ce sync tourne : pas fatal, ce fichier sera
+            # simplement absent du prochain inventaire. Ne pas planter tout
+            # le lot pour un seul fichier disparu entre l'inventaire et la
+            # copie. Distinct de `unstable` (contenu modifie PENDANT la
+            # lecture) : ici rien n'a ete lu, code de sortie normal (0).
+            write_frame({"type": "missing", "path": encoded_path})
+            continue
         try:
             before = os.fstat(descriptor)
             if (
@@ -1593,6 +1613,11 @@ class VmController:
         # incrémental (cf. print_remote_log_tail) sans retélécharger le fichier
         # en entier à chaque cycle de surveillance.
         self._log_offsets: Dict[str, int] = {}
+        # État \r/\n reporté d'un sondage au suivant (buf, cr_buf), même
+        # machine à états que _TeeLogger côté lidar2map.py : un run.log
+        # distant contient les répétitions \r des barres de progression, et
+        # un sondage peut couper une répétition en plein milieu.
+        self._log_tail_buf: Dict[str, Tuple[str, str]] = {}
 
     def _connection_options(self) -> List[str]:
         result = [
@@ -1637,7 +1662,18 @@ class VmController:
         (nouveau process --remote-cli = self._log_offsets vide en mémoire)
         retéléchargeait et réimprimait tout le run.log distant depuis le
         début, provoquant un burst de plusieurs milliers de lignes [VM] qui
-        figeait le panneau de log du GUI (bug vécu 2026-08-05)."""
+        figeait le panneau de log du GUI (bug vécu 2026-08-05).
+
+        run.log est la capture terminal BRUTE (tmux/tee), pas le log interne
+        horodaté de lidar2map.py (publié atomiquement seulement à la fin du
+        run, donc pas encore lisible en cours de route) : elle contient les
+        répétitions \r des barres de progression. Un splitlines() naïf les
+        aurait fanées en autant de lignes [VM] distinctes (splitlines coupe
+        aussi sur \r) → même barre de progression réimprimée des dizaines de
+        fois dans le GUI. Même machine à états \r/\n que _TeeLogger côté
+        lidar2map.py (ne garde que l'état final d'une répétition \r), état
+        reporté d'un sondage au suivant dans _log_tail_buf (une répétition
+        peut être coupée en plein milieu par la frontière entre deux tail)."""
         if not state.log_path:
             return
         key = state.run_id or self.options.session
@@ -1659,9 +1695,31 @@ class VmController:
         if not data:
             return
         self._log_offsets[key] = offset + len(data)
-        for line in data.decode("utf-8", errors="replace").splitlines():
-            if line.strip():
-                print("  [VM] " + line, flush=True)
+        text = data.decode("utf-8", errors="replace")
+        buf, cr_buf = self._log_tail_buf.get(key, ("", ""))
+        lines = []
+        pos = 0
+        n = len(text)
+        while pos < n:
+            i_r = text.find("\r", pos)
+            i_n = text.find("\n", pos)
+            if i_r == -1 and i_n == -1:
+                buf += text[pos:]
+                break
+            if i_n == -1 or (i_r != -1 and i_r < i_n):
+                cr_buf = buf + text[pos:i_r]
+                buf = ""
+                pos = i_r + 1
+            else:
+                line = (buf + text[pos:i_n]) or cr_buf
+                if line.strip():
+                    lines.append(line)
+                buf = ""
+                cr_buf = ""
+                pos = i_n + 1
+        self._log_tail_buf[key] = (buf, cr_buf)
+        for line in lines:
+            print("  [VM] " + line, flush=True)
 
     def _load_persisted_log_offset(self, state: "RemoteState") -> int:
         """Relit log_tail_offset dans le rlidar2map.json local (écrit par
@@ -2245,16 +2303,16 @@ class VmController:
         )
 
     def _sync_only_excludes(self) -> Tuple[str, ...]:
-        """Extensions à exclure du rapatriement selon --sync-only : les
-        catégories non demandées (cf. SYNC_ONLY_EXTENSIONS). "tout" (défaut)
-        -> rien à exclure, comportement inchangé."""
+        """Extensions à exclure du rapatriement : ALWAYS_EXCLUDED_EXTENSIONS
+        (intermédiaires jamais utiles, quel que soit --sync-only) + les
+        catégories non demandées par --sync-only (cf. SYNC_ONLY_EXTENSIONS).
+        "tout" (défaut) -> seul le premier groupe s'applique."""
+        excluded: List[str] = list(ALWAYS_EXCLUDED_EXTENSIONS)
         wanted = self.options.sync_only
-        if wanted == "tout":
-            return ()
-        excluded: List[str] = []
-        for categorie, extensions in SYNC_ONLY_EXTENSIONS.items():
-            if categorie != wanted:
-                excluded.extend(extensions)
+        if wanted != "tout":
+            for categorie, extensions in SYNC_ONLY_EXTENSIONS.items():
+                if categorie != wanted:
+                    excluded.extend(extensions)
         return tuple(excluded)
 
     def _sync_results_rsync(
@@ -2363,6 +2421,22 @@ class VmController:
             return True
 
         transfer_size = sum(item[2][2] for item in selected)
+        _marge = 100 * 1024 * 1024   # garde-fou : un peu de marge, pas juste l'exact
+        try:
+            _libre = shutil.disk_usage(local_run_dir).free
+        except OSError:
+            _libre = None
+        if _libre is not None and _libre < transfer_size + _marge:
+            print(
+                "==> Espace disque local insuffisant pour la copie SSH : "
+                "{:.1f} Mio requis, {:.1f} Mio libres. Copie annulée, "
+                "réessai au prochain cycle de synchronisation.".format(
+                    transfer_size / (1024 * 1024), _libre / (1024 * 1024)
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
         print(
             "==> Copie SSH de {} fichier(s) nouveau(x)/modifié(s), "
             "{:.1f} Mio.".format(
@@ -2381,6 +2455,8 @@ class VmController:
             )
             return False
         for relative, _encoded, remote_fingerprint in selected:
+            if relative not in transferred:
+                continue   # purgé côté distant entre inventaire et copie
             copied[relative] = {
                 "fingerprint": list(remote_fingerprint),
                 "sha256": transferred[relative],
@@ -2730,6 +2806,16 @@ class VmController:
                 for relative, encoded, fingerprint in selected:
                     header = self._read_stream_frame(process.stdout)
                     if (
+                        header.get("type") == "missing"
+                        and header.get("path") == encoded
+                    ):
+                        # Purgé côté distant entre l'inventaire et cette
+                        # copie (intermédiaire nettoyé par le pipeline en
+                        # cours) : pas fatal, ce fichier n'est simplement
+                        # pas transféré cette fois (cf. copy_files côté
+                        # remote_file_sync_helper).
+                        continue
+                    if (
                         header.get("type") != "file"
                         or header.get("path") != encoded
                         or header.get("size") != fingerprint[2]
@@ -2787,6 +2873,8 @@ class VmController:
                         )
                     )
                 for relative, _encoded, _fingerprint in selected:
+                    if relative not in staged_paths:
+                        continue   # "missing" côté distant : rien à promouvoir
                     destination = self._safe_local_result_path(
                         local_results,
                         relative,
@@ -2958,6 +3046,40 @@ def _terminal_return_code(state: RemoteState, sync_ok: bool) -> int:
     if state.exit_code is not None and 1 <= state.exit_code <= 125:
         return state.exit_code
     return 1
+
+
+def _sync_once_with_live_log_tail(
+    controller: "VmController", state: "RemoteState"
+) -> Tuple[bool, str, Path]:
+    """sync_once en tâche de fond, tail du log distant rafraîchi PENDANT le
+    transfert (rsync/scp peut prendre plusieurs minutes sur un gros lot) au
+    lieu de figer l'affichage jusqu'à sa fin (observé : le panneau semblait
+    mort pendant une grosse copie, alors que le calcul distant continuait
+    normalement). Un seul sync à la fois, comme avant : cette fonction ne
+    rend la main qu'une fois CE sync terminé, mêmes garanties d'ordre pour
+    l'appelant (même résultat, juste sans le blocage silencieux)."""
+    box: Dict[str, object] = {}
+
+    def _run():
+        try:
+            box["result"] = controller.sync_once(state)
+        except BaseException as exc:   # relayé au thread principal ci-dessous
+            box["error"] = exc
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    # join(timeout) rend la main DÈS que le thread finit, sans attendre le
+    # timeout complet : un sync rapide (cas normal, et tous les tests avec
+    # subprocess simulés) ne déclenche jamais le corps de la boucle -
+    # comportement identique à un appel synchrone. Seul un sync qui dépasse
+    # vraiment _LOG_TAIL_POLL_INTERVAL_S déclenche un rafraîchissement.
+    thread.join(_LOG_TAIL_POLL_INTERVAL_S)
+    while thread.is_alive():
+        controller.print_remote_log_tail(state)
+        thread.join(_LOG_TAIL_POLL_INTERVAL_S)
+    if "error" in box:
+        raise box["error"]  # type: ignore[misc]
+    return box["result"]  # type: ignore[return-value]
 
 
 def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
@@ -3152,7 +3274,9 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
             last_status = state.status
 
         controller.print_remote_log_tail(state)
-        sync_ok, _method, local_dir = controller.sync_once(state)
+        sync_ok, _method, local_dir = _sync_once_with_live_log_tail(
+            controller, state
+        )
         if state.terminal:
             if state.status == "succeeded" and sync_ok:
                 controller.notify(

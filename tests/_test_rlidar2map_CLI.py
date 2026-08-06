@@ -562,6 +562,111 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(destination.read_bytes(), b"complete-new")
 
+    def test_scp_missing_remote_file_is_skipped_not_fatal(self):
+        # Le pipeline distant purge ses intermédiaires (VRT voisin, etc.)
+        # pendant que le sync tourne : un fichier de l'inventaire peut avoir
+        # disparu au moment de la copie. Vécu : FileNotFoundError distante
+        # plantait tout le lot. Le fichier manquant doit juste être ignoré,
+        # les AUTRES fichiers du même lot doivent quand même passer.
+        with tempfile.TemporaryDirectory() as tmp:
+            parsed = rlidar2map_cli.parse_options(
+                ["--local-dir", tmp, "--sync-method", "scp", "vm.example"]
+            )
+            controller = rlidar2map_cli.VmController(parsed)
+            state = remote_state("succeeded", exit_code=0)
+            local_results = Path(tmp) / state.run_id / "results"
+            local_results.mkdir(parents=True)
+
+            # PAS .vrt : exclu inconditionnellement en amont (cf.
+            # ALWAYS_EXCLUDED_EXTENSIONS) donc jamais demandé au tout, ce qui
+            # court-circuiterait le chemin de résilience testé ici. Un autre
+            # intermédiaire (warp temporaire) illustre le même risque de
+            # purge concurrente pour un fichier non filtré en amont.
+            gone_relative = "gar9_002x003/warped_3857_tmp.tif"
+            gone_encoded = rlidar2map_cli.base64.b64encode(
+                gone_relative.encode("utf-8")
+            ).decode("ascii")
+            ok_relative = "gar9_002x003/result.mbtiles"
+            ok_encoded = rlidar2map_cli.base64.b64encode(
+                ok_relative.encode("utf-8")
+            ).decode("ascii")
+            ok_content = b"complete-mbtiles"
+
+            inventory = {
+                gone_relative: (gone_encoded, (1, 2, 999, 3)),
+                ok_relative: (ok_encoded, (1, 2, len(ok_content), 3)),
+            }
+
+            def frame(payload):
+                raw = json.dumps(
+                    payload, separators=(",", ":")
+                ).encode("ascii")
+                return rlidar2map_cli.struct.pack(">Q", len(raw)) + raw
+
+            class FakeProcess:
+                def __init__(self, output, returncode):
+                    self.stdin = io.BytesIO()
+                    self.stdout = io.BytesIO(output)
+                    self._final_returncode = returncode
+                    self._returncode = None
+
+                def wait(self):
+                    if self._returncode is None:
+                        self._returncode = self._final_returncode
+                    return self._returncode
+
+                def poll(self):
+                    return self._returncode
+
+                def kill(self):
+                    self._returncode = -9
+
+            digest = rlidar2map_cli.hashlib.sha256(ok_content).hexdigest()
+            # Ordre = ordre du dict inventory (Python 3.7+ garantit l'ordre
+            # d'insertion) : "missing" pour le .vrt, puis file/trailer normal
+            # pour le .mbtiles. Code de sortie 0 (pas 74/unstable) : rien n'a
+            # été lu de façon instable, le fichier était juste absent.
+            stream = (
+                rlidar2map_cli.FILE_STREAM_MAGIC
+                + frame({"type": "missing", "path": gone_encoded})
+                + frame(
+                    {
+                        "type": "file",
+                        "path": ok_encoded,
+                        "size": len(ok_content),
+                    }
+                )
+                + ok_content
+                + frame(
+                    {
+                        "type": "trailer",
+                        "path": ok_encoded,
+                        "stable": True,
+                        "sha256": digest,
+                    }
+                )
+                + frame({"type": "end", "count": 2})
+            )
+            with mock.patch.object(
+                    controller,
+                    "_remote_results_inventory",
+                    return_value=inventory,
+            ), mock.patch.object(
+                    rlidar2map_cli.subprocess,
+                    "Popen",
+                    return_value=FakeProcess(stream, 0),
+            ):
+                ok = controller._sync_results_scp(state, local_results)
+
+            self.assertTrue(ok)
+            self.assertEqual(
+                (local_results / ok_relative).read_bytes(), ok_content
+            )
+            self.assertFalse((local_results / gone_relative).exists())
+            self.assertFalse(
+                list(local_results.parent.glob(".rlidar2map-sync-*"))
+            )
+
     def test_purge_markers_are_monotonic_across_stale_monitors(self):
         with tempfile.TemporaryDirectory() as tmp:
             parsed = rlidar2map_cli.parse_options(
@@ -663,10 +768,12 @@ class TransportTests(unittest.TestCase):
             self.assertNotEqual(calls[0][0], "scp")
 
     def test_sync_only_excludes_mapping(self):
+        # .vrt exclu inconditionnellement (intermédiaire jamais utile en
+        # local, cf. ALWAYS_EXCLUDED_EXTENSIONS), quel que soit --sync-only.
         for value, expected in (
-            ("tout", ()),
-            ("ombrages", (".mbtiles", ".rmap", ".sqlitedb")),
-            ("carte", (".tif",)),
+            ("tout", (".vrt",)),
+            ("ombrages", (".vrt", ".mbtiles", ".rmap", ".sqlitedb")),
+            ("carte", (".vrt", ".tif")),
         ):
             parsed = rlidar2map_cli.parse_options(
                 ["--sync-only", value, "vm.example"]
@@ -740,6 +847,95 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(method, "ssh")
             self.assertEqual(calls, [])
+
+    def test_scp_transfer_skipped_when_local_disk_is_low(self):
+        # Garde-fou disque local avant une copie SSH : espace insuffisant ->
+        # annulation propre (retry au prochain cycle), pas de tentative de
+        # copie qui échouerait à mi-chemin ou saturerait le disque local.
+        with tempfile.TemporaryDirectory() as tmp:
+            parsed = rlidar2map_cli.parse_options(
+                ["--local-dir", tmp, "--sync-method", "auto", "vm.example"]
+            )
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: None)
+            controller = rlidar2map_cli.VmController(parsed, deps)
+            state = remote_state("succeeded", exit_code=0)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append((list(command), kwargs))
+                return subprocess.CompletedProcess(command, 0, b"", b"")
+
+            encoded = rlidar2map_cli.base64.b64encode(
+                b"gar9_001x001_svf_flux.tif"
+            ).decode("ascii")
+            inventory = {
+                "gar9_001x001_svf_flux.tif": (encoded, (1, 2, 5_000_000_000, 4)),
+            }
+            fake_usage = mock.Mock(free=1_000)   # bien en dessous de la marge
+            local_results = controller.local_run_dir(state) / "results"
+            local_results.mkdir(parents=True, exist_ok=True)
+            with mock.patch.object(
+                rlidar2map_cli.subprocess, "run", fake_run
+            ), mock.patch.object(
+                    controller,
+                    "_remote_results_inventory",
+                    return_value=inventory,
+            ), mock.patch.object(
+                    rlidar2map_cli.shutil, "disk_usage", return_value=fake_usage,
+            ):
+                # _sync_results_scp directement (pas sync_once) : isole le
+                # garde-fou disque du transfert du log final, sans rapport.
+                ok = controller._sync_results_scp(state, local_results)
+
+            self.assertFalse(ok)
+            self.assertEqual(calls, [])
+
+    def test_print_remote_log_tail_collapses_cr_progress_across_polls(self):
+        # run.log est la capture brute (tmux/tee) : ses répétitions \r ne
+        # doivent PAS devenir des lignes [VM] distinctes (splitlines() coupe
+        # aussi sur \r) - seul l'état final d'une répétition compte, et
+        # l'état doit survivre à la frontière entre deux sondages (tail
+        # incrémental), une répétition pouvant être coupée en plein milieu.
+        with tempfile.TemporaryDirectory() as tmp:
+            parsed = rlidar2map_cli.parse_options(
+                ["--local-dir", tmp, "--sync-method", "auto", "vm.example"]
+            )
+            deps = rlidar2map_cli.RuntimeDeps(which=lambda _name: None)
+            controller = rlidar2map_cli.VmController(parsed, deps)
+            state = remote_state()
+
+            # Sondage 1 : 3 répétitions \r, la dernière coupée avant tout \r/\n
+            # (poll suivant en pleine barre de progression).
+            chunk1 = (
+                b"SVF chunked:  10% (1/10)\r"
+                b"SVF chunked:  20% (2/10)\r"
+                b"SVF chunked:  30% (3/10)"
+            )
+            # Sondage 2 : continuation -> \r finalise le 30%, PUIS la vraie
+            # ligne de fin, terminée par \n.
+            chunk2 = b"\rSVF chunked: done (10 blocks)\n"
+
+            results = iter([chunk1, chunk2])
+
+            def fake_run(_command, **_kwargs):
+                return subprocess.CompletedProcess(
+                    _command, 0, next(results), b""
+                )
+
+            printed = io.StringIO()
+            with mock.patch.object(
+                rlidar2map_cli.subprocess, "run", fake_run
+            ), mock.patch("sys.stdout", printed):
+                controller.print_remote_log_tail(state)
+                controller.print_remote_log_tail(state)
+
+            output = printed.getvalue()
+            self.assertNotIn("10%", output)
+            self.assertNotIn("20%", output)
+            self.assertNotIn("30%", output)
+            self.assertEqual(
+                output.count("SVF chunked: done (10 blocks)"), 1
+            )
 
 
 class ControllerTests(unittest.TestCase):
