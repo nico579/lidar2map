@@ -2345,6 +2345,10 @@ class VmController:
         )
         stdout = completed.stdout.decode("utf-8", errors="replace").strip()
         if stdout:
+            print(
+                "==> Synchronisation rsync vers {}".format(local_results),
+                flush=True,
+            )
             print(stdout)
         if completed.returncode != 0:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -2437,6 +2441,10 @@ class VmController:
                 flush=True,
             )
             return False
+        print(
+            "==> Synchronisation ssh vers {}".format(local_results),
+            flush=True,
+        )
         print(
             "==> Copie SSH de {} fichier(s) nouveau(x)/modifié(s), "
             "{:.1f} Mio.".format(
@@ -2952,12 +2960,6 @@ class VmController:
         with self._local_sync_lock(local_dir):
             local_results = local_dir / "results"
             local_results.mkdir(parents=True, exist_ok=True)
-            print(
-                "==> Synchronisation {} vers {}".format(
-                    method, local_results
-                ),
-                flush=True,
-            )
             if method == "rsync":
                 results_ok = self._sync_results_rsync(
                     state, local_results

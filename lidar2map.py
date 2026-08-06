@@ -2671,7 +2671,7 @@ class _PrefetchDalles:
                 # nom_zone sert de nom_zone_base : même convention que
                 # l'appel synchrone (_etape_ombrage -> _traiter_bbox_lidar_ombrage).
                 self._resultat = _decouvrir_et_telecharger_ombrage(
-                    args, bbox, nom_z, nom_zone, manifeste, cle)
+                    args, bbox, nom_z, nom_zone, manifeste, cle, quiet=True)
             except Exception as e:
                 print(f"  ⚠ Prefetch {cle}: {type(e).__name__}: {e} "
                       f"(ignoré, retéléchargement normal à son tour)")
@@ -12860,7 +12860,8 @@ def _dl_workers_effectif(workers, dl_cap, lp):
     return max(workers, lp)
 
 
-def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args):
+def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args,
+                              quiet=False):
     """Télécharge en parallèle les dalles d'un dict {nom: url} (issu de
     PROVIDER.discover_dalles). Pure orchestration : la découverte et le
     fallback grille sont entièrement délégués au provider.
@@ -12868,6 +12869,12 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     dalles_dict : {nom_dalle: url_telechargement_complet}
     bbox        : (x_min, y_min, x_max, y_max) en CRS natif (informatif, pour
                   le header de dalles_zone.txt)
+    quiet       : coupe la barre \\r répétée (appelé depuis le thread de fond
+                  _PrefetchDalles pendant que le thread principal imprime son
+                  propre déroulé (ombrage) — sans coordination entre les deux
+                  flux, la barre \\r du préchargement se faisait écraser en
+                  plein milieu par une ligne complète du thread principal,
+                  produisant une ligne de log fusionnée illisible).
     """
     ok = skip = absent = erreur = 0
     a_telecharger = []
@@ -12903,6 +12910,8 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     t0_dl = time.time()
 
     def _afficher_barre(done, nb_total, t0_dl):
+        if quiet:
+            return
         pct  = int(done * 100 / max(nb_total, 1))
         bars = int(done * largeur / max(nb_total, 1))
         elap = int(time.time() - t0_dl)
@@ -12959,8 +12968,9 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
                 _afficher_barre(done, nb_total, t0_dl)
 
     if nb_total > 0:
-        print()  # fin barre
-        print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
+        if not quiet:
+            print()  # fin barre
+            print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
         _laz_prof_resume(time.time() - t0_dl, _dl_workers, _lp)   # R1#6 profiling
 
     # Invariant (miroir WMTS, revue 2026-07-10) : ne JAMAIS continuer sur une
@@ -13856,11 +13866,15 @@ def _dalles_zone_lookahead(bbox_natif):
         return None
 
 
-def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
+def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
+                                       quiet=False):
     """Découverte + téléchargement des dalles d'un morceau glissant (cle_dl
     dédié) — factorisé hors de _traiter_bbox_lidar_ombrage pour être appelable
     à la fois en synchrone (chemin normal) et en préchargement tâche de fond
     (_PrefetchDalles) sans dupliquer la logique de découverte/download.
+
+    quiet : voir _telecharger_dalles_zone — coupe sa barre \\r (préchargement
+            en tâche de fond, cf. appelant _PrefetchDalles._travail).
 
     Retourne (dalles_dict, dossier_dalles, dossier_ville).
     """
@@ -13891,7 +13905,8 @@ def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, ma
                 " - rerun to resume this chunk")
         dalles_dict = _d
         if args.telechargement:
-            _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
+            _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args,
+                                      quiet=quiet)
     return dalles_dict, dossier_dalles, dossier_ville
 
 
