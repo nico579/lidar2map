@@ -735,6 +735,7 @@ ensure_swap() {
   "${SUDO[@]}" swapon "$swapfile"
   grep -q "^$swapfile " /etc/fstab 2>/dev/null ||
     echo "$swapfile none swap sw 0 0" | "${SUDO[@]}" tee -a /etc/fstab >/dev/null
+  echo "Swap ready: ${target_mb}M active at $swapfile"
 }
 ensure_swap
 

@@ -558,6 +558,7 @@ import uuid
 import re
 import sys
 import ssl
+import gc
 
 # certifi fournit un bundle de certificats CA à jour, indispensable sur
 # Windows 11 et macOS où les certificats système sont parfois absents ou
@@ -13570,6 +13571,13 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     nb_ok = 0
     nb_incomplet = 0
     for i_z, sz in enumerate(sous_zones):
+        # Tous les chunks tournent dans le même process (pas de sous-process
+        # par chunk) : un objet accroché par un cycle de références (datasets
+        # GDAL/rasterio notamment, connus pour ça) survivrait au refcounting
+        # normal et s'accumulerait silencieusement sur un split à N chunks.
+        # gc.collect() explicite en bordure de chunk = filet de sécurité peu
+        # coûteux (pas de leak connu à ce jour, juste une précaution).
+        gc.collect()
         i_lat, i_lon = sz[0], sz[1]
         coords = tuple(sz[2:])
         cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
@@ -14038,6 +14046,11 @@ def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
         prefetch.lancer(args, manifeste, racine_pr, nom_zone, sz_suiv, cle_suiv)
 
     def _etape_ombrage(sz):
+        # Filet de sécurité (cf. _run_split_priori) : même process pour tous
+        # les chunks d'une rangée, gc.collect() en bordure de chunk contre un
+        # éventuel cycle de références (datasets GDAL/rasterio) qui
+        # survivrait au refcounting normal.
+        gc.collect()
         cle = _cle(sz)
         if manifeste.deja_traite(cle) and not overwrite_actif:
             return

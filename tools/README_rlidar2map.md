@@ -242,11 +242,20 @@ le débit par adresse.
 
 Sur un `--lidar` grande zone (département entier), le pic de RAM du calcul
 d'ombrage (SVF, openness) suit approximativement la surface d'un chunk après
-découpage. Constaté : un chunk d'environ 1150 km² (découpage 3×3 sur un
-département) peut atteindre ~31 Go de RSS avec SVF+openness séparés,
-suffisant pour déclencher l'OOM killer sur une VM à 32 Go. Repère empirique,
-pas une formule garantie (le composite VAT/e4MSTP, qui fusionne SVF+openness
-en un seul passage, tolère mieux le même découpage) :
+découpage, mais le vrai facteur causal est la **densité de tuiles sources du
+VRT** de ce chunk (nombre de dalles LiDAR mosaïquées), pas la surface en
+elle-même : sur un département découpé en 3×3 (9 chunks d'aire quasi
+identique, ~1150 km² chacun), seuls les 2 chunks dont le VRT référençait
+1200+ tuiles ont crashé (~31 Go de RSS, tué par l'OOM killer sur une VM à
+32 Go) ; les chunks à 100-700 tuiles sont passés sans souci. Confirmé : pas
+de fuite mémoire d'un chunk à l'autre (deux crashs indépendants, l'un après
+3 chunks traités, l'autre après 1 seul, meurent au même RSS à 23 Mo près, ce
+qui exclut une accumulation). La surface reste un proxy correct la plupart
+du temps (plus un chunk est grand, plus il référence de tuiles), mais deux
+chunks de même surface peuvent diverger si la densité de couverture LiDAR
+diffère. Repère empirique, pas une formule garantie (le composite VAT/e4MSTP,
+qui fusionne SVF+openness en un seul passage, tolère mieux le même
+découpage) :
 
 | RAM de la VM | Taille de chunk visée |
 |---|---|
@@ -254,8 +263,17 @@ en un seul passage, tolère mieux le même découpage) :
 | 64 Go | ~1150 km² (le 3×3 par défaut passe généralement) |
 
 Un découpage plus fin coûte du temps (passes TMS/VRT/percentiles et coutures
-répétées par chunk en plus), pas seulement de la marge RAM — c'est un
+répétées par chunk en plus), pas seulement de la marge RAM : c'est un
 compromis, pas un réglage à mettre au maximum par défaut.
+
+**Filet de sécurité automatique** : depuis la version qui inclut ce
+paragraphe, `rlidar2map_CLI` dimensionne un swapfile dédié (≈ la RAM de la VM)
+au lancement/reprise, sans action requise. Ça ne rend pas le calcul plus
+rapide sur un chunk trop dense, mais transforme un crash (process tué,
+travail perdu depuis le dernier chunk terminé) en ralentissement (le calcul
+finit, juste plus lentement pendant le pic). Le tableau ci-dessus reste utile
+pour éviter le ralentissement, pas pour éviter un crash : celui-ci est
+maintenant couvert dans les deux cas.
 
 ## Construction et publication GitHub
 
