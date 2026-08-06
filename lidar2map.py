@@ -190,7 +190,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                                   --shading oneg:gamma=1.5 --shading lrm:sigma=10
                                   Params : elevation (directionnels/multi),
                                   conv/dist/gamma/sweep (svf),
-                                  dist/gamma (opos/oneg/vat/e4mstp),
+                                  dist/gamma/sweep (opos/oneg),
+                                  dist/gamma (vat/e4mstp),
                                   sigma en m (lrm/rrim). Dans e4mstp, dist ne
                                   règle que SVF/O+/O− et gamma vaut 0,8 par
                                   défaut. Plusieurs instances coexistent tant
@@ -7610,8 +7611,8 @@ _SHADING_TYPES = {
     "vat":    {"dist", "gamma"},
     "e4mstp": {"dist", "gamma"},
     "svf":   {"conv", "dist", "gamma", "sweep"},
-    "opos":  {"dist", "gamma"},
-    "oneg":  {"dist", "gamma"},
+    "opos":  {"dist", "gamma", "sweep"},
+    "oneg":  {"dist", "gamma", "sweep"},
     "rrim":  {"sigma"},
     "multi": {"elevation"},
     "315":   {"elevation"},
@@ -7672,7 +7673,8 @@ def parser_shading_spec(spec):
       315/045/135/225/multi : elevation (degrés)
       svf                   : conv (flux|rvt), dist (m), gamma,
                               sweep (1|0, kernel sweep-horizon — défaut --svf-sweep)
-      opos/oneg             : dist (m), gamma
+      opos/oneg             : dist (m), gamma,
+                              sweep (1|0, kernel sweep-horizon — défaut --svf-sweep)
       lrm/rrim              : sigma (m, écart-type gaussien — défaut 15 px du provider)
       vat                   : dist (m, rayon SVF/openness), gamma (du composite)
       e4mstp                : dist (m, rayon SVF/openness), gamma (RGB final,
