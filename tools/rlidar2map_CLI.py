@@ -1718,8 +1718,23 @@ class VmController:
                 cr_buf = ""
                 pos = i_n + 1
         self._log_tail_buf[key] = (buf, cr_buf)
+        enc = sys.stdout.encoding or "utf-8"
         for line in lines:
-            print("  [VM] " + line, flush=True)
+            try:
+                print("  [VM] " + line, flush=True)
+            except UnicodeEncodeError:
+                # La console locale (cp1252/cp850 sous Windows sans
+                # PYTHONIOENCODING=utf-8) ne sait pas représenter un
+                # caractère du run.log distant (barres de progression
+                # █/░, accents...). Un run distant réussi ne doit jamais
+                # être perdu pour un problème d'affichage local (bug vécu
+                # 2026-08-07 : crash ici tuait toute la surveillance,
+                # laissant un run terminé avec succès sans synchronisation
+                # locale). Repli sur un rendu lisible mais dégradé.
+                print(
+                    "  [VM] " + line.encode(enc, "replace").decode(enc),
+                    flush=True,
+                )
 
     def _load_persisted_log_offset(self, state: "RemoteState") -> int:
         """Relit log_tail_offset dans le rlidar2map.json local (écrit par
@@ -3270,15 +3285,50 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
 
     last_status: Optional[str] = None
     consecutive_ssh_errors = 0
+    consecutive_loop_errors = 0
     while True:
         if state.status != last_status:
             _display_state(state)
             last_status = state.status
 
-        controller.print_remote_log_tail(state)
-        sync_ok, _method, local_dir = _sync_once_with_live_log_tail(
-            controller, state
-        )
+        local_dir = controller.local_run_dir(state)
+        try:
+            controller.print_remote_log_tail(state)
+            sync_ok, _method, local_dir = _sync_once_with_live_log_tail(
+                controller, state
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            # Un incident LOCAL (affichage, synchro) pendant le suivi ne
+            # doit jamais faire perdre la trace d'un run distant par
+            # ailleurs sain (bug vécu 2026-08-07 : run terminé avec
+            # succès, surveillance locale morte avant la synchro finale,
+            # reprise manuelle nécessaire pour rapatrier les résultats).
+            # Même tolérance que les erreurs SSH ci-dessous : quelques
+            # essais avant d'abandonner proprement plutôt qu'un crash sec.
+            consecutive_loop_errors += 1
+            print(
+                "==> Incident de surveillance local ({}/{}): {}: {}".format(
+                    consecutive_loop_errors, options.max_ssh_errors,
+                    type(exc).__name__, exc,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            if consecutive_loop_errors >= options.max_ssh_errors:
+                controller.notify(
+                    "SURVEILLANCE INTERROMPUE",
+                    "Incident local répété pendant le suivi ; l'état du "
+                    "run distant n'est pas affecté. Relancez la commande "
+                    "de reprise.",
+                )
+                controller.print_remote_hints(state)
+                return 3
+            controller.deps.sleep(options.interval)
+            continue
+        consecutive_loop_errors = 0
+
         if state.terminal:
             if state.status == "succeeded" and sync_ok:
                 controller.notify(
