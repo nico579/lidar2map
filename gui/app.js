@@ -3,6 +3,7 @@
 let fusionFiles = [];
 let fusionSel = -1;
 let polling = null;
+let cfgEnCours = null; // config effectivement lancée (notamment pour une file)
 let _initialized = false;
 // Résolution native (m/px) du provider actif, mise à jour via get_init_data et au
 // changement de provider. Sert au défaut LRM/RRIM = 15 px (cf. sigma_defaut_m
@@ -48,7 +49,7 @@ const I18N = {
     "remote.sync.carte":"Carte seule", "remote.sync.ombrages":"Ombrages seuls",
     "tip.remotesync":"Quels fichiers rapatrier localement au fur et à mesure : tout (défaut), seulement la carte finale (mbtiles/rmap/sqlitedb) ou seulement les ombrages intermédiaires (.tif).",
     "remote.block":"Bloc", "tip.remoteblock":"Répartit une zone géographique sur plusieurs VM : chaque machine traite un bloc différent (LiDAR uniquement). Laisser vide pour tout traiter sur cette VM.",
-    "remote.hint.cli":"Lance ce calcul dans tmux sur la VM et resynchronise progressivement les résultats (log distant inclus). « Arrêter » ne coupe que la surveillance locale, pas le calcul distant.",
+    "remote.hint.cli":"Lance ce calcul dans tmux sur la VM et resynchronise progressivement les résultats (log distant inclus). À l'arrêt, le GUI propose aussi d'arrêter le calcul sur la VM.",
     "remote.hint.gui":"Installe un bureau XFCE + RDP sur la VM puis ouvre le client RDP. Les autres paramètres de ce formulaire sont ignorés.",
     "req.remotehost":"Indiquez l'hôte de la VM distante.",
     "loading":"Chargement...", "apikey":"Clé API :",
@@ -144,6 +145,9 @@ const I18N = {
     "queue.running":"File {i}/{n} : {label}",
     "queue.done":"✓ File terminée : {ok} ok, {ko} échec(s)",
     "running":"En cours...", "done":"✓ Terminé", "stopped":"⚠ Arrêté",
+    "remote.stop.confirm":"Voulez-vous aussi arrêter le traitement sur la VM ?\n\nOui : le processus distant sera arrêté.\nNon : seule la surveillance sur cet ordinateur sera arrêtée.",
+    "remote.purge.confirm":"Voulez-vous aussi purger les fichiers de cette session sur la VM ?\n\nOui : suppression définitive ; les résultats non synchronisés seront perdus.\nNon : les fichiers et le cache sont conservés pour une reprise ultérieure.",
+    "remote.stop.error":"La surveillance locale a été arrêtée, mais l'action demandée sur la VM a échoué :\n\n{msg}",
     "err.code":"✗ Erreur (code {c})",
     "fail.detail":"Le traitement a échoué (code {c}).\n\n{msg}\n\n(détails complets dans le panneau de log ci-dessous)",
     "fail.generic":"Le traitement a échoué (code {c}).\n\nVoir le panneau de log ci-dessous pour les détails.",
@@ -207,7 +211,7 @@ const I18N = {
     "remote.sync.carte":"Map only", "remote.sync.ombrages":"Shadings only",
     "tip.remotesync":"Which files to sync back locally as they are produced: everything (default), only the final map (mbtiles/rmap/sqlitedb), or only the intermediate shadings (.tif).",
     "remote.block":"Block", "tip.remoteblock":"Splits a geographic area across several VMs: each machine processes a different block (LiDAR only). Leave empty to process the whole area on this VM.",
-    "remote.hint.cli":"Runs this job in tmux on the VM and progressively syncs results back (remote log included). Stop only cancels local monitoring, not the remote job.",
+    "remote.hint.cli":"Runs this job in tmux on the VM and progressively syncs results back (remote log included). When stopping, the GUI also offers to stop the job on the VM.",
     "remote.hint.gui":"Installs an XFCE + RDP desktop on the VM then opens the RDP client. The rest of this form is ignored.",
     "req.remotehost":"Enter the remote VM's host.",
     "loading":"Loading...", "apikey":"API key:",
@@ -289,6 +293,9 @@ const I18N = {
     "queue.running":"Queue {i}/{n}: {label}",
     "queue.done":"✓ Queue done: {ok} ok, {ko} failed",
     "running":"Running...", "done":"✓ Done", "stopped":"⚠ Stopped",
+    "remote.stop.confirm":"Do you also want to stop the job on the VM?\n\nYes: the remote process will be stopped.\nNo: only monitoring on this computer will stop.",
+    "remote.purge.confirm":"Do you also want to purge this session's files from the VM?\n\nYes: permanent deletion; unsynced results will be lost.\nNo: files and cache are kept for a later resume.",
+    "remote.stop.error":"Local monitoring was stopped, but the requested action on the VM failed:\n\n{msg}",
     "err.code":"✗ Error (code {c})",
     "fail.detail":"Processing failed (code {c}).\n\n{msg}\n\n(full details in the log panel below)",
     "fail.generic":"Processing failed (code {c}).\n\nSee the log panel below for details.",
@@ -2598,6 +2605,7 @@ function renderFile() {
 // cliquer) ; le récap se fait alors en fin de file.
 function executerCfg(cfg, silent) {
   return new Promise(resolve => {
+    cfgEnCours = cfg;
     viderLog();
     document.getElementById('log-status').textContent = t('running');
     setLogProgress(0, '');
@@ -2760,12 +2768,19 @@ async function arreter() {
   // boucle de file. Ne PAS clearInterval ici : sinon la promesse reste
   // pendante et la file se fige. btnReset est fait par le done handler
   // (mode simple) ou en fin de lancerFile (mode file).
+  const stopRemote = cfgEnCours?.remote_choix === 'cli' &&
+    confirm(t('remote.stop.confirm'));
+  const purgeRemote = stopRemote && confirm(t('remote.purge.confirm'));
   arretDemande = true;
-  await pywebview.api.stop();
+  const result = await pywebview.api.stop(stopRemote, purgeRemote);
+  if (stopRemote && result && result.ok === false) {
+    alert(tf('remote.stop.error', {msg: result.error || t('del.unknown')}));
+  }
   document.getElementById('footer-status').textContent = t('stopped');
 }
 
 function btnReset() {
+  cfgEnCours = null;
   document.getElementById('btn-run').disabled = false;
   document.getElementById('btn-stop').disabled = true;
   setFormLocked(false);

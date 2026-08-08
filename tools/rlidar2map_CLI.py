@@ -15,9 +15,10 @@ vers le PC au fur et à mesure.
   session (lidar par défaut) est donc l'identifiant d'un lancement ; plusieurs
   calculs peuvent être suivis avec plusieurs noms.
 
-  Ctrl-C arrête uniquement le contrôleur local, jamais le tmux ni lidar2map.
-  Relancer la même commande avec la même VM et --session reprend la surveillance
-  et la synchronisation sans démarrer un second calcul. Une session terminée
+Ctrl-C propose d'arrêter le processus de la session distante, puis de purger
+ses fichiers. Répondre non conserve le comportement de simple interruption du
+contrôleur local. Relancer la même commande avec la même VM et --session reprend
+la surveillance et la synchronisation sans démarrer un second calcul. Une session terminée
   n'est pas relancée implicitement : utiliser --resume, --restart, ou un
   nouveau nom.
 
@@ -897,6 +898,120 @@ echo "Remote results: $RESULTS"
 """
 
 
+REMOTE_STOP_SCRIPT = r"""#!/usr/bin/env bash
+set -u
+umask 077
+
+SESSION="${1:-}"
+GRACE="${2:-15}"
+if [[ ! "$SESSION" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then
+  echo "invalid session" >&2
+  exit 64
+fi
+if [[ ! "$GRACE" =~ ^[0-9]+$ ]]; then
+  echo "invalid grace period" >&2
+  exit 64
+fi
+
+RUN_DIR="$HOME/.lidar2map-runs/$SESSION"
+if [ ! -d "$RUN_DIR" ]; then
+  printf 'protocol=1\nstopped=0\nreason=absent\n'
+  exit 0
+fi
+
+read_value() {
+  local value=""
+  if [ -r "$1" ]; then
+    IFS= read -r value < "$1" || true
+  fi
+  printf '%s' "$value"
+}
+
+write_value() {
+  local tmp="${1}.tmp.$$"
+  printf '%s\n' "$2" > "$tmp"
+  mv -f -- "$tmp" "$1"
+}
+
+kill_process_tree() {
+  local signal="$1" parent="$2" child
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    kill_process_tree "$signal" "$child"
+  done < <(pgrep -P "$parent" 2>/dev/null || true)
+  kill -"$signal" "$parent" 2>/dev/null || true
+}
+
+status="$(read_value "$RUN_DIR/status")"
+case "$status" in
+  provisioning|starting|running) ;;
+  *)
+    printf 'protocol=1\nstopped=0\nreason=inactive\n'
+    exit 0
+    ;;
+esac
+
+stopped=0
+forced=0
+if command -v tmux >/dev/null 2>&1 &&
+   tmux has-session -t "=$SESSION" 2>/dev/null; then
+  pane_pid="$(tmux list-panes -t "=$SESSION" -F '#{pane_pid}' 2>/dev/null | head -n1)"
+  # C-c est remis au groupe de premier plan du pane : lidar2map peut ainsi
+  # fermer proprement manifeste, fichiers .part et bases SQLite.
+  tmux send-keys -t "=$SESSION" C-c 2>/dev/null || true
+  stopped=1
+  deadline=$((SECONDS + GRACE))
+  while tmux has-session -t "=$SESSION" 2>/dev/null &&
+        [ "$SECONDS" -lt "$deadline" ]; do
+    sleep 1
+  done
+  if tmux has-session -t "=$SESSION" 2>/dev/null; then
+    # Le pane peut héberger plusieurs descendants (Python, GDAL, workers).
+    # Les tuer explicitement avant la session évite tout processus orphelin.
+    if [[ "$pane_pid" =~ ^[0-9]+$ ]]; then
+      kill_process_tree KILL "$pane_pid"
+    fi
+    tmux kill-session -t "=$SESSION" 2>/dev/null || true
+    forced=1
+  fi
+else
+  # Pendant le provisioning, tmux n'existe pas encore. Le PID publié est
+  # celui du bootstrap SSH ; terminer récursivement uniquement ses enfants
+  # évite de laisser apt/curl/git poursuivre le déploiement en arrière-plan.
+  bootstrap_pid="$(read_value "$RUN_DIR/bootstrap_pid")"
+  if [[ "$bootstrap_pid" =~ ^[0-9]+$ ]] &&
+     kill -0 "$bootstrap_pid" 2>/dev/null; then
+    kill_process_tree TERM "$bootstrap_pid"
+    sleep 2
+    if kill -0 "$bootstrap_pid" 2>/dev/null; then
+      kill_process_tree KILL "$bootstrap_pid"
+      forced=1
+    fi
+    stopped=1
+  fi
+fi
+
+# Le runner écrit normalement lui-même son état dans son trap EXIT. En cas
+# d'arrêt forcé (ou de provisioning interrompu), publier tout de même un état
+# terminal cohérent afin qu'une reconnexion ne présente pas un run fantôme.
+if [ "$stopped" -eq 1 ]; then
+  sleep 1
+  status="$(read_value "$RUN_DIR/status")"
+  case "$status" in
+    provisioning|starting|running)
+      write_value "$RUN_DIR/exit_code" "130"
+      write_value "$RUN_DIR/reason" "stopped by user"
+      write_value "$RUN_DIR/finished_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      write_value "$RUN_DIR/status" "failed"
+      ;;
+  esac
+fi
+
+printf 'protocol=1\nstopped=%s\nforced=%s\nreason=%s\n' \
+  "$stopped" "$forced" "$([ "$stopped" -eq 1 ] && printf stopped || printf not-running)"
+"""
+
+
 REMOTE_PURGE_SCRIPT = r"""#!/usr/bin/env bash
 set -euo pipefail
 umask 077
@@ -1267,6 +1382,7 @@ class Options:
     once: bool
     max_ssh_errors: int
     no_bell: bool
+    stop_remote: bool = False
 
 
 @dataclass
@@ -1320,7 +1436,8 @@ def _parser() -> argparse.ArgumentParser:
             f"  {example_command} --session gareoult-laz root@192.0.2.10\n"
             f"  {example_command} --session gareoult-laz --purge-remote "
             "root@192.0.2.10\n\n"
-            "Après Ctrl-C, relancer la même session reprend la surveillance et la copie. "
+            "Après Ctrl-C, des confirmations proposent l'arrêt distant puis la purge. "
+            "Répondre non conserve la session pour une reprise ultérieure. "
             "Les arguments lidar2map doivent être placés après '--'. "
             "Chaque argument lidar2map est transmis sans réinterprétation."
         ),
@@ -1410,6 +1527,13 @@ def _parser() -> argparse.ArgumentParser:
             "puis supprime son état, son log et ses résultats distants"
         ),
     )
+    lifecycle.add_argument(
+        "--stop", dest="stop_remote", action="store_true",
+        help=(
+            "optionnel, désactivé par défaut ; arrête le traitement de cette "
+            "session sur la VM (arrêt gracieux puis forcé)"
+        ),
+    )
     parser.add_argument(
         "--detach", action="store_true",
         help="optionnel, désactivé par défaut ; quitte sans surveillance continue",
@@ -1455,8 +1579,8 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
         parser.error("--max-ssh-errors doit être strictement positif")
     if ns.detach and ns.once:
         parser.error("--detach et --once sont mutuellement exclusifs")
-    if ns.purge_remote and (ns.detach or ns.once):
-        parser.error("--purge-remote est incompatible avec --detach/--once")
+    if (ns.purge_remote or ns.stop_remote) and (ns.detach or ns.once):
+        parser.error("--purge-remote/--stop est incompatible avec --detach/--once")
     if (
         ns.vm.startswith("-")
         or any(ord(ch) < 32 for ch in ns.vm)
@@ -1472,8 +1596,12 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
         lidar_args.pop(0)
     if "--purge-remote" in lidar_args:
         parser.error("--purge-remote doit être placé avant la cible VM")
+    if "--stop" in lidar_args:
+        parser.error("--stop doit être placé avant la cible VM")
     if ns.purge_remote and lidar_args:
         parser.error("--purge-remote n'accepte aucun argument lidar2map")
+    if ns.stop_remote and lidar_args:
+        parser.error("--stop n'accepte aucun argument lidar2map")
     for arg in lidar_args:
         if (
             arg in ("--output-dir", "--dossier")
@@ -1505,6 +1633,7 @@ def parse_options(argv: Optional[Sequence[str]] = None) -> Options:
         once=ns.once,
         max_ssh_errors=ns.max_ssh_errors,
         no_bell=ns.no_bell,
+        stop_remote=ns.stop_remote,
     )
 
 
@@ -1836,6 +1965,39 @@ class VmController:
                     completed.returncode
                 )
             )
+
+    def stop_remote(self, grace_seconds: int = 15) -> bool:
+        """Arrête la session gérée sur la VM ; True si elle était active."""
+        completed = subprocess.run(
+            self._ssh_command([self.options.session, str(grace_seconds)]),
+            input=REMOTE_STOP_SCRIPT.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 0 and _is_host_key_changed(completed.stderr):
+            self._auto_reset_host_key()
+            completed = subprocess.run(
+                self._ssh_command([self.options.session, str(grace_seconds)]),
+                input=REMOTE_STOP_SCRIPT.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        if completed.returncode != 0:
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise SshError(
+                stderr or "arrêt distant impossible",
+                returncode=completed.returncode,
+            )
+        values = {}
+        for raw_line in completed.stdout.decode("utf-8", errors="replace").splitlines():
+            if "=" in raw_line:
+                key, value = raw_line.split("=", 1)
+                values[key] = value
+        if values.get("protocol") != "1" or values.get("stopped") not in ("0", "1"):
+            raise RunOnVmError("réponse d'arrêt distante invalide")
+        return values["stopped"] == "1"
 
     def purge_remote(self, state: RemoteState) -> bool:
         if not state.terminal or state.tmux:
@@ -3104,6 +3266,18 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
     if options.reset_host_key:
         controller.reset_host_key()
 
+    if options.stop_remote:
+        stopped = controller.stop_remote()
+        if stopped:
+            print("==> Traitement distant '{}' arrêté sur {}.".format(
+                options.session, options.vm
+            ))
+        else:
+            print("==> Aucun traitement distant actif pour '{}'.".format(
+                options.session
+            ))
+        return 0
+
     state = controller.query_state()
     pending: Optional[Tuple[RemoteState, str]] = None
     if (
@@ -3383,6 +3557,17 @@ def run_controller(options: Options, deps: Optional[RuntimeDeps] = None) -> int:
                 return 3
 
 
+def _confirm_cli(question: str) -> bool:
+    """Confirmation destructive interactive ; jamais oui sans terminal."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        answer = input(question + " [o/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in ("o", "oui", "y", "yes")
+
+
 def main(
     argv: Optional[Sequence[str]] = None,
     *,
@@ -3393,18 +3578,67 @@ def main(
         options = parse_options(argv)
         return run_controller(options, deps)
     except KeyboardInterrupt:
-        print(
-            "\n==> Surveillance locale interrompue. Le processus tmux distant "
-            "n'a pas été arrêté.",
-            file=sys.stderr,
-        )
+        stopped = False
+        purged = False
         if options is not None:
-            print(
-                "==> Reprise : {}".format(
-                    VmController(options, deps).reconnect_command()
-                ),
-                file=sys.stderr,
-            )
+            controller = VmController(options, deps)
+            if _confirm_cli(
+                "\nArrêter aussi le traitement de la session '{}' sur {} ?".format(
+                    options.session, options.vm
+                )
+            ):
+                try:
+                    stopped = controller.stop_remote()
+                    print(
+                        "==> Traitement distant arrêté."
+                        if stopped else
+                        "==> Aucun processus actif pour cette session.",
+                        file=sys.stderr,
+                    )
+                    if _confirm_cli(
+                        "Purger définitivement les fichiers distants de la session "
+                        "'{}' ? Les résultats non synchronisés seront perdus ; "
+                        "répondre Non conserve le cache pour --resume.".format(
+                            options.session
+                        )
+                    ):
+                        state = controller.query_state()
+                        if state.exists:
+                            if not state.terminal or state.tmux:
+                                raise RunOnVmError(
+                                    "la session est encore active après la demande d'arrêt"
+                                )
+                            controller.purge_remote(state)
+                            purged = True
+                            print(
+                                "==> Fichiers de la session supprimés sur la VM.",
+                                file=sys.stderr,
+                            )
+                        else:
+                            print(
+                                "==> Aucun fichier de session distant à purger.",
+                                file=sys.stderr,
+                            )
+                except (RunOnVmError, OSError) as exc:
+                    print("ERREUR lors de l'arrêt/purge distant : {}".format(exc),
+                          file=sys.stderr)
+            if not stopped:
+                print(
+                    "\n==> Surveillance locale interrompue. Le processus tmux "
+                    "distant n'a pas été arrêté.",
+                    file=sys.stderr,
+                )
+            elif not purged:
+                print(
+                    "==> Fichiers distants conservés ; utilisez --resume pour "
+                    "reprendre avec le cache existant.",
+                    file=sys.stderr,
+                )
+            if not purged:
+                print(
+                    "==> Reprise : {}".format(controller.reconnect_command()),
+                    file=sys.stderr,
+                )
         return 130
     except SshError as exc:
         print("ERREUR SSH: {}".format(exc), file=sys.stderr)

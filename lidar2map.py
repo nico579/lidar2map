@@ -19851,7 +19851,55 @@ def lancer_gui():
             self._reader_t.start()
             return {"cmd": " ".join(str(c) for c in cmd)}
 
-        def stop(self):
+        def _stop_remote_run(self, purge_remote=False):
+            """Arrête le calcul VM associé au subprocess de surveillance."""
+            cfg = getattr(self, "_cfg_launch", {}) or {}
+            if cfg.get("remote_choix") != "cli":
+                return {"ok": False, "error": "Le traitement courant n'est pas un calcul VM."}
+            argv = ["--session", cfg.get("remote_session") or "lidar", "--stop"]
+            if cfg.get("remote_identity"):
+                argv += ["--identity", cfg["remote_identity"]]
+            argv.append("{}@{}".format(self._REMOTE_SSH_USER, cfg.get("remote_host", "")))
+            stopped = False
+            try:
+                from tools.rlidar2map_CLI import parse_options, VmController
+                controller = VmController(parse_options(argv))
+                stopped = controller.stop_remote()
+                purged = False
+                if purge_remote:
+                    state = controller.query_state()
+                    if state.exists:
+                        if not state.terminal or state.tmux:
+                            raise RuntimeError(
+                                "la session est encore active après la demande d'arrêt"
+                            )
+                        controller.purge_remote(state)
+                        purged = True
+                if stopped:
+                    self._log_queue.put({
+                        "line": "\n⚠ Traitement arrêté sur la VM.\n", "tag": "err"
+                    })
+                else:
+                    self._log_queue.put({
+                        "line": "\n⚠ Aucun traitement actif sur la VM.\n", "tag": "err"
+                    })
+                if purged:
+                    self._log_queue.put({
+                        "line": "⚠ Fichiers de la session supprimés sur la VM.\n",
+                        "tag": "err",
+                    })
+                return {"ok": True, "stopped": stopped, "purged": purged}
+            except BaseException as exc:
+                # argparse lève SystemExit (BaseException) si une session saisie
+                # dans le GUI est invalide ; la convertir en erreur du bridge.
+                message = str(exc) or exc.__class__.__name__
+                self._log_queue.put({
+                    "line": "\n✗ Arrêt sur la VM impossible : {}\n".format(message),
+                    "tag": "err",
+                })
+                return {"ok": False, "stopped": stopped, "error": message}
+
+        def stop(self, stop_remote=False, purge_remote=False):
             """Arrêt gracieux, puis forcé.
 
             1. Signal doux : CTRL_BREAK au groupe Windows (routé vers le
@@ -19865,10 +19913,17 @@ def lancer_gui():
             L'escalade tourne dans un thread pour ne pas bloquer le bridge
             JS ; _done est posé par le thread lecteur quand le pipe se ferme.
             """
+            remote_result = None
+            if stop_remote:
+                # Faire l'appel SSH avant de couper le contrôleur local : cette
+                # méthode ne rend la main qu'une fois le process VM réellement
+                # sorti (ou forcé), et peut encore consigner le résultat au log.
+                remote_result = self._stop_remote_run(bool(purge_remote))
+
             _STOP_GRACE_S = 15
             proc = self._process
             if not (proc and proc.poll() is None):
-                return
+                return remote_result
             self._stop_t = time.time()   # lu par launch() : relance = escalade immédiate
             self._log_queue.put(
                 {"line": f"\n⚠ Stop requested - graceful, forced after {_STOP_GRACE_S} s\n",
@@ -19892,6 +19947,7 @@ def lancer_gui():
                 self._kill_tree(proc)
                 self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
             threading.Thread(target=_escalade, daemon=True).start()
+            return remote_result
 
         def check_update(self):
             """Compare la dernière release GitHub à la version locale.

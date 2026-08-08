@@ -104,6 +104,22 @@ class ParseTests(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 rlidar2map_cli.parse_options(argv)
 
+    def test_stop_is_a_dedicated_mode(self):
+        parsed = rlidar2map_cli.parse_options(
+            ["--stop", "--session", "active-2", "root@vm"]
+        )
+        self.assertTrue(parsed.stop_remote)
+        self.assertEqual(parsed.session, "active-2")
+        self.assertEqual(parsed.lidar_args, [])
+        for argv in (
+            ["--stop", "--restart", "root@vm"],
+            ["--stop", "--detach", "root@vm"],
+            ["--stop", "root@vm", "--", "--lidar"],
+            ["root@vm", "--stop"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                rlidar2map_cli.parse_options(argv)
+
 
 class ProtocolTests(unittest.TestCase):
     def test_parse_complete_state(self):
@@ -423,6 +439,29 @@ class TransportTests(unittest.TestCase):
             self.assertIsNotNone(completed)
             assert completed is not None
             self.assertEqual(completed[0].run_id, state.run_id)
+
+    def test_remote_stop_targets_only_the_exact_session(self):
+        parsed = rlidar2map_cli.parse_options(
+            ["--stop", "--session", "active-2", "vm.example"]
+        )
+        controller = rlidar2map_cli.VmController(parsed)
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((list(command), kwargs))
+            response = b"protocol=1\nstopped=1\nforced=0\nreason=stopped\n"
+            return subprocess.CompletedProcess(command, 0, response, b"")
+
+        with mock.patch.object(rlidar2map_cli.subprocess, "run", fake_run):
+            stopped = controller.stop_remote()
+
+        self.assertTrue(stopped)
+        remote_tokens = shlex.split(calls[0][0][-1], posix=True)
+        self.assertEqual(remote_tokens[-2:], ["active-2", "15"])
+        self.assertEqual(
+            calls[0][1]["input"],
+            rlidar2map_cli.REMOTE_STOP_SCRIPT.encode("utf-8"),
+        )
 
     def test_scp_fallback_writes_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1253,6 +1292,23 @@ class ControllerTests(unittest.TestCase):
             rc = rlidar2map_cli.main(["vm.example"])
         self.assertEqual(rc, 130)
 
+    def test_interactive_keyboard_interrupt_can_stop_without_purging(self):
+        controller = mock.Mock()
+        controller.stop_remote.return_value = True
+        controller.reconnect_command.return_value = "resume-command"
+        with mock.patch.object(
+            rlidar2map_cli, "run_controller", side_effect=KeyboardInterrupt
+        ), mock.patch.object(
+            rlidar2map_cli, "VmController", return_value=controller
+        ), mock.patch.object(
+            rlidar2map_cli, "_confirm_cli", side_effect=[True, False]
+        ):
+            rc = rlidar2map_cli.main(["--session", "active-2", "vm.example"])
+
+        self.assertEqual(rc, 130)
+        controller.stop_remote.assert_called_once_with()
+        controller.purge_remote.assert_not_called()
+
 
 class EndToEndFakeTransportTests(unittest.TestCase):
     def test_start_follow_and_final_scp_use_real_subprocess_boundaries(self):
@@ -1378,7 +1434,7 @@ class EndToEndFakeTransportTests(unittest.TestCase):
             launch_call = next(call for call in calls if call.get("kind") == "launch")
             self.assertEqual(
                 launch_call["remote_tokens"][3:],
-                ["source", "lidar", "0", "0", "--lidar", *hostile],
+                ["source", "lidar", "0", "0", "0", "--lidar", *hostile],
             )
             self.assertFalse((root / "PWN").exists())
 

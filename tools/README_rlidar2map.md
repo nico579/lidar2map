@@ -178,8 +178,10 @@ Les résultats sont copiés sous
 disponible des deux côtés; sinon le client utilise un flux SSH incrémental avec
 vérification SHA-256.
 
-Interrompre le client avec `Ctrl-C` n'arrête pas le calcul distant. Pour
-reprendre la surveillance sans créer un second calcul :
+Interrompre le client avec `Ctrl-C` demande s'il faut aussi arrêter le processus
+de cette session sur la VM, puis s'il faut purger ses fichiers. Répondre non à
+la purge conserve le cache et les résultats pour une reprise. Pour reprendre la
+surveillance sans créer un second calcul :
 
 ```bash
 rlidar2map_CLI --bundle --session paris root@192.0.2.10
@@ -204,8 +206,10 @@ rlidar2map_CLI --session paris --purge-remote root@192.0.2.10
 Les arguments lidar2map sont fournis séparément après `--`. La surveillance est
 active par défaut : le client attend la fin du calcul dans `tmux`, signale le
 succès ou l'échec après une dernière synchronisation, et recopie progressivement
-les résultats. `Ctrl-C` n'arrête que le moniteur local. Relancer la même commande,
-ou simplement `rlidar2map_CLI --bundle --session paris root@192.0.2.10`, relit
+les résultats. `Ctrl-C` permet de choisir entre l'arrêt du seul moniteur et celui
+du processus distant de la session exacte ; une seconde question, indépendante,
+propose la purge. Relancer la même commande, ou simplement
+`rlidar2map_CLI --bundle --session paris root@192.0.2.10`, relit
 l'état distant sans lancer un second calcul. Une session terminée n'est jamais
 relancée implicitement : utiliser un nouveau `--session`, ou `--restart` avec de
 nouveaux arguments.
