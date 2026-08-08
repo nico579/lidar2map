@@ -41,6 +41,28 @@ HERE   = Path(__file__).resolve().parent
 SCRIPT = HERE / "lidar2map.py"
 TARGET = "_internal/lidar2map.py"
 
+# Ressources de tools/ effectivement embarquées par les specs. Le script shell
+# GUI VM est aplati sous _internal/ ; les modules Python gardent leur package.
+PATCHABLE_TOOL_TARGETS = {
+    "tools/__init__.py": "_internal/tools/__init__.py",
+    "tools/rlidar2map_CLI.py": "_internal/tools/rlidar2map_CLI.py",
+    "tools/rlidar2map_GUI.py": "_internal/tools/rlidar2map_GUI.py",
+    "tools/rlidar2map_GUI_vm.sh": "_internal/rlidar2map_GUI_vm.sh",
+}
+_LEGACY_PATCHABLE_TOOL_TARGETS = {
+    f"_internal/{source_rel}" for source_rel in PATCHABLE_TOOL_TARGETS
+}
+
+
+def _is_managed_patch_path(path):
+    """Ressource miroir dont l'absence locale signifie suppression."""
+    return (
+        (path.startswith("_internal/providers/") and path.endswith(".py"))
+        or path.startswith("_internal/gui/")
+        or path in PATCHABLE_TOOL_TARGETS.values()
+        or path in _LEGACY_PATCHABLE_TOOL_TARGETS
+    )
+
 REPO_OWNER = "nico579"
 REPO_NAME  = "lidar2map"
 
@@ -53,13 +75,47 @@ def sha256(path):
     return h.hexdigest()
 
 
+def _collect_patch_extras():
+    """Collecte la source unique des ressources patchables du bundle."""
+    extras = {}
+    providers_dir = HERE / "providers"
+    if providers_dir.exists():
+        for source in sorted(providers_dir.glob("*.py")):
+            extras[f"_internal/providers/{source.name}"] = source.read_bytes()
+
+    gui_dir = HERE / "gui"
+    if gui_dir.exists():
+        for source in sorted(gui_dir.glob("*")):
+            if source.is_file():
+                extras[f"_internal/gui/{source.name}"] = source.read_bytes()
+
+    for source_rel, target in PATCHABLE_TOOL_TARGETS.items():
+        source = HERE / source_rel
+        if source.exists():
+            extras[target] = source.read_bytes()
+    return extras
+
+
+def _inner_bundle_is_current(bundle_path, new_script, extras):
+    """Vérifie le cœur ET chaque extra ; un fix tools-only doit être patché."""
+    with zipfile.ZipFile(bundle_path, "r") as bundle:
+        names = set(bundle.namelist())
+        if TARGET not in names or bundle.read(TARGET) != new_script:
+            return False
+        managed = {path for path in names
+                   if not path.endswith("/") and _is_managed_patch_path(path)}
+        if managed != set(extras):
+            return False
+        return all(bundle.read(path) == data for path, data in extras.items())
+
+
 # ── Helpers : patch chirurgical ──────────────────────────────────────────────
 
 def _patch_inner_bundle(inner_bytes, new_script, extras=None):
     """Régénère un lidar2map_bundle.zip avec _internal/lidar2map.py remplacé.
     extras : dict {path_in_bundle: file_bytes} pour ajouter/remplacer des fichiers
-             additionnels (ex: providers/*.py). Si une entrée extras coïncide
-             avec un fichier existant dans le bundle, elle l'écrase.
+             additionnels (ex: providers/*.py). Les ressources miroir gérées
+             qui ne figurent plus dans extras sont supprimées du bundle.
     Renvoie les bytes du nouveau zip ou lève SystemExit si TARGET absent."""
     extras = extras or {}
     new_inner = io.BytesIO()
@@ -74,6 +130,10 @@ def _patch_inner_bundle(inner_bytes, new_script, extras=None):
             elif item.filename in extras:
                 # Remplace via le ZipInfo existant pour préserver les permissions
                 out_b.writestr(item, extras[item.filename])
+            elif _is_managed_patch_path(item.filename):
+                # Miroir strict : une source provider/gui/tool supprimée ne doit
+                # pas survivre indéfiniment dans les archives publiées.
+                continue
             else:
                 out_b.writestr(item, in_b.read(item.filename))
             written_paths.add(item.filename)
@@ -141,7 +201,7 @@ def _patch_linux_targz(input_path, output_path, new_script, extras=None):
 
 # ── Mode archive macOS (refactorisé pour utiliser les helpers) ───────────────
 
-def _update_macos_archive(outer_path, new_script_bytes):
+def _update_macos_archive(outer_path, new_script_bytes, extras=None):
     """Patch chirurgical d'un lidar2map-macos-*.zip — préserve les permissions
     Unix encodées par ditto (Contents/MacOS/lidar2map mode 0o755, symlinks
     PyQt6, etc.) car seules les bytes du bundle interne sont régénérées."""
@@ -157,7 +217,8 @@ def _update_macos_archive(outer_path, new_script_bytes):
                      f"dans {outer_path.name} — pas une archive .app valide.")
         inner_bytes = outer.read(inner_name)
 
-    new_inner_bytes = _patch_inner_bundle(inner_bytes, new_script_bytes)
+    new_inner_bytes = _patch_inner_bundle(
+        inner_bytes, new_script_bytes, extras=extras)
 
     # 2. Réécrire l'archive externe atomiquement
     tmp = outer_path.with_suffix(".zip.tmp")
@@ -170,7 +231,7 @@ def _update_macos_archive(outer_path, new_script_bytes):
         tmp.unlink(missing_ok=True)
         sys.exit(f"ERREUR : {e}")
 
-    print(f"  ✓ {TARGET} remplacé dans {inner_name}")
+    print(f"  ✓ {TARGET} et {len(extras or {})} ressource(s) remplacés dans {inner_name}")
     print(f"  ✓ ZipInfo préservés sur les {n_entries} entrées")
     print(f"  SHA256 archive : {sha256(outer_path)[:16]}...")
 
@@ -390,24 +451,11 @@ def _do_release(tag, new_script, dry_run=False):
             _download_with_progress(t["url"], dest)
         t["local"] = dest
 
-    # 3b. Collecter les fichiers additionnels à injecter (providers/*.py v1.2+,
-    # gui/ v1.12+). Les bundles v1.1 n'ont pas de providers/ — on l'ajoute via
-    # extras. Même mécanisme pour le front GUI (index.html/style.css/app.js,
-    # bundlé en datas par les specs sous _internal/gui/) : sans ça, un fix
-    # gui-only poussé sur main n'atteignait JAMAIS les bundles via patch,
-    # seul un rebuild --new-tag le livrait.
-    extras = {}
-    _providers_dir = HERE / "providers"
-    if _providers_dir.exists():
-        for _f in sorted(_providers_dir.glob("*.py")):
-            extras[f"_internal/providers/{_f.name}"] = _f.read_bytes()
-    _gui_dir = HERE / "gui"
-    if _gui_dir.exists():
-        for _f in sorted(_gui_dir.glob("*")):
-            if _f.is_file():
-                extras[f"_internal/gui/{_f.name}"] = _f.read_bytes()
+    # 3b. Collecter toutes les ressources patchables depuis une source unique :
+    # providers, GUI et contrôleurs d'exécution distante embarqués.
+    extras = _collect_patch_extras()
     if extras:
-        print(f"\n  Extras à injecter (providers/ + gui/) : {len(extras)} fichiers")
+        print(f"\n  Ressources embarquées à injecter : {len(extras)} fichiers")
         for path in extras:
             print(f"    + {path}")
 
@@ -508,57 +556,62 @@ def _find_bundle():
 
 # ── Vérifications source + dispatch ─────────────────────────────────────────
 
-if not SCRIPT.exists(): sys.exit(f"ERREUR : {SCRIPT} introuvable")
-new_content = SCRIPT.read_bytes()
+def main():
+    if not SCRIPT.exists():
+        sys.exit(f"ERREUR : {SCRIPT} introuvable")
+    new_content = SCRIPT.read_bytes()
+    patch_extras = _collect_patch_extras()
 
-# Validation syntaxique : un .py cassé injecté dans le zip rendrait l'app
-# non lançable sans rebuild. compile() lève SyntaxError si invalide.
-try:
-    compile(new_content, str(SCRIPT), "exec")
-except SyntaxError as e:
-    sys.exit(f"ERREUR : {SCRIPT.name} contient une SyntaxError ({e}) — abandon")
+    # Validation syntaxique : un .py cassé injecté dans le zip rendrait l'app
+    # non lançable sans rebuild. compile() lève SyntaxError si invalide.
+    try:
+        compile(new_content, str(SCRIPT), "exec")
+    except SyntaxError as e:
+        sys.exit(f"ERREUR : {SCRIPT.name} contient une SyntaxError ({e}) — abandon")
 
-# Mode --release : download/patch/upload sur les 3 OS
-if "--release" in sys.argv:
-    _tag = "v1.1.0"
-    if "--tag" in sys.argv:
-        _i = sys.argv.index("--tag")
-        if _i + 1 < len(sys.argv):
-            _tag = sys.argv[_i + 1]
-    _do_release(_tag, new_content, dry_run="--dry-run" in sys.argv)
-    sys.exit(0)
+    # Mode --release : download/patch/upload sur les 3 OS
+    if "--release" in sys.argv:
+        tag = "v1.1.0"
+        if "--tag" in sys.argv:
+            i = sys.argv.index("--tag")
+            if i + 1 < len(sys.argv):
+                tag = sys.argv[i + 1]
+        _do_release(tag, new_content, dry_run="--dry-run" in sys.argv)
+        return 0
 
-# Mode archive macOS : argument .zip macOS OU lidar2map-macos-arm64.zip auto-détecté
-_archive = _find_macos_archive()
-if _archive:
-    _update_macos_archive(_archive, new_content)
-    print("Terminé. Re-uploader l'archive sur la release (ou utiliser --release).")
-    sys.exit(0)
+    # Mode archive macOS : argument .zip macOS OU archive auto-détectée.
+    archive = _find_macos_archive()
+    if archive:
+        _update_macos_archive(archive, new_content, extras=patch_extras)
+        print("Terminé. Re-uploader l'archive sur la release (ou utiliser --release).")
+        return 0
 
-# Mode bundle direct (Win/Linux livrable, ou Mac depuis le .app extrait)
-BUNDLE = _find_bundle()
-if not BUNDLE.exists(): sys.exit(f"ERREUR : {BUNDLE} introuvable")
+    # Mode bundle direct (Win/Linux livrable, ou Mac depuis le .app extrait)
+    bundle = _find_bundle()
+    if not bundle.exists():
+        sys.exit(f"ERREUR : {bundle} introuvable")
 
-with zipfile.ZipFile(BUNDLE) as z:
-    if TARGET not in z.namelist():
-        sys.exit(f"ERREUR : {TARGET} absent du zip")
-    current = z.read(TARGET)
+    if _inner_bundle_is_current(bundle, new_content, patch_extras):
+        print("Déjà à jour — aucune modification.")
+        return 0
 
-if current == new_content:
-    print("Déjà à jour — aucune modification.")
-    sys.exit(0)
+    # Réécrire le zip de manière atomique.
+    bundle_tmp = bundle.with_suffix(".zip.tmp")
+    print(f"Mise à jour de {TARGET} dans {bundle.name}...")
+    try:
+        new_inner_bytes = _patch_inner_bundle(
+            bundle.read_bytes(), new_content, extras=patch_extras)
+        bundle_tmp.write_bytes(new_inner_bytes)
+        os.replace(bundle_tmp, bundle)
+    except Exception as e:
+        bundle_tmp.unlink(missing_ok=True)
+        sys.exit(f"ERREUR : {e}")
 
-# Réécrire le zip avec le nouveau lidar2map.py — opération atomique
-BUNDLE_TMP = BUNDLE.with_suffix(".zip.tmp")
-print(f"Mise à jour de {TARGET} dans {BUNDLE.name}...")
-try:
-    new_inner_bytes = _patch_inner_bundle(BUNDLE.read_bytes(), new_content)
-    BUNDLE_TMP.write_bytes(new_inner_bytes)
-    os.replace(BUNDLE_TMP, BUNDLE)
-except Exception as e:
-    BUNDLE_TMP.unlink(missing_ok=True)
-    sys.exit(f"ERREUR : {e}")
+    print(f"  ✓ {TARGET} et {len(patch_extras)} ressource(s) remplacés")
+    print(f"  SHA256 bundle : {sha256(bundle)[:16]}...")
+    print("Terminé. La nouvelle version sera active au prochain lancement.")
+    return 0
 
-print(f"  ✓ {TARGET} remplacé")
-print(f"  SHA256 bundle : {sha256(BUNDLE)[:16]}...")
-print("Terminé. La nouvelle version sera active au prochain lancement.")
+
+if __name__ == "__main__":
+    sys.exit(main())

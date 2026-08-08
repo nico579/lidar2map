@@ -131,8 +131,10 @@ la surveillance et la synchronisation sans démarrer un second calcul. Une sessi
 
   --reset-host-key           [OPTIONNEL, défaut : désactivé]
                              Supprime explicitement l'ancienne clé de cette
-                             cible dans known_hosts avant la connexion. Utile
-                             quand la VM change tout en gardant son IP.
+                             cible dans known_hosts avant la connexion. Le
+                             contrôleur répare déjà automatiquement un
+                             changement confirmé et réessaie une fois ; ce
+                             flag force le nettoyage avant même le diagnostic.
                              Ex. : reprendre après réinstallation de la VM :
                              python tools/rlidar2map_CLI.py -s doc-gareoult-lrm3 \
                                  --reset-host-key root@192.0.2.10
@@ -1505,7 +1507,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reset-host-key", action="store_true",
-        help="optionnel, désactivé par défaut ; retire l'ancienne clé known_hosts",
+        help="optionnel ; force le retrait préventif de l'ancienne clé "
+             "known_hosts (un changement détecté est déjà réparé automatiquement)",
     )
     lifecycle = parser.add_mutually_exclusive_group()
     lifecycle.add_argument(

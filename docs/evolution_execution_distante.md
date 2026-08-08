@@ -1,5 +1,11 @@
 # Évolution envisagée : unifier les modes local et distant
 
+> **Archive de conception — document dépassé.** L’exécution intégrée
+> `--remote-cli` / `--remote-gui`, les sessions ciblées, l’arrêt et la purge
+> sont désormais implémentés. Pour le comportement actuel, consulter le
+> [guide d’exécution distante](remote.fr.md). Ce fichier est conservé comme
+> historique des décisions, pas comme mode d’emploi.
+
 Statut : **proposition à terme, non implémentée**.
 
 Aujourd'hui, deux points d'entrée coexistent :

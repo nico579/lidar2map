@@ -967,14 +967,84 @@ if getattr(sys, "frozen", False):
 # d'orchestration SSH/RDP, avant le bootstrap (venv) et les imports lourds :
 # ce sont des scripts stdlib pur, sans dépendance vers le pipeline LiDAR.
 # Arguments propres à chaque mode : voir tools/README_rlidar2map.md.
+
+
+def _import_patchable_source_module(package_name, module_name):
+    """Charge explicitement une ressource Python patchable depuis le disque.
+
+    Les specs PyInstaller embarquent aussi ces modules dans le PYZ pour que
+    leurs dépendances soient détectées au build. Un import normal peut donc
+    préférer cette copie compilée à `_internal/<package>/*.py`, précisément le
+    fichier que `update_app.py` remplace. Le chargeur explicite garantit que
+    les outils distants et providers livrés par un patch sont ceux exécutés.
+    En mode source, il conserve la même sémantique et facilite le test.
+    """
+    import importlib as _runtime_importlib
+    import importlib.util as _runtime_importlib_util
+    from pathlib import Path as _RuntimePath
+
+    root = _RuntimePath(__file__).resolve().parent
+    package_dir = root / package_name
+    module_path = package_dir / f"{module_name}.py"
+    if not module_path.is_file():
+        return _runtime_importlib.import_module(
+            f"{package_name}.{module_name}"
+        )
+
+    def _load(full_name, path, package_paths=None):
+        current = sys.modules.get(full_name)
+        try:
+            current_path = _RuntimePath(getattr(current, "__file__", "")).resolve()
+        except (OSError, TypeError, ValueError):
+            current_path = None
+        if current is not None and current_path == path.resolve():
+            return current
+
+        spec = _runtime_importlib_util.spec_from_file_location(
+            full_name,
+            path,
+            submodule_search_locations=package_paths,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load patchable module {full_name} from {path}")
+        previous = sys.modules.get(full_name)
+        module = _runtime_importlib_util.module_from_spec(spec)
+        sys.modules[full_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            if previous is None:
+                sys.modules.pop(full_name, None)
+            else:
+                sys.modules[full_name] = previous
+            raise
+        return module
+
+    package_init = package_dir / "__init__.py"
+    if package_init.is_file():
+        _load(package_name, package_init, [str(package_dir)])
+
+    # Tous les providers qui mutualisent réseau/cache importent common. Le
+    # précharger explicitement empêche leur source fraîche de retomber sur un
+    # ancien providers.common compilé dans le PYZ.
+    if package_name == "providers" and module_name != "common":
+        common_path = package_dir / "common.py"
+        if common_path.is_file():
+            _load("providers.common", common_path)
+
+    return _load(f"{package_name}.{module_name}", module_path)
+
+
 if len(sys.argv) > 1 and sys.argv[1] in ("--remote-cli", "--remote-gui"):
     os.environ["LIDAR2MAP_REMOTE_MODE"] = "1"
     _remote_argv = sys.argv[2:]
     if sys.argv[1] == "--remote-cli":
-        from tools import rlidar2map_CLI as _remote_tool
+        _remote_tool = _import_patchable_source_module(
+            "tools", "rlidar2map_CLI")
         sys.exit(_remote_tool.main(_remote_argv))
     else:
-        from tools import rlidar2map_GUI as _remote_tool
+        _remote_tool = _import_patchable_source_module(
+            "tools", "rlidar2map_GUI")
         _relaunch = [sys.executable]
         if not getattr(sys, "frozen", False):
             _relaunch.append(__file__)
@@ -2775,7 +2845,6 @@ def _appliquer_production_dir(args):
 #
 # Sélection : --provider <code> en CLI, ou variable d'env LIDAR2MAP_PROVIDER.
 # Codes disponibles : fr-ign (défaut), nl-ahn (POC).
-import importlib as _importlib
 import os as _os
 
 def _discover_providers():
@@ -2787,7 +2856,9 @@ def _discover_providers():
     country_rank.
     """
     try:
-        from providers.common import COUNTRY_INFO as _COUNTRY_INFO
+        _common_provider = _import_patchable_source_module(
+            "providers", "common")
+        _COUNTRY_INFO = _common_provider.COUNTRY_INFO
     except Exception:
         _COUNTRY_INFO = {}
     providers_dir = Path(__file__).resolve().parent / "providers"
@@ -2803,7 +2874,7 @@ def _discover_providers():
         if f.stem.endswith("_laz"):
             continue
         try:
-            mod = _importlib.import_module(f"providers.{f.stem}")
+            mod = _import_patchable_source_module("providers", f.stem)
             # Un module SANS CODE n'est pas un provider mais un utilitaire
             # partagé (ex. providers/common.py) — ne pas le lister.
             if not hasattr(mod, "CODE"):
@@ -2830,7 +2901,8 @@ def _discover_providers():
             # source de vérité unique, anti-drift GUI×pipeline).
             if (providers_dir / f"{f.stem}_laz.py").exists():
                 try:
-                    twin = _importlib.import_module(f"providers.{f.stem}_laz")
+                    twin = _import_patchable_source_module(
+                        "providers", f"{f.stem}_laz")
                     entry["laz"] = {
                         "hmin":    float(getattr(twin, "LAZ_HMIN", 0.4)),
                         "hmax":    float(getattr(twin, "LAZ_HMAX", 2.5)),
@@ -2933,7 +3005,7 @@ def _load_provider():
     module_name = code.replace("-", "_")
     _pdir = Path(__file__).resolve().parent / "providers"
     try:
-        _mod = _importlib.import_module(f"providers.{module_name}")
+        _mod = _import_patchable_source_module("providers", module_name)
         # Réglages LAZ (--laz-hmin/hmax/classes) → posés sur le module jumeau.
         if _laz_params:
             _setp = getattr(_mod, "set_laz_params", None)
@@ -3557,6 +3629,29 @@ def normaliser_nom(texte):
     texte = re.sub(r"[^a-zA-Z0-9_-]", "_", texte.lower())
     texte = re.sub(r"_+", "_", texte).strip("_")
     return texte
+
+
+def _nom_zone_gps_auto(lat, lon):
+    """Nom stable et lisible pour une zone GPS sans --zone-name explicite."""
+    return normaliser_nom(f"gps_{lat:.5f}_{lon:.5f}")
+
+
+def _nom_zone_bbox_auto(lon_min, lat_min, lon_max, lat_max):
+    """Nom stable pour une bbox WGS84 sans imposer un paramètre redondant."""
+    return normaliser_nom(
+        f"bbox_{lon_min:.5f}_{lat_min:.5f}_{lon_max:.5f}_{lat_max:.5f}"
+    )
+
+
+def _zone_cli_presente(args):
+    """True lorsqu'exactement une zone du groupe argparse a été fournie."""
+    return any((
+        getattr(args, "zone_ville", None),
+        getattr(args, "zone_gps", None),
+        getattr(args, "zone_bbox", None),
+        getattr(args, "zone_departement", None),
+        getattr(args, "zone_region", None),
+    ))
 
 
 def wgs84_to_lamb93_approx(lon, lat):
@@ -11293,17 +11388,19 @@ def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         return None
 
 def _resoudre_choix_ombrages(args):
-    """Résout --shadings/--shading en (choix, instances) : 'tous' →
-    SHADING_TOUS, 'aucun' → rien du tout (instances comprises), et les types
+    """Résout --shadings/--shading en (choix, instances) : 'all'/'tous' →
+    SHADING_TOUS, 'none'/'aucun' → rien du tout (instances comprises), et les types
     couverts par une instance --shading explicite sont retirés de choix
     (l'instance porte SES params — sinon ils seraient AUSSI générés aux
     params par défaut). Partagé par main() et _traiter_bbox_lidar : la
     résolution était dupliquée dans les deux mains (sites jumeaux)."""
     ombrages   = args.ombrages or []
     spec_insts = getattr(args, "shading_instances", None) or []
-    if "aucun" in ombrages:
+    if any(v in ombrages for v in ("aucun", "none")):
         return [], []
-    choix = list(SHADING_TOUS) if "tous" in ombrages else list(ombrages)
+    choix = (list(SHADING_TOUS)
+             if any(v in ombrages for v in ("tous", "all"))
+             else list(ombrages))
     if spec_insts:
         _types = {t for t, _ in spec_insts}
         choix = [c for c in choix if c not in _types]
@@ -11362,6 +11459,55 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
                            mbtiles_neuf=mbt_neuf)
 
 
+def _appliquer_defauts_cli_lidar(args):
+    """Applique le contrat par défaut d'un run LiDAR en ligne de commande.
+
+    Un traitement normal télécharge les données manquantes, calcule LRM et
+    produit MBTiles. Une commande de maintenance seule ou une conversion de
+    source ne télécharge pas les données implicitement. Les choix explicites
+    priment (la découverte d'index du provider peut toujours vérifier la zone).
+    """
+    maintenance_demandee = any((
+        args.dalles_purger_invalides,
+        args.dalles_purger_hors_zone,
+        args.ombrages_compresser,
+    ))
+    produit_explicitement_demande = bool(
+        args.ombrages is not None
+        or args.shading_specs
+        or args.shading_preset
+        or args.formats_fichier
+    )
+    maintenance_seule = (
+        maintenance_demandee and not produit_explicitement_demande
+    )
+
+    if args.telechargement_forcer or args.telechargement_ecraser:
+        args.telechargement = True
+    elif args.telechargement is None:
+        args.telechargement = bool(
+            args.ignlidar and not args.source and not maintenance_seule
+        )
+
+    if (args.ignlidar and not args.source and not maintenance_seule
+            and args.ombrages is None and not args.shading_specs
+            and not args.shading_preset):
+        args.ombrages = ["lrm"]
+
+    source_tif = bool(
+        args.source and Path(args.source).suffix.lower() in (".tif", ".tiff")
+    )
+    ombrage_productif = bool(
+        args.ombrages
+        and not any(v in args.ombrages for v in ("aucun", "none"))
+    )
+    if (args.ignlidar and not args.formats_fichier
+            and (ombrage_productif or args.shading_specs
+                 or args.shading_preset or source_tif)):
+        args.formats_fichier = ["mbtiles"]
+    return args
+
+
 def main():
     import argparse
     t_debut = time.time()
@@ -11371,15 +11517,15 @@ def main():
         epilog="""
 Examples:
   python lidar2map.py
-  python lidar2map.py --lidar --zone-city gareoult --download --shadings multi slope --file-formats mbtiles
-  python lidar2map.py --lidar --zone-department 83 --download --shadings multi --file-formats mbtiles
+  python lidar2map.py --lidar --zone-city gareoult
+  python lidar2map.py --lidar --zone-department 83 --shadings multi --file-formats mbtiles
   python lidar2map.py --osm --zone-city gareoult
         """
     )
     parser.add_argument("--version", action="version",
                         version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
     parser.add_argument("--lidar", "--ignlidar", action="store_true", dest="ignlidar",
-                        help="IGN LiDAR DEM mode")
+                        help="LiDAR terrain-processing workflow")
 
     # ── Découpage à priori (raster uniquement) ──────────────────────────────
     grp_priori = parser.add_argument_group(
@@ -11436,9 +11582,8 @@ Examples:
 
     # Téléchargement
     parser.add_argument("--provider", default=None, metavar="CODE",
-                        help="LiDAR provider (default: fr-ign). Available codes: "
-                             "fr-ign, nl-ahn, ch-swisstopo, no-kartverket, us-3dep. "
-                             "See providers/")
+                        help="LiDAR provider code (default: fr-ign). See the GUI "
+                             "selector or docs/providers.md for the current list.")
     parser.add_argument("--api-key", "--apikey", default="", metavar="KEY", dest="apikey",
                         help="Provider API key when required. For us-3dep: "
                              "https://portal.opentopography.org/myopentopo. "
@@ -11475,10 +11620,11 @@ Examples:
 
     # Ombrages
     parser.add_argument("--shadings", "--ombrages", metavar="TYPE", nargs="+", dest="ombrages",
-                        choices=SHADING_TYPES_ORDRE + ["tous", "aucun"],
+                        choices=SHADING_TYPES_ORDRE + ["all", "none", "tous", "aucun"],
                         help=(
-                            "Shadings to generate (default: interactive). "
-                            "Values: " + " ".join(SHADING_TYPES_ORDRE) + " tous(all) aucun(none). "
+                            "Shadings to generate (default for --lidar: lrm). "
+                            "Values: " + " ".join(SHADING_TYPES_ORDRE) + " all none "
+                            "(French aliases: tous aucun). "
                             "Names: lrm = Local Relief Model (implemented as SLRM, Simple LRM); "
                             "vat = Visualization for Archaeological Topography (VAT-style variant); "
                             "e4mstp = Multiscale Topographic Position, enhanced version 4 "
@@ -11502,7 +11648,8 @@ Examples:
                             "--shading oneg:dist=20,gamma=1.5 --shading 315:elevation=20 "
                             "--shading lrm:sigma=10. "
                             "Params: 315/045/135/225/multi=elevation ; "
-                            "svf=conv,dist,gamma,sweep ; opos/oneg=dist,gamma ; "
+                             "svf=conv,dist,gamma,sweep ; "
+                             "opos/oneg=dist,gamma,sweep ; "
                             "vat/e4mstp=dist,gamma ; lrm/rrim=sigma(m) ; "
                             "slope=none. Unset params inherit --svf-* / "
                             "--shading-elevation, except e4mstp gamma, which "
@@ -11543,9 +11690,16 @@ Examples:
                               f"mirror gamma. e4mstp has its own final gamma "
                               f"(default 0.8)."))
 
-    # Mode non-interactif
-    parser.add_argument("--download", "--telechargement", action="store_true", dest="telechargement",
-                        help="Download missing IGN tiles.")
+    # Mode non-interactif. None permet de distinguer le défaut du choix explicite :
+    # un run --lidar normal télécharge les données manquantes, tandis qu'une
+    # opération de maintenance/source ne télécharge rien implicitement.
+    parser.add_argument("--download", "--telechargement",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        dest="telechargement",
+                        help="Download missing provider tiles (default for a normal "
+                             "--lidar run). --no-download enforces cache-only processing. "
+                             "Valid cached tiles are never re-downloaded unless "
+                             "--download-force/--download-overwrite is set.")
     parser.add_argument("--tiles-purge-invalid", "--dalles-purger-invalides", action="store_true",
                         dest="dalles_purger_invalides",
                         help="Delete cache tiles < 2 MB (sea tiles, partial errors). "
@@ -11576,12 +11730,14 @@ Examples:
                         choices=["mbtiles","rmap","sqlitedb","map","gz","geojson",
                                  "transparent-raster"],
                         default=[], metavar="FMT",
-                        help="Output file formats (multi-value): mbtiles rmap sqlitedb "
+                        help="Output file formats (multi-value; default for --lidar: mbtiles): "
+                             "mbtiles rmap sqlitedb "
                              "(raster) ; map geojson gz (vector) ; transparent-raster "
                              "(transparent PNG tiles rasterizing OSM/IGN vector -> .sqlitedb "
                              "overlay for OsmAnd over the LiDAR).")
     parser.add_argument("--source", metavar="PATH", default=None,
-                        help="Existing source file (standalone mode, no zone required). "
+                        help="Existing source file. MBTiles conversion needs no zone; "
+                             "TIF and PBF processing still require a geographic area. "
                              ".tif/.tiff: existing shading → MBTiles/RMAP "
                              "            (CRS auto-detected: 3857=direct tiling, other=warp). "
                              ".mbtiles  : conversion → RMAP (requires rmap format). "
@@ -11612,6 +11768,23 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
+
+    # Contrat CLI utile et minimal : un workflow explicite + une zone suffit.
+    # Les conversions --source constituent leur propre intention et restent
+    # utilisables sans --lidar. --osm est géré dans ce même parser.
+    if not args.ignlidar and not args.osm and not args.source:
+        parser.error("choose a workflow: --lidar or --osm (or pass --source for a conversion)")
+
+    _source_ext_cli = Path(args.source).suffix.lower() if args.source else ""
+    if (not _zone_cli_presente(args)
+            and _source_ext_cli not in (".mbtiles",)):
+        parser.error(
+            "one geographic area is required: --zone-city, --zone-gps, "
+            "--zone-bbox, --zone-department, or --zone-region"
+        )
+
+    _appliquer_defauts_cli_lidar(args)
+
     _valider_zooms(args, parser)
     _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
     _appliquer_production_dir(args)   # racine des .tif LAZ (produits)
@@ -11699,8 +11872,8 @@ Examples:
         if ext == ".mbtiles":
             # Conversion directe MBTiles → RMAP/SQLiteDB (exit immédiat, pas de zone requise)
             if not args.rmap and not args.sqlitedb:
-                print("  ERROR: --rmap or --sqlitedb required for MBTiles conversion.")
-                print(f"  Ex: --source {src_path.name} --rmap")
+                print("  ERROR: choose --file-formats rmap and/or sqlitedb for MBTiles conversion.")
+                print(f"  Ex: --source {src_path.name} --file-formats rmap")
                 sys.exit(1)
             # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
             # R2#6/#50 : vérifier le retour (None = échec), FINALISER l'historique
@@ -11843,10 +12016,8 @@ Examples:
         print(f"  BBox WGS84 : {lon1:.4f},{lat1:.4f} → {lon2:.4f},{lat2:.4f}")
         print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
         print(f"  Area: ~{surface_km2:.0f} km²")
-        if not args.zone_nom:
-            print("  ERROR: --zone-name required with --zone-bbox")
-            sys.exit(1)
-        nom_zone = normaliser_nom(args.zone_nom)
+        nom_zone = (normaliser_nom(args.zone_nom) if args.zone_nom
+                    else _nom_zone_bbox_auto(lon1, lat1, lon2, lat2))
         if not nom_zone:
             sys.exit(1)
 
@@ -11861,10 +12032,8 @@ Examples:
                 and -90 <= lat <= 90 and -180 <= lon <= 180):
             print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
             sys.exit(1)
-        if not args.zone_nom:
-            print("  ERROR: --zone-name required with --zone-gps")
-            sys.exit(1)
-        nom_zone = normaliser_nom(args.zone_nom)
+        nom_zone = (normaliser_nom(args.zone_nom) if args.zone_nom
+                    else _nom_zone_gps_auto(lat, lon))
         if not nom_zone:
             sys.exit(1)
         # BUGFIX : la conversion GPS->CRS natif doit se faire dans TOUS les cas,
@@ -12085,7 +12254,7 @@ Examples:
                   f" ({len(noms_zone_purge)} zone tiles)")
         else:
             print(f"  ERROR out-of-zone purge: {dalles_zone_txt.name} not found.")
-            print("  Relaunch with --download to rebuild the list.")
+            print("  Relaunch with --download to rebuild the list explicitly.")
             sys.exit(1)
         toutes = _rglob_tif_robuste(dossier_dalles)
         # #2 : le cache est indexé par PAYS (lidar/<pays>), donc plusieurs
@@ -12188,9 +12357,10 @@ Examples:
         else:
             dalles_existantes = _rglob_tif_robuste(dossier_dalles) if dossier_dalles.exists() else []
             if not dalles_existantes:
-                print("\n  WARNING: --download missing but no tile found.")
+                print("\n  WARNING: downloads are disabled and no cached tile was found.")
                 print(f"  Tiles folder : {dossier_dalles}")
-                print("  Add --download to fetch the missing tiles.")
+                print("  Remove --no-download (normal --lidar default), or add "
+                      "--download to a maintenance command.")
                 sys.exit(1)
             # Vérification zone-spécifique : parmi les dalles du cache, combien
             # couvrent réellement la zone demandée ? Le cache peut contenir des
@@ -12208,7 +12378,8 @@ Examples:
                     libelle_zone = args.zone_ville or nom_zone
                     print(f"  Requested zone: {len(noms_attendus)} tile(s) around "
                           f"{libelle_zone}")
-                    print("  Add --download to fetch the missing tiles.")
+                    print("  Remove --no-download (normal --lidar default), or add "
+                          "--download to a maintenance command.")
                     sys.exit(1)
                 print(f"\n  Download skipped "
                       f"({len(dalles_zone_cache)}/{len(noms_attendus)} zone tile(s) found in cache)")
@@ -12263,7 +12434,7 @@ Examples:
                     # L'ancien fichier porte un en-tête différent et sera donc
                     # ignoré, mais on ne le détruit pas tant qu'aucune nouvelle
                     # liste complète n'a pu être publiée.
-                    print("  No tile in cache for this zone - use --download")
+                    print("  No tile in cache for this zone - enable downloads")
                     noms_zone = set()
             else:
                 noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
@@ -12287,7 +12458,7 @@ Examples:
                     print(f"  dalles_zone.txt rebuilt: {len(noms_zone)} tile(s) found on disk")
                 else:
                     print(f"  ERROR: no tile of the zone found in {dossier_dalles}")
-                    print("  Relaunch with --download to fetch the tiles.")
+                    print("  Relaunch without --no-download, or pass --download explicitly.")
                     sys.exit(1)
         else:
             if args.osm and not args.ombrages and not args.mbtiles:
@@ -12295,7 +12466,7 @@ Examples:
             else:
                 print(f"\n  ERROR: {dalles_zone_txt.name} not found in {dossier_ville}/")
                 print("  This file is created automatically during download.")
-                print("  Relaunch with --download to rebuild it.")
+                print("  Relaunch without --no-download, or pass --download explicitly.")
                 print("  (Tiles already present on disk will be skipped, ~a few seconds)")
                 sys.exit(1)
         toutes_dalles    = sorted(_rglob_tif_robuste(dossier_dalles))
@@ -14584,8 +14755,7 @@ def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
       utilise None (résolu à 20 plus tard), main_wmts/wfs utilisent 20.0 dès
       le parser. NB : c'est un CÔTÉ, pas un rayon (20 km de large = l'ancien
       rayon de 10 km, avant le passage au modèle largeur).
-    - bbox_metavar  : main() = "X1,Y1,X2,Y2" Lambert 93 en mètres ;
-      main_wmts/wfs = "W,S,E,N" WGS84 en degrés.
+    - bbox_metavar  : libellé de la bbox WGS84 "W,S,E,N".
     - bbox_help     : help textuel propre à chaque mode.
     - avec_dossier  : si True, ajoute aussi --dossier (uniquement pour main()
       qui le mélange avec --dossier-dalles ; les autres l'ajoutent à part).
@@ -14627,7 +14797,8 @@ def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
                              f"{width_default if width_default is not None else 20})")
     parser.add_argument("--zone-name", "--zone-nom", metavar="NAME", default=None, dest="zone_nom",
                         help="Output folder name for the processed zone. "
-                             "Required for --zone-gps and --zone-bbox.")
+                             "Automatically derived from the city, GPS coordinates, "
+                             "bbox, department, or region when omitted.")
     if avec_dossier:
         parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier",
                             help="Root output folder.")
@@ -14697,8 +14868,8 @@ def _resoudre_zone_wgs84(args):
         lon_min, lat_min, lon_max, lat_max = _bbox_valide_wgs84(
             lon_min, lat_min, lon_max, lat_max)
         if not nom_zone:
-            print("  ERROR: --zone-name required with --zone-bbox")
-            sys.exit(1)
+            nom_zone = _nom_zone_bbox_auto(
+                lon_min, lat_min, lon_max, lat_max)
 
     elif args.zone_gps:
         try:
@@ -14712,8 +14883,7 @@ def _resoudre_zone_wgs84(args):
             print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
             sys.exit(1)
         if not nom_zone:
-            print("  ERROR: --zone-name required with --zone-gps")
-            sys.exit(1)
+            nom_zone = _nom_zone_gps_auto(lat_c, lon_c)
         _demi  = (args.zone_width or 20.0) / 2.0   # côté → demi-étendue
         r     = _demi / 111.0
         r_lon = _demi / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
@@ -14838,7 +15008,7 @@ Examples:
                         version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
     parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
                         help="IGN raster mode via WMTS. "
-                             "Use --layer for the layer (default: scan25). "
+                             "Use --layer for the layer (default: planign). "
                              "Ex: --raster --layer GEOGRAPHICALGRIDSYSTEMS.MAPS")
     # Consommé tôt par _load_provider (scan de sys.argv) ; déclaré ici uniquement
     # pour qu'argparse ne le rejette pas. Le raster US (--layer naip) passe par
@@ -14932,6 +15102,11 @@ Examples:
         sys.exit(0)
 
     args = parser.parse_args()
+    if not args.source and not _zone_cli_presente(args):
+        parser.error(
+            "one geographic area is required: --zone-city, --zone-gps, "
+            "--zone-bbox, --zone-department, or --zone-region"
+        )
     _valider_zooms(args, parser)
     _appliquer_cache_dir(args)   # avant le cache WMTS ign_raster
     # Résolution --formats-fichier → flags booléens
@@ -14954,9 +15129,9 @@ Examples:
             print(f"  ERROR: --source expects a .mbtiles (got: {p.suffix})")
             sys.exit(1)
         if not args.rmap and not args.sqlitedb:
-            print("  ERROR: --rmap or --sqlitedb required.")
-            print(f"  Ex: --source {p.name} --rmap")
-            print(f"  Ex: --source {p.name} --sqlitedb")
+            print("  ERROR: choose --file-formats rmap and/or sqlitedb.")
+            print(f"  Ex: --source {p.name} --file-formats rmap")
+            print(f"  Ex: --source {p.name} --file-formats sqlitedb")
             sys.exit(1)
         # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
         # R2#6/#50 (jumeau du site LiDAR) : vérifier le retour (None = échec),
@@ -17310,6 +17485,11 @@ def main_wfs():
                              "Without it, computed automatically from the area "
                              "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
     args = parser.parse_args()
+    if not _zone_cli_presente(args):
+        parser.error(
+            "one geographic area is required: --zone-city, --zone-gps, "
+            "--zone-bbox, --zone-department, or --zone-region"
+        )
     _appliquer_cache_dir(args)   # avant le cache bdtopo/discover
     _ff = getattr(args, "formats_fichier", ["gz"])
     # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
@@ -18314,6 +18494,26 @@ def _cfg_depuis_argv() -> dict:
 
     fmts = _args_after("--file-formats", "--formats-fichier")
     ombs = _args_after("--shadings", "--ombrages")
+    _source_cli = _arg("--source")
+    _maintenance_cli = _flag(
+        "--tiles-purge-invalid", "--dalles-purger-invalides",
+        "--tiles-purge-out-of-zone", "--dalles-purger-hors-zone",
+        "--shadings-compress", "--ombrages-compresser",
+    )
+    _produit_cli = bool(
+        ombs or fmts or _flag("--shading", "--shading-preset")
+    )
+    _lidar_standard = (
+        t == "lidar" and not _source_cli
+        and not (_maintenance_cli and not _produit_cli)
+    )
+    if (_lidar_standard and not ombs
+            and not _flag("--shading", "--shading-preset")):
+        ombs = ["lrm"]
+    if (_lidar_standard and not fmts
+            and (ombs and not any(v in ombs for v in ("aucun", "none"))
+                 or _flag("--shading", "--shading-preset"))):
+        fmts = ["mbtiles"]
 
     return {
         # Provider — pris du global déjà résolu (PROVIDER.CODE), car _load_provider
@@ -18333,7 +18533,10 @@ def _cfg_depuis_argv() -> dict:
         "bbox":    _arg("--zone-bbox"),
         "zone_width": _arg_float("--zone-width", "--zone-largeur", default=20.0),
         # LiDAR
-        "tel":           _flag("--download", "--telechargement"),
+        "tel":           (_flag("--download", "--telechargement")
+                          or (_lidar_standard
+                              and not _flag("--no-download",
+                                            "--no-telechargement"))),
         # Compression ON par defaut : seule la NEGATION apparait dans argv
         "comp":          not _flag("--no-download-compress",
                                    "--no-telechargement-compresser"),
@@ -19254,7 +19457,11 @@ def lancer_gui():
             # ── LiDAR ────────────────────────────────────────────────────
             if t == "lidar":
                 cmd.append("--lidar")
-                if cfg.get("tel"):      cmd.append("--download")
+                # Le CLI télécharge désormais les données manquantes par défaut.
+                # La GUI doit donc exprimer aussi le choix négatif : sans ce
+                # --no-download, décocher la case n'aurait plus aucun effet.
+                cmd.append("--download" if cfg.get("tel", True)
+                           else "--no-download")
                 # Compression ON par défaut côté CLI : n'émettre que la
                 # déviation (case décochée → --no-download-compress).
                 if not cfg.get("comp", True):
@@ -19862,8 +20069,10 @@ def lancer_gui():
             argv.append("{}@{}".format(self._REMOTE_SSH_USER, cfg.get("remote_host", "")))
             stopped = False
             try:
-                from tools.rlidar2map_CLI import parse_options, VmController
-                controller = VmController(parse_options(argv))
+                remote_cli = _import_patchable_source_module(
+                    "tools", "rlidar2map_CLI")
+                controller = remote_cli.VmController(
+                    remote_cli.parse_options(argv))
                 stopped = controller.stop_remote()
                 purged = False
                 if purge_remote:

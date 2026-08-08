@@ -113,6 +113,17 @@ FOLDERS = {
     "tools":       "tools",       # outils (découverte de providers par catalogue CSW)
 }
 
+# Outils réellement embarqués par les specs PyInstaller. Un changement de l'un
+# d'eux doit déclencher le patch des bundles, comme lidar2map.py/providers/gui.
+# Les autres scripts de tools/ restent des utilitaires source et ne justifient
+# pas de patch binaire.
+PATCHABLE_TOOL_FILES = {
+    "tools/__init__.py",
+    "tools/rlidar2map_CLI.py",
+    "tools/rlidar2map_GUI.py",
+    "tools/rlidar2map_GUI_vm.sh",
+}
+
 # Anciens chemins sur GitHub à supprimer (renommages + scripts PS1 obsolètes)
 REMOVE = [
     "lidar2map.spec",
@@ -519,19 +530,22 @@ def main():
 
     # --- Phase 2 : catégorisation -> action ---
     rebuild = [c for c in changed if is_rebuild_file(c)]
-    # providers/*.py et gui/* comptent comme du code : update_app.py les injecte
-    # dans les bundles lors du patch (extras _internal/providers/ + _internal/gui/
-    # depuis v1.12). Sans ce test, un nouveau provider ou un fix gui-only serait
-    # poussé sur main mais jamais livré aux bundles.
+    # providers/*.py, gui/* et les contrôleurs remote embarqués comptent comme
+    # du code : update_app.py les injecte dans les bundles lors du patch. Sans
+    # ce test, un correctif gui/remote/provider serait poussé sur main mais
+    # jamais livré aux exécutables existants.
     code_changed = (APP_PY in changed
-                    or any(c.startswith(("providers/", "gui/")) for c in changed))
+                    or any(c.startswith(("providers/", "gui/")) for c in changed)
+                    or any(c in PATCHABLE_TOOL_FILES for c in changed))
 
     if rebuild:
         cprint("\n==> [2/2] REBUILD requis (fichiers impactant le binaire) :", "yellow")
         for f in rebuild:
             cprint(f"      {f}", "yellow")
         print()
-        print(f"    Le patch (cloud ou local) ne change que _internal/{APP_PY} :")
+        print(f"    Le patch (cloud ou local) ne change que {APP_PY} et les")
+        print("    ressources Python/shell explicitement embarquées :")
+        print("    providers/, gui/ et contrôleurs remote de tools/.")
         print("    il ne peut PAS livrer ces changements. Il faut un vrai rebuild")
         print("    via release.yml, déclenché par un NOUVEAU tag. La version se")
         print(f"    bumpe dans la constante VERSION de {APP_PY} (source unique) ;")
@@ -545,7 +559,7 @@ def main():
 
     if code_changed:
         tag = args.patch_tag or get_latest_tag(args.repo)
-        cprint(f"\n==> [2/2] {APP_PY} modifié → patch via --mode {args.mode} sur {tag}", "cyan")
+        cprint(f"\n==> [2/2] Code embarqué modifié → patch via --mode {args.mode} sur {tag}", "cyan")
         cprint("    Avertissement : si tu as touché au BLOC LAUNCHER ou aux DEPS dans", "yellow")
         cprint(f"    {APP_PY}, le patch ne suffit pas → rebuild via release.yml.", "yellow")
         invoke_patch(args.mode, args.repo, tag)

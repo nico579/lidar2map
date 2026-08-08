@@ -1701,6 +1701,78 @@ check("onglet Usage : lecture seule, 3 tiers, open_folder",
       and "def get_usage(self" in _src
       and "pywebview.api.open_folder" in _appjs)
 
+print("== 9j. Contrat CLI minimal : défauts utiles, cache-only explicite ==")
+check("nom GPS automatique stable",
+      l2m._nom_zone_gps_auto(43.3156, 6.0423) == "gps_43_31560_6_04230")
+check("nom bbox automatique stable",
+      l2m._nom_zone_bbox_auto(6.0, 43.3, 6.1, 43.4)
+      == "bbox_6_00000_43_30000_6_10000_43_40000")
+_all, _ = l2m._resoudre_choix_ombrages(
+    types.SimpleNamespace(ombrages=["all"], shading_instances=None))
+_none, _ = l2m._resoudre_choix_ombrages(
+    types.SimpleNamespace(ombrages=["none"], shading_instances=None))
+check("--shadings accepte les alias anglais all/none",
+      _all == l2m.SHADING_TOUS and _none == [])
+_cli_base = dict(
+    ignlidar=True, source=None, telechargement=None,
+    telechargement_forcer=False, telechargement_ecraser=False,
+    dalles_purger_invalides=False, dalles_purger_hors_zone=False,
+    ombrages_compresser=False, ombrages=None, shading_specs=None,
+    shading_preset=None, formats_fichier=[])
+_cli_normal = l2m._appliquer_defauts_cli_lidar(
+    types.SimpleNamespace(**_cli_base))
+check("CLI LiDAR : téléchargement/LRM/MBTiles appliqués comme défauts utiles",
+      _cli_normal.telechargement is True
+      and _cli_normal.ombrages == ["lrm"]
+      and _cli_normal.formats_fichier == ["mbtiles"])
+_cli_hors_ligne = l2m._appliquer_defauts_cli_lidar(
+    types.SimpleNamespace(**{**_cli_base, "telechargement": False}))
+check("CLI LiDAR : --no-download conserve les autres défauts utiles",
+      _cli_hors_ligne.telechargement is False
+      and _cli_hors_ligne.ombrages == ["lrm"]
+      and _cli_hors_ligne.formats_fichier == ["mbtiles"])
+_cli_maintenance = l2m._appliquer_defauts_cli_lidar(
+    types.SimpleNamespace(**{**_cli_base, "dalles_purger_invalides": True}))
+check("maintenance LiDAR seule : aucun téléchargement ni produit implicite",
+      _cli_maintenance.telechargement is False
+      and _cli_maintenance.ombrages is None
+      and _cli_maintenance.formats_fichier == [])
+_patchable_name = "tools.rlidar2map_CLI"
+_previous_patchable = sys.modules.get(_patchable_name)
+_previous_tools = sys.modules.get("tools")
+_compiled_copy = types.ModuleType(_patchable_name)
+_compiled_copy.__file__ = "<pyinstaller-pyz>/tools/rlidar2map_CLI.pyc"
+sys.modules[_patchable_name] = _compiled_copy
+try:
+    _source_copy = l2m._import_patchable_source_module(
+        "tools", "rlidar2map_CLI")
+    check("bundle patché : la source disque prime sur une ancienne copie PYZ",
+          _source_copy is not _compiled_copy
+          and Path(_source_copy.__file__).resolve()
+          == (_ROOT / "tools" / "rlidar2map_CLI.py").resolve())
+finally:
+    if _previous_patchable is None:
+        sys.modules.pop(_patchable_name, None)
+    else:
+        sys.modules[_patchable_name] = _previous_patchable
+    if _previous_tools is None:
+        sys.modules.pop("tools", None)
+    else:
+        sys.modules["tools"] = _previous_tools
+check("GUI : décocher Télécharger émet explicitement --no-download",
+      'else "--no-download"' in _src)
+check("GUI VM : arrêt et purge sont deux confirmations indépendantes",
+      "confirm(t('remote.stop.confirm'))" in _appjs
+      and "const purgeRemote = stopRemote && confirm(t('remote.purge.confirm'))"
+      in _appjs
+      and "pywebview.api.stop(stopRemote, purgeRemote)" in _appjs)
+check("GUI VM : l'arrêt transmet la session active exacte au contrôleur",
+      'argv = ["--session", cfg.get("remote_session") or "lidar", "--stop"]'
+      in _src)
+check("GUI VM : le dialogue précise que les caches partagés sont conservés",
+      "Les caches partagés restent conservés dans les deux cas." in _appjs
+      and "Shared caches are preserved in both cases." in _appjs)
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS — voir ci-dessus")
 sys.exit(0 if ok_all else 1)

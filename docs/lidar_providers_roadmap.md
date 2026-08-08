@@ -6,7 +6,7 @@ Kept by hand so we do not re-dig the same dead ends every few months. Last
 reviewed 2026-07-22.
 
 For the integrated providers and their exact access mechanism, see the
-[provider table](../README.md#lidar-providers--adding-a-country) in the README.
+[canonical provider catalogue](providers.md).
 This document is the fuller registry: the sources that did *not* make it, with a
 precise reason each time.
 
@@ -402,20 +402,6 @@ candidate with a real tile download before writing the provider.
 
 ## Adding a provider
 
-Copy the provider closest in paradigm and adapt URLs / CRS / naming:
-
-- **WCS** → `es_cnig.py` (or `de_hessen.py`): synthetic 1 km grid clipped to the
-  coverage extent, `GetCoverage` per bbox. First one ~half a day, next ones 1-2 h.
-- **STAC + windowed COG** → `ca_nrcan.py`: per-bbox cache, select the DTM asset,
-  the core reads the bbox window via `/vsicurl/`. Add `gdal_env_options()` if the
-  download host needs HTTP auth (see `se_lantmateriet.py`).
-- **ATOM index** → `de_thueringen.py` (grid) or `cz_cuzk.py` (two-level, LAZ).
-- **ArcGIS ImageServer** → `no_kartverket.py` (`exportImage`, reproject on
-  download if the server only speaks its native CRS, see `au_ga.py`).
-
-Each provider is `providers/<code>.py`, ~50-200 lines, exposing `CODE`, `NAME`,
-`COUNTRY`, `CRS_NATIF`, `RESOLUTION_M`, `DALLE_KM`, `PX_PAR_DALLE`,
-`SEUIL_DALLE_VALIDE` and `discover_dalles(bbox_wgs84, bbox_natif, cache_path)`.
-The downstream pipeline (SVF, relief, EPSG:3857 warp, MBTiles) is
-provider-agnostic. Always validate a new provider with a **real tile download**
-before shipping, and add a smoke-test point in `Tests/smoke_providers.py`.
+The provider contract, access-pattern examples and validation checklist now
+live in one canonical page: [Adding a LiDAR provider](contributing-providers.md).
+This roadmap remains the registry of sources evaluated, integrated or rejected.

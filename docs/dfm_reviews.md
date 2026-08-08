@@ -1,5 +1,9 @@
 # Suivi des revues LAZ / DFM / CSF
 
+> **Dossier d’ingénierie.** Ce journal conserve les validations et décisions
+> historiques. Pour utiliser la fonction actuelle, consulter le
+> [guide DFM / LAZ / CSF](dfm.fr.md).
+
 Chaque revue est une liste de **questionnements à trancher**. Ce fichier les suit
 pour ne rien oublier et ne pas re-litiger. Statuts :
 

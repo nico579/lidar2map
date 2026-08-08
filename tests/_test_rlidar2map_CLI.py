@@ -122,6 +122,23 @@ class ParseTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_host_key_change_detection_is_specific(self):
+        self.assertTrue(
+            rlidar2map_cli._is_host_key_changed(
+                b"REMOTE HOST IDENTIFICATION HAS CHANGED!"
+            )
+        )
+        self.assertTrue(
+            rlidar2map_cli._is_host_key_changed(
+                b"Host key verification failed."
+            )
+        )
+        self.assertFalse(
+            rlidar2map_cli._is_host_key_changed(
+                b"ssh: connect to host vm.example port 22: timed out"
+            )
+        )
+
     def test_parse_complete_state(self):
         payload = "\n".join(
             [
@@ -265,6 +282,45 @@ class ProtocolTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_query_state_repairs_changed_host_key_and_retries_once(self):
+        controller = rlidar2map_cli.VmController(options())
+        calls = []
+        responses = iter(
+            (
+                subprocess.CompletedProcess(
+                    [], 255, b"", b"REMOTE HOST IDENTIFICATION HAS CHANGED!"
+                ),
+                subprocess.CompletedProcess([], 0, b"", b""),
+                subprocess.CompletedProcess(
+                    [], 0, b"protocol=1\nexists=0\ntmux=0\n", b""
+                ),
+            )
+        )
+
+        def fake_run(command, **kwargs):
+            calls.append((list(command), kwargs))
+            return next(responses)
+
+        with mock.patch.object(rlidar2map_cli.subprocess, "run", fake_run):
+            state = controller.query_state()
+
+        self.assertFalse(state.exists)
+        self.assertEqual(calls[1][0], ["ssh-keygen", "-R", "vm.example"])
+        self.assertEqual(calls[0][0], calls[2][0])
+        self.assertIn("StrictHostKeyChecking=accept-new", calls[2][0])
+
+    def test_query_state_does_not_reset_for_an_unrelated_ssh_failure(self):
+        controller = rlidar2map_cli.VmController(options())
+        failed = subprocess.CompletedProcess(
+            [], 255, b"", b"ssh: connect to host vm.example port 22: timed out"
+        )
+        with mock.patch.object(
+            rlidar2map_cli.subprocess, "run", return_value=failed
+        ) as run_mock, self.assertRaises(rlidar2map_cli.SshError):
+            controller.query_state()
+
+        self.assertEqual(run_mock.call_count, 1)
+
     def test_remote_command_round_trips_hostile_arguments(self):
         parsed = rlidar2map_cli.parse_options(
             [
