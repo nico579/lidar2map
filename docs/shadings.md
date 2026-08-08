@@ -3,30 +3,40 @@
 ***English** | [Version française](shadings.fr.md)*
 
 The LiDAR point cloud already contains three-dimensional relief: every return
-has $(x,y,z)$ coordinates. To map the terrain, points classified as ground are
-interpolated into a **digital terrain model (DTM)**, a grid in which every pixel
-stores an elevation. On a flat map, however, that number does not spontaneously
-reveal the shape of a bank, the sign of a ditch, or decimetre-scale microrelief.
+has $(x,y,z)$ coordinates. To map it, lidar2map transforms those points into a
+**raster elevation surface**, in which every pixel stores an elevation.
+Depending on the workflow, that surface can be a bare-earth digital terrain model (DTM)
+interpolated from ground-classified points, a Digital Feature Model (DFM) that
+reinjects selected low standing structures, or a surface reconstructed with the
+Cloth Simulation Filter (CSF). The [DFM/CSF guide](dfm.md) explains these two
+point-cloud methods in detail. On a flat map, elevation alone does not
+spontaneously reveal the shape of a bank, the sign of a ditch, or
+decimetre-scale microrelief.
 
 lidar2map's “shadings” are therefore, in the broad sense, **2D visual encodings
-of DTM geometry**. They transform elevation or its relationship to neighbouring
-cells — slope and aspect, deviation from broad relief, horizon angles, visible
-sky, convexity, and concavity — into luminance or colour. They neither recreate
-lost 3D nor alter the DTM: they make its forms perceptible and select which
-scales or properties to emphasize. Only hillshade and multidirectional
+of the input surface's geometry**. They transform elevation or its relationship
+to neighbouring cells — slope and aspect, deviation from broad relief, horizon
+angles, visible sky, convexity, and concavity — into luminance or colour. They
+neither recreate lost 3D nor alter the source surface: they make its forms
+perceptible and select which scales or properties to emphasize. Only hillshade and multidirectional
 hillshade actually simulate illumination; LRM, slope, SVF, and openness are
 different geometric visualizations.
 
 ```mermaid
 flowchart LR
-    P["3D LiDAR cloud (x, y, z)"] --> G[Ground-classified points]
-    G --> Z["DTM: elevation z(x, y)"]
+    P["3D LiDAR cloud (x, y, z)"] --> S{"Input surface"}
+    S --> M["DTM: bare earth"]
+    S --> F["DFM: reinjected structures"]
+    S --> C["CSF: cloth-filtered surface"]
+    M --> Z["Elevation z(x, y)"]
+    F --> Z
+    C --> Z
     Z --> D["Geometric measure: slope, horizons, scales"]
     D --> I["2D image: luminance or colour"]
 ```
 
-A 3D viewer can of course display the cloud or DTM directly, while contours or
-hypsometric tints can also encode elevation. Two-dimensional rasters remain
+A 3D viewer can of course display the cloud or any of these surfaces directly,
+while contours or hypsometric tints can also encode elevation. Two-dimensional rasters remain
 convenient for comparing methods, overlaying other maps, and offline use on a
 phone; their local derivatives are particularly effective at detecting subtle
 relief beneath forest cover.
@@ -37,7 +47,7 @@ positive openness may remain ambiguous until negative openness is inspected.
 There is no universal best visualization.
 
 Scale and distance parameters should match the size of the target landforms and
-the DTM resolution. For LRM, an explicit `sigma` value is expressed in metres;
+the input surface resolution. For LRM, an explicit `sigma` value is expressed in metres;
 its value in pixels is:
 
 $$

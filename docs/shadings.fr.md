@@ -3,32 +3,42 @@
 *[English version](shadings.md) | **Français***
 
 Le nuage de points LiDAR contient déjà le relief en trois dimensions : chaque
-retour possède des coordonnées $(x,y,z)$. Pour cartographier le terrain, les
-points classés « sol » sont interpolés en un **modèle numérique de terrain
-(MNT)**, une grille où chaque pixel conserve une altitude. Sur une carte plane,
-ce nombre ne rend toutefois pas spontanément visibles la forme d'un talus, le
-signe d'un fossé ou un microrelief de quelques décimètres.
+retour possède des coordonnées $(x,y,z)$. Pour le cartographier, lidar2map
+transforme ces points en une **surface d’altitude rasterisée**, où chaque pixel
+conserve une altitude. Selon le workflow, cette surface peut être un modèle
+numérique de terrain (MNT) sol-nu interpolé depuis les points classés « sol »,
+un Digital Feature Model (DFM) qui réinjecte certaines structures basses, ou une
+surface reconstruite par Cloth Simulation Filter (CSF). Le
+[guide DFM/CSF](dfm.fr.md) détaille ces deux méthodes issues du nuage classé.
+Sur une carte plane, l’altitude seule ne rend toutefois pas spontanément
+visibles la forme d’un talus, le signe d’un fossé ou un microrelief de quelques
+décimètres.
 
 Les « ombrages » de lidar2map sont donc, au sens large, des **encodages visuels
-2D de la géométrie du MNT**. Ils transforment l'altitude ou ses relations avec
-le voisinage — pente et aspect, écart au relief de fond, angles d'horizon,
-fraction de ciel visible, convexité et concavité — en luminance ou en couleur.
-Ils ne recréent pas une 3D perdue et ne modifient pas le MNT : ils rendent ses
-formes perceptibles et sélectionnent les échelles ou propriétés à mettre en
-évidence. Seuls l'ombrage directionnel et l'ombrage multidirectionnel simulent réellement un
-éclairage ; LRM, pente, SVF et openness sont d'autres visualisations
-géométriques.
+2D de la géométrie de cette surface d’entrée**. Ils transforment l’altitude ou
+ses relations avec le voisinage — pente et aspect, écart au relief de fond,
+angles d’horizon, fraction de ciel visible, convexité et concavité — en
+luminance ou en couleur. Ils ne recréent pas une 3D perdue et ne modifient pas
+la surface source : ils rendent ses formes perceptibles et sélectionnent les
+échelles ou propriétés à mettre en évidence. Seuls l’ombrage directionnel et
+l’ombrage multidirectionnel simulent réellement un éclairage ; LRM, pente, SVF
+et openness sont d’autres visualisations géométriques.
 
 ```mermaid
 flowchart LR
-    P["Nuage LiDAR 3D (x, y, z)"] --> G[Points classés sol]
-    G --> Z["MNT : altitude z(x, y)"]
+    P["Nuage LiDAR 3D (x, y, z)"] --> S{"Surface d'entrée"}
+    S --> M["MNT : sol nu"]
+    S --> F["DFM : structures réinjectées"]
+    S --> C["CSF : surface par filtre tissu"]
+    M --> Z["Altitude z(x, y)"]
+    F --> Z
+    C --> Z
     Z --> D["Mesure géométrique : pente, horizons, échelles"]
     D --> I["Image 2D : luminance ou couleur"]
 ```
 
-Un visualiseur 3D peut bien sûr afficher directement le nuage ou le MNT, et
-l'altitude peut aussi être représentée par des courbes de niveau ou des teintes
+Un visualiseur 3D peut bien sûr afficher directement le nuage ou l’une de ces
+surfaces, et l’altitude peut aussi être représentée par des courbes de niveau ou des teintes
 hypsométriques. Les rasters 2D restent néanmoins pratiques pour comparer les
 méthodes, superposer le résultat à d'autres cartes et l'utiliser hors ligne sur
 un téléphone ; leurs dérivées locales sont particulièrement efficaces pour
@@ -39,8 +49,9 @@ ressort fortement dans un LRM peut disparaître dans un ombrage directionnel, et
 claire dans l'openness positif peut être ambiguë tant que l'openness négatif n'a
 pas été consulté. Il n'existe donc pas d'ombrage universel.
 
-Les paramètres d'échelle et de distance doivent être adaptés à la taille des
-formes recherchées et à la résolution du MNT. Pour le LRM, une valeur explicite
+Les paramètres d’échelle et de distance doivent être adaptés à la taille des
+formes recherchées et à la résolution de la surface d’entrée. Pour le LRM, une
+valeur explicite
 de `sigma` est exprimée en mètres et sa valeur en pixels est :
 
 $$
