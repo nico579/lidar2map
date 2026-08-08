@@ -26,8 +26,10 @@ With a release, replace `python lidar2map.py` with `lidar2map.exe` on Windows,
 - Any processing argument selects the headless CLI.
 - Use one primary mode per invocation: `--lidar`, `--raster`, `--osm`,
   `--vector`, `--merge`, `--split`, or `--serve`.
-- `--lidar` and `--osm` are the one useful combination: one invocation can
-  produce both LiDAR relief and an OSM vector map for the same area.
+- In the CLI, `--lidar` and `--osm` can be combined: one invocation runs the
+  LiDAR relief and then the OSM vector map over the same area. In the GUI,
+  these are two separate jobs: configure each one, add it with `＋ Queue`, then
+  run the queue.
 - `--remote-cli` and `--remote-gui` are early-dispatch prefixes and must be the
   first argument after the executable.
 - `--index-sheet DIR` is a standalone maintenance mode.
@@ -61,9 +63,15 @@ That command, without hidden prompts:
 1. explicitly selects provider `fr-ign`;
 2. creates a square 2 km wide around the geocoded town;
 3. downloads only missing source tiles;
-4. computes `lrm`;
-5. writes an MBTiles map at zooms 13–18;
+4. computes `lrm` with Gaussian smoothing σ = 7.5 m, or 15 pixels at the
+   `fr-ign` provider's native resolution of 0.5 m/px;
+5. writes an MBTiles map at zooms 13–18, using lossless PNG for this `lrm`;
 6. creates an index sheet when a readable deliverable exists.
+
+The default image format is `auto`: it keeps LRM, SVF, openness, and RRIM in
+lossless PNG, and selects JPEG for directional hillshades. To encode this LRM
+as JPEG quality 85, add `--image-format jpeg`; 85 is already the default value
+of `--image-quality`. Any transparent edge tiles remain PNG.
 
 The normal behaviour already reuses every valid cached tile and downloads only
 missing source data. To prohibit source-data downloads and require an

@@ -28,9 +28,10 @@ Windows, `./lidar2map` sous Linux ou l’exécutable contenu dans
 - Tout argument de traitement sélectionne la CLI sans fenêtre.
 - Utiliser un seul mode principal par invocation : `--lidar`, `--raster`,
   `--osm`, `--vector`, `--merge`, `--split` ou `--serve`.
-- `--lidar` et `--osm` constituent la seule combinaison utile : une même
-  commande peut produire le relief LiDAR et une carte vectorielle OSM de la
-  même zone.
+- En CLI, `--lidar` et `--osm` peuvent être combinés : une même invocation
+  exécute le relief LiDAR puis la carte vectorielle OSM sur la même zone. Dans
+  le GUI, ce sont deux traitements distincts : configurer chacun d’eux,
+  l’ajouter avec `＋ File`, puis lancer la file d’attente.
 - `--remote-cli` et `--remote-gui` sont des préfixes de dispatch précoce : ils
   doivent être le premier argument après l’exécutable.
 - `--index-sheet DIR` est un mode de maintenance autonome.
@@ -64,9 +65,16 @@ Sans question cachée, cette commande :
 1. sélectionne explicitement le fournisseur `fr-ign` ;
 2. crée un carré de 2 km de côté autour de la commune géocodée ;
 3. télécharge uniquement les dalles sources manquantes ;
-4. calcule un `lrm` ;
-5. écrit une carte MBTiles aux zooms 13–18 ;
+4. calcule un `lrm` avec un lissage gaussien σ = 7,5 m, soit 15 pixels à la
+   résolution native de 0,5 m/px du provider `fr-ign` ;
+5. écrit une carte MBTiles aux zooms 13–18, en PNG sans perte pour ce `lrm` ;
 6. crée une planche d’index lorsqu’un livrable lisible existe.
+
+Le format d’image par défaut est `auto` : il conserve les LRM, SVF, openness et
+RRIM en PNG sans perte, et choisit le JPEG pour les ombrages directionnels. Pour
+encoder ce LRM en JPEG qualité 85, ajouter `--image-format jpeg` ; 85 est déjà
+la valeur par défaut de `--image-quality`. Les éventuelles tuiles de bord avec
+transparence restent en PNG.
 
 Le comportement normal réutilise déjà toutes les dalles valides du cache et ne
 télécharge que les données sources manquantes. Pour interdire leur
