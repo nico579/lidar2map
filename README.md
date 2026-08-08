@@ -41,7 +41,9 @@ outside the coverage of mainstream applications.
 
 ## LiDAR coverage
 
-[![LiDAR coverage available through lidar2map](coverage.png)](coverage.geojson)
+<p align="center">
+  <a href="coverage.geojson"><img src="coverage.png" alt="LiDAR coverage available through lidar2map" width="600"></a>
+</p>
 
 lidar2map provides one workflow over national and regional elevation sources
 across many countries. Resolution, exact coverage, credentials, and DFM

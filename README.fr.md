@@ -45,7 +45,9 @@ ou l’exploration hors de la couverture des applications généralistes.
 
 ## Couverture LiDAR
 
-[![Couverture LiDAR disponible dans lidar2map](coverage.fr.png)](coverage.geojson)
+<p align="center">
+  <a href="coverage.geojson"><img src="coverage.fr.png" alt="Couverture LiDAR disponible dans lidar2map" width="600"></a>
+</p>
 
 lidar2map propose un même parcours de traitement au-dessus de sources
 d’altitude nationales et régionales de nombreux pays. La résolution, la
