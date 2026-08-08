@@ -188,6 +188,9 @@ Before opening a PR:
 9. Update the [provider catalogue](providers.md), credentials section if
    applicable, and [data/source acknowledgements](data-licenses.md).
 
+The current status and previous runs are available in the
+[provider smoke-test workflow](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml).
+
 Never commit a private token, username, password, signed URL, or temporary
 session cookie. Public keys supplied by the official source should still be
 documented explicitly rather than hidden in unrelated code.

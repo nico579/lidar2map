@@ -148,6 +148,8 @@ After a run, the GUI's 📲 button serves the project on the local Wi-Fi network
 and displays a QR code. Nothing is uploaded. The CLI equivalent is
 `--serve --zone-name PROJECT_NAME`.
 
+Example rendering in Locus and OsmAnd:
+
 <p align="center">
   <img src="screenshots/LIDAR_Samples/Svf_LocusMap.jpg" alt="SVF relief in Locus Map" width="320">
   <img src="screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg" alt="LRM overlay in OsmAnd" width="320">
@@ -162,7 +164,7 @@ and displays a QR code. Nothing is uploaded. The CLI equivalent is
   index sheets keep large deliverables manageable.
 - The GUI queue processes several configured areas unattended; one failed job
   does not stop the following jobs.
-- The same application can prepare an Ubuntu 24.04/26.04 VM, run a headless job
+- lidar2map can prepare an Ubuntu 24.04/26.04 VM, run a headless job
   in an isolated session, monitor it, reconnect, and synchronize results.
 - `--block i/M` distributes one geographic area across several VMs.
 
@@ -199,8 +201,6 @@ macOS are supported by the standalone builds but have received less field
 testing; known platform cases are listed in [BUILD.md](BUILD.md). Feedback and
 reproducible reports are welcome through
 [GitHub issues](https://github.com/nico579/lidar2map/issues).
-
-[![Provider smoke tests](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml/badge.svg)](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml)
 
 Use LiDAR and historical imagery responsibly and comply with local heritage,
 access, privacy, and data-licence rules. lidar2map is not intended to guide

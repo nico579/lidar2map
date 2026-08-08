@@ -194,6 +194,9 @@ Avant d'ouvrir une PR :
    identifiants si nécessaire et les
    [crédits/licences des sources](data-licenses.fr.md).
 
+L’état actuel et les exécutions précédentes sont disponibles dans le
+[workflow de smoke tests des providers](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml).
+
 Ne jamais committer un token privé, identifiant, mot de passe, URL signée ou
 cookie de session temporaire. Même une clé publique fournie par la source
 officielle doit être documentée explicitement, pas cachée dans un code sans

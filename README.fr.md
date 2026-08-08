@@ -164,6 +164,8 @@ Après un traitement, le bouton 📲 de l’interface partage le projet sur le r
 Wi-Fi local et affiche un QR code. Aucun fichier n’est envoyé vers Internet.
 L’équivalent CLI est `--serve --zone-name NOM_DU_PROJET`.
 
+Exemple de rendu sur Locus et OsmAnd :
+
 <p align="center">
   <img src="screenshots/LIDAR_Samples/Svf_LocusMap.jpg" alt="Relief SVF dans Locus Map" width="320">
   <img src="screenshots/LIDAR_Samples/LRM_OSMAND_Transparent.jpg" alt="Surcouche LRM dans OsmAnd" width="320">
@@ -180,7 +182,7 @@ L’équivalent CLI est `--serve --zone-name NOM_DU_PROJET`.
   et les planches d’assemblage rendent les gros livrables maîtrisables.
 - La file d’attente de l’interface traite plusieurs zones sans surveillance ;
   l’échec d’un élément n’arrête pas les suivants.
-- La même application peut préparer une VM Ubuntu 24.04/26.04, lancer un
+- Lidar2map peut préparer une VM Ubuntu 24.04/26.04, lancer un
   traitement sans bureau dans une session isolée, le surveiller, se reconnecter
   et synchroniser progressivement les résultats.
 - `--block i/M` répartit une même emprise entre plusieurs VM.
@@ -220,8 +222,6 @@ exécutables Linux et macOS sont pris en charge mais ont reçu moins de tests de
 terrain ; les cas connus par plateforme sont recensés dans
 [BUILD.md](BUILD.md). Les retours et rapports reproductibles sont les bienvenus
 dans les [issues GitHub](https://github.com/nico579/lidar2map/issues).
-
-[![Tests de fonctionnement des sources](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml/badge.svg)](https://github.com/nico579/lidar2map/actions/workflows/smoke.yml)
 
 Utilisez le LiDAR et l’imagerie historique de manière responsable, dans le
 respect des règles locales sur le patrimoine, l’accès, la vie privée et les
