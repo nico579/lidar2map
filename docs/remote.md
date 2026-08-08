@@ -105,7 +105,14 @@ only for a key stored elsewhere.
 
 ## Graphical mode: XFCE and RDP
 
-The integrated command is:
+In the local GUI, select `Remote desktop (VM)` in the `Where` field, then enter
+the host and, when needed, a specific SSH key:
+
+<p align="center">
+  <img src="../screenshots/GUI/local_2_vm_gui.PNG" alt="Selecting a remote VM desktop from the local GUI" width="720">
+</p>
+
+The same operation is available directly from the CLI:
 
 ```bash
 lidar2map --remote-gui --ip 192.0.2.10
@@ -166,6 +173,15 @@ copies it to the VM. There is nothing to download or execute manually. The
 detailed APT log remains on the VM at `/var/log/rlidar2map_GUI_apt.log`.
 
 ## Headless CLI mode
+
+In the local GUI, select `Headless remote processing (VM)` in the `Where` field.
+The normal processing form remains available; the `Execution` row adds the
+host, SSH key, session, resume strategy, results to synchronize, and optional
+`i/M` block:
+
+<p align="center">
+  <img src="../screenshots/GUI/local_2_vm_cli.PNG" alt="Configuring a headless VM job from the local GUI" width="1000">
+</p>
 
 CLI mode installs neither XFCE nor xrdp and does not require port 3389. On the
 first run it installs only missing packages with APT: `tmux` and, according to

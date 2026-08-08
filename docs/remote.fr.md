@@ -108,7 +108,17 @@ Les clés placées à l’emplacement standard sont détectées automatiquement.
 
 ## Mode graphique : XFCE et RDP
 
-La commande intégrée est :
+Depuis l’interface locale, sélectionner `Bureau distant (VM)` dans le champ
+`Où`, puis indiquer l’hôte et, si nécessaire, une clé SSH particulière :
+
+<p align="center">
+  <img src="../screenshots/GUI/local_2_vm_gui.PNG" alt="Sélection du bureau distant sur une VM depuis l’interface locale" width="720">
+</p>
+
+*Sélection du bureau distant depuis l’interface locale ; la capture utilise la
+traduction anglaise de lidar2map.*
+
+La même opération est disponible directement en CLI :
 
 ```bash
 lidar2map --remote-gui --ip 192.0.2.10
@@ -172,6 +182,18 @@ Le journal APT détaillé reste sur la VM dans
 `/var/log/rlidar2map_GUI_apt.log`.
 
 ## Mode CLI sans bureau
+
+Depuis l’interface locale, sélectionner `Calcul distant sans bureau (VM)` dans
+le champ `Où`. Le formulaire de traitement reste identique ; la ligne
+`Exécution` ajoute l’hôte, la clé SSH, la session, la stratégie de reprise, les
+résultats à synchroniser et l’éventuel bloc `i/M` :
+
+<p align="center">
+  <img src="../screenshots/GUI/local_2_vm_cli.PNG" alt="Configuration d’un traitement sans bureau sur une VM depuis l’interface locale" width="1000">
+</p>
+
+*Configuration d’un traitement distant sans bureau ; la capture utilise la
+traduction anglaise de lidar2map.*
 
 Le mode CLI n’installe ni XFCE ni xrdp et ne nécessite pas le port 3389. Au
 premier lancement, il installe uniquement les paquets APT manquants : `tmux`
