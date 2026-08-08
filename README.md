@@ -77,19 +77,23 @@ index sheet, and uninstall procedure are in
 
 ### Command line
 
-A useful LiDAR job needs only an explicit workflow and one geographic area:
+A LiDAR job needs an explicit workflow, provider, and geographic area. A town
+or GPS point also needs the width of the square to process:
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2
 ```
 
 On an empty cache, this downloads the missing provider data, computes LRM, and
 creates an MBTiles map. Existing valid data is never downloaded again unless
 `--download-force` or `--download-overwrite` is requested.
 
-Use `--no-download` for strict cache-only recomputation. GPS and bounding-box
-projects receive a stable automatic name; `--zone-name` remains available when
-you want a human-readable one.
+The normal behaviour already reuses every valid cached source and downloads
+only what is missing. Use `--no-download` to prohibit source-data downloads and
+require a populated cache; missing sources are not fetched. GPS and
+bounding-box projects receive a stable automatic name; `--zone-name` remains
+available when you want a human-readable one.
 
 See the **[complete CLI reference](docs/cli.md)** for every workflow, default,
 parameter interaction, maintenance action, and reproducible example.
@@ -112,7 +116,7 @@ Their history, formulas, parameters, diagrams, strengths, limitations, and
 comparison method are maintained in **[Choosing LiDAR visualizations](docs/shadings.md)**.
 
 Bare-earth DTMs intentionally remove many standing structures. On providers
-that publish dense classified point clouds, the experimental DFM/LAZ workflow
+that publish dense classified point clouds, the alternative DFM/LAZ workflow
 can reintroduce candidate walls using producer classes or a Cloth Simulation
 Filter. It is data-heavy, intended for small targeted areas, and still requires
 human and field validation. See **[DFM, LAZ, and CSF](docs/dfm.md)**.

@@ -51,38 +51,44 @@ canoniques ; les [alias français](#alias-français) restent acceptés.
 
 ## Premier LiDAR en deux minutes
 
-Une commande LiDAR normale ne demande plus qu’un workflow et une zone :
+Une commande LiDAR exige un provider et une zone explicites. Lorsque la zone
+est une commune ou un point GPS, elle exige aussi la largeur du carré à traiter :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2
 ```
 
 Sans question cachée, cette commande :
 
-1. utilise le fournisseur `fr-ign` ;
-2. crée un carré de 20 km de côté autour de la commune géocodée ;
+1. sélectionne explicitement le fournisseur `fr-ign` ;
+2. crée un carré de 2 km de côté autour de la commune géocodée ;
 3. télécharge uniquement les dalles sources manquantes ;
 4. calcule un `lrm` ;
 5. écrit une carte MBTiles aux zooms 13–18 ;
 6. crée une planche d’index lorsqu’un livrable lisible existe.
 
-Les dalles valides déjà en cache sont réutilisées. Pour exiger un cache déjà
-rempli et refuser le téléchargement des données sources :
+Le comportement normal réutilise déjà toutes les dalles valides du cache et ne
+télécharge que les données sources manquantes. Pour interdire leur
+téléchargement et exiger un cache déjà rempli :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult --no-download
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2 --no-download
 ```
 
 Si les données nécessaires sont absentes, le traitement cache-only échoue avec
-un message indiquant comment autoriser le téléchargement. `--no-download`
-contrôle les téléchargements des données LiDAR ; le géocodage ou la découverte
-du fournisseur peuvent encore nécessiter un accès réseau.
+une erreur et ne les récupère pas. `--no-download` contrôle les téléchargements
+des données LiDAR ; le géocodage ou la découverte du fournisseur peuvent encore
+nécessiter un accès réseau.
 
 Les modes GPS et bbox n’exigent plus `--zone-name` :
 
 ```bash
-python lidar2map.py --lidar --zone-gps 43.3156,6.0423 --zone-width 2
-python lidar2map.py --lidar --zone-bbox 6.0,43.3,6.1,43.4
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-gps 43.3156,6.0423 --zone-width 2
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-bbox 6.0,43.3,6.1,43.4
 ```
 
 Ils reçoivent un nom stable dérivé des coordonnées arrondies à cinq décimales,
@@ -101,7 +107,7 @@ exception est la conversion directe d’un fichier `.mbtiles` existant.
 | `--zone-bbox O,S,E,N` | sélecteur obligatoire | Ouest, sud, est, nord en degrés WGS84. Les paires inversées sont normalisées ; une bbox nulle ou hors limites est refusée. |
 | `--zone-department NUM` | France uniquement | Un département, ou une liste/plage exécutée en traitements successifs ; voir [Zones propres à la France](#zones-et-exemples-propres-à-la-france). |
 | `--zone-region SLUG` | France / Geofabrik | Slug d’une ancienne région Geofabrik France. |
-| `--zone-width KM` | `20` | Côté du carré autour d’une commune ou d’un point GPS, et non son rayon. Sans effet sur une bbox, un département ou une région. |
+| `--zone-width KM` | obligatoire pour `--lidar` avec commune/GPS ; sinon `20` lorsque pertinent | Côté du carré autour d’une commune ou d’un point GPS, et non son rayon. Sans effet sur une bbox, un département ou une région. |
 | `--zone-name NOM` | automatique | Remplace le nom de projet normalisé. Commune, GPS, bbox, département et région ont tous un nom automatique. |
 
 Le dossier de travail est celui du script avec les sources, et celui de
@@ -134,23 +140,25 @@ propres à une zone et restent donc dans le projet. Voir
 ### Défauts et acquisition des données
 
 ```bash
-python lidar2map.py --lidar ZONE [OPTIONS LIDAR]
+python lidar2map.py --lidar --provider CODE ZONE [OPTIONS LIDAR]
 ```
 
 | Option | Défaut / valeurs | Rôle |
 |---|---|---|
 | `--lidar` | désactivé | Sélectionne le traitement du terrain. Alias historique : `--ignlidar`. |
-| `--provider CODE` | `LIDAR2MAP_PROVIDER`, sinon `fr-ign` | Sélectionne une source du [catalogue des fournisseurs](providers.fr.md). |
+| `--provider CODE` | obligatoire ; aucun provider implicite | Sélectionne explicitement une source du [catalogue des fournisseurs](providers.fr.md). `LIDAR2MAP_PROVIDER` seul ne satisfait pas cette exigence CLI. |
 | `--api-key CLE` | variable d’environnement du fournisseur si prise en charge | Fournit l’identifiant demandé par certaines sources. |
-| `--download` / `--no-download` | téléchargement du manque pour un `--lidar` normal | Autorise le téléchargement manquant ou impose un traitement cache-only. |
+| `--download` / `--no-download` | réutilisation du cache valide et téléchargement du manque | `--no-download` interdit le téléchargement des sources ; les sources absentes ne sont pas récupérées. |
 | `--workers N` | `8` | Connexions parallèles aux dalles sources ; valeur strictement positive. Un fournisseur peut imposer une limite effective plus basse. |
 | `--download-compress` / `--no-download-compress` | activé | Active ou désactive la compression DEFLATE des dalles raster en cache. |
 | `--download-force` | désactivé | Retélécharge aussi les données sources valides du cache. |
 | `--download-overwrite` | désactivé | Équivalent à `--download-force`, nuages LAZ compris. |
 
-`--download` signifie « télécharger ce qui manque », pas « tout
-retélécharger ». Une entrée de cache valide est ignorée sauf si l’un des deux
-flags de forçage est présent.
+Le comportement normal et `--download` explicite signifient tous deux
+« télécharger ce qui manque », pas « tout retélécharger ». Une entrée de cache
+valide est ignorée sauf si l’un des deux flags de forçage est présent.
+`--no-download` interdit simplement le téléchargement des données sources et
+exige donc que toutes les sources nécessaires soient déjà dans le cache.
 
 ### Choisir les visualisations
 
@@ -158,7 +166,8 @@ Le défaut d’un traitement `--lidar` normal est `lrm`. Sélectionner des
 instances ordinaires avec une option multivaleur :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult \
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2 \
   --shadings multi svf oneg --svf-dist 20 --svf-gamma 2
 ```
 
@@ -166,7 +175,8 @@ Ou ajouter des instances paramétrées indépendamment avec `--shading`
 répétable :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult \
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2 \
   --shading svf:dist=20,gamma=2 \
   --shading svf:dist=100,gamma=1.5 \
   --shading oneg:dist=20 \
@@ -226,7 +236,7 @@ sont en mètres au sol, pas en pixels :
 
 ```bash
 python lidar2map.py --lidar --provider ch-swisstopo \
-  --zone-city Lausanne --shading-preset auto
+  --zone-city Lausanne --zone-width 2 --shading-preset auto
 ```
 
 Les paramètres d’instance fournis explicitement restent des sorties séparées
@@ -301,7 +311,8 @@ environ z19 pour 0,25 m, z18 pour 0,5 m, z17 pour 1 m, z16 pour 2 m et z15 pour
 Hillshade multidirectionnel et SVF sur une commune de 2 km de côté :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult --zone-width 2 \
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2 \
   --shadings multi svf --file-formats mbtiles
 ```
 
@@ -313,7 +324,7 @@ Reproduire les réglages SVF du triptyque du README en remplaçant les
 coordonnées :
 
 ```bash
-python lidar2map.py --lidar \
+python lidar2map.py --lidar --provider fr-ign \
   --zone-gps <lat>,<lon> --zone-width 2 --zone-name hero \
   --download --workers 8 \
   --shadings svf --svf-conv rvt --svf-dist 20 --svf-gamma 0.8 --svf-sweep \
@@ -431,7 +442,8 @@ python lidar2map.py --osm --zone-city Gareoult --zone-width 5 \
 Combiner les défauts LiDAR normaux avec la carte OSM par défaut :
 
 ```bash
-python lidar2map.py --lidar --osm --zone-city Gareoult --zone-width 2
+python lidar2map.py --lidar --provider fr-ign --osm \
+  --zone-city Gareoult --zone-width 2
 ```
 
 ## Workflow vectoriel IGN
@@ -561,7 +573,7 @@ Exemples :
 python lidar2map.py --source relief.mbtiles --file-formats rmap sqlitedb
 
 # GeoTIFF d’ombrage existant vers des livrables raster
-python lidar2map.py --lidar --source relief.tif \
+python lidar2map.py --lidar --provider fr-ign --source relief.tif \
   --zone-bbox 6.0,43.3,6.1,43.4 --file-formats mbtiles rmap
 
 # PBF téléchargé manuellement, y compris hors de France
@@ -575,7 +587,7 @@ python lidar2map.py --osm --source my-region-latest.osm.pbf \
 une plage ou un mélange :
 
 ```bash
-python lidar2map.py --lidar --zone-department 83
+python lidar2map.py --lidar --provider fr-ign --zone-department 83
 python lidar2map.py --raster --zone-department 30,35,75 --layer planign
 python lidar2map.py --vector --zone-department 1-3,75,83 --layer chemins
 ```
@@ -615,8 +627,9 @@ source manuelle sont internationaux.
 
 ## Maintenance du cache et des ombrages
 
-Les commandes de maintenance exigent encore `--lidar` et une zone, afin de
-résoudre le fournisseur actif, le projet et la portée du cache.
+Les commandes de maintenance exigent encore `--lidar`, un `--provider`
+explicite et une zone, afin de résoudre le fournisseur actif, le projet et la
+portée du cache.
 
 | Option | Effet |
 |---|---|
@@ -630,14 +643,16 @@ n’ajoute **ni** téléchargement, **ni** LRM, **ni** MBTiles par défaut.
 
 ```bash
 # Purge seule ; aucun téléchargement de dalle ni génération de carte implicite
-python lidar2map.py --lidar --zone-department 83 --tiles-purge-invalid
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-department 83 --tiles-purge-invalid
 
 # Purge puis téléchargement explicitement demandé ; toujours aucune carte implicite
-python lidar2map.py --lidar --zone-department 83 \
+python lidar2map.py --lidar --provider fr-ign --zone-department 83 \
   --tiles-purge-invalid --download
 
 # Compression des ombrages bruts existants sans en demander un nouveau
-python lidar2map.py --lidar --zone-city Gareoult --shadings-compress
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2 --shadings-compress
 ```
 
 La purge hors zone exige un `dalles_zone.txt` existant. S’il manque, exécuter
@@ -696,7 +711,7 @@ sur une VM Ubuntu 24.04/26.04 x86-64 :
 ```bash
 lidar2map --remote-cli --bundle --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5
 ```
 
 Tout ce qui suit le `--` isolé est transmis à lidar2map sur la VM. Utiliser un

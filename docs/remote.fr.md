@@ -28,7 +28,7 @@ Lancer un traitement sans interface depuis le bundle Linux publié :
 ```bash
 lidar2map --remote-cli --bundle --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -222,7 +222,7 @@ Fermez le moniteur local sans arrêter le traitement avec `Ctrl+C` puis réponde
 ```bash
 lidar2map --remote-cli --bundle --detach --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -299,7 +299,7 @@ de mémoire :
 ```bash
 lidar2map --remote-cli --bundle --resume --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -308,7 +308,7 @@ Redémarrer avec de nouveaux paramètres :
 ```bash
 lidar2map --remote-cli --bundle --restart --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading svf:dist=20,gamma=2 --file-formats mbtiles
 ```
 
@@ -420,7 +420,7 @@ avant même qu'OpenSSH ne signale une erreur :
 ```bash
 lidar2map --remote-cli --reset-host-key --bundle --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5
 ```
 
 ## Répartir une zone sur plusieurs VM
@@ -431,17 +431,17 @@ explicite pour chaque traitement :
 
 ```bash
 lidar2map --remote-cli --bundle --session var-bloc-1 root@vm1 -- \
-  --lidar --laz --zone-department 83 --block 1/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 1/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 
 lidar2map --remote-cli --bundle --session var-bloc-2 root@vm2 -- \
-  --lidar --laz --zone-department 83 --block 2/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 2/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 
 lidar2map --remote-cli --bundle --session var-bloc-3 root@vm3 -- \
-  --lidar --laz --zone-department 83 --block 3/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 3/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 ```
@@ -493,7 +493,7 @@ Python 3.8 ou plus récent :
 ```bash
 python tools/rlidar2map_GUI.py --ip 192.0.2.10
 python tools/rlidar2map_CLI.py --bundle --session paris-lrm \
-  root@192.0.2.10 -- --lidar --zone-city Paris --zone-width 5
+  root@192.0.2.10 -- --lidar --provider fr-ign --zone-city Paris --zone-width 5
 ```
 
 Les binaires de développement dédiés `rlidar2map_GUI` et `rlidar2map_CLI`

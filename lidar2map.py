@@ -35,8 +35,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                  ici : téléchargement des dalles (surface MNT, ou nuage de
                  points LAZ en mode LAZ « structures debout »), calcul des
                  ombrages (multi-directionnel, SVF, LRM, RRIM…), export en
-                 MBTiles. Multi-provider / multi-pays (défaut fr-ign HD,
-                 voir --provider). On expérimente dans Locus, on identifie
+                 MBTiles. Multi-provider / multi-pays (fr-ign HD préselectionné
+                 dans le GUI ; --provider explicite en CLI). On expérimente
                  les manques.
 
   ② Raster      Fond alternatif ou de recalage (Scan 25, orthophotos,
@@ -65,7 +65,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   --ignlidar      Dalles LiDAR → ombrages → MBTiles/RMAP/SQLiteDB
-                    (défaut fr-ign HD par WMS ; autres pays via --provider)
+                    (--provider obligatoire en CLI ; fr-ign préselectionné au GUI)
   --ignraster     Tuiles WMTS raster (Scan 25, Ortho, NAIP US…) → MBTiles/RMAP/SQLiteDB
   --ignvecteur    WFS IGN (cadastre, hydrographie…) → GeoJSON(.gz)
   --osm           PBF Geofabrik → carte Mapsforge (.map) + GeoJSON(.gz)
@@ -77,7 +77,7 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
 
   Pré-flags globaux (lus AVANT argparse, tel un préfixe de commande :
   ils sélectionnent la source ou le pipeline, puis sont retirés de argv) :
-    --provider CODE   Source LiDAR/raster (défaut fr-ign). 27 pays câblés :
+--provider CODE   Source LiDAR/raster (obligatoire avec --lidar). 27 pays câblés :
                         fr-ign, ch-swisstopo, nl-ahn, us-3dep, no-kartverket…
                         Liste vivante = un fichier par source dans providers/.
     --laz             Mode LAZ « structures debout » (voir MODE --ignlidar).
@@ -498,17 +498,17 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   python lidar2map.py
 
   # LiDAR : zone 2 km, ombrage multi, MBTiles + RMAP + SQLiteDB
-  python lidar2map.py --ignlidar --zone-ville gareoult --zone-width 2 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 2 \
       --zone-nom aa --telechargement --ombrages multi \
       --formats-fichier mbtiles rmap sqlitedb --zoom-min 8 --zoom-max 18
 
   # LiDAR : zone 20 km, plusieurs ombrages
-  python lidar2map.py --ignlidar --zone-ville gareoult --zone-width 20 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 20 \
       --zone-nom gareoult --telechargement --ombrages multi slope svf lrm \
       --formats-fichier mbtiles rmap --qualite-image 75
 
   # LiDAR : depuis TIF existant → RMAP uniquement
-  python lidar2map.py --ignlidar --zone-ville gareoult --zone-width 2 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 2 \
       --zone-nom aa --source ign_lidar/aa/_warped_aa_multi_ombrage_z18.tif \
       --formats-fichier rmap --zoom-min 8 --zoom-max 18
 
@@ -537,21 +537,21 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
       --formats-fichier gz
 
   # Zone par département entier (Var)
-  python lidar2map.py --ignlidar --zone-departement 83 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-departement 83 \
       --telechargement --workers 8 --ombrages multi --formats-fichier mbtiles
 
   # A-priori splitting: grande zone en 4×4 morceaux avec nettoyage disque
-  python lidar2map.py --ignlidar --zone-departement 83 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
       --cols-decoupe 4 --rows-decoupe 4 --nettoyage
 
   # Reprise après interruption (même commande — les morceaux terminés sont ignorés)
-  python lidar2map.py --ignlidar --zone-departement 83 \
+  python lidar2map.py --ignlidar --provider fr-ign --zone-departement 83 \
       --telechargement --ombrages multi svf lrm --formats-fichier mbtiles \
       --cols-decoupe 4 --rows-decoupe 4 --nettoyage
 
   # Linux/macOS : la commande est identique, sauf 'python' → 'python3'
-  python3 lidar2map.py --ignlidar --zone-ville Gareoult --zone-width 2 \
+  python3 lidar2map.py --ignlidar --provider fr-ign --zone-ville Gareoult --zone-width 2 \
       --ombrages svf --formats-fichier mbtiles
 """
 import os
@@ -2936,7 +2936,11 @@ def _pre_valeur_suivante(argv, i):
     return None
 
 
+_PROVIDER_CLI_EXPLICIT = False
+
+
 def _load_provider():
+    global _PROVIDER_CLI_EXPLICIT
     code = None
     # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré).
     # --provider est un pré-flag GLOBAL : on le lit puis on le RETIRE de sys.argv
@@ -2967,10 +2971,12 @@ def _load_provider():
                       "(e.g. --provider us-tnm).", file=sys.stderr)
                 sys.exit(1)
             code = _v
+            _PROVIDER_CLI_EXPLICIT = True
             del _argv[_i:_i + 2]
             continue
         if _a.startswith("--provider="):
             code = _a.split("=", 1)[1]
+            _PROVIDER_CLI_EXPLICIT = True
             del _argv[_i]
             continue
         if _a == "--laz":
@@ -11508,6 +11514,31 @@ def _appliquer_defauts_cli_lidar(args):
     return args
 
 
+def _valider_contrat_cli_lidar(args, parser, *, provider_explicit=None):
+    """Valide les paramètres qui rendent un run LiDAR reproductible.
+
+    Le provider ne doit pas dépendre d'un défaut géographique implicite. Une
+    ville ou un point GPS définit un centre, pas une emprise : sa largeur est
+    donc obligatoire. Les zones surfaciques (bbox, département, région) sont
+    déjà entièrement définies et n'ont pas besoin de ``--zone-width``.
+    """
+    if not getattr(args, "ignlidar", False):
+        return
+    if provider_explicit is None:
+        provider_explicit = _PROVIDER_CLI_EXPLICIT
+    if not provider_explicit:
+        parser.error(
+            "--provider is required with --lidar "
+            "(for example: --provider fr-ign)"
+        )
+    if ((getattr(args, "zone_ville", None)
+         or getattr(args, "zone_gps", None))
+            and getattr(args, "zone_width", None) is None):
+        parser.error(
+            "--zone-width is required with --zone-city or --zone-gps"
+        )
+
+
 def main():
     import argparse
     t_debut = time.time()
@@ -11517,8 +11548,8 @@ def main():
         epilog="""
 Examples:
   python lidar2map.py
-  python lidar2map.py --lidar --zone-city gareoult
-  python lidar2map.py --lidar --zone-department 83 --shadings multi --file-formats mbtiles
+  python lidar2map.py --lidar --provider fr-ign --zone-city gareoult --zone-width 5
+  python lidar2map.py --lidar --provider fr-ign --zone-department 83 --shadings multi --file-formats mbtiles
   python lidar2map.py --osm --zone-city gareoult
         """
     )
@@ -11582,8 +11613,8 @@ Examples:
 
     # Téléchargement
     parser.add_argument("--provider", default=None, metavar="CODE",
-                        help="LiDAR provider code (default: fr-ign). See the GUI "
-                             "selector or docs/providers.md for the current list.")
+                        help="LiDAR provider code (required with --lidar). See the "
+                             "GUI selector or docs/providers.md for the current list.")
     parser.add_argument("--api-key", "--apikey", default="", metavar="KEY", dest="apikey",
                         help="Provider API key when required. For us-3dep: "
                              "https://portal.opentopography.org/myopentopo. "
@@ -11774,6 +11805,8 @@ Examples:
     # utilisables sans --lidar. --osm est géré dans ce même parser.
     if not args.ignlidar and not args.osm and not args.source:
         parser.error("choose a workflow: --lidar or --osm (or pass --source for a conversion)")
+
+    _valider_contrat_cli_lidar(args, parser)
 
     _source_ext_cli = Path(args.source).suffix.lower() if args.source else ""
     if (not _zone_cli_presente(args)
@@ -14790,11 +14823,13 @@ def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
         loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement")
         loc.add_argument("--zone-region", metavar="SLUG")
 
-    parser.add_argument("--zone-width", "--zone-largeur", type=_arg_float_positif, default=width_default,
-                        metavar="KM", dest="zone_width",
-                        help=f"Width in km of the (square) zone around the point "
-                             f"(the side, not a radius; default: "
-                             f"{width_default if width_default is not None else 20})")
+    _width_contract = (f"default: {width_default}"
+                       if width_default is not None
+                       else "required with --zone-city/--zone-gps")
+    parser.add_argument("--zone-width", "--zone-largeur", type=_arg_float_positif,
+                        default=width_default, metavar="KM", dest="zone_width",
+                        help=f"Width in km of the square around the point "
+                             f"(the side, not a radius; {_width_contract})")
     parser.add_argument("--zone-name", "--zone-nom", metavar="NAME", default=None, dest="zone_nom",
                         help="Output folder name for the processed zone. "
                              "Automatically derived from the city, GPS coordinates, "
@@ -19399,8 +19434,10 @@ def lancer_gui():
                    else [sys.executable, str(SCRIPT)])
             t = cfg.get("type", "lidar")
 
-            # Provider (multi-pays) — propagé au subprocess
-            if cfg.get("provider") and cfg["provider"] != PROVIDER.CODE:
+            # Provider (multi-pays) — toujours explicite dans le subprocess.
+            # Le contrat CLI LiDAR l'exige, y compris pour fr-ign sélectionné
+            # par défaut dans la GUI.
+            if cfg.get("provider"):
                 cmd += ["--provider", cfg["provider"]]
             # Mode LAZ (structures debout) : case + réglages ≠ défauts
             # (la GUI n'envoie dfm_* que si modifiés, cf. app.js).

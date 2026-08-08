@@ -27,7 +27,7 @@ Run a headless job from the published Linux bundle:
 ```bash
 lidar2map --remote-cli --bundle --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -213,7 +213,7 @@ answer **No** when asked whether to stop it, or launch detached from the start:
 ```bash
 lidar2map --remote-cli --bundle --detach --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -287,7 +287,7 @@ memory:
 ```bash
 lidar2map --remote-cli --bundle --resume --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading lrm:sigma=3 --file-formats mbtiles
 ```
 
@@ -296,7 +296,7 @@ Restart with new parameters:
 ```bash
 lidar2map --remote-cli --bundle --restart --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5 --download \
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5 --download \
   --shading svf:dist=20,gamma=2 --file-formats mbtiles
 ```
 
@@ -401,7 +401,7 @@ OpenSSH reports an error:
 ```bash
 lidar2map --remote-cli --reset-host-key --bundle --session paris-lrm \
   root@192.0.2.10 -- \
-  --lidar --zone-city Paris --zone-width 5
+  --lidar --provider fr-ign --zone-city Paris --zone-width 5
 ```
 
 ## Split one area across several VMs
@@ -411,17 +411,17 @@ lidar2map --remote-cli --reset-host-key --bundle --session paris-lrm \
 
 ```bash
 lidar2map --remote-cli --bundle --session var-block-1 root@vm1 -- \
-  --lidar --laz --zone-department 83 --block 1/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 1/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 
 lidar2map --remote-cli --bundle --session var-block-2 root@vm2 -- \
-  --lidar --laz --zone-department 83 --block 2/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 2/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 
 lidar2map --remote-cli --bundle --session var-block-3 root@vm3 -- \
-  --lidar --laz --zone-department 83 --block 3/3 --download \
+  --lidar --provider fr-ign --laz --zone-department 83 --block 3/3 --download \
   --split-width 5 --cleanup --min-free-gb 20 \
   --shading lrm:sigma=4 --file-formats mbtiles
 ```
@@ -468,7 +468,7 @@ from the source checkout for development; they require Python 3.8 or newer:
 ```bash
 python tools/rlidar2map_GUI.py --ip 192.0.2.10
 python tools/rlidar2map_CLI.py --bundle --session paris-lrm \
-  root@192.0.2.10 -- --lidar --zone-city Paris --zone-width 5
+  root@192.0.2.10 -- --lidar --provider fr-ign --zone-city Paris --zone-width 5
 ```
 
 Dedicated development binaries named `rlidar2map_GUI` and `rlidar2map_CLI`

@@ -29,6 +29,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -1702,6 +1703,54 @@ check("onglet Usage : lecture seule, 3 tiers, open_folder",
       and "pywebview.api.open_folder" in _appjs)
 
 print("== 9j. Contrat CLI minimal : défauts utiles, cache-only explicite ==")
+
+# Tester le vrai point d'entrée sans laisser le pipeline atteindre le réseau :
+# une plage de zoom volontairement inversée sert de sentinelle APRÈS le contrat
+# provider/zone. Si son erreur est atteinte, la combinaison a franchi la
+# validation qui nous intéresse (avant tout géocodage ou téléchargement).
+def _run_cli_contract(*argv):
+    _env = os.environ.copy()
+    _env["LIDAR2MAP_BOOTSTRAP"] = "none"
+    _proc = subprocess.run(
+        [sys.executable, str(_APP), *argv],
+        cwd=str(_ROOT), env=_env,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=30,
+    )
+    return _proc.returncode, _proc.stdout + _proc.stderr
+
+
+_rc, _out = _run_cli_contract(
+    "--lidar", "--zone-city", "X", "--zone-width", "5")
+check("CLI réel : --lidar + ville + largeur refuse le provider absent",
+      _rc == 2 and "error: --provider is required with --lidar" in _out,
+      detail=f"rc={_rc}")
+
+_rc, _out = _run_cli_contract(
+    "--lidar", "--provider", "fr-ign", "--zone-city", "X")
+check("CLI réel : --lidar + provider + ville refuse la largeur absente",
+      _rc == 2
+      and "error: --zone-width is required with --zone-city or --zone-gps" in _out,
+      detail=f"rc={_rc}")
+
+_zoom_sentinel = ("--zoom-min", "19", "--zoom-max", "18")
+_rc, _out = _run_cli_contract(
+    "--lidar", "--provider", "fr-ign", "--zone-city", "X",
+    "--zone-width", "5", *_zoom_sentinel)
+check("CLI réel : provider + ville + largeur franchit le contrat avant réseau",
+      _rc == 2 and "error: --zoom-min" in _out
+      and "--provider is required" not in _out
+      and "--zone-width is required" not in _out,
+      detail=f"rc={_rc}")
+
+_rc, _out = _run_cli_contract(
+    "--lidar", "--provider", "fr-ign",
+    "--zone-bbox", "6.0,43.3,6.1,43.4", *_zoom_sentinel)
+check("CLI réel : bbox + provider ne demande pas --zone-width",
+      _rc == 2 and "error: --zoom-min" in _out
+      and "--zone-width is required" not in _out,
+      detail=f"rc={_rc}")
+
 check("nom GPS automatique stable",
       l2m._nom_zone_gps_auto(43.3156, 6.0423) == "gps_43_31560_6_04230")
 check("nom bbox automatique stable",
@@ -1761,6 +1810,12 @@ finally:
         sys.modules["tools"] = _previous_tools
 check("GUI : décocher Télécharger émet explicitement --no-download",
       'else "--no-download"' in _src)
+check("GUI : le provider sélectionné est toujours explicite dans la commande CLI",
+      'if cfg.get("provider"):' in _src
+      and 'cfg["provider"] != PROVIDER.CODE' not in _src)
+check("GUI : l'icône du bouton téléphone a une taille dédiée lisible",
+      'class="share-icon"' in _html
+      and '#btn-share .share-icon' in _css and 'font-size:20px' in _css)
 check("GUI VM : arrêt et purge sont deux confirmations indépendantes",
       "confirm(t('remote.stop.confirm'))" in _appjs
       and "const purgeRemote = stopRemote && confirm(t('remote.purge.confirm'))"

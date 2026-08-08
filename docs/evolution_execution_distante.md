@@ -25,14 +25,14 @@ d'exécution changerait.
 
 ```bash
 # Mode local actuel
-python lidar2map.py --ignlidar --zone-ville gareoult --zone-width 5 \
+python lidar2map.py --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 
 # Syntaxe distante envisagée — elle n'est pas encore implémentée
 python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 \
-    --ignlidar --zone-ville gareoult --zone-width 5 \
+    --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 ```
@@ -143,7 +143,7 @@ Une commande distante avec des paramètres métier créerait un run absent :
 # Syntaxe cible, non encore disponible
 python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 \
-    --ignlidar --zone-ville gareoult --zone-width 5 \
+    --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 ```
@@ -161,7 +161,7 @@ Une session terminée nécessiterait une action explicite :
 # Nouveau calcul sous le même nom
 python lidar2map.py --remote root@192.0.2.10 \
     --remote-session gareoult-lrm3 --remote-restart \
-    --ignlidar --zone-ville gareoult --zone-width 5 \
+    --ignlidar --provider fr-ign --zone-ville gareoult --zone-width 5 \
     --zone-nom gareoult_lrm3 --telechargement --ombrages lrm \
     --shading lrm:sigma=3 --formats-fichier mbtiles
 

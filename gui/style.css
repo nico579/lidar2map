@@ -87,6 +87,8 @@ select{cursor:pointer}
 .seg input:checked+label{background:var(--ac);color:#fff}
 .btn{padding:4px 14px;border:none;border-radius:4px;cursor:pointer;
   font:12px var(--fnt);font-weight:600;letter-spacing:.3px}
+#btn-share .share-icon{display:inline-block;font-size:20px;line-height:12px;
+  margin-right:4px;vertical-align:-3px;letter-spacing:0}
 .btn-run{background:var(--ac);color:#fff;padding:6px 20px}
 .btn-lang{background:var(--bg3);color:var(--dim);border:none;padding:3px 9px;
   font:11px var(--fnt);font-weight:600;cursor:pointer}

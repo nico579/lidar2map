@@ -85,10 +85,12 @@ désinstallation sont détaillés dans **[Bien démarrer](docs/getting-started.f
 
 ### Ligne de commande
 
-Un traitement LiDAR utile ne demande qu’un workflow explicite et une zone :
+Un traitement LiDAR demande un workflow, un provider et une zone explicites.
+Une commune ou un point GPS exige aussi la largeur du carré à traiter :
 
 ```bash
-python lidar2map.py --lidar --zone-city Gareoult
+python lidar2map.py --lidar --provider fr-ign \
+  --zone-city Gareoult --zone-width 2
 ```
 
 Sur un cache vide, cette commande télécharge les données manquantes, calcule un
@@ -96,9 +98,12 @@ LRM et crée une carte MBTiles. Les données valides existantes ne sont jamais
 téléchargées à nouveau, sauf avec `--download-force` ou
 `--download-overwrite`.
 
-Utilisez `--no-download` pour imposer un recalcul exclusivement depuis le
-cache. Les projets GPS ou définis par une emprise reçoivent automatiquement un
-nom stable ; `--zone-name` reste disponible pour choisir un nom lisible.
+Le comportement normal réutilise déjà toutes les sources valides du cache et
+ne télécharge que celles qui manquent. Utilisez `--no-download` pour interdire
+le téléchargement des données sources et exiger un cache déjà rempli ; les
+sources absentes ne seront pas récupérées. Les projets GPS ou définis par une
+emprise reçoivent automatiquement un nom stable ; `--zone-name` reste
+disponible pour choisir un nom lisible.
 
 La **[référence CLI complète](docs/cli.fr.md)** décrit chaque workflow, valeur
 par défaut, interaction entre paramètres, action de maintenance et exemple
@@ -124,7 +129,7 @@ limites et méthode de comparaison sont regroupés dans
 
 Les MNT de sol nu retirent volontairement de nombreuses structures encore en
 élévation. Lorsque la source publie un nuage de points classé suffisamment
-dense, le traitement expérimental DFM/LAZ peut réintroduire des murs candidats
+dense, le traitement alternatif DFM/LAZ peut réintroduire des murs candidats
 à partir des classes du producteur ou d’un filtre de simulation de tissu. Ce
 traitement est volumineux, destiné à de petites zones ciblées et exige toujours
 une interprétation humaine et une validation de terrain. Voir

@@ -15,13 +15,13 @@ ajouter une source, voir
 ## Sélectionner un provider
 
 - Dans la GUI, utiliser la liste des providers en haut du formulaire LiDAR.
-- En CLI, passer `--provider <code>`.
-- Pour définir un choix CLI persistant, utiliser `LIDAR2MAP_PROVIDER`.
+- Dans chaque commande CLI LiDAR, passer explicitement `--provider <code>`.
+- `LIDAR2MAP_PROVIDER` ne remplace pas cet argument CLI obligatoire.
 
-`fr-ign` est le choix par défaut. Les codes terminés par `-laz` dans le tableau
-sont des jumeaux internes pour les nuages de points : sélectionner normalement
-le provider parent, puis activer le **mode DFM** dans la GUI ou passer `--laz`
-en CLI.
+Utiliser `fr-ign` pour la France métropolitaine. Les codes terminés par `-laz`
+dans le tableau sont des jumeaux internes pour les nuages de points :
+sélectionner normalement le provider parent, puis activer le **mode DFM** dans
+la GUI ou passer `--laz` en CLI.
 
 ## Comptes et clés API
 
@@ -75,13 +75,13 @@ de la zone annoncée.
 
 | Code | Pays | Donnée | Rés. | CRS natif | Accès & particularités |
 |---|---|---|---|---|---|
-| `fr-ign` | France *(défaut)* | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
+| `fr-ign` | France | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, couverture nationale (métropole) |
 | `fr-reunion` · `fr-guadeloupe` | France (Réunion, Guadeloupe DROM) | IGN LiDAR HD | 0.5 m | EPSG:2975 / 5490 (UTM40S / UTM20N) | Index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle porte son `url` de téléchargement direct), GeoTIFF 0,5 m, Licence Ouverte 2.0 (Martinique/Mayotte annoncées mais WFS vide pour l'instant) |
-| `fr-ign` + **mode DFM** | France (**mode ruines debout**, expérimental) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--laz`) : télécharge les dalles **COPC LAZ** (~205 Mo/km²) et reconstruit le modèle depuis le socle par défaut `--laz-ground classes` (ensemble `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres réinjectées dans les trous du sol) ou `--laz-ground csf`. **Peut réintroduire des retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi). Réglages complets : `--laz-hmin/-hmax/-classes` et `--laz-csf-*` ; lancer `python lidar2map.py --help` pour la référence CLI actuelle. Nom de zone auto-suffixé (`_laz_dfm` / `_laz_csf`) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
+| `fr-ign` + **mode DFM** | France (**mode alternatif « ruines debout »**) | DFM depuis le nuage classé LiDAR HD | 0,5 m | EPSG:2154 (Lambert-93) | Case « mode DFM » dans la GUI (ou CLI `--laz`) : télécharge les dalles **COPC LAZ** (~205 Mo/km²) et reconstruit le modèle depuis le socle par défaut `--laz-ground classes` (ensemble `1,2,3,4,9,66` : 2/9/66 = socle terrain comme le MNT officiel, les autres réinjectées dans les trous du sol) ou `--laz-ground csf`. **Peut réintroduire des retours compatibles avec des murs debout** que le MNT efface (candidats, pas une classification de murs : le maquis revient aussi). Réglages complets : `--laz-hmin/-hmax/-classes` et `--laz-csf-*` ; lancer `python lidar2map.py --help` pour la référence CLI actuelle. Nom de zone auto-suffixé (`_laz_dfm` / `_laz_csf`) : les sorties MNT et nuage ne se mélangent jamais. Le LAZ reste dans le cache : changer les réglages reconvertit sans retélécharger. Prospection ciblée de quelques km², pas de grandes cartes |
 | `nl-ahn` | Pays-Bas | AHN4/5 | 0.5 m | EPSG:28992 (RD New) | ATOM feed + JSON FeatureCollection, couverture nationale |
 | `ch-swisstopo` | Suisse | swissALTI3D | 0.5 m | EPSG:2056 (CH1903+/LV95) | STAC API REST, couverture nationale |
-| `ch-swisstopo` + **mode DFM** | Suisse (**mode structures debout**, expérimental) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode DFM » (ou CLI `--laz`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--laz-ground csf`, Cloth Simulation Filter), car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |
-| **+ mode LAZ (autres providers)** | Pologne, Estonie, Flandre, Canada (NRCan + Québec), USA, Danemark, France (CRAIG Auvergne) | DFM/CSF depuis les nuages classés nationaux | 0,5 m | *(CRS de chaque provider)* | Le **mode LAZ** (`--laz`) marche aussi là où le nuage de points classé complet est publié : `pl-gugik-laz`, `ee-maaamet-laz`, `be-flanders-laz`, `ca-nrcan-laz` (COPC fenêtré), `us-3dep-laz` (COPC fenêtré, sans compte), `ca-quebec-laz`, `dk-datafordeler-laz` (clé API), `fr-craig-laz`. Densité, classes et CRS varient. Voir la [roadmap des providers](lidar_providers_roadmap.md). Expérimental, prospection ciblée |
+| `ch-swisstopo` + **mode DFM** | Suisse (**mode alternatif « structures debout »**) | DFM depuis le nuage classé swissSURFACE3D | 0,5 m | EPSG:2056 (CH1903+/LV95) | Case « mode DFM » (ou CLI `--laz`) sur le provider suisse : télécharge les tuiles **swissSURFACE3D `.las.zip`** (~125 Mo/km²) via la même API STAC, dézippe le nuage et reconstruit le modèle « structures debout ». Socle par défaut = **CSF** (`--laz-ground csf`, Cloth Simulation Filter), car les codes de classification swisstopo ne sont pas garantis compatibles IGN ; le mode `classes` reste disponible. Mêmes réglages par site et cache-puis-réajuste que le DFM France (~6 min/tuile). Prospection ciblée, validation terrain conseillée |
+| **+ mode LAZ (autres providers)** | Pologne, Estonie, Flandre, Canada (NRCan + Québec), USA, Danemark, France (CRAIG Auvergne) | DFM/CSF depuis les nuages classés nationaux | 0,5 m | *(CRS de chaque provider)* | Le **mode LAZ** (`--laz`) marche aussi là où le nuage de points classé complet est publié : `pl-gugik-laz`, `ee-maaamet-laz`, `be-flanders-laz`, `ca-nrcan-laz` (COPC fenêtré), `us-3dep-laz` (COPC fenêtré, sans compte), `ca-quebec-laz`, `dk-datafordeler-laz` (clé API), `fr-craig-laz`. Densité, classes et CRS varient. Voir la [roadmap des providers](lidar_providers_roadmap.md). Traitement alternatif pour une prospection ciblée ; validation terrain conseillée |
 | `no-kartverket` | Norvège | Nasjonal Høydemodell | 1 m | EPSG:25833 (UTM33N) | ArcGIS ImageServer exportImage, couverture nationale |
 | `se-lantmateriet` | Suède | Markhöjdmodell (laser) | 1 m | EPSG:3006 (SWEREF99 TM) | STAC + COG mosaïque 10 km (lecture fenêtrée), couverture nationale ; **compte GeoTorget gratuit** (`LANTMATERIET_USER` / `LANTMATERIET_PASS`) requis pour le téléchargement |
 | `de-bayern` · `de-nrw` · `de-niedersachsen` · `de-rlp` | Allemagne (4 Länder : Bavière, RNW, Basse-Saxe, Rhénanie-Palatinat) | DGM1 | 1 m | EPSG:25832 (UTM32N) | metalink / index.json / STAC COG, données ouvertes (de-rlp : index Metalink d'environ 21k tuiles GeoTIFF ; `post_fetch` retire le CRS vertical composé pour revenir à 25832) |
