@@ -7,13 +7,13 @@ workflow. For map formats and phone import, see [Formats and mobile apps](format
 Building and publishing the application are documented separately in
 [BUILD.md](../BUILD.md).
 
-## Choose how to run lidar2map
+## 1. Choose how to run lidar2map
 
-The standalone application is the normal choice for end users. It contains its
-own Python runtime, dependencies, Java runtime, and osmosis; it does not install
-them system-wide.
+The standalone binary application is the normal choice for end users. It
+contains its own Python runtime, dependencies, Java runtime, and osmosis; it
+does not install them system-wide.
 
-| | **Standalone application** | **Python script** |
+| | **Standalone binary application** | **Python script** |
 |---|---|---|
 | Requirements | None beyond a supported OS | Python 3.12 |
 | First setup | No installation; the bundled runtime is extracted on first launch | About 5 minutes; automatic bootstrap into a private virtual environment |
@@ -25,7 +25,9 @@ Publishing or patching the standalone archives is a maintainer workflow. The
 build scripts, bundle architecture, and `update_app.py` release workflow are
 covered only in [BUILD.md](../BUILD.md).
 
-## Install the standalone application
+### 1.1. Standalone binary application
+
+#### 1.1.1. Download and extract
 
 Download the archive for your platform from the
 [GitHub Releases page](https://github.com/nico579/lidar2map/releases), then
@@ -42,13 +44,15 @@ The extracted directory contains the launcher (`lidar2map.exe`, `lidar2map`,
 or `LIDAR2MAP.app`) and `lidar2map_bundle.zip` side by side. Keep them together.
 There is no system installation.
 
-### Launch it
+#### 1.1.2. Launch the binary application
 
 | OS | How to start |
 |---|---|
 | Windows | Double-click `lidar2map.exe`. Starting it from a terminal also exposes the startup log. |
 | Linux | Run `chmod +x lidar2map` once, then `./lidar2map` from the extracted directory. |
 | macOS | Double-click `LIDAR2MAP.app`. If Gatekeeper blocks it, run `xattr -dr com.apple.quarantine LIDAR2MAP.app`, then double-click again. |
+
+#### 1.1.3. First binary startup and runtime
 
 The first launch extracts the Qt-based bundle once and usually takes 30–60
 seconds. The extracted runtime is stored in:
@@ -59,7 +63,7 @@ seconds. The extracted runtime is stored in:
 
 Later launches reuse that copy.
 
-## Run from the Python source
+### 1.2. Python script
 
 On first launch, the script creates `~/.lidar2map/venv` and installs the
 critical dependencies there: Pillow, pyproj, numpy, rasterio, pywebview, and
@@ -70,7 +74,7 @@ Temurin 21 and osmosis are downloaded on demand. No system GDAL installation is
 required because rasterio wheels include their own GDAL. Allow roughly 400 MB
 for this one-time setup.
 
-### Windows 10+
+#### 1.2.1. Windows 10+
 
 1. Install [Python 3.12 or newer](https://www.python.org/downloads/).
 2. Clone and launch:
@@ -81,7 +85,7 @@ cd lidar2map
 python lidar2map.py
 ```
 
-### macOS 11+
+#### 1.2.2. macOS 11+
 
 ```bash
 brew install python@3.12
@@ -90,7 +94,7 @@ cd lidar2map
 python3.12 lidar2map.py
 ```
 
-### Debian / Ubuntu
+#### 1.2.3. Debian / Ubuntu
 
 ```bash
 sudo apt install python3.12 python3.12-venv git
@@ -103,11 +107,17 @@ Linux/macOS cases such as PEP 668, distribution Qt packages, Wayland, and
 Gatekeeper on the Java runtime are covered in the
 [BUILD.md troubleshooting section](../BUILD.md#9-dépannage).
 
-## First launch and graphical workflow
+## 2. First launch and graphical workflow — binary application or Python script
 
-Starting lidar2map without arguments opens the graphical interface. Supplying
-arguments starts a headless command-line job instead. The interface detects
-English or French automatically and also provides a manual language toggle.
+### 2.1. Open the graphical interface
+
+Whether it is started from the standalone binary application or the Python
+script, lidar2map opens the graphical interface when run without arguments.
+Supplying arguments starts a headless command-line job instead. The interface
+detects English or French automatically and also provides a manual language
+toggle.
+
+### 2.2. Configure the first job
 
 The form follows the processing workflow:
 
@@ -124,24 +134,33 @@ The form follows the processing workflow:
 
 ![Main LiDAR form using a DTM surface](../screenshots/GUI/lidar_dtm.PNG)
 
+### 2.3. Follow the job
+
 The interface validates the form before starting and shows a live log while a
 job is running.
 
-## History, clean stops, and the processing queue
+## 3. History, clean stops, and the processing queue
 
-- **Crash-safe history:** every run remains in History with its state and logs,
-  including interrupted or failed runs.
-- **Clean stop and resume:** processing can finish the current chunk cleanly;
-  a manifest records completed chunks so a later run can resume them instead
-  of starting again.
-- **Queue:** `＋ Queue` stores several configured areas. `Run queue` processes
-  them unattended, and a failed item does not prevent the following items from
-  running.
+### 3.1. Crash-safe history
+
+Every run remains in History with its state and logs, including interrupted or
+failed runs.
+
+### 3.2. Clean stop and resume
+
+Processing can finish the current chunk cleanly; a manifest records completed
+chunks so a later run can resume them instead of starting again.
+
+### 3.3. Processing queue
+
+`＋ Queue` stores several configured areas. `Run queue` processes them
+unattended, and a failed item does not prevent the following items from
+running.
 
 Large areas can also be split into chunks or delegated to one or several VMs;
 see the [remote execution guide](remote.md).
 
-## Index sheet
+## 4. Index sheet
 
 Every run normally creates `<product>_planche.png` next to its deliverables.
 It shows the processed extent and numbered output cells, which is particularly
@@ -158,18 +177,31 @@ extent and cells alone.
 The index sheet is enabled by default. `--no-index-map` disables it, and
 `--index-sheet DIRECTORY` rebuilds it from an existing project.
 
-## Uninstall
+## 5. Uninstall
 
-Use `--desinstaller` with the launcher or script, for example:
+Use `--desinstaller` with the binary launcher or Python script.
+
+### 5.1. Standalone binary application
+
+On Windows:
 
 ```powershell
 lidar2map.exe --desinstaller
 ```
 
+On Linux or macOS:
+
 ```bash
 ./lidar2map --desinstaller
-# or: python3.12 lidar2map.py --desinstaller
 ```
+
+### 5.2. Python script
+
+```bash
+python3.12 lidar2map.py --desinstaller
+```
+
+### 5.3. Removed and retained files
 
 This removes the private virtual environment and installed tools/runtime. It
 does not remove the launcher or source script.
