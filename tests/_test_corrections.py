@@ -1405,7 +1405,10 @@ _dc4 = tmp / "chunk_r110d"; _dc4.mkdir()
 _orig_est = l2m._mbtiles_est_complete
 try:
     l2m._mbtiles_est_complete = lambda m: True
-    check("R1#10 mbtiles demandé + contenu complet -> complet",
+    check("R1#10 mbtiles+rmap demandés mais rmap absent -> incomplet",
+          l2m._chunk_livrable_complet(_dc4, _args(mbtiles=True, rmap=True)) is False)
+    (_dc4 / "z_svf.rmap").write_text("rmap")
+    check("R1#10 mbtiles+rmap demandés et présents -> complet",
           l2m._chunk_livrable_complet(_dc4, _args(mbtiles=True, rmap=True)) is True)
     l2m._mbtiles_est_complete = lambda m: False
     check("R1#10 mbtiles demandé + contenu vide -> incomplet (contenu, pas présence)",
@@ -1461,6 +1464,72 @@ try:
 finally:
     l2m.PROVIDER = _orig_prov
     l2m._post_fetch_si_besoin = _orig_pf
+
+print("== 23. Planche : emprise WFS d'un itinéraire recadrée sur la zone demandée ==")
+# Un WFS IGN "itinéraires anciens" renvoie la géométrie ENTIÈRE d'un tracé qui
+# traverse seulement la zone (ex. une véloroute de centaines de km pour une
+# zone de quelques km) : sans recadrage, l'emprise calculée pour la planche
+# dérive très loin de la zone réelle (reverse-geocoding département en échec,
+# planche illisible à l'échelle du tracé entier). Reproduit avec un LineString
+# dont la bbox dépasse largement la zone demandée.
+import json as _json23
+with tempfile.TemporaryDirectory() as _td23:
+    _dossier23 = Path(_td23)
+    _gj23 = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "properties": {},
+            "geometry": {
+                "type": "LineString",
+                # Traverse toute la côte méditerranéenne (Perpignan-Menton),
+                # comme l'EV8 réel qui a déclenché le bug.
+                "coordinates": [[2.8, 42.45], [4.0, 43.0], [6.05, 43.33], [7.5, 43.95]],
+            },
+        }],
+    }
+    (_dossier23 / "d_ign_itineraire.geojson").write_text(
+        _json23.dumps(_gj23), encoding="utf-8")
+
+    _zone23 = (6.0210, 43.3113, 6.0705, 43.3474)   # zone Garéoult ~4 km, réelle
+    _appels_contours = []
+    _appels_planche = []
+    _orig_contours = l2m._planche_contours_dept
+    _orig_generer = l2m._generer_planche
+
+    def _contours_mock(bbox_wgs84, args):
+        _appels_contours.append(bbox_wgs84)
+        return None
+
+    def _generer_mock(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
+        _appels_planche.append(bbox_wgs84)
+
+    l2m._planche_contours_dept = _contours_mock
+    l2m._generer_planche = _generer_mock
+    try:
+        # Sans zone_bbox_wgs84 (comportement historique) : l'emprise reste
+        # celle du tracé entier, largement hors de la zone demandée.
+        l2m._planche_depuis_dossier(_dossier23, SimpleNamespace(index_map=True),
+                                    nom_zone="d")
+        _sans_recadrage = _appels_planche[-1]
+        check("sans recadrage : emprise dérive hors zone (largeur > 1°, bug reproduit)",
+              (_sans_recadrage[2] - _sans_recadrage[0]) > 1.0,
+              detail=str(_sans_recadrage))
+
+        _appels_contours.clear(); _appels_planche.clear()
+        # Avec zone_bbox_wgs84 (correctif) : l'emprise doit rester bornée à la
+        # zone réellement demandée.
+        l2m._planche_depuis_dossier(_dossier23, SimpleNamespace(index_map=True),
+                                    nom_zone="d", zone_bbox_wgs84=_zone23)
+        _avec_recadrage = _appels_planche[-1]
+        check("avec recadrage : emprise planche == zone demandée",
+              _avec_recadrage == _zone23, detail=str(_avec_recadrage))
+        check("avec recadrage : emprise passée au reverse-geocoding == zone demandée",
+              _appels_contours and _appels_contours[0] == _zone23,
+              detail=str(_appels_contours))
+    finally:
+        l2m._planche_contours_dept = _orig_contours
+        l2m._generer_planche = _orig_generer
 
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")

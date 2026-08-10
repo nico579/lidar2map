@@ -30,8 +30,14 @@ jobs:
     env:
       LIDAR2MAP_BOOTSTRAP: none
       OPENTOPOGRAPHY_API_KEY: ${{ secrets.OPENTOPOGRAPHY_API_KEY }}
-      DATAFORDELER_TOKEN:     ${{ secrets.DATAFORDELER_TOKEN }}
+      # Le secret historique garde son nom TOKEN, mais le provider et le
+      # harness lisent l'environnement public DATAFORDELER_API_KEY.
+      DATAFORDELER_API_KEY:   ${{ secrets.DATAFORDELER_TOKEN }}
       FI_NLS_API_KEY:         ${{ secrets.FI_NLS_API_KEY }}
+      DGT_USER:               ${{ secrets.DGT_USER }}
+      DGT_PASS:               ${{ secrets.DGT_PASS }}
+      LANTMATERIET_USER:      ${{ secrets.LANTMATERIET_USER }}
+      LANTMATERIET_PASS:      ${{ secrets.LANTMATERIET_PASS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5

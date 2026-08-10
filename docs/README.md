@@ -40,10 +40,10 @@ The following pages preserve design reviews and implementation investigations.
 They are useful to maintainers, but they are not current user instructions:
 
 - [LAZ / DFM / CSF review log](dfm_reviews.md)
+- [Refactoring plan and regression gates](plan_refonte.fr.md) *(French)*
 - [Remote-execution unification design record](evolution_execution_distante.md)
 - [Python 3.12 bootstrap investigation](correctif_bootstrap_python312_multiplateforme.md)
 - [Warp, overview and MBTiles parallelism investigation](correctif_parallelisation_warp_overviews_mbtiles.md)
 
 When an engineering record conflicts with a user guide, the user guide and the
 current program help are authoritative.
-

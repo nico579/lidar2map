@@ -18,7 +18,7 @@ Usage :
   python Tests/smoke_providers.py
   python Tests/smoke_providers.py --only gb-scotland,lu-act
 Reseau requis. Pense pour tourner regulierement (cron CI ou manuel).
-Cles API (sinon SKIP) : OPENTOPOGRAPHY_API_KEY, DATAFORDELER_TOKEN, FI_NLS_API_KEY.
+Cles API (sinon SKIP) : OPENTOPOGRAPHY_API_KEY, DATAFORDELER_API_KEY, FI_NLS_API_KEY.
 """
 import argparse
 import importlib

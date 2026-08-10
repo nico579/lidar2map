@@ -1011,6 +1011,7 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
       "applyProviderLaz" in _appjs and "laz_hmin" in _appjs
       and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
+_sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
       '"--laz"' in _src and '"--laz-hmin"' in _src and '"--laz-ground"' in _src
       and '"--laz-csf-threshold"' in _src)
@@ -1216,8 +1217,8 @@ with _tf.TemporaryDirectory() as _d:
           _dalle_partagee.exists() and not _dalle_propre.exists())
 check("wiring R1#5/#9 : lookahead calculé avant le cleanup du morceau glissant",
       "def _dalles_zone_lookahead(" in _src
-      and "def _noms_dalles_morceau_suivant(" in _src
-      and "noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle)" in _src
+      and "def _noms_dalles_morceau_suivant(" in _sliding_src
+      and "noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle)" in _sliding_src
       and "noms_dalles_a_garder=None" in _src   # _traiter_bbox_lidar_ombrage
       and "noms_garder=noms_dalles_a_garder" in _src)
 

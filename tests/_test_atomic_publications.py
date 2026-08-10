@@ -52,6 +52,130 @@ class AtomicPublicationTests(unittest.TestCase):
 
         return seen, recorder
 
+    def _run_wmts(self, final, **kwargs):
+        """Exécute le vrai producteur WMTS sur une tuile, sans réseau."""
+        options = {
+            "chemin": final,
+            "tuiles_iter": iter([(10, 1, 1)]),
+            "total": 1,
+            "nom_zone": "zone",
+            "fmt_ext": "jpg",
+            "zoom_min": 10,
+            "zoom_max": 10,
+            "layer": "TEST",
+            "style": "normal",
+            "img_fmt": "image/jpeg",
+            "apikey": "",
+            "apikey_requis": False,
+            "workers": 1,
+            "bbox_wgs84": (5.0, 43.0, 6.0, 44.0),
+            "ecraser_tuiles": True,
+        }
+        options.update(kwargs)
+        with mock.patch.object(L, "_log_req"), \
+             contextlib.redirect_stdout(io.StringIO()):
+            return L.generer_mbtiles_wmts(**options)
+
+    def _assert_no_sqlite_staging(self):
+        residues = [
+            path for path in self.tmp.rglob("*")
+            if path.is_file()
+            and (".part" in path.name
+                 or path.name.endswith("-wal")
+                 or path.name.endswith("-shm"))
+        ]
+        self.assertEqual(residues, [])
+
+    def test_wmts_download_failure_keeps_previous_final(self):
+        final = self.tmp / "zone.mbtiles"
+        final.write_bytes(b"previous-mbtiles")
+
+        with mock.patch.object(
+                L, "telecharger_tuile", side_effect=IOError("network failure")):
+            with self.assertRaises(RuntimeError):
+                self._run_wmts(final)
+
+        self.assertEqual(final.read_bytes(), b"previous-mbtiles")
+        self._assert_no_sqlite_staging()
+
+    def test_wmts_interruption_keeps_previous_final_and_cleans_staging(self):
+        jpeg = b"\xff\xd8\xff\xe0" + b"x" * 700
+
+        for mode in ("cooperative-stop", "keyboard-interrupt"):
+            with self.subTest(mode=mode):
+                final = self.tmp / f"zone-{mode}.mbtiles"
+                final.write_bytes(b"previous-mbtiles")
+                if mode == "cooperative-stop":
+                    L._stop_event.set()
+                    fetch = mock.Mock(return_value=jpeg)
+                else:
+                    fetch = mock.Mock(side_effect=KeyboardInterrupt("ctrl-c"))
+
+                try:
+                    with mock.patch.object(L, "telecharger_tuile", fetch):
+                        with self.assertRaises(KeyboardInterrupt):
+                            self._run_wmts(final)
+                finally:
+                    L._stop_event.clear()
+
+                self.assertEqual(final.read_bytes(), b"previous-mbtiles")
+                self._assert_no_sqlite_staging()
+
+    def test_wmts_png_to_jpeg_failure_publishes_neither_cache_nor_final(self):
+        final = self.tmp / "zone-jpeg.mbtiles"
+        final.write_bytes(b"previous-mbtiles")
+        cache = self.tmp / "cache"
+        open_image = mock.Mock(side_effect=OSError("invalid PNG"))
+        fake_pil = types.ModuleType("PIL")
+        fake_pil.Image = types.SimpleNamespace(open=open_image)
+
+        with mock.patch.dict(sys.modules, {"PIL": fake_pil}), \
+             mock.patch.object(L, "telecharger_tuile", return_value=b"broken-png"):
+            with self.assertRaises(RuntimeError):
+                self._run_wmts(
+                    final,
+                    fmt_ext="png",
+                    img_fmt="image/png",
+                    jpeg_quality=82,
+                    dossier_cache=cache,
+                )
+
+        self.assertEqual(final.read_bytes(), b"previous-mbtiles")
+        self.assertEqual(
+            [path for path in cache.rglob("*") if path.is_file()],
+            [],
+        )
+        open_image.assert_called_once()
+        self._assert_no_sqlite_staging()
+
+    def test_wmts_validation_failure_keeps_previous_final_after_close(self):
+        final = self.tmp / "zone-validation.mbtiles"
+        final.write_bytes(b"previous-mbtiles")
+        jpeg = b"\xff\xd8\xff\xe0" + b"x" * 700
+        validation = []
+
+        def reject_after_close(part, tables):
+            # Sous Windows, ces deux renommages prouvent que SQLite a relâché le
+            # fichier avant la validation et la tentative de publication.
+            probe = part.with_name(f"{part.name}.closed-probe")
+            part.replace(probe)
+            probe.replace(part)
+            validation.append((part, tables))
+            raise RuntimeError("invalid SQLite staging")
+
+        with mock.patch.object(L, "telecharger_tuile", return_value=jpeg), \
+             mock.patch.object(
+                 L, "_valider_sqlite_part", side_effect=reject_after_close
+             ):
+            with self.assertRaises(RuntimeError):
+                self._run_wmts(final)
+
+        self.assertEqual(len(validation), 1)
+        self.assertEqual(validation[0][1], {"metadata": None, "tiles": 1})
+        self.assertEqual(final.read_bytes(), b"previous-mbtiles")
+        self.assertFalse(list(self.tmp.rglob("*.closed-probe")))
+        self._assert_no_sqlite_staging()
+
     def test_atomic_text_failure_keeps_previous_final(self):
         final = self.tmp / "dalles_zone.txt"
         final.write_text("old", encoding="utf-8")
@@ -99,18 +223,21 @@ class AtomicPublicationTests(unittest.TestCase):
                     ecraser_tuiles=True,
                 )
 
-    def _osmosis_output_parts(self, command):
+    def _osmosis_output_paths(self, command):
+        """Sorties d'une passe osmosis, sans confondre ses entrées file=... .
+
+        Le pipeline OSM courant fait trois passes : deux PBF intermédiaires,
+        puis une fusion qui publie le .map et le PBF filtré. L'ancien test
+        supposait une invocation unique et ne voyait donc plus les sorties.
+        """
         outputs = []
-        for arg in command:
-            value = str(arg)
-            if not value.startswith("file="):
+        for index, arg in enumerate(command[:-1]):
+            if arg not in ("--write-pbf", "--mapfile-writer"):
                 continue
-            path = Path(value.split("=", 1)[1])
-            if ".map." in path.name or "_filtered.pbf." in path.name:
-                outputs.append(path)
-        self.assertEqual(len(outputs), 2)
-        for path in outputs:
-            self.assertEqual(path.suffix, ".part")
+            value = str(command[index + 1])
+            self.assertTrue(value.startswith("file="), value)
+            outputs.append(Path(value.split("=", 1)[1]))
+        self.assertTrue(outputs)
         return outputs
 
     def test_osmosis_failure_keeps_map_and_filtered_pbf(self):
@@ -121,19 +248,26 @@ class AtomicPublicationTests(unittest.TestCase):
         seen = []
 
         def runner(command, **_kwargs):
-            outputs = self._osmosis_output_parts(command)
+            outputs = self._osmosis_output_paths(command)
             seen.extend(outputs)
             for path in outputs:
                 path.write_bytes(b"partial")
-            return 7, "forced failure"
+            # P1/P2 réussissent ; l'échec de la passe finale doit préserver
+            # les deux anciens livrables et nettoyer les staging .part.
+            if any(path.suffix == ".part" for path in outputs):
+                return 7, "forced failure"
+            return 0, ""
 
         result = self._run_osm_map(runner)
 
         self.assertIsNone(result)
         self.assertEqual(final_map.read_bytes(), b"old-map")
         self.assertEqual(final_pbf.read_bytes(), b"old-pbf")
-        self.assertTrue(seen)
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(len([p for p in seen if p.suffix == ".part"]), 2)
         self._assert_no_part()
+        self.assertFalse((self.tmp / "zone_ways.tmp.pbf").exists())
+        self.assertFalse((self.tmp / "zone_poi.tmp.pbf").exists())
 
     def test_osmosis_success_publishes_both_and_cleans_parts(self):
         final_map = self.tmp / "zone.map"
@@ -143,7 +277,7 @@ class AtomicPublicationTests(unittest.TestCase):
         seen = []
 
         def runner(command, **_kwargs):
-            outputs = self._osmosis_output_parts(command)
+            outputs = self._osmosis_output_paths(command)
             seen.extend(outputs)
             for path in outputs:
                 if ".map." in path.name:
@@ -157,8 +291,10 @@ class AtomicPublicationTests(unittest.TestCase):
         self.assertEqual(result, final_map)
         self.assertEqual(final_map.read_bytes(), b"new-map")
         self.assertEqual(final_pbf.read_bytes(), b"new-pbf")
-        self.assertTrue(seen)
+        self.assertEqual(len(seen), 4)
         self._assert_no_part()
+        self.assertFalse((self.tmp / "zone_ways.tmp.pbf").exists())
+        self.assertFalse((self.tmp / "zone_poi.tmp.pbf").exists())
 
     def _write_point_geojson(self, path):
         path.write_text(json.dumps({

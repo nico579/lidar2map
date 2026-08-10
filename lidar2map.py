@@ -559,7 +559,6 @@ import uuid
 import re
 import sys
 import ssl
-import gc
 
 # certifi fournit un bundle de certificats CA à jour, indispensable sur
 # Windows 11 et macOS où les certificats système sont parfois absents ou
@@ -1061,8 +1060,6 @@ import sqlite3
 import xml.etree.ElementTree as _ET
 import math
 import time
-import struct
-import io
 import subprocess
 import unicodedata
 import urllib.request
@@ -1070,7 +1067,7 @@ import urllib.parse
 import urllib.error
 import platform
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Vérification version Python
 # Python 3.9 minimum RÉEL : argparse.BooleanOptionalAction (utilisé par
@@ -2087,6 +2084,10 @@ class _TeeLogger:
     Pour le terminal, \r écrase la ligne courante — comportement normal.
     Pour le log, on ne conserve que le dernier état de chaque ligne \r
     (la valeur finale), en ignorant les mises à jour intermédiaires.
+
+    Pendant un découpage à priori, les lignes de détail du terminal/GUI sont
+    aussi préfixées par le chunk et la phase. Les en-têtes et bilans qui portent
+    déjà ``[LLLxCCC]`` ne sont pas doublés.
     """
     def __init__(self, log_path):
         self._terminal = sys.stdout
@@ -2104,6 +2105,7 @@ class _TeeLogger:
         # s'entrelace entre threads → lignes de log corrompues.
         self._lock = threading.Lock()
         self._chunk_actuel = None   # cf. definir_chunk
+        self._terminal_debut_ligne = True
 
     def definir_chunk(self, cle):
         """Marque le chunk en cours (découpage à priori) : préfixe chaque
@@ -2123,6 +2125,52 @@ class _TeeLogger:
             _cle = f"[{self._chunk_actuel}] " if self._chunk_actuel else ""
             self._log.write(f"[{ts}] {_cle}{line}\n")
 
+    def _terminal_avec_chunk(self, msg):
+        """Préfixe chaque ligne logique sans casser les progressions ``\r``.
+
+        ``print`` peut appeler ``write`` une fois pour le texte puis une seconde
+        fois pour le saut de ligne. L'état ``_terminal_debut_ligne`` évite donc
+        d'insérer un préfixe au milieu d'un message fragmenté. Chaque retour
+        chariot redémarre en revanche une ligne de progression complète.
+        """
+        if not msg:
+            return msg
+
+        contexte = self._chunk_actuel
+        debut_ligne = self._terminal_debut_ligne
+        resultat = msg
+        if contexte:
+            contexte = str(contexte)
+            bloc = contexte.split(":", 1)[0]
+            marqueur_bloc = f"[{bloc}]"
+            marqueur_contexte = f"[{contexte}]"
+
+            def _prefixer(match):
+                separateur, contenu = match.groups()
+                # Le premier fragment peut continuer un write précédent ; les
+                # fragments suivant \r/\n commencent toujours une nouvelle ligne.
+                if not separateur and not debut_ligne:
+                    return contenu
+                # En-têtes et messages de bilan ont déjà leur bloc visible.
+                if (marqueur_bloc in contenu
+                        or marqueur_contexte in contenu):
+                    return separateur + contenu
+                indentation = contenu[:len(contenu) - len(contenu.lstrip())]
+                texte = contenu[len(indentation):]
+                return (
+                    f"{separateur}{indentation}"
+                    f"{marqueur_contexte} {texte}"
+                )
+
+            resultat = re.sub(
+                r"(^|[\r\n])([^\r\n]+)",
+                _prefixer,
+                msg,
+            )
+
+        self._terminal_debut_ligne = msg.endswith(("\r", "\n"))
+        return resultat
+
     def write(self, msg):
         # ── Terminal ─────────────────────────────────────────────────────────
         # Toutes les opérations sont défensives parce que cette méthode est
@@ -2130,12 +2178,23 @@ class _TeeLogger:
         # une exception, Windows retourne le code 120 (ERROR_CALL_NOT_IMPLEMENTED)
         # à la place du code passé à sys.exit().
         try:
-            self._terminal.write(msg)
+            # Même verrou que le fichier : un worker ne doit pas couper une
+            # ligne entre son préfixe et son contenu pendant un changement de
+            # contexte effectué par le thread principal.
+            with self._lock:
+                msg_terminal = self._terminal_avec_chunk(msg)
+        except Exception:
+            msg_terminal = msg
+        try:
+            self._terminal.write(msg_terminal)
         except UnicodeEncodeError:
             try:
-                self._terminal.write(msg.encode(self._terminal.encoding or "cp1252",
-                                                 errors="replace").decode(
-                                                 self._terminal.encoding or "cp1252"))
+                self._terminal.write(
+                    msg_terminal.encode(
+                        self._terminal.encoding or "cp1252",
+                        errors="replace",
+                    ).decode(self._terminal.encoding or "cp1252")
+                )
             except Exception:
                 pass
         except Exception:
@@ -2332,7 +2391,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.32.0"
+VERSION      = "1.33.0"
 VERSION_DATE = "2026-08"
 
 
@@ -2384,192 +2443,19 @@ MACOS   = platform.system() == "Darwin"
 import threading as _threading
 from contextlib import contextmanager as _contextmanager
 
-_manifest_ctx = _threading.local()   # .manifeste et .cle par thread
+# ``spec_from_file_location`` (tests et intégrateurs) n'ajoute pas le dossier
+# du script à sys.path, contrairement à ``python lidar2map.py``. Rétablir cette
+# sémantique garantit que les modules privés voisins restent importables.
+_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _MODULE_DIR not in sys.path:
+    sys.path.insert(0, _MODULE_DIR)
 
-
-class Manifeste:
-    """Manifeste JSON local au projet — reprise et nettoyage des morceaux."""
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self._data = self._charger()
-        # Verrou : le préchargement glissant (_PrefetchDalles) écrit depuis un
-        # thread de fond pendant que le thread principal calcule l'ombrage du
-        # morceau courant -> deux threads mutent self._data en parallèle sans
-        # ça (aucun autre verrou n'existe dans le pipeline aujourd'hui).
-        self._lock = _threading.Lock()
-
-    def _charger(self):
-        if self.path.exists():
-            try:
-                d = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(d, dict):
-                    d.setdefault("morceaux", {})
-                    d.setdefault("fichiers", {})
-                    return d
-                print(f"  ⚠ Manifeste {self.path.name}: unexpected structure "
-                      f"(type={type(d).__name__}), resetting")
-            except (OSError, json.JSONDecodeError) as e:
-                # Manifeste corrompu (crash disque, écriture interrompue) : on
-                # repart d'un état vierge mais on prévient l'utilisateur — la
-                # progression précédente sera perdue, pas réinitialisée silencieusement.
-                print(f"  ⚠ Manifeste {self.path.name} unreadable ({type(e).__name__}: {e}), "
-                      f"resetting (previous progress lost)")
-        return {"morceaux": {}, "fichiers": {}}
-
-    def deja_traite(self, cle: str) -> bool:
-        with self._lock:
-            return self._data["morceaux"].get(cle, {}).get("termine", False)
-
-    def verifier_signature(self, sig: str) -> bool:
-        """Compare la signature de config du run courant à celle stockée (R1#4).
-
-        Retourne True si elle a CHANGÉ (les 'termine' précédents portent sur une
-        autre géométrie/contenu de sortie → périmés) après avoir réinitialisé la
-        progression ; False si identique ou première pose (rien à invalider).
-        Sans ce garde, changer --split-width/--zoom-max/--image-format/--shading
-        en gardant le même projet sautait les chunks calculés sous l'ancienne
-        config = sortie fausse en silence."""
-        with self._lock:
-            ancienne = self._data.get("config_sig")
-            self._data["config_sig"] = sig
-            if ancienne is None or ancienne == sig:
-                if ancienne is None:      # première pose : mémoriser sans reset
-                    self._sauver()
-                return False
-            # Config changée : la reprise porte sur une autre sortie → repartir clean.
-            self._data["morceaux"] = {}
-            self._data["fichiers"] = {}
-            self._sauver()
-            return True
-
-    def debut_morceau(self, cle: str, nom: str):
-        # termine=False remis EXPLICITEMENT : une relance avec écrasement qui
-        # démarre un morceau puis échoue avant fin_morceau laissait sinon
-        # l'ancien termine=True actif -> le morceau (re)cassé passait pour fait.
-        with self._lock:
-            self._data["morceaux"].setdefault(cle, {}).update(
-                {"debut": time.strftime("%Y-%m-%dT%H:%M:%S"), "nom": nom,
-                 "termine": False})
-            self._sauver()
-
-    def fin_morceau(self, cle: str, duree_s: int):
-        with self._lock:
-            self._data["morceaux"][cle].update({"termine": True, "duree_s": duree_s})
-            self._sauver()
-
-    def enregistrer_fichier(self, path, cle: str):
-        p = str(Path(path).resolve())
-        with self._lock:
-            lst = self._data["fichiers"].setdefault(cle, [])
-            if p not in lst:
-                lst.append(p)
-            self._sauver()
-
-    def enregistrer_fichiers(self, paths, cle: str):
-        """Version en LOT : une seule sauvegarde pour N fichiers. L'unitaire
-        réécrit tout le JSON + fsync PAR fichier — O(n²) octets sur un chunk
-        de milliers de dalles (dizaines de secondes perdues par chunk)."""
-        with self._lock:
-            lst = self._data["fichiers"].setdefault(cle, [])
-            vus = set(lst)
-            ajout = False
-            for path in paths:
-                p = str(Path(path).resolve())
-                if p not in vus:
-                    lst.append(p)
-                    vus.add(p)
-                    ajout = True
-            if ajout:
-                self._sauver()
-
-    def fichiers_morceau(self, cle: str) -> list:
-        with self._lock:
-            return list(self._data["fichiers"].get(cle, []))
-
-    def eta_global(self, n_total: int):
-        """ETA *grossier* du run, à partir des duree_s déjà stockées par
-        morceau (fin_morceau). Retourne (nb_termine, eta_s) ; eta_s vaut None
-        tant qu'aucun morceau n'est terminé (pas de base de calcul).
-
-        Médiane × restants, PAS moyenne : les durées sont très hétérogènes
-        (chunk en mer ≈ 0, chunk en relief dense très cher), une moyenne plate
-        donnerait un ETA sauvage en début de run. La médiane absorbe ces
-        outliers. Reste un ordre de grandeur — étiqueté 'coarse' à l'affichage."""
-        with self._lock:
-            durees = sorted(m["duree_s"] for m in self._data["morceaux"].values()
-                            if m.get("termine") and isinstance(m.get("duree_s"), (int, float)))
-        if not durees:
-            return 0, None
-        n = len(durees)
-        med = durees[n // 2] if n % 2 else (durees[n // 2 - 1] + durees[n // 2]) / 2
-        restants = max(0, n_total - n)
-        return n, int(med * restants)
-
-    _warned_save_failed = False    # class-level : un seul warn par run
-
-    def _sauver(self):
-        try:
-            _ecrire_json_atomique(self.path, self._data, indent=2)
-        except Exception as e:
-            # Le manifeste est best-effort : si le disque est saturé ou
-            # si les permissions changent, on n'interrompt pas le pipeline
-            # principal — mais on prévient une fois (par run) pour que
-            # l'utilisateur sache que la reprise sera incohérente.
-            if not Manifeste._warned_save_failed:
-                Manifeste._warned_save_failed = True
-                print(f"  ⚠ Manifeste {self.path.name} : write failure "
-                      f"({type(e).__name__}: {e}). "
-                      f"Resume may be inconsistent.")
-
-
-@_contextmanager
-def _contexte_manifeste(manifeste, cle: str):
-    """Active le tracking des fichiers créés pour ce morceau dans le thread courant.
-
-    Supporte l'imbrication : sauvegarde le contexte précédent à l'entrée et
-    le restaure à la sortie, plutôt que d'écraser avec None (ce qui ferait
-    perdre le contexte externe en cas de with ... with).
-    """
-    _prev_m = getattr(_manifest_ctx, "manifeste", None)
-    _prev_c = getattr(_manifest_ctx, "cle",       None)
-    _manifest_ctx.manifeste = manifeste
-    _manifest_ctx.cle = cle
-    try:
-        yield
-    finally:
-        _manifest_ctx.manifeste = _prev_m
-        _manifest_ctx.cle = _prev_c
-
-
-def _creer_fichier(path):
-    """
-    Déclare un fichier intermédiaire créé dans le pipeline.
-
-    Enregistré dans le manifest du morceau courant → removed par --nettoyage
-    après le morceau (dalles, TIF ombrages, TIF warpé, VRT, data.bin, tuiles
-    WMTS, etc.).
-
-    Les sorties finales (.mbtiles, .rmap, .sqlitedb, .geojson(.gz)) NE doivent
-    PAS être déclarées via cette fonction — elles sont conservées d'office.
-
-    Silencieux si aucun contexte manifeste n'est actif (hors boucle à priori).
-    """
-    m = getattr(_manifest_ctx, "manifeste", None)
-    if m is None:
-        return
-    cle = getattr(_manifest_ctx, "cle", "global")
-    m.enregistrer_fichier(path, cle)
-
-
-def _creer_fichiers(paths):
-    """Déclare en LOT des fichiers intermédiaires (cf. _creer_fichier) :
-    une seule écriture du manifeste au lieu d'une par fichier."""
-    m = getattr(_manifest_ctx, "manifeste", None)
-    if m is None:
-        return
-    cle = getattr(_manifest_ctx, "cle", "global")
-    m.enregistrer_fichiers(paths, cle)
+from _split_manifest import (
+    Manifeste,
+    _contexte_manifeste,
+    _creer_fichier,
+    _creer_fichiers,
+)
 
 
 def _supprimer_fichiers(fichiers: list, dossiers_garder=None, noms_garder=None):
@@ -4022,23 +3908,18 @@ def _parser_departements(valeur: str) -> list:
     return codes
 
 
-def _parse_block(spec: str):
-    """Parse --block 'i/M' → (i, M) validés, ou None si vide.
+from _split_planning import (
+    _calculer_sous_zones_priori as _calculer_sous_zones_priori_impl,
+    _cle_chunk,          # noqa: F401 - réexport de façade (contrat historique)
+    _identite_chunk,     # noqa: F401 - réexport de façade (contrat historique)
+    _parse_block as _parse_block_impl,
+    _signature_config as _signature_config_impl,
+)
 
-    Sharding géographique INTER-machines : on découpe la zone en M blocs et ce
-    run ne traite que le i-ème. 1 ≤ i ≤ M, M ≥ 1 (ex. '1/3' = 1er tiers). Lève
-    ValueError sur un format invalide (l'appelant convertit en erreur propre)."""
-    import re
-    spec = (spec or "").strip()
-    if not spec:
-        return None
-    m = re.match(r'^(\d+)\s*/\s*(\d+)$', spec)
-    if not m:
-        raise ValueError(f"--block attend le format 'i/M' (ex: 1/3), reçu : {spec!r}")
-    i, total = int(m.group(1)), int(m.group(2))
-    if total < 1 or not (1 <= i <= total):
-        raise ValueError(f"--block {spec} : il faut 1 ≤ i ≤ M et M ≥ 1")
-    return i, total
+
+def _parse_block(spec: str):
+    """Façade historique vers le parseur de sharding extrait."""
+    return _parse_block_impl(spec)
 
 
 # ============================================================
@@ -8542,47 +8423,36 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     return _cibles + [p for p in _prov if p.exists()]
 
 
-def _bbox_depuis_gdalinfo(chemin):
-    """Retourne (xmin, ymin, xmax, ymax) en unités natives du fichier via rasterio."""
-    try:
-        import rasterio
-        with rasterio.open(str(chemin)) as ds:
-            b = ds.bounds   # BoundingBox(left, bottom, right, top)
-            return (b.left, b.bottom, b.right, b.top)
-    except Exception:
-        return None
+from _mbtiles_lidar import (
+    _DependancesMbtilesLidar,
+    _bbox_depuis_gdalinfo,   # noqa: F401 - réexport de façade (contrat historique)
+    _tile_workers_defaut,
+    _warped_3857_valide,     # noqa: F401 - réexport de façade, testé directement
+    generer_mbtiles_lidar as _generer_mbtiles_lidar_impl,
+)
 
 
-def _warped_3857_valide(chemin):
-    """True si `chemin` est un GeoTIFF EPSG:3857 lisible (dims > 0, 1 bloc lu).
+def _dependances_mbtiles_lidar():
+    """Reconstruit les coutures du producteur LiDAR à chaque appel.
 
-    Garde-fou du cache de warp : un warpé partiel laissé par une interruption
-    (jadis écrit directement dans son chemin final) pouvait dépasser 1 Mo et
-    être plus récent que la source, donc réutilisé à tort comme valide. On
-    l'ouvre pour vérifier CRS + dimensions + une lecture. Ne lève jamais."""
-    try:
-        import rasterio as _rio_v
-        with _rio_v.open(str(chemin)) as _d:
-            if _d.width == 0 or _d.height == 0:
-                return False
-            if _d.crs is None or _d.crs.to_epsg() != 3857:
-                return False
-            _d.read(1, window=_rio_v.windows.Window(
-                0, 0, min(64, _d.width), min(64, _d.height)))
-        return True
-    except Exception:
-        return False
-
-
-def _tile_workers_defaut():
-    """Parallélisme de l'encodage de tuiles (JPEG/PNG, Pillow libère le GIL,
-    cf. le pool dans generer_mbtiles_lidar) : DÉCOUPLÉ de --workers, qui
-    plafonne les téléchargements réseau (throttle IGN ~3 en simultané, cf.
-    --laz-parallel pour la même logique côté conversion LAZ). L'encodage est
-    100% CPU local, sans lien avec ce plafond réseau : le limiter au nombre
-    de workers de download le bridait sans raison (ex. --workers 3 sur une
-    VM à 16 vCPU = 13 coeurs inutilisés pendant tout le tuilage)."""
-    return os.cpu_count() or 4
+    Les attributs sont relus sur le module : les monkeypatches des suites
+    (`PROVIDER`, `_creer_fichier`, `_mbtiles_a_regenerer`,
+    `_bbox_enveloppe_transform`, `_valider_sqlite_part`, `_chemin_part`)
+    restent donc actifs après l'extraction."""
+    return _DependancesMbtilesLidar(
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        creer_fichier=_creer_fichier,
+        formater_duree=_hms,
+        stop_event=_stop_event,
+        get_transformer=_get_transformer,
+        natif_vers_wgs84=_natif_vers_wgs84,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        batch_insert=BATCH_MBTILES_INSERT,
+        crs_natif=PROVIDER.CRS_NATIF,
+    )
 
 
 def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
@@ -8590,832 +8460,16 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     jpeg_quality=85, bbox_natif=None, tampon_coin_max_m=0,
                     source_already_warped=False, ecraser_tuiles=False,
                     tile_workers=8):
-    """
-    Pipeline MBTiles : source unique, pyramide rasterio, tuilage par bandes.
-
-    1. rasterio.warp : tif_source (EPSG:2154) → warped_3857.tif (EPSG:3857)
-                       à la résolution native de zoom_max, DEFLATE+TILED.
-    2. build_overviews : overviews gauss pour zoom_min..zoom_max-1.
-    3. Tiling : rangées de tuiles via lecture fenêtrée rasterio + Pillow
-                → INSERT OR REPLACE SQLite.
-
-    format_tuiles : 'auto' (JPEG pour hillshades, PNG pour SVF/LRM/RRIM),
-                    'jpeg' ou 'png'.
-    JPEG à Q=85 divise la taille par 5-8 sur les hillshades sans perte visible.
-    PNG conservé pour les analyses à gradient fin (SVF, LRM) et RRIM couleur.
-    """
-    from PIL import Image
-
-    # Vérification anticipée de rasterio — évite d'attendre la fin du warp
-    try:
-        import rasterio as _rio_check  # noqa
-    except ImportError:
-        print("  ERROR: rasterio missing - required for MBTiles tiling.")
-        print("  Install it: pip install rasterio")
-        return None
-
-    Image.MAX_IMAGE_PIXELS = None
-
-    # Contrôle dtype AVANT le warp (fail-fast, R2#19) : le tuileur écrit chaque
-    # fenêtre dans un canvas uint8 (`_np.zeros(..., uint8)`). Une source 16 bits
-    # ou flottante (MNT brut passé via --source) y serait COULÉE sans
-    # normalisation — valeurs 0-65535 ou flottantes tronquées mod 256 = tuiles
-    # aberrantes, publiées en silence. gdal2tiles refuse pareillement une source
-    # non-Byte. Les ombrages produits par lidar2map sont déjà uint8 : ce garde
-    # ne vise que les rasters --source bruts. On échoue tôt avec le remède.
-    try:
-        import rasterio as _rio_dt
-        with _rio_dt.open(str(tif_source)) as _dsrc:
-            _src_dtypes = set(_dsrc.dtypes)
-    except Exception:
-        _src_dtypes = set()   # illisible ici : le warp échouera avec son message
-    if _src_dtypes and _src_dtypes != {"uint8"}:
-        print(f"  ERROR: source dtype {sorted(_src_dtypes)} - the tiler needs "
-              f"8-bit (Byte); values would be truncated silently.")
-        print(f"  Rescale first, e.g.:  gdal_translate -ot Byte -scale "
-              f"{tif_source.name} scaled_8bit.tif")
-        return None
-
-    # Déterminer le format de tuile effectif
-    _nom_lower = tif_source.stem.lower()
-    _types_png = ("svf", "opos", "oneg", "lrm", "rrim")   # gradients fins → PNG sans perte
-    if format_tuiles == "auto":
-        _use_jpeg = not any(t in _nom_lower for t in _types_png)
-    elif format_tuiles == "jpeg":
-        _use_jpeg = True
-    else:
-        _use_jpeg = False
-    _tile_fmt  = "JPEG" if _use_jpeg else "PNG"
-    print(f"  Base tile format: {_tile_fmt}"
-          f"{'  Q=' + str(jpeg_quality) if _use_jpeg else '  lossless'}", flush=True)
-
-    EARTH_CIRC = 20037508.3427892
-    TILE_SIZE  = 256
-
-    # Nom de base : utiliser nom_ville si fourni (ex: "aa_hillshade_multi"),
-    # sinon stem du TIF source
-    nom_base = nom_ville if nom_ville else tif_source.stem
-    mbtiles  = dossier_ville / (nom_base + f"_z{zoom_min}-{zoom_max}.mbtiles")
-
-    # MÊME décideur que les call sites (_mbtiles_a_regenerer) : fraîcheur vs
-    # TIF source incluse. L'ancien gate `exists and not ecraser` court-circuitait
-    # la décision du caller ("older than ... regenerating" suivi d'un
-    # "already present" → l'ancien rendu restait servi).
-    # source=tif_source TOUJOURS, y compris already-warped (R2#22) : dans ce cas
-    # le tuilage lit tif_source DIRECTEMENT (warped = tif_source, cf. plus bas),
-    # donc c'est la bonne référence de fraîcheur. L'ancien `None if
-    # source_already_warped` désactivait la comparaison → un mbtiles plus vieux
-    # qu'un TIF source ré-exporté passait pour "already present" (l'appelant
-    # décidait pourtant regen, mais ce check interne l'annulait).
-    if not _mbtiles_a_regenerer(mbtiles, ecraser_tuiles, source=tif_source):
-        print(f"  {mbtiles.name} → already present")
-        return mbtiles
-    if mbtiles.exists():
-        # Pas d'unlink : mbtiles_part.replace(mbtiles) écrase atomiquement à la
-        # fin. Le supprimer maintenant perdrait l'ancien rendu si ce run échoue.
-        print(f"  {mbtiles.name} → overwrite")
-
-    def merc_to_tile(mx, my, z):
-        n = 2 ** z
-        return (int((mx + EARTH_CIRC) / (2 * EARTH_CIRC) * n),
-                int((EARTH_CIRC - my) / (2 * EARTH_CIRC) * n))
-
-    def tile_bounds(tx, ty, z):
-        n  = 2 ** z
-        x0 = tx / n * 2 * EARTH_CIRC - EARTH_CIRC
-        y1 = EARTH_CIRC - ty / n * 2 * EARTH_CIRC
-        x1 = (tx + 1) / n * 2 * EARTH_CIRC - EARTH_CIRC
-        y0 = EARTH_CIRC - (ty + 1) / n * 2 * EARTH_CIRC
-        return x0, y0, x1, y1   # xmin ymin xmax ymax
-
-    t0 = time.time()
-
-    res_max = 2 * EARTH_CIRC / (TILE_SIZE * 2 ** zoom_max)
-
-    # Bbox source dans le CRS natif du provider, fournie directement par
-    # main() si connue (évite gdalinfo qui peut échouer sans proj.db sur
-    # certaines installations)
-    if bbox_natif is not None:
-        bb_src = bbox_natif
-    else:
-        bb_src = _bbox_depuis_gdalinfo(tif_source)
-    if bb_src:
-        w_src_px = (bb_src[2] - bb_src[0]) / res_max
-        h_src_px = (bb_src[3] - bb_src[1]) / res_max
-        taille_go_est = w_src_px * h_src_px / 1e9
-    else:
-        taille_go_est = 0.0
-
-    if taille_go_est > 0:
-        print(f"  Estimated size: ~{taille_go_est:.1f} Go -> single warp"
-              f" (rasterio streaming)", flush=True)
-
-    # Niveaux d'overviews — gauss > average pour hillshades (rendu 8 bits)
-    overview_levels = [2 ** (zoom_max - z)
-                       for z in range(zoom_max - 1, zoom_min - 1, -1)]
-
-    # ── MBTiles ───────────────────────────────────────────────────────────────
-    mbtiles.parent.mkdir(parents=True, exist_ok=True)
-    # Écriture dans un .part renommé à la fin : un .mbtiles présent est
-    # TOUJOURS complet (même garantie que generer_mbtiles_wmts). Sans ça, un
-    # run interrompu laissait un partiel que _mbtiles_a_regenerer validait.
-    mbtiles_part = _chemin_part(mbtiles)
-    con = sqlite3.connect(str(mbtiles_part))
-    # Une seule connexion écrit. Un journal MEMORY est plus cohérent qu'un WAL
-    # persistant : toute la base est déjà jetable sous .part jusqu'au replace,
-    # et aucun sidecar ne doit accompagner le fichier publié.
-    con.execute("PRAGMA journal_mode=MEMORY;")
-    con.execute("PRAGMA synchronous=OFF;")
-    cur = con.cursor()
-    cur.executescript("""
-        CREATE TABLE metadata (name TEXT, value TEXT);
-        CREATE TABLE tiles   (zoom_level INTEGER, tile_column INTEGER,
-                              tile_row   INTEGER, tile_data   BLOB);
-        CREATE UNIQUE INDEX idx_tiles ON tiles (zoom_level, tile_column, tile_row);
-    """)
-    # NB : la métadonnée "format" est insérée APRÈS le tuilage (R1#7), une fois
-    # connu si le run a émis des tuiles PNG-alpha (bas zoom / bord) en plus des
-    # JPEG intérieures — le format déclaré doit refléter le contenu réel.
-    for k, v in [("name", mbtiles.stem), ("type", "overlay"), ("version", "1.0"),
-                 ("description", nom_ville),
-                 ("minzoom", str(zoom_min)), ("maxzoom", str(zoom_max))]:
-        cur.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
-
-    # bounds : requis par la spec MBTiles et par Locus pour positionner la carte
-    # "left,bottom,right,top" en degrés WGS84
-    if bbox_natif is not None:
-        # Enveloppe des 4 coins : un rectangle dans le CRS natif ne reste pas
-        # axis-aligné après reprojection, min/max sur 2 coins opposés
-        # sous-estimerait l'emprise.
-        _pts4 = [_natif_vers_wgs84(cx4, cy4)
-                 for cx4, cy4 in ((bbox_natif[0], bbox_natif[1]),
-                                  (bbox_natif[2], bbox_natif[1]),
-                                  (bbox_natif[2], bbox_natif[3]),
-                                  (bbox_natif[0], bbox_natif[3]))]
-        _lons = [p[0] for p in _pts4]
-        _lats = [p[1] for p in _pts4]
-        _bounds = f"{min(_lons):.6f},{min(_lats):.6f},{max(_lons):.6f},{max(_lats):.6f}"
-        _cx = (min(_lons) + max(_lons)) / 2
-        _cy = (min(_lats) + max(_lats)) / 2
-        cur.execute("INSERT INTO metadata VALUES (?,?)", ("bounds", _bounds))
-        cur.execute("INSERT INTO metadata VALUES (?,?)",
-                    ("center", f"{_cx:.6f},{_cy:.6f},{zoom_max}"))
-    con.commit()
-
-    total_insere = 0
-    t_tile = time.time()
-    # Initialisé avant la boucle pour rester accessible même si le warp
-    # plante avant d'atteindre la phase de tuilage (cf. bloc plus bas
-    # qui le décrémente puis affiche un récapitulatif).
-    nb_echecs_tr = 0
-
-    # R1#7 : le format de tuile est décidé PAR TUILE. Une tuile qui déborde de
-    # l'emprise couverte (bas zoom : tuile >> chunk ; frange de bord) porte du
-    # padding hors-source. En JPEG ce padding est NOIR OPAQUE → tuile bas zoom
-    # noire, et en découpé/sharding (1 mbtiles par chunk que Locus empile) la
-    # tuile opaque d'un bloc MASQUE la pastille du bloc voisin au même (z,x,y).
-    # Fix : les tuiles à padding sortent en PNG alpha=0 (composables entre
-    # blocs) ; les tuiles PLEINES gardent le format de base (JPEG = gain taille
-    # là où le padding est absent, càd la masse des hauts zooms intérieurs).
-    _emitted_partial = False   # ≥1 tuile PNG-alpha émise dans un run base-JPEG
-
-    # ── Pool d'encodage des tuiles ────────────────────────────────────────
-    # Pillow libère le GIL pendant JPEG/PNG save, donc un ThreadPool donne du vrai
-    # parallélisme. Le pool est créé une fois pour toute la pyramide et fermé
-    # à la fin. Sur petites bandes (<_MIN_PAR_TILES tuiles), on bypass le pool
-    # car l'overhead submit/wait l'emporte sur le gain d'encodage.
-    _MIN_PAR_TILES = 8
-    _pool = ThreadPoolExecutor(max_workers=tile_workers) if tile_workers > 1 else None
-
-    def _encode_tile(args):
-        _tile, _alpha, _z, _tx, _ty = args
-        _buf = io.BytesIO()
-        if _alpha is not None:
-            # R1#7 : tuile partielle → PNG avec canal alpha (0 hors emprise) pour
-            # composer entre chunks/blocs empilés dans Locus/OsmAnd. RGBA (et non
-            # LA) pour la compat maximale des décodeurs Android.
-            _rgba = _tile.convert("RGBA")
-            _rgba.putalpha(_alpha)
-            _rgba.save(_buf, "PNG", optimize=False, compress_level=6)
-        elif _use_jpeg:
-            _tile.convert("RGB").save(_buf, "JPEG",
-                                       quality=jpeg_quality, optimize=False)
-        else:
-            # PNG : conserver le mode natif — une source monobande (SVF, LRM)
-            # part en niveaux de gris ("L"), ~2-3× plus petit que le même
-            # contenu tripliqué en RGB. PNG grayscale = standard, lu par
-            # Locus/OsmAnd/TwoNav. compress_level=6 (défaut zlib) : artefact
-            # final écrit une fois, lu mille fois — le niveau 1 économisait
-            # quelques secondes d'encodage contre ~20-30 % de taille.
-            # RGBA gardé pour PNG : préserver l'alpha d'une source --source RGBA
-            # (R2#19) ; L/RGB inchangés ; autres modes (P, LA…) → RGB.
-            _img = _tile if _tile.mode in ("L", "RGB", "RGBA") else _tile.convert("RGB")
-            _img.save(_buf, "PNG", optimize=False, compress_level=6)
-        _y_tms = (2 ** _z - 1) - _ty
-        return (_z, _tx, _y_tms, _buf.getvalue())
-
-    def _tuiler_source():
-        # Warp → overviews → tuilage de la source. Fonction locale : les
-        # `return` court-circuitent le tuilage en cas d'échec du warp ou de
-        # bbox introuvable (remplace l'ancienne boucle banding à tranche
-        # unique et ses `continue` ; le banding a été retiré car il créait
-        # des artefacts de jointure Lambert93/Mercator).
-        nonlocal total_insere, nb_echecs_tr, _emitted_partial
-        # Fichier warped persistant dans dossier_ville — préfixe _ pour
-        # être ignoré par le glob MBTiles (not t.name.startswith("_")).
-        # Nom déterministe : source + zoom_max → réutilisable si on relance
-        # avec des zooms différents sur le même TIF source.
-        warped = dossier_ville / f"{tif_source.stem}_tuilage_z{zoom_max}.tif"
-        lbl    = warped.name
-        # Masque de couverture séparé (cf. bloc de reproject plus bas) :
-        # un rectangle du CRS natif (ex. Lambert93) ne reste pas axis-aligné
-        # une fois reprojeté en Web Mercator, donc warped lui-même contient
-        # des coins hors de la vraie empreinte, remplis à 0 par le warp faute
-        # de nodata. Fichier séparé (pas une bande de plus dans warped) pour
-        # ne pas perturber la détection RGBA existante basée sur _w_count.
-        warped_cov = dossier_ville / f"{tif_source.stem}_tuilage_z{zoom_max}_cov.tif"
-
-        # Si la source est déjà en EPSG:3857 (ex: _warped_*.tif réutilisé),
-        # pas besoin de re-warper — on l'utilise directement comme warped.
-        if source_already_warped:
-            warped = tif_source
-            warp_deja_fait = True
-            print("  Source already in EPSG:3857 - warp skipped", flush=True)
-        else:
-            # Fraîcheur : un cache warpé plus VIEUX que le TIF source signifie
-            # que l'ombrage a été régénéré (--shadings-overwrite) → re-warper,
-            # sinon les tuiles resserviraient l'ancien rendu. + validation du
-            # cache (CRS 3857 + dims + lecture) : sinon un warpé tronqué mais
-            # récent était réutilisé comme valide (#4).
-            # warped_cov.exists() : un cache warpé écrit AVANT ce fix (masque
-            # de couverture séparé) n'a pas de fichier _cov → sans ce test,
-            # il serait réutilisé tel quel, coins noirs jamais corrigés.
-            warp_deja_fait = (warped.exists() and warped.stat().st_size > 1_000_000
-                              and not ecraser_tuiles
-                              and warped.stat().st_mtime >= tif_source.stat().st_mtime
-                              and _warped_3857_valide(warped)
-                              and warped_cov.exists())
-            if warp_deja_fait:
-                print(f"  Warped cache: {warped.name}  "
-                      f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
-
-        # ── 1. Warp via rasterio ───────────────────────────────────────────
-        # Plus de cmd_warp gdalwarp à construire — voir bloc rasterio.warp
-        # plus bas. On garde le calcul de te_xmin/etc. pour la bbox cible.
-        # ── Calcul de l'étendue cible en Web Mercator ────────────────────
-        te_xmin = te_ymin = te_xmax = te_ymax = None
-        # Repli CRS natif → WGS84 → Web Mercator en Python pur (fallback du
-        # transformer pyproj ci-dessous). _natif_vers_wgs84 borne la France :
-        # hors pyproj et hors France il lève, plutôt que de projeter du natif
-        # étranger avec les formules Lambert 93.
-        def _natif_to_merc(x, y):
-            lon, lat = _natif_vers_wgs84(x, y)
-            mx = math.radians(lon) * 6378137.0
-            my = math.log(math.tan(math.pi/4 + math.radians(lat)/2)) * 6378137.0
-            return mx, my
-
-        if bb_src is not None:
-            x0, _y0, x1, _y1 = bb_src
-            # Un rectangle dans le CRS natif du provider ne reste pas
-            # axis-aligné après reprojection (la grille tourne légèrement) :
-            # chaque côté devient une ligne très légèrement inclinée en
-            # Mercator. Milieu de CHAQUE côté (moyenne des 2 coins qui le
-            # bornent), PAS min/max des 4 coins du bloc : l'enveloppe min/max
-            # publiait systématiquement plus que le rectangle nominal sur
-            # chaque côté (~265 m mesuré sur un bloc 5 km à cette latitude,
-            # cf. gdalwarp -te, conservateur par design pour une zone isolée).
-            # Deux blocs voisins directs (même rangée ou même colonne)
-            # partagent EXACTEMENT les 2 coins de leur frontière commune :
-            # ils moyennent les 2 mêmes points → même frontière des deux
-            # côtés, aucune incidence pour une zone seule.
-            #
-            # ESSAYÉ ET ABANDONNÉ : faire porter cette moyenne sur l'étendue
-            # de la zone ENTIÈRE (pas les bornes propres du bloc) pour aussi
-            # réconcilier le coin partagé par 4 blocs (diagonaux, découpage
-            # à priori) — supprime bien le petit trou/carré blanc au centre,
-            # MAIS pour un bloc loin du bord opposé de la zone (ex. rangée
-            # nord utilisant le bord sud de la zone), la droite obtenue
-            # dérive du bord LOCAL réel du bloc suffisamment pour que le
-            # pixel de destination corresponde, une fois reprojeté en sens
-            # inverse, à une coordonnée hors de la couverture de la dalle
-            # source de CE bloc → vraies zones sans données (triangle noir,
-            # mesuré 2026-08-05 : ~90 m de dérive dès le bord nord d'un bloc
-            # 5 km, largement au-delà du sous-pixel). Pire que le défaut que
-            # ça devait corriger. Reverti : le petit trou au coin partagé par
-            # 4 blocs (borné, ~265 m, un point isolé) reste un residu connu,
-            # préférable à une perte de données réelle.
-            try:
-                _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
-                _tr = _t.transform
-            except Exception:
-                _tr = _natif_to_merc
-            corners = [(x0, _y0), (x1, _y0), (x1, _y1), (x0, _y1)]  # SO SE NE NO
-            p_so, p_se, p_ne, p_no = [_tr(cx, cy) for cx, cy in corners]
-            te_xmin = (p_so[0] + p_no[0]) / 2   # côté ouest
-            te_xmax = (p_se[0] + p_ne[0]) / 2   # côté est
-            te_ymin = (p_so[1] + p_se[1]) / 2   # côté sud
-            te_ymax = (p_no[1] + p_ne[1]) / 2   # côté nord
-            if tampon_coin_max_m:
-                # Ferme le petit trou qui reste au coin partagé par 4 blocs
-                # (découpage à priori) : le milieu de bord ci-dessus rend
-                # chaque frontière exacte avec les voisins directs, mais le
-                # coin diagonal reste calculé différemment par chacun des 4
-                # blocs (cf. discussion). PAS de retour à un calcul
-                # zone-globale (tenté et reverti : dérive au-delà de la
-                # dalle source, nodata) : ici on élargit juste la fenêtre
-                # publiée par CE bloc, en pixels RÉELS, pas inventés —
-                # l'appelant garantit une couverture d'au moins
-                # tampon_coin_max_m au-delà de cette bbox (marge de
-                # téléchargement fixe pour --block, ou VRT avec les vrais
-                # voisins sinon).
-                #
-                # Tampon CALCULÉ, pas une constante à ajuster à la main :
-                # l'écart au coin dépend de la latitude et de la taille du
-                # bloc (via le cisaillement de la reprojection), et l'outil
-                # gère des providers du monde entier avec des tailles de
-                # bloc au choix de l'utilisateur — une constante calée sur
-                # un seul cas (mesuré 2026-08-05 : ~192-265 m en France,
-                # blocs 5 km) serait tantôt trop courte tantôt inutilement
-                # large ailleurs. Dérivation : pour un bloc voisin direct
-                # partageant EXACTEMENT 2 de mes coins, son propre calcul de
-                # bord ne diffère du mien que par l'AUTRE coin qu'il moyenne
-                # (le sien, à une largeur/hauteur de bloc plus loin) ; half
-                # de cet écart = l'ampleur réelle du coin manquant, sans
-                # avoir besoin des données du voisin, juste sa position
-                # géométrique connue (grille régulière).
-                largeur = x1 - x0
-                hauteur = _y1 - _y0
-                _pt_e = _tr(x1 + largeur, _y1)   # coin NE d'1 largeur plus loin
-                _pt_n = _tr(x0, _y1 + hauteur)   # coin NO d'1 hauteur plus loin
-                gap_ns = abs(p_no[1] - _pt_e[1]) / 2
-                gap_ew = abs(p_so[0] - _pt_n[0]) / 2
-                tampon_coin_m = min(max(gap_ns, gap_ew), tampon_coin_max_m)
-                te_xmin -= tampon_coin_m
-                te_xmax += tampon_coin_m
-                te_ymin -= tampon_coin_m
-                te_ymax += tampon_coin_m
-        # Si bb_src est None, te_* restent None et le warp retombe proprement
-        # sur calculate_default_transform (étendue auto depuis la source).
-
-        if not warp_deja_fait:
-            # ── 1. Warp via rasterio (remplace gdalwarp CLI — étape 5) ──────
-            # Lambert 93 (EPSG:2154) → Web Mercator (EPSG:3857) avec
-            # rééchantillonnage bilinéaire et résolution cible res_max.
-            # Conserve le -te (target extent) calculé ci-dessus pour ne pas
-            # dépendre de proj.db pour la conversion d'étendue.
-            print(f"  Warp EPSG:3857  res={res_max:.3f} m/px"
-                  f"  (rasterio, zoom {zoom_max})...", flush=True)
-
-            t0_warp = time.time()
-            try:
-                import rasterio as _rio_w
-                from rasterio.warp import calculate_default_transform as _calc_tr
-                from rasterio.warp import reproject as _reproject
-                from rasterio.warp import Resampling as _Resampling
-                from rasterio.transform import from_origin as _from_origin
-
-                with _rio_w.open(str(tif_source)) as src:
-                    # Si te_xmin/etc. fournis : on impose la bbox cible.
-                    # Sinon : calculate_default_transform calcule l'étendue
-                    # automatiquement à partir des bounds de la source.
-                    if te_xmin is not None:
-                        # Coin haut-gauche calé sur la grille WebMercator
-                        # GLOBALE (référence -EARTH_CIRC/+EARTH_CIRC, même
-                        # convention que merc_to_tile/tile_bounds ci-dessus),
-                        # résolution EXACTEMENT res_max, arrondi VERS
-                        # L'EXTÉRIEUR (équivalent de gdalwarp -tap, target
-                        # aligned pixels). Avant ce calage, dst_width/height
-                        # étaient arrondis indépendamment par bloc puis
-                        # from_bounds() répartissait l'écart d'arrondi sur
-                        # toute la largeur : la résolution réelle dérivait
-                        # légèrement d'un bloc à l'autre et deux blocs voisins
-                        # (découpage à priori) n'avaient plus la garantie que
-                        # leurs grilles de pixels coïncident à la jonction →
-                        # couture visible dans le MBTiles, identique quel que
-                        # soit l'ombrage (lrm ET multi affectés, TIF source
-                        # intact).
-                        snap_x0 = -EARTH_CIRC + math.floor(
-                            (te_xmin + EARTH_CIRC) / res_max) * res_max
-                        snap_y1 = EARTH_CIRC - math.floor(
-                            (EARTH_CIRC - te_ymax) / res_max) * res_max
-                        dst_width  = int(math.ceil((te_xmax - snap_x0) / res_max))
-                        dst_height = int(math.ceil((snap_y1 - te_ymin) / res_max))
-                        dst_transform = _from_origin(
-                            snap_x0, snap_y1, res_max, res_max)
-                    else:
-                        dst_transform, dst_width, dst_height = _calc_tr(
-                            src.crs, "EPSG:3857",
-                            src.width, src.height, *src.bounds,
-                            resolution=res_max)
-
-                    # Profil de sortie compatible avec le code en aval
-                    dst_profile = src.profile.copy()
-                    dst_profile.update({
-                        "driver":     "GTiff",
-                        "crs":        "EPSG:3857",
-                        "transform":  dst_transform,
-                        "width":      dst_width,
-                        "height":     dst_height,
-                        "compress":   "deflate",
-                        "predictor":  2,
-                        "tiled":      True,
-                        "blockxsize": 512,
-                        "blockysize": 512,
-                        "BIGTIFF":    "YES",
-                    })
-
-                    # Écriture dans <warped>.part validé puis replace (#4) :
-                    # une interruption ne laisse plus un warpé tronqué que le
-                    # run suivant réutiliserait comme cache valide.
-                    warped_part = _chemin_part(warped)
-                    with _rio_w.open(str(warped_part), "w", **dst_profile) as dst:
-                        for b in range(1, src.count + 1):
-                            _reproject(
-                                source        = _rio_w.band(src, b),
-                                destination   = _rio_w.band(dst, b),
-                                src_transform = src.transform,
-                                src_crs       = src.crs,
-                                dst_transform = dst_transform,
-                                dst_crs       = "EPSG:3857",
-                                resampling    = _Resampling.bilinear,
-                                num_threads   = 0)  # 0 = tous les CPUs
-
-                    # Masque de couverture (cf. commentaire à la définition de
-                    # warped_cov) : reprojette une source constante à 255 avec
-                    # EXACTEMENT le même transform/CRS que les bandes réelles
-                    # ci-dessus, dst_nodata=0 — capture la vraie empreinte
-                    # pivotée (GDAL sait la calculer, nous non sans réinventer
-                    # la géométrie de reprojection). Fichier à part : ne
-                    # change pas le nombre de bandes de warped_3857.tif, donc
-                    # ne perturbe pas la détection RGBA existante (_w_count).
-                    import numpy as _np_cov
-                    cov_part = _chemin_part(warped_cov)
-                    cov_profile = dst_profile.copy()
-                    cov_profile.update(count=1, dtype="uint8", nodata=None,
-                                       compress="deflate", predictor=1)
-                    with _rio_w.open(str(cov_part), "w", **cov_profile) as dst_cov:
-                        _cov_src = _np_cov.full((src.height, src.width), 255,
-                                                dtype=_np_cov.uint8)
-                        _reproject(
-                            source        = _cov_src,
-                            destination   = _rio_w.band(dst_cov, 1),
-                            src_transform = src.transform,
-                            src_crs       = src.crs,
-                            dst_transform = dst_transform,
-                            dst_crs       = "EPSG:3857",
-                            dst_nodata    = 0,
-                            resampling    = _Resampling.nearest,
-                            num_threads   = 0)
-                    cov_part.replace(warped_cov)
-                # Les overviews font partie du fichier : les construire sur le
-                # .part avant publication. Une interruption ne peut alors pas
-                # altérer l'ancien cache final.
-                if zoom_max > zoom_min and overview_levels:
-                    print(f"  Overviews (gauss) {overview_levels}...", flush=True)
-                    t_addo = time.time()
-                    try:
-                        import rasterio as _rio_o
-                        from rasterio.enums import Resampling as _Res_o
-                        with _rio_o.open(str(warped_part), "r+") as ds_o:
-                            ds_o.build_overviews(overview_levels, _Res_o.gauss)
-                            ds_o.update_tags(
-                                ns="rio_overview", resampling="gauss"
-                            )
-                        print(f"  Overviews OK ({_hms(time.time()-t_addo)})")
-                    except Exception as _e_ovw:
-                        warped_part.unlink(missing_ok=True)
-                        raise RuntimeError(
-                            f"overview construction failed: {_e_ovw}"
-                        ) from _e_ovw
-                if not _warped_3857_valide(warped_part):
-                    warped_part.unlink(missing_ok=True)
-                    raise RuntimeError("warpé invalide après écriture "
-                                       "(CRS/dimensions/lecture)")
-                warped_part.replace(warped)
-                _creer_fichier(warped)
-                taille_w = warped.stat().st_size / 1e6
-                elap = time.time() - t0_warp
-                print("  " + lbl.ljust(36) + " [" + "█"*30 +
-                      f"] 100%  {_hms(elap)}  {taille_w:.0f} Mo")
-            except Exception as _e_warp:
-                print(f"  ERROR rasterio.warp: {_e_warp}")
-                return
-
-            # ── 2. Diagnostic dimensions warped (rasterio) ──────────────────
-            bb_diag = _bbox_depuis_gdalinfo(warped)
-            if bb_diag:
-                try:
-                    import rasterio as _rio_dx
-                    with _rio_dx.open(str(warped)) as ds_diag:
-                        _sz = (ds_diag.width, ds_diag.height)
-                    print(f"  warped dims : {_sz[0]} × {_sz[1]} px  "
-                          f"bbox merc : {bb_diag[0]:.0f},{bb_diag[1]:.0f}"
-                          f" → {bb_diag[2]:.0f},{bb_diag[3]:.0f}", flush=True)
-                except Exception:
-                    print(f"  warped bbox : {bb_diag}", flush=True)
-
-            # ── 3. Overviews via rasterio (remplace gdaladdo — étape 6) ──────
-            # Resampling.gauss reproduit -r gauss de gdaladdo.
-            # Overviews already built on ``warped_part`` before publication.
-
-        # ── 3. Bbox warped (EPSG:3857) ──────────────────────────────────────
-        # Priorité : -te calculé lors du warp courant (pas besoin de proj.db).
-        # Fallback mode cache : recalculer depuis bb_src avec pyproj/approx.
-        if te_xmin is not None:
-            bb_w = (te_xmin, te_ymin, te_xmax, te_ymax)
-        elif warp_deja_fait and bb_src is not None:
-            # Warped réutilisé : reconstruire la bbox Mercator depuis bb_src.
-            # Enveloppe des 4 coins, comme le -te du warp frais : à 2 coins,
-            # les rangées de tuiles en bordure étaient rognées de quelques px
-            # uniquement sur le chemin cache (rendu dépendant du cache).
-            try:
-                _t2 = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:3857")
-                bb_w = _bbox_enveloppe_transform(_t2.transform, *bb_src)
-            except Exception:
-                bb_w = _bbox_enveloppe_transform(_natif_to_merc, *bb_src)
-        else:
-            bb_w = _bbox_depuis_gdalinfo(warped)
-        if bb_w is None:
-            print(f"  ERROR: bbox not found for {lbl}")
-            return
-        xmin_w, ymin_w, xmax_w, ymax_w = bb_w
-
-        # ── 4. Tiling direct via rasterio ────────────────────────────────
-        # Lecture directe du warped TIF par rasterio — pas de gdal_translate,
-        # pas de fichiers temporaires, pas de proj.db requis pour les coords pixel.
-        import rasterio as _rio
-        from rasterio.windows import Window as _Win
-        import numpy as _np
-
-        batch = []
-        BATCH = BATCH_MBTILES_INSERT   # constante partagée (drift : 500 local)
-        # Largeur de traitement bornée : l'ancien tuileur allouait une bande
-        # couvrant TOUTES les colonnes d'une rangée (mémoire ∝ largeur de la
-        # zone). On traite par fenêtres de _COL_WIN tuiles ; le warp étant déjà
-        # en Mercator, une fenêtre de colonnes est une simple tranche
-        # horizontale (offset entier depuis le début de rangée → pas de couture).
-        _COL_WIN = 48
-        rangees_done = 0
-        total_rangees_tr = max(1, sum(
-            merc_to_tile(xmax_w, ymin_w, z)[1] -
-            merc_to_tile(xmin_w, ymax_w, z)[1] + 1
-            for z in range(zoom_min, zoom_max + 1)
-        ))
-
-        # Masque de couverture optionnel (absent si source_already_warped, ou
-        # cache écrit avant ce fix mais alors warp_deja_fait=False donc
-        # régénéré) : ouvert à part de `with _ds` pour ne pas réindenter toute
-        # la boucle de tuilage dans un bloc `with` imbriqué ; fermé
-        # explicitement après (cf. `_ds_cov.close()` en sortie de boucle).
-        _ds_cov = None
-        if warped_cov.exists():
-            try:
-                _ds_cov = _rio.open(str(warped_cov))
-            except Exception:
-                _ds_cov = None
-
-        with _rio.open(str(warped)) as _ds:
-            _w_orig_x = _ds.transform.c   # xmin Mercator
-            _w_orig_y = _ds.transform.f   # ymax Mercator
-            _w_res    = _ds.transform.a   # résolution pixel (m/px)
-            _w_width  = _ds.width
-            _w_height = _ds.height
-            _w_count  = _ds.count         # nb bandes
-
-            def _progress_rangee():
-                pct  = int(rangees_done / total_rangees_tr * 100)
-                bars = int(pct / 100 * 30)
-                elapsed = int(time.time() - t_tile)
-                print(f"\r  z{zoom_min}-{zoom_max} ["
-                      + "█" * bars + "░" * (30 - bars)
-                      + f"] {pct:3d}%  {total_insere} tiles  {_hms(elapsed)}",
-                      end="", flush=True)
-
-            for z in range(zoom_min, zoom_max + 1):
-                tx0, ty0 = merc_to_tile(xmin_w, ymax_w, z)
-                tx1, ty1 = merc_to_tile(xmax_w, ymin_w, z)
-                # Résolution de cette tuile par rapport au warped (qui est à zoom_max)
-                zoom_factor = 2 ** (zoom_max - z)
-                _tile_px = TILE_SIZE * zoom_factor   # largeur d'1 tuile en px warped
-
-                for ty in range(ty0, ty1 + 1):
-                    # Soft-cancel : le 1er Ctrl+C / bouton Arrêter pose
-                    # _stop_event — sans ce check (présent chez le jumeau
-                    # WMTS), l'étape tuilage était ininterruptible et la GUI
-                    # escaladait en kill forcé après 15 s.
-                    if _stop_event.is_set():
-                        raise KeyboardInterrupt("LiDAR tiling interrupted")
-
-                    # Vertical (identique pour toutes les colonnes de la rangée)
-                    _, _, _, by1_t = tile_bounds(tx0, ty, z)
-                    py_off  = int((_w_orig_y - by1_t) / _w_res)
-                    py_clip = max(0, py_off)
-                    py_end  = min(_w_height, py_off + int(_tile_px))
-                    if py_end <= py_clip:
-                        # Rangée entièrement hors du TIF (verticalement)
-                        rangees_done += 1
-                        _progress_rangee()
-                        continue
-                    out_h = max(1, int((py_end - py_clip) / zoom_factor))
-                    dst_y = max(0, int((py_clip - py_off) / zoom_factor))
-
-                    # Offset px du début de rangée (colonne tx0), puis fenêtres
-                    # de colonnes contiguës par pas entier de tuiles.
-                    px_off_row = int((tile_bounds(tx0, ty, z)[0] - _w_orig_x) / _w_res)
-
-                    for cwx0 in range(tx0, tx1 + 1, _COL_WIN):
-                        cwx1 = min(cwx0 + _COL_WIN - 1, tx1)
-                        cw_ncols  = cwx1 - cwx0 + 1
-                        cw_band_w = cw_ncols * TILE_SIZE
-                        px_off = px_off_row + int((cwx0 - tx0) * _tile_px)
-                        px_clip = max(0, px_off)
-                        px_end  = min(_w_width, px_off + int(cw_band_w * zoom_factor))
-                        if px_end <= px_clip:
-                            continue   # fenêtre de colonnes hors du TIF (bord)
-
-                        try:
-                            # Lecture directe à la résolution tuile (out_shape).
-                            win_w = px_end - px_clip
-                            out_w = max(1, int(win_w / zoom_factor))
-                            win = _Win(px_clip, py_clip, win_w, py_end - py_clip)
-                            arr = _ds.read(window=win,
-                                           out_shape=(_w_count, out_h, out_w),
-                                           resampling=_rio.enums.Resampling.bilinear)
-                            dst_x = max(0, int((px_clip - px_off) / zoom_factor))
-                            canvas = _np.zeros(
-                                (_w_count, TILE_SIZE, cw_band_w), dtype=_np.uint8)
-                            canvas[:, dst_y:dst_y+arr.shape[1],
-                                      dst_x:dst_x+arr.shape[2]] = arr
-                            # R1#7 : masque de couverture (255 = pixel issu de la
-                            # source, 0 = padding hors emprise). Il décide par
-                            # tuile JPEG plein vs PNG transparent, et fournit le
-                            # canal alpha des tuiles partielles.
-                            if _w_count >= 4:
-                                # Source RGBA : son propre alpha porte DÉJÀ la
-                                # géométrie (canvas parti de zéros → padding = 0),
-                                # inutile de le recombiner avec le masque.
-                                alpha_band = canvas[3]
-                            else:
-                                alpha_band = _np.zeros(
-                                    (TILE_SIZE, cw_band_w), dtype=_np.uint8)
-                                alpha_band[dst_y:dst_y+arr.shape[1],
-                                           dst_x:dst_x+arr.shape[2]] = 255
-                            if _ds_cov is not None:
-                                # Coins hors de la vraie empreinte pivotée
-                                # (cf. warped_cov) : intersection avec le
-                                # masque ci-dessus, PAS un remplacement — les
-                                # deux exclusions (géométrie de fenêtre, hors
-                                # empreinte réelle) sont indépendantes.
-                                _cov_arr = _ds_cov.read(
-                                    1, window=win, out_shape=(out_h, out_w),
-                                    resampling=_rio.enums.Resampling.nearest)
-                                _cov_canvas = _np.zeros(
-                                    (TILE_SIZE, cw_band_w), dtype=_np.uint8)
-                                _cov_canvas[dst_y:dst_y+_cov_arr.shape[0],
-                                           dst_x:dst_x+_cov_arr.shape[1]] = _cov_arr
-                                alpha_band = _np.minimum(alpha_band, _cov_canvas)
-                            # Contenu SANS alpha : monobande conservée en "L" (PNG
-                            # grayscale 2-3× plus petit), sinon RGB. Plus de
-                            # composite gris JPEG pour la source RGBA : une tuile
-                            # partielle sort désormais en PNG alpha, une tuile
-                            # pleine est opaque (rien à composer).
-                            if _w_count >= 3:
-                                band_img = Image.fromarray(
-                                    _np.moveaxis(canvas[:3], 0, 2))
-                            else:
-                                band_img = Image.fromarray(canvas[0])
-                            alpha_img = Image.fromarray(alpha_band, "L")
-                        except Exception as _e_read:
-                            nb_echecs_tr += 1
-                            if nb_echecs_tr <= 3:
-                                print(f"\n  ⚠ rasterio read failure z{z} ty={ty}"
-                                      f" cols {cwx0}-{cwx1}: {_e_read}", flush=True)
-                            continue
-
-                        # Découpe + encodage (Pillow libère le GIL → ThreadPool ;
-                        # séquentiel sous _MIN_PAR_TILES tuiles). R1#7 : une tuile
-                        # dont la couverture ne remplit pas les 256×256 sort en
-                        # PNG alpha (padding transparent) ; une tuile pleine garde
-                        # le format de base. Le cull getbbox (tuile entièrement
-                        # vide) est inchangé.
-                        _tiles_args = []
-                        for i, tx in enumerate(range(cwx0, cwx1 + 1)):
-                            left = i * TILE_SIZE
-                            tile = band_img.crop((left, 0, left + TILE_SIZE, TILE_SIZE))
-                            if tile.getbbox() is None:
-                                continue
-                            atile = alpha_img.crop(
-                                (left, 0, left + TILE_SIZE, TILE_SIZE))
-                            if atile.getextrema()[0] < 255:
-                                _tiles_args.append((tile, atile, z, tx, ty))
-                                if _use_jpeg:
-                                    _emitted_partial = True
-                            else:
-                                _tiles_args.append((tile, None, z, tx, ty))
-
-                        if _pool is not None and len(_tiles_args) >= _MIN_PAR_TILES:
-                            for _res in _pool.map(_encode_tile, _tiles_args):
-                                batch.append(_res)
-                                total_insere += 1
-                        else:
-                            for _args in _tiles_args:
-                                batch.append(_encode_tile(_args))
-                                total_insere += 1
-                        band_img.close()
-                        alpha_img.close()
-
-                        if len(batch) >= BATCH:
-                            cur.executemany(
-                                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-                            con.commit()
-                            batch.clear()
-
-                    # Fin de RANGÉE : progression par rangée (comme avant).
-                    rangees_done += 1
-                    _progress_rangee()
-
-        if batch:
-            cur.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-            con.commit()
-            batch.clear()
-
-        if _ds_cov is not None:
-            _ds_cov.close()
-
-        # warped conservé dans dossier_ville/ pour réutilisation future
-        taille_w = warped.stat().st_size / 1e6 if warped.exists() else 0
-        print(f"  Tiling cache kept: {warped.name}  ({taille_w:.0f} MB)"
-              f", delete it manually if not needed")
-
-    try:
-        _tuiler_source()
-    except BaseException:
-        # Miroir du finally du jumeau WMTS (ce chemin n'en avait pas) : sur
-        # exception/interruption, fermer la connexion AVANT unlink (Windows
-        # verrouille un fichier ouvert), jeter le .part (un .mbtiles ne doit
-        # exister que complet) et libérer le pool d'encodage.
-        try: con.close()
-        except Exception: pass
-        if _pool is not None:
-            _pool.shutdown(wait=True)
-        _nettoyer_sqlite_part(mbtiles_part)
-        raise
-
-    # R1#7 : métadonnée "format" décidée APRÈS coup. Base PNG → 'png'. Base JPEG
-    # sans tuile partielle → 'jpg'. Base JPEG AVEC tuiles PNG-alpha (bas zoom /
-    # bord) → 'png' : le fichier est mixte, on déclare le format alpha-capable.
-    # Les lecteurs reconnaissent chaque tuile à ses octets magiques (Locus via
-    # BitmapFactory, OsmAnd) ; la conversion RMAP ré-encode par sniff et
-    # SQLiteDB recopie tel quel — le champ n'est qu'un indice de contenu.
-    _fmt_final = "png" if (not _use_jpeg or _emitted_partial) else "jpg"
-    try:
-        cur.execute("INSERT INTO metadata VALUES ('format', ?)", (_fmt_final,))
-        con.commit()
-        con.close()
-    except BaseException:
-        try: con.close()
-        except Exception: pass
-        if _pool is not None:
-            _pool.shutdown(wait=True)
-        _nettoyer_sqlite_part(mbtiles_part)
-        raise
-    if _pool is not None:
-        _pool.shutdown(wait=True)
-
-    # #3 — invariant "artefact présent = complet" (miroir WMTS) : NE PAS publier
-    # un mbtiles troué (rangées rasterio en échec) ni vide depuis une source non
-    # triviale (warp raté ou bbox introuvable laissent 0 tuile ; source
-    # demi-écrite ; reprojection hors-bbox). On jette le .part et on retourne
-    # None -> le caller ne convertit pas, le cache de warp est conservé, un
-    # re-run reprend sans re-warper.
-    src_size_mb = tif_source.stat().st_size / 1e6 if tif_source.exists() else 0
-    if nb_echecs_tr > 0 or (total_insere == 0 and src_size_mb > 1):
-        _nettoyer_sqlite_part(mbtiles_part)
-        _cause = (f"{nb_echecs_tr} row(s) failed" if nb_echecs_tr
-                  else f"0 tiles from {src_size_mb:.0f} MB source")
-        print(f"\n  ✗ MBTiles not finalized: {_cause}. "
-              f"Rerun to complete (warp cache kept).")
-        return None
-
-    # Réouvrir en lecture seule après le close : valide le schéma, le compte
-    # exact et l'absence de dépendance à un journal annexe avant publication.
-    try:
-        _valider_sqlite_part(
-            mbtiles_part, {"metadata": None, "tiles": total_insere}
-        )
-    except BaseException:
-        _nettoyer_sqlite_part(mbtiles_part)
-        raise
-
-    # Publication atomique après le close (Windows refuse de renommer un handle
-    # ouvert et l'ancien livrable doit rester intact jusqu'ici).
-    mbtiles_part.replace(mbtiles)
-    elapsed = int(time.time() - t0)
-    taille_mb = mbtiles.stat().st_size / 1e6 if mbtiles.exists() else 0
-    print("\n  z" + str(zoom_min) + "-" + str(zoom_max) + " 100%  " + str(total_insere) + " tiles  " + _hms(elapsed))
-    print(f"  {mbtiles.name} : {total_insere} tiles  ({taille_mb:.0f} MB)")
-    return mbtiles
+    """Façade compatible vers le producteur MBTiles LiDAR extrait."""
+    return _generer_mbtiles_lidar_impl(
+        tif_source, dossier_ville, nom_ville,
+        zoom_min=zoom_min, zoom_max=zoom_max, format_tuiles=format_tuiles,
+        jpeg_quality=jpeg_quality, bbox_natif=bbox_natif,
+        tampon_coin_max_m=tampon_coin_max_m,
+        source_already_warped=source_already_warped,
+        ecraser_tuiles=ecraser_tuiles, tile_workers=tile_workers,
+        dependances=_dependances_mbtiles_lidar(),
+    )
 
 
 # ============================================================
@@ -9492,372 +8546,65 @@ COUCHES = {
 }
 
 
-# Cache GetCapabilities WMTS en session : (layer_id, apikey_requis) → (zoom_min, zoom_max) | None
-_wmts_caps_cache: dict = {}
-_wmts_caps_lock  = threading.Lock()   # protège les lectures/écritures concurrentes
-
-
-# Plafonds (zoom_min, zoom_max) pour les couches XYZ sans GetCapabilities.
-# Signature recherchée dans le template d'URL → limites. USGSImageryOnly = naip.
-_XYZ_ZOOM_LIMITS = (
-    ("USGSImageryOnly", (0, 16)),
+from _mbtiles_wmts_helpers import (
+    _DependancesTelechargementWmts,
+    _bbox_valide_wgs84,
+    _est_image_valide,
+    _wmts_close_all_conns,
+    _wmts_fetch as _wmts_fetch_impl,
+    _wmts_get_conn,        # noqa: F401 - réexport de façade (contrat historique)
+    calculer_grille_xyz,
+    compter_tuiles_xyz,
+    construire_url_wmts,   # noqa: F401 - réexport de façade (contrat historique)
+    deg_to_tile,
+    estimer_taille,
+    telecharger_tuile as _telecharger_tuile_impl,
+    _lire_zoom_limites_wmts as _lire_zoom_limites_wmts_impl,
 )
 
 
-def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
-    """
-    Interroge GetCapabilities WMTS IGN et retourne (zoom_min, zoom_max) réels
-    pour la couche *layer* dans le TileMatrixSet PM.
-    Résultat mis en cache pour la session ; retourne None si inaccessible.
-    """
-    # Couches XYZ (USGS Imagery, etc.) : pas de GetCapabilities WMTS IGN. On
-    # plafonne via une table de limites connues (réutilise le clamp ci-dessous
-    # comme pour l'IGN). USGSImageryOnly (naip) : LODs 0-16 au national ; au-delà
-    # de z16, le cache ArcGIS renvoie des 204 → flot d'absences qui déclenche le
-    # garde-fou « hors couverture » à tort. Sans limite connue → None (le 204
-    # reste le filet de sécurité).
-    if layer.startswith("XYZ:"):
-        for _sig, _lim in _XYZ_ZOOM_LIMITS:
-            if _sig in layer:
-                return _lim
-        return None
-    cache_key = (layer, bool(apikey_requis))
-
-    # Lecture du cache — verrou court, pas de réseau dedans
-    with _wmts_caps_lock:
-        if cache_key in _wmts_caps_cache:
-            return _wmts_caps_cache[cache_key]
-
-    # Requête réseau hors du verrou (évite de bloquer les autres threads)
-    base = WMTS_URL if apikey_requis else WMTS_URL_PUB
-    url  = f"{base}?SERVICE=WMTS&REQUEST=GetCapabilities&VERSION=1.0.0"
-    if apikey_requis and apikey:
-        url += f"&apikey={apikey}"
-
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            xml_bytes = r.read()
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as e:
-        print(f"  ⚠ WMTS GetCapabilities unreachable ({type(e).__name__}: {e}) — zoom capping skipped")
-        with _wmts_caps_lock:
-            _wmts_caps_cache[cache_key] = None
-        return None
-
-    _NS = {
-        "wmts": "http://www.opengis.net/wmts/1.0",
-        "ows":  "http://www.opengis.net/ows/1.1",
-    }
-    try:
-        root = _ET.fromstring(xml_bytes)
-    except Exception as e:   # xml.etree.ElementTree.ParseError — pas importé directement
-        print(f"  ⚠ GetCapabilities parsing failed ({e})")
-        with _wmts_caps_lock:
-            _wmts_caps_cache[cache_key] = None
-        return None
-
-    for lyr in root.findall(".//wmts:Layer", _NS):
-        ident = lyr.findtext("ows:Identifier", namespaces=_NS)
-        if ident != layer:
-            continue
-        for link in lyr.findall("wmts:TileMatrixSetLink", _NS):
-            if link.findtext("wmts:TileMatrixSet", namespaces=_NS) != "PM":
-                continue
-            limits = link.find("wmts:TileMatrixSetLimits", _NS)
-            if limits is None:
-                break
-            zooms = []
-            for tml in limits.findall("wmts:TileMatrixLimits", _NS):
-                tm = tml.findtext("wmts:TileMatrix", namespaces=_NS)
-                if tm is not None:
-                    try: zooms.append(int(tm))
-                    except ValueError: pass
-            if zooms:
-                result = (min(zooms), max(zooms))
-                with _wmts_caps_lock:
-                    _wmts_caps_cache[cache_key] = result
-                return result
-        break
-
-    with _wmts_caps_lock:
-        _wmts_caps_cache[cache_key] = None
-    return None
-
-
-def _bbox_valide_wgs84(lon0, lat0, lon1, lat1):
-    """Retourne (lon_min, lat_min, lon_max, lat_max) validée et ordonnée, ou
-    message d'erreur + sys.exit(1). Rejette NaN/inf, lat hors [-90,90], lon
-    hors [-180,180], bbox dégénérée. Réordonne des coins inversés (avec un
-    avertissement) au lieu de produire un MBTiles vide silencieux (#12)."""
-    for v in (lon0, lat0, lon1, lat1):
-        if not (isinstance(v, (int, float)) and math.isfinite(v)):
-            print(f"  ERROR: non-finite bbox coordinate ({v}).")
-            sys.exit(1)
-    if not (-90 <= lat0 <= 90 and -90 <= lat1 <= 90):
-        print(f"  ERROR: latitude out of range [-90, 90] ({lat0}, {lat1}).")
-        sys.exit(1)
-    if not (-180 <= lon0 <= 180 and -180 <= lon1 <= 180):
-        print(f"  ERROR: longitude out of range [-180, 180] ({lon0}, {lon1}).")
-        sys.exit(1)
-    lo0, lo1 = sorted((lon0, lon1))
-    la0, la1 = sorted((lat0, lat1))
-    if lo0 == lo1 or la0 == la1:
-        print("  ERROR: degenerate bbox (zero width or height).")
-        sys.exit(1)
-    if (lo0, la0) != (lon0, lat0):
-        print("  ⚠ bbox corners were reordered to W,S,E,N.")
-    return lo0, la0, lo1, la1
-
-
-def deg_to_tile(lat_deg, lon_deg, zoom):
-    """Coordonnées WGS84 → tuile XYZ (convention Google/OSM, y=0 en haut)."""
-    n = 2 ** zoom
-    # Clamp de la latitude à la plage Web Mercator AVANT le log : au-delà de
-    # ±85.0511° tan/cos explosent (math domain error / inf). L'ancien code
-    # clampait x,y APRÈS coup, donc une latitude polaire plantait le log.
-    lat_deg = max(-85.05112878, min(85.05112878, lat_deg))
-    x = int((lon_deg + 180.0) / 360.0 * n)
-    lat_r = math.radians(lat_deg)
-    y = int((1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
-            / 2.0 * n)
-    return max(0, min(n - 1, x)), max(0, min(n - 1, y))
-
-
-def calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):
-    """
-    Génère toutes les tuiles (z, x, y) couvrant la bbox WGS84 pour tous les
-    zooms demandés. GÉNÉRATEUR : un département en z18 représente des millions
-    de tuples, la liste matérialisée coûtait des centaines de Mo de RAM avant
-    la première requête. Le total est fourni par compter_tuiles_xyz (formule
-    fermée, mêmes bornes).
-    """
-    for z in range(zoom_min, zoom_max + 1):
-        x0, y0 = deg_to_tile(lat_max, lon_min, z)   # coin NW (y petit)
-        x1, y1 = deg_to_tile(lat_min, lon_max, z)   # coin SE (y grand)
-        for x in range(x0, x1 + 1):
-            for y in range(y0, y1 + 1):
-                yield (z, x, y)
-
-
-def compter_tuiles_xyz(lat_min, lon_min, lat_max, lon_max, zoom_min, zoom_max):
-    """Compte les tuiles que calculer_grille_xyz générera (mêmes bornes),
-    sans matérialiser la liste."""
-    total = 0
-    for z in range(zoom_min, zoom_max + 1):
-        x0, y0 = deg_to_tile(lat_max, lon_min, z)
-        x1, y1 = deg_to_tile(lat_min, lon_max, z)
-        total += (x1 - x0 + 1) * (y1 - y0 + 1)
-    return total
-
-
-def estimer_taille(nb_tuiles, format_img="jpeg"):
-    """Estimation grossière : ~15 Ko/tuile JPEG Scan25, ~30 Ko ortho.
-    Accepte "jpeg" ET "jpg" : l'appelant passe fmt_ext (= "jpg"), et le
-    test strict != "jpeg" ne prenait donc JAMAIS le tarif JPEG (estimation
-    2× trop haute pour toutes les couches JPEG)."""
-    ko_par_tuile = 15 if format_img in ("jpeg", "jpg") else 30
-    return nb_tuiles * ko_par_tuile // 1024   # Mo
-
-# ============================================================
-# CONSTRUCTION URL WMTS
-# ============================================================
-
-def construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis):
-    """
-    Construit l'URL de tuile (z, x, y).
-    - WMTS IGN : TileMatrix=z, TileCol=x, TileRow=y (XYZ standard).
-    - Source XYZ (layer == "XYZ:<template>", ex. USGS Imagery / NAIP) : substitue
-      {z}/{x}/{y} dans le template ArcGIS/XYZ (même schéma Mercator, y top-origine).
-    """
-    if layer.startswith("XYZ:"):
-        tmpl = layer[4:]
-        return (tmpl.replace("{z}", str(z))
-                    .replace("{x}", str(x))
-                    .replace("{y}", str(y)))
-    base = WMTS_URL if apikey_requis else WMTS_URL_PUB
-    params = {
-        "SERVICE":      "WMTS",
-        "REQUEST":      "GetTile",
-        "Version":      "1.0.0",
-        "Layer":        layer,
-        "Style":        style,
-        "TileMatrixSet":"PM",
-        "FORMAT":       fmt,
-        "TileMatrix":   str(z),
-        "TileCol":      str(x),
-        "TileRow":      str(y),
-    }
-    if apikey_requis:
-        params["apikey"] = apikey
-    return base + "?" + urllib.parse.urlencode(params)
-
-# ============================================================
-# TÉLÉCHARGEMENT D'UNE TUILE
-# ============================================================
-
-
-
-# ── Connexions keep-alive pour le download WMTS ───────────────────────────────
-# urllib.request.urlopen rouvre une connexion TCP+TLS par tuile (~90 ms de
-# poignée de main perdus à chaque fois ; benchmark IGN planign : ~2x plus lent
-# qu'une connexion réutilisée). Les tuiles d'un batch tapent toutes le même hôte
-# (data.geopf.fr) : on garde une connexion HTTP/1.1 keep-alive par worker
-# (thread-local), réutilisée d'une tuile à l'autre, avec reconnexion auto si le
-# serveur ferme. Fermeture en fin de batch (generer_mbtiles_wmts).
-import http.client
-
-_wmts_conn_tl    = threading.local()
-_wmts_conns      = []                  # connexions ouvertes (fermées en fin de batch)
-_wmts_conns_lock = threading.Lock()
-
-
-def _wmts_get_conn(scheme, host):
-    cache = getattr(_wmts_conn_tl, "by_host", None)
-    if cache is None:
-        cache = {}; _wmts_conn_tl.by_host = cache
-    conn = cache.get(host)
-    if conn is None:
-        cls = (http.client.HTTPSConnection if scheme == "https"
-               else http.client.HTTPConnection)
-        conn = cls(host, timeout=15)
-        cache[host] = conn
-        with _wmts_conns_lock:
-            _wmts_conns.append(conn)
-    return conn
-
-
-def _wmts_drop_conn(host):
-    cache = getattr(_wmts_conn_tl, "by_host", None)
-    if cache and host in cache:
-        try: cache[host].close()
-        except Exception: pass
-        del cache[host]
-
-
-def _wmts_close_all_conns():
-    """À appeler en fin de batch WMTS pour libérer les sockets keep-alive."""
-    with _wmts_conns_lock:
-        for c in _wmts_conns:
-            try: c.close()
-            except Exception: pass
-        _wmts_conns.clear()
-
-
 def _wmts_fetch(url):
-    """GET via la connexion keep-alive thread-local (réutilisée d'une tuile à
-    l'autre). Retourne (status, content_type, data). Une reconnexion si la
-    connexion persistante a été fermée par le serveur.
+    """Façade compatible vers le fetch HTTP keep-alive extrait.
 
-    Suit les redirections (301/302/303/307/308) jusqu'à 3 sauts :
-    http.client ne le fait pas seul (contrairement à urllib), et sans ça
-    une bascule d'infra côté serveur classerait tout le batch en erreurs
-    « HTTP 301 » peu parlantes."""
-    for _hop in range(4):
-        parts = urllib.parse.urlsplit(url)
-        host  = parts.netloc
-        path  = parts.path + (("?" + parts.query) if parts.query else "")
-        last_exc = None
-        reponse  = None
-        for _essai in (1, 2):
-            conn = _wmts_get_conn(parts.scheme, host)
-            try:
-                conn.request("GET", path, headers=WMTS_HEADERS)
-                resp = conn.getresponse()
-                data = resp.read()        # lecture complète = condition de réutilisation
-                reponse = (resp.status, resp.headers.get("content-type", ""),
-                           data, resp.headers.get("location"))
-                break
-            except (http.client.HTTPException, OSError) as e:
-                last_exc = e
-                _wmts_drop_conn(host)     # connexion morte → on en recrée une au prochain tour
-        if reponse is None:
-            raise last_exc if last_exc else IOError("WMTS fetch failed")
-        status, ct, data, loc = reponse
-        if status in (301, 302, 303, 307, 308) and loc:
-            url = urllib.parse.urljoin(url, loc)
-            continue
-        return status, ct, data
-    raise IOError(f"WMTS fetch: too many redirects ({url})")
+    Signature à un seul argument, INCHANGÉE : certaines suites remplacent cette
+    fonction en bloc (`l2m._wmts_fetch = lambda url: ...`, sans réseau ni
+    `mock.patch.object`). `telecharger_tuile` reçoit ce nom comme dépendance
+    injectée (`wmts_fetch`), donc un tel remplacement direct reste vu."""
+    return _wmts_fetch_impl(url, headers=WMTS_HEADERS)
 
 
-def _est_image_valide(data):
-    """True si `data` commence par une signature d'image raster connue.
+def _dependances_telechargement_wmts():
+    """Reconstruit les coutures du téléchargement WMTS à chaque appel.
 
-    Validation par MAGIE, pas par taille (R2#16) : le jumeau des dalles valide
-    déjà son contenu (`_valider_tif_dalle`, magic TIFF), mais `telecharger_tuile`
-    ne se fiait qu'à un seuil `len < 500` → une tuile PNG uniforme valide (zone
-    de relief plat) tombait sous le seuil et était jetée = TROU de couverture,
-    tandis qu'une page d'erreur HTML/JSON >500 o servie en `image/png` passait
-    pour une tuile. Couvre JPEG/PNG/GIF/WebP/TIFF (tout ce qu'un WMTS raster
-    peut servir)."""
-    if not data or len(data) < 4:
-        return False
-    if data[:3] == b'\xff\xd8\xff':                       # JPEG
-        return True
-    if data[:8] == b'\x89PNG\r\n\x1a\n':                  # PNG
-        return True
-    if data[:6] in (b'GIF87a', b'GIF89a'):               # GIF
-        return True
-    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':     # WebP
-        return True
-    if data[:4] in (b'II\x2a\x00', b'MM\x00\x2a',         # TIFF / BigTIFF
-                    b'II\x2b\x00', b'MM\x00\x2b'):
-        return True
-    return False
+    Les attributs sont relus sur le module : les monkeypatches des suites
+    (`MAX_TENTATIVES` notamment, patché par `_test_atomic_downloads.py` pour
+    les jumeaux LiDAR de ce paramètre ; `_wmts_fetch`, remplacé en bloc par
+    `_test_robustesse.py`/`_test_interactions.py`) restent donc actifs après
+    l'extraction."""
+    return _DependancesTelechargementWmts(
+        wmts_url=WMTS_URL,
+        wmts_url_pub=WMTS_URL_PUB,
+        wmts_fetch=_wmts_fetch,
+        http_ua=_HTTP_UA,
+        max_tentatives=MAX_TENTATIVES,
+        delai_retry=DELAI_RETRY,
+    )
+
+
+def _lire_zoom_limites_wmts(layer, apikey_requis, apikey=""):
+    """Façade compatible vers l'interrogation GetCapabilities extraite."""
+    return _lire_zoom_limites_wmts_impl(
+        layer, apikey_requis, apikey=apikey,
+        dependances=_dependances_telechargement_wmts(),
+    )
 
 
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis):
-    """
-    Télécharge une tuile et retourne les bytes, ou None si absente/erreur.
-    Réessaie MAX_TENTATIVES fois avec délai exponentiel. Réutilise une connexion
-    keep-alive par worker (cf. _wmts_fetch), ~2x plus rapide que urlopen/tuile.
-    """
-    url = construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis)
-    for tentative in range(1, MAX_TENTATIVES + 1):
-        try:
-            status, ct, data = _wmts_fetch(url)
-            if status == 404:
-                return None
-            if not (200 <= status < 300):
-                raise IOError(f"HTTP {status}")
-            ct = (ct or "").lower()
-            if "xml" in ct or "html" in ct:
-                # Rapport d'exception WMTS/HTML servi en 200 : erreur de
-                # service/auth/paramètre, PAS une tuile absente. La classer
-                # "absente" contournait le circuit-breaker (revue 2026-07-10).
-                raise IOError(f"server error response ({ct}): "
-                              f"{bytes(data[:120] if data else b'')!r}")
-            # Erreur serveur JSON déguisée en 200 (ArcGIS/XYZ, cf.
-            # telecharger_dalle_directe) : IOError → retry, pas "absente".
-            if data and data.lstrip()[:1] == b"{" and b'"error"' in data[:200]:
-                raise IOError(f"server error payload: {data[:120]!r}")
-            if not data:
-                return None   # 204 / corps vide = tuile absente (mer, hors couv.)
-            # Validation par magie (R2#16) : ni le seuil de taille (jetait un
-            # petit PNG valide) ni le content-type (parfois image/png sur une
-            # erreur). Un corps non-image = panne serveur → IOError → retry →
-            # 'erreurs' (jamais 'absent' : un trou marqué complet est pire).
-            if not _est_image_valide(data):
-                raise IOError(f"non-image WMTS response ({len(data)} B): "
-                              f"{bytes(data[:80])!r}")
-            return data
-        except KeyboardInterrupt:
-            # Propagation au handler top-level (sys.exit(130)) qui sait
-            # nettoyer (lockfile, tmp). sys.exit(0) ici tuerait juste le
-            # worker, masquerait l'interruption et casserait le code retour.
-            raise
-        except (urllib.error.URLError, IOError, OSError, http.client.HTTPException):
-            if tentative < MAX_TENTATIVES:
-                time.sleep(DELAI_RETRY * tentative)
-            else:
-                # Panne PERSISTANTE (5xx, timeout, 403 clé expirée) ≠ tuile
-                # absente : propager. L'appelant (_dl → generer_mbtiles_wmts)
-                # compte en 'erreurs' + circuit-breaker 30 consécutives. Avant,
-                # `return None` classait ces pannes en 'absentes' : le MBTiles
-                # sortait "complet" avec des trous, et le re-run disait
-                # "already present" — l'artefact bloquait sa propre réparation.
-                raise
-    return None
+    """Façade compatible vers le téléchargement de tuile WMTS extrait."""
+    return _telecharger_tuile_impl(
+        z, x, y, layer, style, fmt, apikey, apikey_requis,
+        dependances=_dependances_telechargement_wmts(),
+    )
 
 # ============================================================
 # GÉNÉRATION MBTILES
@@ -9903,970 +8650,102 @@ def _nom_mbtiles_wmts(nom, couche, zoom_min, zoom_max, jpeg_q):
     return f"{nom}_{couche}_z{zoom_min}-{zoom_max}{_q}"
 
 
+from _mbtiles_wmts import (
+    _DependancesMbtilesWMTS,
+    generer_mbtiles_wmts as _generer_mbtiles_wmts_impl,
+)
+
+
+def _dependances_mbtiles_wmts():
+    """Reconstruit les coutures du producteur WMTS à chaque appel.
+
+    Les attributs sont relus sur le module : les monkeypatches des suites
+    (`telecharger_tuile`, `_valider_sqlite_part`, `_chemin_part`, `_log_req`)
+    restent donc actifs après l'extraction."""
+    return _DependancesMbtilesWMTS(
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        telecharger_tuile=telecharger_tuile,
+        est_image_valide=_est_image_valide,
+        fermer_connexions_wmts=_wmts_close_all_conns,
+        log_req=_log_req,
+        formater_duree=_hms,
+        stop_event=_stop_event,
+        zone_hors_couverture=ZoneHorsCouvertureWMTS,
+        endpoint_prive=WMTS_URL,
+        endpoint_public=WMTS_URL_PUB,
+        batch_insert=BATCH_MBTILES_INSERT,
+        seuil_err_consec=SEUIL_ERR_CONSEC,
+        seuil_hors_couverture=SEUIL_HORS_COUVERTURE,
+    )
+
+
 def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                     zoom_min, zoom_max, layer, style, img_fmt,
                     apikey, apikey_requis, workers,
                     bbox_wgs84=None, jpeg_quality=None,
                     dossier_cache=None, ecraser_tuiles=False, ecraser_dalles=False):
-    """
-    Télécharge toutes les tuiles et les insère dans un fichier MBTiles.
-
-    Convention MBTiles : y en TMS (y=0 en bas) → inversion depuis XYZ.
-
-    jpeg_quality   : si défini et img_fmt est PNG, convertit PNG→JPEG à cette
-                     qualité (gain ×3-5 sans double compression).
-    dossier_cache  : si défini, les tuiles sont mises en cache sur disque
-                     sous dossier_cache/<z>/<x>/<y>.<ext> et réutilisées
-                     sans retélécharger lors des runs suivants.
-    """
-
-    if chemin.exists() and not ecraser_tuiles:
-        print(f"  {chemin.name} → already present")
-        return chemin
-    if chemin.exists() and ecraser_tuiles:
-        # Pas d'unlink ici : chemin_part.replace(chemin) écrase atomiquement à
-        # la fin. Le supprimer maintenant perdrait le mbtiles précédent si le
-        # nouveau run échoue (le .part est jeté).
-        print(f"  {chemin.name} → overwrite")
-
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-
-    # Écriture dans un .part renommé à la toute fin : un .mbtiles présent est
-    # TOUJOURS complet. Sans ça, un run interrompu (Ctrl+C, stop GUI) laissait
-    # un fichier partiel avec >0 tuiles que _mbtiles_a_regenerer prenait pour
-    # un fichier valide à la reprise.
-    chemin_part = _chemin_part(chemin)
-
-    # Calculer _convert_png ici — utilisé pour _meta_fmt et dans _dl
-    _convert_png = (jpeg_quality is not None
-                    and img_fmt.lower() in ("image/png", "png"))
-    # Downgrade PROPRE si Pillow est absent : garder le PNG natif ET l'étiqueter
-    # png (cohérent), au lieu de télécharger tout puis rater chaque conversion.
-    # Le cas SYSTÉMATIQUE est neutralisé ici ; il ne reste dans _dl que l'échec
-    # SPORADIQUE (une tuile corrompue), qui doit lever et non mentir (R2#15).
-    if _convert_png:
-        try:
-            from PIL import Image as _PILchk  # noqa: F401
-        except ImportError:
-            print("  WARNING: Pillow unavailable, PNG->JPEG conversion disabled "
-                  "(tiles kept as PNG, metadata stays consistent).")
-            _convert_png = False
-    _meta_fmt    = "jpeg" if _convert_png else fmt_ext
-
-    con = sqlite3.connect(str(chemin_part))
-    # Une seule connexion insère les résultats des workers. Le journal reste en
-    # mémoire : la base entière est un .part jetable et aucun -wal/-shm ne doit
-    # être nécessaire au livrable final.
-    con.execute("PRAGMA journal_mode=MEMORY;")
-    # synchronous=OFF sans risque : la cible est un .part jeté sur échec.
-    con.execute("PRAGMA synchronous=OFF;")
-    cur = con.cursor()
-    cur.executescript("""
-        CREATE TABLE metadata (name TEXT, value TEXT);
-        CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,
-                            tile_row INTEGER, tile_data BLOB);
-        CREATE UNIQUE INDEX idx_tiles ON tiles (zoom_level, tile_column, tile_row);
-    """)
-
-    for k, v in [
-        ("name",        chemin.stem),
-        ("type",        "overlay"),
-        ("version",     "1.0"),
-        ("description", f"IGN {layer}"),
-        ("format",      _meta_fmt),
-        ("minzoom",     str(zoom_min)),
-        ("maxzoom",     str(zoom_max)),
-    ]:
-        cur.execute("INSERT INTO metadata VALUES (?,?)", (k, v))
-
-    # bounds requis par Locus : "left,bottom,right,top" en degrés WGS84
-    if bbox_wgs84 is not None:
-        _lon0, _lat0, _lon1, _lat1 = bbox_wgs84
-        _bounds = f"{_lon0:.6f},{_lat0:.6f},{_lon1:.6f},{_lat1:.6f}"
-        _cx = (_lon0 + _lon1) / 2
-        _cy = (_lat0 + _lat1) / 2
-        cur.execute("INSERT INTO metadata VALUES (?,?)", ("bounds", _bounds))
-        cur.execute("INSERT INTO metadata VALUES (?,?)",
-                    ("center", f"{_cx:.6f},{_cy:.6f},{zoom_max}"))
-    con.commit()
-
-    BATCH       = BATCH_MBTILES_INSERT
-    FENETRE     = workers * 4   # nb de futures en vol simultané — équilibre RAM/débit
-    batch       = []
-    done        = 0
-    ok          = 0
-    absentes    = 0    # 204 No Content (tuile hors couverture) — état IGN normal
-    erreurs     = 0    # exceptions worker (timeout, 401, 5xx, parsing) — diagnostic
-    err_consec  = 0    # erreurs consécutives — utile pour détection panne globale
-    abort_msg   = None # set si on abort à mi-parcours (clé expirée, etc.)
-    abort_hors_couv = False  # True si l'abort est un hors-couverture (que des 204),
-                             # False si panne I/O systémique — pilote le type d'exception.
-    # Seuil d'abandon : au-delà de SEUIL_ERR_CONSEC erreurs consécutives,
-    # on assume une panne systémique (clé API expirée, IGN down, réseau coupé)
-    # et on n'écrit pas un MBTiles tronqué qui aurait l'apparence d'un succès.
-    largeur     = 30
-    t0          = time.time()
-
-    _base_wmts = WMTS_URL if apikey_requis else WMTS_URL_PUB
-    # Couches XYZ (USGS Imagery…) : pas un WMTS IGN → logger le vrai template.
-    if layer.startswith("XYZ:"):
-        _log_req(layer[4:], "XYZ tiles")
-    else:
-        _log_req(f"{_base_wmts}?SERVICE=WMTS&LAYER={layer}&...", "WMTS IGN")
-    print(f"  Downloading {total:,} tiles -> {chemin.name}...", flush=True)
-
-    _fmt_out = "jpeg" if _convert_png else fmt_ext   # format réel inséré
-
-    # ── Namespace du cache par COUCHE (fix collision inter-couches) ───────────
-    # Le cache disque cache/ign_raster/ est PARTAGÉ par toutes les couches ;
-    # l'ancienne clé était z/x/y(+qualité) SANS layer/style/endpoint/format
-    # source. Deux couches au même format sur la même zone (ex. planIGN et
-    # cadastre, toutes deux PNG) écrivaient donc le MÊME fichier → tuiles
-    # croisées servies en silence. On insère un segment de namespace stable
-    # dérivé de (endpoint, layer, style, format serveur). Les tuiles déjà en
-    # cache sous l'ancien chemin ne sont pas migrables (on ignore de quelle
-    # couche elles viennent, c'est le bug) : elles deviennent orphelines et
-    # sont re-téléchargées une fois par couche — coût accepté pour ne plus
-    # servir de données fausses. Racine "ign_raster" conservée (legacy).
-    import hashlib as _hl_ns
-    _endpoint = WMTS_URL if apikey_requis else WMTS_URL_PUB
-    _ns_key = f"{_endpoint}|{layer}|{style}|{img_fmt}".encode("utf-8")
-    _ns_hint = re.sub(r"[^a-z0-9]+", "",
-                      ("xyz" if layer.startswith("XYZ:")
-                       else layer.split(":")[-1]).lower())[:16] or "layer"
-    _cache_ns = f"{_ns_hint}_{_hl_ns.md5(_ns_key).hexdigest()[:8]}"
-
-    # Quand on re-encode PNG→JPEG avec une qualité explicite, le binaire stocké
-    # dépend de jpeg_quality. Sans versionner, un changement de --qualite-image
-    # réutiliserait silencieusement les tuiles de l'ancienne qualité.
-    # Si img_fmt est nativement JPEG (pas de re-encode), le cache ne dépend
-    # pas de jpeg_quality (data IGN brute).
-    _cache_qual_seg = (f"q{int(jpeg_quality)}"
-                       if _convert_png and jpeg_quality is not None else "")
-
-    def _cache_path(z, x, y):
-        base = dossier_cache / _cache_ns / str(z) / str(x)
-        if _cache_qual_seg:
-            base = base / _cache_qual_seg
-        return base / f"{y}.{_fmt_out}"
-
-    def _dl(args_t):
-        z, x, y = args_t
-        data = None
-        # Lire depuis le cache si disponible
-        if dossier_cache is not None and not ecraser_dalles:
-            _cache_file = _cache_path(z, x, y)
-            if _cache_file.exists():
-                data = _cache_file.read_bytes()
-                # Cache d'un run buggé : un blob PNG écrit sous un nom .jpeg
-                # (ancien fallback silencieux) mentait sur le format. On le
-                # rejette pour re-télécharger+convertir proprement (R2#15).
-                if _convert_png and data[:3] != b'\xff\xd8\xff':
-                    data = None
-                # Cache antérieur au garde magic : un blob non-image (HTML/JSON
-                # d'erreur mis en cache par un vieux run) serait inséré tel quel
-                # → re-télécharger au lieu de le lire (R2#16).
-                elif not _est_image_valide(data):
-                    data = None
-        if data is None:
-            data = telecharger_tuile(z, x, y, layer, style, img_fmt,
-                                     apikey, apikey_requis)
-            if data and _convert_png:
-                try:
-                    from PIL import Image as _PILImg
-                    img = _PILImg.open(io.BytesIO(data)).convert("RGB")
-                    buf = io.BytesIO()
-                    img.save(buf, "JPEG", quality=jpeg_quality, optimize=True)
-                    data = buf.getvalue()
-                except Exception as _e_conv:
-                    # Ne PAS garder le PNG sous un contrat jpeg (métadonnées
-                    # format=jpeg + cache .jpeg) : tuile mal étiquetée illisible
-                    # pour un lecteur strict. On lève → comptée en 'erreurs'
-                    # (drop honnête). Le cas systématique (Pillow absent) est
-                    # déjà neutralisé en amont, ne reste que le sporadique (R2#15).
-                    raise IOError(f"PNG->JPEG conversion failed for tile "
-                                  f"{z}/{x}/{y}: {type(_e_conv).__name__}: "
-                                  f"{_e_conv}") from _e_conv
-            # Écrire dans le cache — écriture ATOMIQUE (temp + os.replace).
-            # Une écriture interrompue (Ctrl+C, crash, disque plein) ne doit pas
-            # laisser une tuile tronquée : au run suivant _cache_file.exists()
-            # serait vrai et read_bytes() relirait les octets partiels comme une
-            # tuile valide → pavé corrompu inséré dans le MBTiles. Miroir du
-            # .part + rename du chemin LiDAR (dalles). Pas de collision entre
-            # workers : chaque (z,x,y) n'est soumis qu'une fois.
-            if data and dossier_cache is not None:
-                _cache_file = _cache_path(z, x, y)
-                _cache_file.parent.mkdir(parents=True, exist_ok=True)
-                # Suffixe PID : le cache est PARTAGÉ entre projets, et deux
-                # process lidar2map parallèles peuvent télécharger la même
-                # tuile. Un .part de nom fixe serait alors écrit par les deux
-                # (l'un tronque pendant que l'autre rename = corruption
-                # persistante, exactement ce que l'atomique doit empêcher).
-                _cache_tmp = _chemin_part(_cache_file)
-                try:
-                    _cache_tmp.write_bytes(data)
-                    os.replace(_cache_tmp, _cache_file)
-                except BaseException:
-                    _cache_tmp.unlink(missing_ok=True)
-                    raise
-                # NB : pas de _creer_fichier ici. Le cache WMTS est PERMANENT
-                # par design (partagé entre projets) : --cleanup ne doit pas
-                # le vider. L'ancien appel était de toute façon un no-op
-                # silencieux (_manifest_ctx est thread-local et _dl tourne
-                # dans un worker du pool, jamais dans le main thread).
-        return z, x, y, data
-
-    def _afficher(done, total, ok, absentes, erreurs, z_courant, t0):
-        pct     = done * 100 // max(total, 1)
-        bars    = pct * largeur // 100
-        elapsed = int(time.time() - t0)
-        eta_s   = int(elapsed * (total - done) / max(done, 1))
-        eta_str = f"  ETA {_hms(eta_s)}" if done > 10 and eta_s > 5 else ""
-        err_str = f"  err:{erreurs}" if erreurs else ""
-        print(f"\r  z{z_courant} [{'#'*bars}{'-'*(largeur-bars)}]"
-              f" {pct:3d}%  {done:,}/{total:,}  ok:{ok:,}  abs:{absentes}{err_str}"
-              f"  {_hms(elapsed)}{eta_str}",
-              end="", flush=True)
-
-    # Consommation au fil de l'eau : tuiles_iter peut être un générateur
-    # (calculer_grille_xyz) — on ne matérialise JAMAIS la liste (dept-scale
-    # z18 = millions de tuples). `total` est fourni par l'appelant
-    # (compter_tuiles_xyz) pour la barre de progression.
-    _tuiles_it = iter(tuiles_iter)
-    z_courant  = zoom_min
-
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            # Soumission par fenêtre glissante : on ne soumet FENETRE tâches à la fois
-            # → la barre démarre immédiatement, RAM bornée même sur 100k tuiles
-            pending = {}
-
-            # Remplir la fenêtre initiale
-            while len(pending) < FENETRE:
-                t = next(_tuiles_it, None)
-                if t is None:
-                    break
-                pending[pool.submit(_dl, t)] = t
-
-            # Boucle principale : on attend qu'au moins une future termine, puis
-            # on draine TOUTES les futures terminées avant de re-remplir la fenêtre.
-            # Performance : wait() enregistre ses callbacks UNE fois par appel,
-            # contrairement à next(as_completed(pending)) en boucle qui réenregistre
-            # des callbacks sur toutes les futures à chaque itération
-            # (complexité O(N × FENETRE) → O(N) en surcharge bookkeeping).
-            # Sur 100k tuiles dept-scale : gagne plusieurs minutes de CPU pur overhead.
-            while pending:
-                if _stop_event.is_set() or abort_msg is not None:
-                    # Cancellation propre : annuler les futures non démarrées,
-                    # laisser les actives finir leur HTTP courant.
-                    for f in list(pending.keys()):
-                        f.cancel()
-                    break
-
-                done_set, _ = wait(pending, return_when=FIRST_COMPLETED)
-
-                # Drainer tout ce qui est terminé (peut être plusieurs en concurrent)
-                for done_future in done_set:
-                    del pending[done_future]
-
-                    try:
-                        z, x, y, data = done_future.result()
-                    except Exception as _exc_dl:
-                        # Une exception worker n'est PAS une absence (204 IGN normal).
-                        # On la compte distinctement pour diagnostiquer panne réseau,
-                        # 401/403 (clé expirée), 5xx persistants, etc. Si trop d'erreurs
-                        # consécutives, on assume une panne systémique et on abort.
-                        done       += 1
-                        erreurs    += 1
-                        err_consec += 1
-                        if err_consec >= SEUIL_ERR_CONSEC and abort_msg is None:
-                            abort_msg = (f"{err_consec} erreurs consécutives "
-                                         f"(dernière : {type(_exc_dl).__name__}: {_exc_dl}). "
-                                         f"Probable panne réseau / clé API / IGN. "
-                                         f"MBTiles non finalisé pour éviter un fichier tronqué.")
-                        _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
-                        t = next(_tuiles_it, None)
-                        if t is not None:
-                            pending[pool.submit(_dl, t)] = t
-                        continue
-
-                    done      += 1
-                    z_courant  = z
-
-                    if data:
-                        y_tms = (1 << z) - 1 - y
-                        batch.append((z, x, y_tms, data))
-                        ok += 1
-                        err_consec = 0   # succès : reset
-                    else:
-                        absentes += 1
-                        # 204 No Content (data=None) — pas une erreur réseau, pas
-                        # de reset du compteur consécutif (on ne veut pas que
-                        # 100 tuiles hors couverture entrecoupées masquent une
-                        # panne transitoire qui revient).
-                        # Garde-fou couverture : si AUCUNE tuile n'est dans la
-                        # couche, la zone est hors couverture — typiquement bbox
-                        # hors zone, ou ordre --zone-bbox inversé (W,S,E,N =
-                        # longitude d'abord). On abort tôt au lieu de tenter 100k
-                        # tuiles vides en silence. R2#17 : critère ok==0 (et non
-                        # ok*50<absentes = couverture <2 %) pour NE PAS abandonner
-                        # une couverture clairsemée mais RÉELLE (île, bande
-                        # côtière, couche historique) ; et on ne fail-fast qu'une
-                        # fois la moitié de la grille balayée (total//2), sinon on
-                        # risquait d'abort avant d'atteindre une couverture tardive
-                        # dans l'ordre de balayage.
-                        if (ok == 0 and abort_msg is None
-                                and absentes >= max(SEUIL_HORS_COUVERTURE,
-                                                    total // 2)):
-                            abort_hors_couv = True
-                            abort_msg = (
-                                f"{absentes} tuiles hors couverture (204) pour "
-                                f"seulement {ok} dans la couche. Zone hors de la "
-                                f"couche, ou ordre de --zone-bbox inversé : il attend "
-                                f"W,S,E,N (longitude d'abord, ex. -5.0,47.8,-2.6,49.0).")
-
-                    if len(batch) >= BATCH:
-                        cur.executemany(
-                            "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-                        con.commit()
-                        batch.clear()
-
-                    _afficher(done, total, ok, absentes, erreurs, z_courant, t0)
-
-                    # Soumettre la prochaine tâche pour maintenir la fenêtre pleine
-                    t = next(_tuiles_it, None)
-                    if t is not None:
-                        pending[pool.submit(_dl, t)] = t
-
-        if batch:
-            cur.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", batch)
-            con.commit()
-    finally:
-        # sys.exc_info() reste renseigné pendant un finally traversé par une
-        # exception : après fermeture on peut alors jeter tout le chantier sans
-        # masquer KeyboardInterrupt/MemoryError/l'erreur d'origine.
-        _wmts_exception_active = sys.exc_info()[0] is not None
-        # Toujours fermer la connexion, même sur exception non capturée
-        # (KeyboardInterrupt, MemoryError, OSError disque plein…).
-        try: con.close()
-        except Exception: pass
-        _wmts_close_all_conns()   # libérer les connexions keep-alive du batch
-        if _wmts_exception_active:
-            _nettoyer_sqlite_part(chemin_part)
-
-    # Garde-fou couverture (fin de scan) : AUCUNE tuile dans la couche → bbox
-    # hors zone / inversée. R2#17 : critère ok==0 (et non ok*50<absentes) pour ne
-    # pas discarder une couverture clairsemée réelle. Évite aussi un MBTiles vide
-    # "0 tiles" présenté comme un succès.
-    if (abort_msg is None and not _stop_event.is_set()
-            and absentes > 0 and ok == 0):
-        abort_hors_couv = True
-        abort_msg = (f"{ok} tuile(s) dans la couverture pour {absentes} hors couche "
-                     f"(204). Zone hors de la couche, ou ordre de --zone-bbox inversé "
-                     f": il attend W,S,E,N (longitude d'abord, ex. -5.0,47.8,-2.6,49.0).")
-
-    if abort_msg is not None:
-        # .part removed: un fichier vide-presque ferait croire à un succès.
-        # Si l'utilisateur veut analyser le partiel, il rejouera et verra les
-        # logs.
-        _nettoyer_sqlite_part(chemin_part)
-        if abort_hors_couv:
-            # Ligne neutre et factuelle : en chunk de grille la boucle de split
-            # ajoute « skipped » (pas d'alarme « ✗ ABANDON ... bbox inversé »
-            # trompeuse sur une cellule mer légitime). Le hint bbox complet
-            # reste dans l'exception, donc un run simple à bbox erronée le voit.
-            print(f"\n  ⊘ {absentes} tiles out of coverage (204) for {ok} in layer.")
-        else:
-            print(f"\n  ✗ ABANDON : {abort_msg}")
-        _exc_cls = ZoneHorsCouvertureWMTS if abort_hors_couv else RuntimeError
-        raise _exc_cls(f"WMTS abort : {abort_msg}")
-
-    if _stop_event.is_set():
-        # Partiel supprimé : sans valeur de reprise (les tuiles déjà reçues
-        # sont dans le cache disque), et un .mbtiles ne doit exister que
-        # complet.
-        elapsed = int(time.time() - t0)
-        taille_mo = chemin_part.stat().st_size / 1e6 if chemin_part.exists() else 0.0
-        _nettoyer_sqlite_part(chemin_part)
-        print(f"\n  Interrupted - {ok} tiles written before stop  "
-              f"({taille_mo:.0f} MB, partial file removed; cached tiles kept)")
-        raise KeyboardInterrupt("MBTiles WMTS interrompu par utilisateur")
-
-    # Erreurs de téléchargement éparses (sous le seuil du circuit-breaker) :
-    # NE PAS publier un MBTiles troué — l'invariant "artefact présent =
-    # complet" tomberait, et le re-run dirait "already present" au lieu de
-    # réparer. Les tuiles réussies sont dans le cache disque : le re-run ne
-    # retélécharge que les manquantes.
-    if erreurs > 0:
-        _nettoyer_sqlite_part(chemin_part)
-        print(f"\n  ✗ {erreurs} download error(s) - MBTiles not finalized "
-              f"({ok} tiles cached; rerun to complete)")
-        raise RuntimeError(f"WMTS : {erreurs} erreur(s) de téléchargement, "
-                           f"MBTiles non finalisé (relancer pour compléter)")
-
-    # Validation après fermeture : schéma, nombre exact de tuiles, aucun
-    # sidecar requis. Une erreur conserve l'ancien final.
-    try:
-        _valider_sqlite_part(
-            chemin_part, {"metadata": None, "tiles": ok}
-        )
-    except BaseException:
-        _nettoyer_sqlite_part(chemin_part)
-        raise
-
-    # Publication atomique : rename après le close (fait dans le finally ;
-    # Windows refuse de renommer un fichier encore ouvert).
-    chemin_part.replace(chemin)
-    elapsed = int(time.time() - t0)
-    taille_mo = chemin.stat().st_size / 1e6
-    err_str = f"  ({erreurs} erreurs)" if erreurs else ""
-    print(f"\n  100%  {ok} tiles  ({absentes} missing){err_str}  {_hms(elapsed)}")
-    print(f"  {chemin.name} : {ok} tiles  ({taille_mo:.0f} MB)")
-    return chemin
+    """Façade compatible vers le producteur MBTiles WMTS extrait."""
+    return _generer_mbtiles_wmts_impl(
+        chemin, tuiles_iter, total, nom_zone, fmt_ext,
+        zoom_min, zoom_max, layer, style, img_fmt,
+        apikey, apikey_requis, workers,
+        bbox_wgs84=bbox_wgs84, jpeg_quality=jpeg_quality,
+        dossier_cache=dossier_cache, ecraser_tuiles=ecraser_tuiles,
+        ecraser_dalles=ecraser_dalles,
+        dependances=_dependances_mbtiles_wmts(),
+    )
 
 # ============================================================
 # GÉNÉRATION RMAP
 # ============================================================
 
 # ── Helpers LE ────────────────────────────────────────────────────────────────
-def _wi(v):  return struct.pack('<i', v)   # int32 little-endian signé
-def _wl(v):  return struct.pack('<q', v)   # int64 little-endian signé
+from _raster_formats import (
+    _blob_vers_jpeg,
+    _build_map_info,
+    _convertir_formats as _convertir_formats_impl,
+    _convertir_un_mbtiles as _convertir_un_mbtiles_impl,
+    _empty_jpeg_256,
+    _sqlitedb_schema_courant,
+    _tile_to_geo,
+    _wi,
+    _wl,
+    generer_rmap_depuis_mbtiles as _generer_rmap_depuis_mbtiles_impl,
+    generer_sqlitedb_depuis_mbtiles as _generer_sqlitedb_depuis_mbtiles_impl,
+)
 
-def _tile_to_geo(tx, ty_xyz, z):
-    """Retourne (lon_min, lat_min, lon_max, lat_max) pour la tuile XYZ."""
-    n = 2 ** z
-    lon_min = tx / n * 360.0 - 180.0
-    lon_max = (tx + 1) / n * 360.0 - 180.0
-    lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * ty_xyz / n))))
-    lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (ty_xyz + 1) / n))))
-    return lon_min, lat_min, lon_max, lat_max
-
-def _empty_jpeg_256():
-    """Génère un JPEG 256×256 gris (tuile vide pour positions sans données)."""
-    try:
-        from PIL import Image
-        img = Image.new('RGB', (256, 256), (180, 180, 180))
-        buf = io.BytesIO()
-        img.save(buf, 'JPEG', quality=50)
-        return buf.getvalue()
-    except Exception:
-        # Fallback : JPEG minimal valide 1×1 px gris
-        # (séquence SOI + APP0 + DQT + SOF0 + DHT + SOS + EOI)
-        return (b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
-                b'\xff\xdb\x00C\x00\x10\x0b\x0c\x0e\x0c\n\x10\x0e\r\x0e\x12\x11\x10'
-                b'\x13\x18(\x1a\x18\x16\x16\x18\x310#$\x1d(=3<9\x10\x11\x11\x16\x13'
-                b'\x16)\x1a\x1a)>\x1e\x1e\x1e=<<=>>><>@@@?BBB?BBBBBBBBBBBBBBBBBB'
-                b'\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00'
-                b'\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00'
-                b'\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b'
-                b'\xff\xc4\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05\x04'
-                b'\x04\x00\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12!1A\x06\x13Qa'
-                b'\x07"q\x142\x81\x91\xa1\x08#B\xb1\xc1\x15R\xd1\xf0$3br'
-                b'\x82\t\n\x16\x17\x18\x19\x1a%&\'()*456789:CDEFGHIJ'
-                b'STUVWXYZ\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xf8k\xff\xd9')
-
-def _blob_vers_jpeg(blob, quality=85):
-    """Convertit un blob de tuile en JPEG si besoin. Le format RMAP CompeGPS/
-    TwoNav ne stocke QUE du JPEG (offsets nommés jpegOffsets, tag 7) : recopier
-    un PNG (reliefs LRM/SVF/RRIM) tel quel produit un RMAP illisible (R2#7).
-
-    - déjà JPEG (magic FF D8 FF) → renvoyé inchangé (chemin rapide, pas de
-      décodage : les sources JPEG scan25/ortho ne paient rien) ;
-    - PNG/autre → décodé via PIL puis ré-encodé ; l'alpha est aplati sur le gris
-      des tuiles vides (JPEG n'a pas de canal alpha) ;
-    - indécodable → None (l'appelant substitue la tuile vide).
-    """
-    if blob[:3] == b'\xff\xd8\xff':       # déjà JPEG : rien à faire
-        return blob
-    try:
-        from PIL import Image as _Img
-        img = _Img.open(io.BytesIO(blob))
-        if img.mode in ("RGBA", "LA", "P"):
-            img = img.convert("RGBA")
-            fond = _Img.new("RGB", img.size, (180, 180, 180))
-            fond.paste(img, mask=img.split()[-1])   # alpha comme masque
-            img = fond
-        else:
-            img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, "JPEG", quality=quality, optimize=True)
-        return buf.getvalue()
-    except Exception:
-        return None
-
-
-# ── Fonction principale ────────────────────────────────────────────────────────
 
 def generer_rmap_depuis_mbtiles(mbtiles_path, ecraser=False):
-    """
-    Génère un fichier .rmap (format binaire CompeGPS/TwoNav) depuis un .mbtiles.
-
-    Format RMAP — reverse-engineered depuis MOBAC TwoNavRMAP.java (GPL v2) :
-
-    FILE HEADER (offset 0, little-endian) :
-      "CompeGPSRasterImage"    19 bytes ASCII (magic)
-      int32  10 · int32  7 · int32  0
-      int32  width_max · int32  -height_max
-      int32  24 (bpp) · int32  1
-      int32  256 (tileW) · int32  256 (tileH)
-      int64  mapDataOffset
-      int32  0 · int32  nZooms
-      int64 × nZooms  zoom_header_offsets
-
-    ZOOM HEADER (à zoom_header_offsets[n]) :
-      int32  width · int32  -height
-      int32  xTiles · int32  yTiles
-      int64 × (xTiles × yTiles)  tile_offsets
-        ordre : y outer, x inner → jpegOffsets[x][y]
-
-    TILE (à tile_offsets[tx][ty]) :
-      int32  7 (tag) · int32  len(jpeg) · bytes jpeg
-
-    MAP INFO (à mapDataOffset) :
-      int32  1 (tag) · int32  len(text) · bytes text (CompeGPS MAP format ASCII)
-
-    Contrainte RMAP : tous les zoom levels doivent couvrir la même zone géo.
-    Convention y : XYZ (y=0 haut, Nord), inverse du TMS stocké dans MBTiles.
-    """
-
-    rmap = mbtiles_path.with_suffix(".rmap")
-    if rmap.exists() and not ecraser:
-        print(f"  {rmap.name} → already present")
-        return rmap
-    # Pas d'unlink de l'ancien rmap ici : rmap_part.replace(rmap) l'écrase
-    # atomiquement en fin de génération. Le supprimer maintenant ferait perdre
-    # le livrable précédent si la régénération échoue (le .part est jeté).
-    if not mbtiles_path.exists():
-        print(f"  ERROR: {mbtiles_path.name} not found")
-        return None
-
-    print(f"  RMAP ← {mbtiles_path.name}...", flush=True)
-    t0 = time.time()
-
-    # Écriture via .part + rename : un .rmap présent est toujours complet
-    # (un Ctrl+C mi-écriture laissait un binaire tronqué "already present").
-    rmap_part = _chemin_part(rmap)
-
-    EMPTY_JPEG = _empty_jpeg_256()
-    TILE_SZ    = 256
-
-    con = sqlite3.connect(str(mbtiles_path))
-    try:
-        # ── Phase 1 : inventaire par zoom ─────────────────────────────────────
-        zooms = [r[0] for r in con.execute(
-            "SELECT DISTINCT zoom_level FROM tiles ORDER BY zoom_level DESC").fetchall()]
-        if not zooms:
-            print("  ERROR: MBTiles empty")
-            return None
-
-        # Étendue (x, y XYZ) par zoom
-        zm = {}
-        for z in zooms:
-            r = con.execute(
-                "SELECT MIN(tile_column), MAX(tile_column), MIN(tile_row), MAX(tile_row) "
-                "FROM tiles WHERE zoom_level=?", (z,)).fetchone()
-            xmin_c, xmax_c, ymin_tms, ymax_tms = r
-            n = 1 << z
-            # TMS → XYZ : y_xyz = (n-1) - y_tms
-            y0_xyz = (n - 1) - ymax_tms   # petit y_tms = grand y_xyz (Nord)
-            y1_xyz = (n - 1) - ymin_tms
-            nx = xmax_c - xmin_c + 1
-            ny = y1_xyz - y0_xyz + 1
-            zm[z] = {'x0': xmin_c, 'y0': y0_xyz, 'nx': nx, 'ny': ny,
-                      'w': nx * TILE_SZ, 'h': ny * TILE_SZ}
-
-        # Zoom le plus détaillé = index 0 dans RMAP
-        z_max   = zooms[0]
-        w_max   = zm[z_max]['w']
-        h_max   = zm[z_max]['h']
-        n_zooms = len(zooms)
-
-        # Coordonnées géo depuis zoom max
-        zd     = zm[z_max]
-        lon_min, lat_min, lon_max, lat_max = _tile_to_geo(
-            zd['x0'], zd['y0'] + zd['ny'] - 1, z_max)
-        lon_max = _tile_to_geo(zd['x0'] + zd['nx'] - 1, zd['y0'], z_max)[2]
-        lat_max = _tile_to_geo(zd['x0'], zd['y0'], z_max)[3]
-
-        total_tiles = sum(zm[z]['nx'] * zm[z]['ny'] for z in zooms)
-
-        # R2#9 — garde-fou couverture clairsemée : le format RMAP impose une
-        # grille rectangulaire DENSE (chaque position du rectangle min-max
-        # existe, remplie par EMPTY_JPEG). Sur une couverture clairsemée
-        # (département en diagonale, bande côtière, couche historique), nx*ny
-        # explose en positions quasi-vides : l'array d'offsets et le header
-        # sont alloués en 8*nx*ny octets (pic RAM), et des millions de tuiles
-        # vides sont écrites (disque + temps mur). Ce n'est PAS rendable
-        # clairsemé sans casser le format. On refuse quand le remplissage est
-        # pathologique (beaucoup de vide ET moins de la moitié réelle) et on
-        # renvoie vers .mbtiles / .sqlitedb qui, eux, ne stockent que le réel.
-        n_reel = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
-        n_vide = total_tiles - n_reel
-        if n_vide >= SEUIL_RMAP_PADDING and n_reel * 2 < total_tiles:
-            _go = n_vide * (len(EMPTY_JPEG) + 8) / 1e9
-            print(f"\n  ✗ RMAP refused: coverage too sparse ({n_reel:,} real "
-                  f"tiles for {total_tiles:,} rectangle positions). RMAP needs a "
-                  f"dense grid: it would pad {n_vide:,} empty tiles "
-                  f"(~{_go:.1f} GB). Use .mbtiles or .sqlitedb (they store only "
-                  f"real tiles), or tighten --zone-bbox.", flush=True)
-            return None
-
-        print(f"  {n_zooms} zoom(s), {total_tiles:,} tile positions", flush=True)
-
-        # ── Phase 2 : écriture séquentielle — offsets enregistrés à la volée ──
-        zoom_hdr_offset = {}
-        _n_reenc     = 0   # tuiles PNG ré-encodées en JPEG (R2#7)
-        _n_illisible = 0   # tuiles indécodables remplacées par la tuile vide
-
-        largeur = 30
-        done    = 0
-
-        try:
-            with open(str(rmap_part), 'wb') as f:
-
-                # --- FILE HEADER placeholder ---
-                f.write(b'CompeGPSRasterImage')
-                f.write(_wi(10)); f.write(_wi(7)); f.write(_wi(0))
-                f.write(_wi(w_max)); f.write(_wi(-h_max))
-                f.write(_wi(24)); f.write(_wi(1))
-                f.write(_wi(TILE_SZ)); f.write(_wi(TILE_SZ))
-                map_data_off_pos = f.tell()
-                f.write(_wl(0))
-                f.write(_wi(0))
-                f.write(_wi(n_zooms))
-                zoom_off_arr_pos = f.tell()
-                for _ in zooms:
-                    f.write(_wl(0))
-
-                # --- ZOOM HEADERS + TILE DATA ---
-                from array import array as _array
-                for z in zooms:
-                    zd = zm[z]
-                    nx, ny = zd['nx'], zd['ny']
-
-                    # FUSION SÉQUENTIELLE curseur SQL ↔ balayage de grille :
-                    # l'ordre d'écriture (tx externe, ty interne = colonne
-                    # ascendante, y_xyz ascendant = tile_row TMS DESCENDANT)
-                    # correspond exactement à ORDER BY tile_column, tile_row
-                    # DESC. Remplace le dict {(col,row): blob} qui chargeait
-                    # TOUS les JPEG du zoom en RAM (plusieurs Go au niveau
-                    # départemental z18) — désormais un seul blob à la fois.
-                    cur_t = con.execute(
-                        "SELECT tile_column, tile_row, tile_data FROM tiles "
-                        "WHERE zoom_level=? "
-                        "ORDER BY tile_column ASC, tile_row DESC", (z,))
-                    suivant = cur_t.fetchone()
-
-                    zoom_hdr_offset[z] = f.tell()
-                    f.write(_wi(zd['w'])); f.write(_wi(-zd['h']))
-                    f.write(_wi(zd['nx'])); f.write(_wi(zd['ny']))
-                    tile_hdr_pos = f.tell()
-                    for _ in range(nx * ny):
-                        f.write(_wl(0))
-
-                    # Offsets en array('q') indexé tx*ny+ty : ~8 octets par
-                    # position au lieu d'un dict {(tx,ty): int} (~200 octets
-                    # par entrée, ~150 Mo au niveau départemental).
-                    offs = _array("q", bytes(8 * nx * ny))
-
-                    for tx in range(nx):
-                        col = zd['x0'] + tx
-                        for ty in range(ny):
-                            y_xyz = zd['y0'] + ty
-                            y_tms = (1 << z) - 1 - y_xyz
-
-                            # Défensif : sauter d'éventuelles lignes "derrière"
-                            # le balayage (ne devrait pas arriver, l'étendue
-                            # couvre toutes les tuiles du zoom).
-                            while suivant is not None and (
-                                    suivant[0] < col
-                                    or (suivant[0] == col and suivant[1] > y_tms)):
-                                suivant = cur_t.fetchone()
-                            if (suivant is not None and suivant[0] == col
-                                    and suivant[1] == y_tms):
-                                _blob = suivant[2]
-                                suivant = cur_t.fetchone()
-                                # RMAP = JPEG uniquement : un PNG (relief) doit
-                                # être ré-encodé, sinon TwoNav ne lit pas (R2#7).
-                                if _blob[:3] == b'\xff\xd8\xff':
-                                    jpeg = _blob
-                                else:
-                                    jpeg = _blob_vers_jpeg(_blob)
-                                    if jpeg is None:
-                                        jpeg = EMPTY_JPEG
-                                        _n_illisible += 1
-                                    else:
-                                        _n_reenc += 1
-                            else:
-                                jpeg = EMPTY_JPEG
-
-                            offs[tx * ny + ty] = f.tell()
-                            f.write(_wi(7))
-                            f.write(_wi(len(jpeg)))
-                            f.write(jpeg)
-
-                            done += 1
-                            if done % 500 == 0 or done == total_tiles:
-                                pct  = done * 100 // max(total_tiles, 1)
-                                bars = pct * largeur // 100
-                                elapsed = int(time.time() - t0)
-                                print(f"\r  RMAP z{z} [{'█'*bars}{'░'*(largeur-bars)}]"
-                                      f" {pct:3d}%  {done:,}/{total_tiles:,}"
-                                      f"  {_hms(elapsed)}",
-                                      end="", flush=True)
-
-                    # --- RÉÉCRIRE le zoom header avec les vrais offsets ---
-                    pos_after = f.tell()
-                    f.seek(tile_hdr_pos)
-                    for ty in range(ny):
-                        for tx in range(nx):
-                            f.write(_wl(offs[tx * ny + ty]))
-                    f.seek(pos_after)
-
-                # --- MAP INFO ---
-                map_data_offset = f.tell()
-                map_text = _build_map_info(
-                    mbtiles_path.name, w_max, h_max,
-                    lon_min, lat_min, lon_max, lat_max)
-                # 'replace' en défense : _build_map_info translittère déjà le
-                # nom (R2#10), le bloc restant est 100 % ASCII littéral + chiffres.
-                map_bytes = map_text.encode('ascii', 'replace')
-                f.write(_wi(1))
-                f.write(_wi(len(map_bytes)))
-                f.write(map_bytes)
-
-                # --- RÉÉCRIRE FILE HEADER avec vrais offsets ---
-                f.seek(map_data_off_pos)
-                f.write(_wl(map_data_offset))
-
-                f.seek(zoom_off_arr_pos)
-                for z in zooms:
-                    f.write(_wl(zoom_hdr_offset[z]))
-
-        except Exception as e:
-            print(f"\n  ERROR RMAP: {e}")
-            import traceback; traceback.print_exc()
-            rmap_part.unlink(missing_ok=True)
-            return None
-
-        rmap_part.replace(rmap)
-        elapsed   = int(time.time() - t0)
-        taille_mo = rmap.stat().st_size / 1e6
-        print(f"\n  {rmap.name} : {taille_mo:.0f} MB  {_hms(elapsed)}")
-        if _n_reenc:
-            print(f"  Note: {_n_reenc:,} PNG tile(s) re-encoded to JPEG "
-                  f"(RMAP is a JPEG-only format; some quality loss expected)")
-        if _n_illisible:
-            print(f"  WARNING: {_n_illisible:,} undecodable tile(s) replaced by blank")
-        return rmap
-    finally:
-        # Garantit la fermeture de la connexion SQLite même sur exception
-        # non capturée (KeyboardInterrupt, MemoryError, disque plein…).
-        try: con.close()
-        except Exception: pass
-
-
-def _sqlitedb_schema_courant(path):
-    """True si le .sqlitedb a le schéma courant (colonne info.tilenumbering,
-    ajoutée avec le fix OsmAnd). Un fichier illisible ou plus ancien → False,
-    donc régénéré. Sert à ne pas laisser un overlay périmé après mise à jour."""
-    try:
-        con = sqlite3.connect(str(path))
-        try:
-            cols = [r[1] for r in con.execute("PRAGMA table_info(info)")]
-        finally:
-            con.close()
-        return "tilenumbering" in cols
-    except Exception:
-        return False
+    """Façade compatible vers le convertisseur RMAP extrait."""
+    return _generer_rmap_depuis_mbtiles_impl(
+        mbtiles_path,
+        ecraser=ecraser,
+        chemin_part=_chemin_part,
+        formater_duree=_hms,
+        seuil_rmap_padding=SEUIL_RMAP_PADDING,
+        pack_int32=_wi,
+        pack_int64=_wl,
+        tile_to_geo=_tile_to_geo,
+        empty_jpeg=_empty_jpeg_256,
+        blob_vers_jpeg=_blob_vers_jpeg,
+        build_map_info=_build_map_info,
+    )
 
 
 def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
-    """
-    Génère un fichier .sqlitedb (cible OsmAnd) depuis un .mbtiles.
-
-    Schéma SQLiteDB (variante OsmAnd : schéma RMaps + colonne tilenumbering) :
-      CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB)
-      CREATE TABLE android_metadata (locale TEXT)
-      CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT)
-
-    Coordonnées : x=col, y=row XYZ (y=0 en haut/Nord), z=zoom, s=0 (inutilisé).
-    Conversion TMS→XYZ : y_xyz = (2^z - 1) - tile_row_tms.
-
-    CIBLE OsmAnd, pas Locus. Locus attend la numérotation RMaps et refuse ce
-    fichier (entrée grisée dans le gestionnaire de cartes) : pour Locus on livre
-    le MBTiles (universel, lu nativement).
-
-    tilenumbering='simple' : indispensable pour OsmAnd. Quand la colonne est
-    absente, OsmAnd (SQLiteTileSource) suppose le schéma BigPlanet à zoom
-    INVERSÉ (z' = 17 - z) et ne trouve donc jamais nos tuiles (couche
-    sélectionnable mais vide). 'simple' = numérotation XYZ normale.
-    """
-
-    sqlitedb = mbtiles_path.with_suffix(".sqlitedb")
-    if sqlitedb.exists() and not ecraser:
-        # Ne pas garder un fichier au schéma périmé : un sqlitedb généré AVANT le
-        # fix tilenumbering serait "already present" et jamais remplacé, laissant
-        # l'utilisateur avec un overlay vide dans OsmAnd après mise à jour. On
-        # régénère si la colonne info.tilenumbering manque (migration transparente,
-        # sans exiger "Écraser" ni supprimer le fichier à la main).
-        if _sqlitedb_schema_courant(sqlitedb):
-            print(f"  {sqlitedb.name} → already present")
-            return sqlitedb
-        print(f"  {sqlitedb.name} → stale schema (no tilenumbering), regenerating")
-    # Pas d'unlink de l'ancien sqlitedb ici (schéma périmé OU écrasement) :
-    # sqlitedb_part.replace(sqlitedb) l'écrase atomiquement en fin de
-    # génération. Le supprimer maintenant perdrait le livrable si la
-    # régénération échoue (le .part est jeté).
-    if not mbtiles_path.exists():
-        print(f"  ERROR: {mbtiles_path.name} not found")
-        return None
-
-    # Écriture via .part + rename : un .sqlitedb présent est toujours complet.
-    sqlitedb_part = _chemin_part(sqlitedb)
-
-    con_mb = sqlite3.connect(str(mbtiles_path))
-    con_db = None
-    try:
-        meta = {}
-        try:
-            meta = dict(con_mb.execute("SELECT name, value FROM metadata").fetchall())
-        except Exception:
-            pass
-        total = con_mb.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
-        # R2#11 : ne PAS publier un sqlitedb VIDE comme un succès. 0 tuile =
-        # overlay grisé/vide dans OsmAnd sous couvert d'un « ok » (et livrable
-        # trompeur). On refuse ; le finally ferme con_mb.
-        if total == 0:
-            print(f"  ERROR: {mbtiles_path.name} has 0 tiles - empty sqlitedb not written")
-            return None
-        # R2#11 : zooms LUS des tuiles quand les métadonnées manquent. Avant :
-        # 0/17 arbitraire → OsmAnd déclare une plage inexistante et ne trouve
-        # jamais les tuiles (couche sélectionnable mais vide).
-        if "minzoom" in meta and "maxzoom" in meta:
-            zoom_min = int(meta["minzoom"]); zoom_max = int(meta["maxzoom"])
-        else:
-            _zr = con_mb.execute(
-                "SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").fetchone()
-            zoom_min, zoom_max = int(_zr[0]), int(_zr[1])
-
-        print(f"  SQLiteDB ← {mbtiles_path.name}  ({total:,} tiles)...", flush=True)
-        t0 = time.time()
-
-        con_db = sqlite3.connect(str(sqlitedb_part))
-        con_db.execute("PRAGMA journal_mode=MEMORY;")
-        con_db.execute("PRAGMA synchronous=OFF;")    # .part jeté sur échec
-        con_db.executescript("""
-            CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
-            CREATE TABLE android_metadata (locale TEXT);
-            CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT);
-            CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
-        """)
-        con_db.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
-        con_db.execute("INSERT INTO info VALUES (?, ?, ?)",
-                       (zoom_min, zoom_max, "simple"))
-        con_db.commit()
-
-        BATCH   = BATCH_SQLITEDB_INSERT
-        batch   = []
-        done    = 0
-        largeur = 30
-
-        try:
-            for zoom_level, tile_column, tile_row, tile_data in con_mb.execute(
-                    "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"):
-                y_xyz = (1 << zoom_level) - 1 - tile_row   # TMS → XYZ
-                batch.append((tile_column, y_xyz, zoom_level, 0, tile_data))
-                done += 1
-                if len(batch) >= BATCH:
-                    con_db.executemany(
-                        "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
-                    con_db.commit()
-                    batch.clear()
-                    pct  = done * 100 // max(total, 1)
-                    bars = pct * largeur // 100
-                    elapsed = int(time.time() - t0)
-                    print(f"\r  SQLiteDB [{'█'*bars}{'░'*(largeur-bars)}]"
-                          f" {pct:3d}%  {done:,}/{total:,}  {_hms(elapsed)}",
-                          end="", flush=True)
-            if batch:
-                con_db.executemany(
-                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch)
-                con_db.commit()
-        except Exception as e:
-            print(f"\n  ERROR SQLiteDB: {e}")
-            # Fermer AVANT unlink : sous Windows, supprimer un fichier SQLite
-            # encore ouvert lève PermissionError et masquerait l'erreur d'origine.
-            try: con_db.close()
-            except Exception: pass
-            _nettoyer_sqlite_part(sqlitedb_part)
-            return None
-
-        elapsed   = int(time.time() - t0)
-        # Fermer puis rouvrir en lecture seule pour valider le staging complet.
-        try: con_db.close()
-        except Exception: pass
-        _valider_sqlite_part(
-            sqlitedb_part,
-            {"tiles": total, "android_metadata": 1, "info": 1},
-        )
-        sqlitedb_part.replace(sqlitedb)
-        taille_mo = sqlitedb.stat().st_size / 1e6
-        print(f"\n  {sqlitedb.name} : {done:,} tiles  ({taille_mo:.0f} MB)"
-              f"  {_hms(elapsed)}          ")
-        return sqlitedb
-    finally:
-        # Toujours fermer les deux connexions, même sur exception non capturée.
-        try: con_mb.close()
-        except Exception: pass
-        if con_db is not None:
-            try: con_db.close()
-            except Exception: pass
-        # Sur exception/interruption ou retour d'échec, seul le staging existe.
-        # Après succès replace() l'a déplacé, donc ce nettoyage est un no-op.
-        _nettoyer_sqlite_part(sqlitedb_part)
-
-
-def _build_map_info(bitmap_name, width, height, lon_min, lat_min, lon_max, lat_max):
-    """Génère le bloc texte CompeGPS MAP (calibration géographique)."""
-    # Le bloc MAP est écrit en ASCII (map_text.encode('ascii') côté appelant).
-    # Un nom de MBTiles accentué ou non-latin (ex. "forêt", nom cyrillique) fait
-    # crasher toute la génération RMAP par UnicodeEncodeError (R2#10). Le champ
-    # Bitmap= n'est qu'une référence d'affichage : on le translittère en ASCII
-    # (é→e via NFKD, le reste éliminé) plutôt que de perdre le livrable.
-    bitmap_name = (unicodedata.normalize("NFKD", str(bitmap_name))
-                   .encode("ascii", "ignore").decode("ascii")) or "map"
-    lines = [
-        "CompeGPS MAP File\r\n",
-        "<Header>\r\n",
-        "Version=2\r\n",
-        "VerCompeGPS=MOBAC\r\n",
-        "Projection=2,Mercator,\r\n",
-        "Coordinates=1\r\n",
-        "Datum=WGS 84\r\n",
-        "</Header>\r\n",
-        "<Map>\r\n",
-        f"Bitmap={bitmap_name}\r\n",
-        "BitsPerPixel=0\r\n",
-        f"BitmapWidth={width}\r\n",
-        f"BitmapHeight={height}\r\n",
-        "Type=10\r\n",
-        "</Map>\r\n",
-        "<Calibration>\r\n",
-        f"P0=0,0,A,{lon_min:.8f},{lat_max:.8f}\r\n",
-        f"P1={width-1},0,A,{lon_max:.8f},{lat_max:.8f}\r\n",
-        f"P2={width-1},{height-1},A,{lon_max:.8f},{lat_min:.8f}\r\n",
-        f"P3=0,{height-1},A,{lon_min:.8f},{lat_min:.8f}\r\n",
-        "</Calibration>\r\n",
-        "<MainPolygonBitmap>\r\n",
-        "M0=0,0\r\n",
-        f"M1={width},0\r\n",
-        f"M2={width},{height}\r\n",
-        f"M3=0,{height}\r\n",
-        "</MainPolygonBitmap>\r\n",
-    ]
-    return "".join(lines)
+    """Façade compatible vers le convertisseur SQLiteDB extrait."""
+    return _generer_sqlitedb_depuis_mbtiles_impl(
+        mbtiles_path,
+        ecraser=ecraser,
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        batch_sqlitedb_insert=BATCH_SQLITEDB_INSERT,
+        formater_duree=_hms,
+        schema_courant=_sqlitedb_schema_courant,
+    )
 
 
 def _java_opts_extra():
@@ -11417,21 +9296,22 @@ def _lister_tifs_ombrages(dossier_ville, tifs_run):
     """TIF d'ombrage à tuiler dans un dossier projet. Exclut les caches de
     tuilage `_tuilage_z<N>.tif` (produits par generer_mbtiles_lidar — sans ce
     filtre le cache devient sa propre source, boucle infinie en pratique) et,
-    quand l'étape shadings a tourné (tifs_run non vide), restreint aux cibles
+    quand l'étape shadings a tourné (tifs_run fourni, même vide), restreint aux cibles
     de CE run (sinon --tiles-overwrite re-tuilait aussi les anciens ombrages
     du dossier). Un run SANS étape shadings (tifs_run None) convertit tout le
     dossier — comportement historique. Partagé main() ↔ _traiter_bbox_lidar."""
     tifs = [t for t in sorted(dossier_ville.glob("*.tif"))
             if not t.name.startswith("_")
             and not re.search(r'_tuilage_z\d+\.tif$', t.name)]
-    if tifs_run:
+    if tifs_run is not None:
         noms_run = {p.name for p in tifs_run}
         tifs = [t for t in tifs if t.name in noms_run]
     return tifs
 
 
 def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
-                          decoupe_sortie=True, verbose=False, tampon_coin_max_m=0):
+                          decoupe_sortie=True, verbose=False, tampon_coin_max_m=0,
+                          mbtiles_attendus=None):
     """Tuile chaque TIF d'ombrage (make-like via _mbtiles_a_regenerer :
     détecte aussi mbtiles corrompu/vide et TIF plus récent) puis applique les
     conversions RMAP/SQLiteDB. Partagé par main() (decoupe_sortie=True) et
@@ -11440,7 +9320,9 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
 
     tampon_coin_max_m : cf. generer_mbtiles_lidar. 0 (défaut, cas non
     découpé) : aucune incidence, cette zone n'a pas de coin partagé avec un
-    voisin."""
+    voisin. Retourne False si au moins une génération/conversion demandée
+    échoue sans lever d'exception."""
+    ok = True
     for tif in tifs:
         if verbose:
             print("  " + tif.name)
@@ -11448,6 +9330,8 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
         suffix = stem[len(nom_zone) + 1:] if stem.startswith(nom_zone + "_") else stem
         nom_base = f"{nom_zone}_{suffix}"
         mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
+        if mbtiles_attendus is not None:
+            mbtiles_attendus.append(mbt_path)
         mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
         if mbt_neuf:
             mbt_out = generer_mbtiles_lidar(
@@ -11461,8 +9345,10 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
         else:
             print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
             mbt_out = mbt_path
-        _convertir_formats(mbt_out, args, decoupe_sortie=decoupe_sortie,
-                           mbtiles_neuf=mbt_neuf)
+        ok = (_convertir_formats(
+            mbt_out, args, decoupe_sortie=decoupe_sortie,
+            mbtiles_neuf=mbt_neuf) and ok)
+    return ok
 
 
 def _appliquer_defauts_cli_lidar(args):
@@ -11539,10 +9425,8 @@ def _valider_contrat_cli_lidar(args, parser, *, provider_explicit=None):
         )
 
 
-def main():
-    import argparse
-    t_debut = time.time()
-
+def _construire_parser_lidar():
+    """Construit le parser argparse du workflow LiDAR/OSM (--lidar/--osm)."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -11793,6 +9677,12 @@ Examples:
     parser.add_argument("--layer", "--couche", metavar="TAGS", nargs="+", default=None, dest="couche",
                         help="For --osm: OSM tags to include. "
                              "Ex: --layer highway=* waterway=* natural=water")
+    return parser
+
+
+def main():
+    t_debut = time.time()
+    parser = _construire_parser_lidar()
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -12179,14 +10069,21 @@ Examples:
                 # mode qui la justifie (cf. discussion "mode rare, ne doit
                 # pas justifier un mouton à 5 pattes pour le cas majoritaire").
                 def _chunk_lidar(coords, nom_z, cle, manifeste):
-                    _traiter_bbox_lidar(args, coords, nom_z, nom_zone, manifeste, cle)
-                _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
-                                  _overwrite_actif, _entete_lidar, _chunk_lidar, t_debut)
+                    return _traiter_bbox_lidar(
+                        args, coords, nom_z, nom_zone, manifeste, cle)
+                _executer_split_historise(
+                    lambda: _run_split_priori(
+                        args, sous_zones, mode_desc, nom_zone, racine_pr,
+                        _overwrite_actif, _entete_lidar, _chunk_lidar, t_debut),
+                    t_debut, racine_pr)
             else:
                 # Cas majoritaire : VRT-voisins glissant, zéro téléchargement
                 # supplémentaire (cf. _run_split_priori_lidar_glissant).
-                _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
-                                                 _overwrite_actif, _entete_lidar, t_debut)
+                _executer_split_historise(
+                    lambda: _run_split_priori_lidar_glissant(
+                        args, sous_zones, nom_zone, racine_pr,
+                        _overwrite_actif, _entete_lidar, t_debut),
+                    t_debut, racine_pr)
             return
         print("  A-priori splitting: zone too small -> single pass")
 
@@ -12363,10 +10260,16 @@ Examples:
         # Rien a telecharger ni a assembler : on sort ici plutot que de laisser
         # le pipeline planter plus loin sur dalles_zone.txt absent.
         if args.telechargement and not dalles_dict and not args.source:
+            _duree_decouverte = max(0, int(time.time() - t_debut))
             if _d is None:
+                _historique_depuis_argv(
+                    _duree_decouverte, str(dossier_ville), statut="ko")
                 sys.exit(1)   # echec transitoire : code non-zero (re-tenter)
             print("  No LiDAR tile for this zone (out of coverage), "
                   "nothing to download.")
+            print(f"  Done! Folder: {dossier_ville}")
+            _historique_depuis_argv(
+                _duree_decouverte, str(dossier_ville), statut="ok")
             return
 
     # -------------------------------------------------------
@@ -12611,6 +10514,10 @@ Examples:
                          instances=spec_insts or None)
 
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
+    # Verdict agrégé du chemin monolithique. Les helpers signalent les échecs
+    # sans toujours lever (génération à 0 tuile, conversion RMAP/SQLiteDB
+    # refusée...) : perdre ce booléen ferait historiser ``ok`` et sortir 0.
+    _livrables_raster_ok = True
     if args.mbtiles or args.rmap or args.sqlitedb:
         # Source : --source .tif ou ombrages générés dans dossier_ville
         if args.source and Path(args.source).suffix.lower() in (".tif", ".tiff"):
@@ -12644,7 +10551,9 @@ Examples:
             elif _mbt_path.exists():
                 print(f"  Existing MBTiles: {_mbt_path.name}, direct split/conversion")
                 _mbt_out = _mbt_path
-            _convertir_formats(_mbt_out, args, mbtiles_neuf=_mbt_requis)
+            _livrables_raster_ok = (bool(_convertir_formats(
+                _mbt_out, args, mbtiles_neuf=_mbt_requis))
+                and _livrables_raster_ok)
         else:
             # Ombrages présents dans dossier_ville — glob/filtre/tuilage
             # factorisés avec le site jumeau _traiter_bbox_lidar
@@ -12652,10 +10561,13 @@ Examples:
             ombrages_tifs = _lister_tifs_ombrages(dossier_ville, tifs_run)
             if ombrages_tifs:
                 print_etape("MBTiles")
-                _tuiler_tifs_ombrages(args, ombrages_tifs, dossier_ville,
-                                      nom_zone, bbox, verbose=True)
+                _livrables_raster_ok = (bool(_tuiler_tifs_ombrages(
+                    args, ombrages_tifs, dossier_ville,
+                    nom_zone, bbox, verbose=True))
+                    and _livrables_raster_ok)
             else:
                 print("  No shading found for MBTiles (generate --shadings first)")
+                _livrables_raster_ok = False
 
     # ── Carte OSM vectorielle de superposition ───────────────────────────────
     dossier_osm = None   # défini si on arrive jusqu'au generer_carte_osm
@@ -12907,11 +10819,21 @@ Examples:
     m, s  = divmod(total, 60)
     # Planche d'assemblage : balaie les livrables du dossier (best-effort).
     _dpl = dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville
-    _planche_depuis_dossier(_dpl, args, nom_zone)
+    # bbox_wgs n'existe (branche OSM) que si un PBF a été téléchargé et traité ;
+    # locals().get() évite un UnboundLocalError sur un run LiDAR pur, où la
+    # planche continue de fonctionner en best-effort (comportement historique).
+    _planche_depuis_dossier(_dpl, args, nom_zone,
+                            zone_bbox_wgs84=locals().get("bbox_wgs"))
     print(f"\n  Done! Folder: {dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville}")
     print(f"  Total time: {m}m{s:02d}s")
     dossier_res = str(dossier_osm if (_osm_seul and dossier_osm is not None) else dossier_ville)
-    _historique_depuis_argv(total, dossier_res)
+    _historique_depuis_argv(
+        total, dossier_res,
+        statut=("ok" if _livrables_raster_ok else "ko"))
+    if not _livrables_raster_ok:
+        raise RuntimeError(
+            "raster generation/conversion incomplete - partial outputs kept; "
+            "rerun to retry failed deliverables")
 
 
 # ============================================================
@@ -12921,67 +10843,18 @@ Examples:
 
 def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, cote_km, unite_m=True,
                                 n_cols=0, n_rows=0):
-    """
-    Divise une bbox en sous-zones pour le découpage à priori.
-
-    unite_m=True  : bbox en mètres  (Lambert 93)  — retourne (i_lat, i_lon, x1, y1, x2, y2)
-    unite_m=False : bbox en degrés  (WGS84)        — retourne (i_lat, i_lon, lon_w, lat_s, lon_e, lat_n)
-
-    Priorité des modes (du plus explicite au plus implicite) :
-      1. grille explicite n_cols × n_rows — respecte l'intention EXACTE de
-         l'utilisateur (un produit premier comme 1×7 reste 1×7, pas refactorisé).
-      2. cote_km — carrés de ~KM de CÔTÉ, uniformes : taille de chunk BORNÉE
-         quelle que soit l'étendue. Méthode recommandée pour les grandes
-         couvertures (le pic RAM/disque par chunk ne dérive pas avec la bbox
-         totale).
-      3. n_morceaux — compte seul → grille refactorisée par ratio d'aspect
-         (peut dégénérer en lanière si le compte est premier).
-      4. zone entière.
-    """
-    largeur = x2 - x1
-    hauteur = y2 - y1
-
-    if n_cols > 0 and n_rows > 0:
-        dx = largeur / n_cols
-        dy = hauteur / n_rows
-        mode_desc = f"{n_cols * n_rows} morceaux ({n_rows}×{n_cols}, grille explicite)"
-    elif cote_km > 0:
-        if unite_m:
-            dy = dx = cote_km * 1000
-        else:
-            lat_c = (y1 + y2) / 2
-            dy = cote_km / 111.0
-            dx = cote_km / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
-        n_rows = max(1, int(math.ceil(hauteur / dy)))
-        n_cols = max(1, int(math.ceil(largeur / dx)))
-        mode_desc = f"~{cote_km:.0f} km/morceau ({n_rows}×{n_cols})"
-    elif n_morceaux > 1:
-        best = (1, n_morceaux); best_ratio = float('inf')
-        for r in range(1, int(math.sqrt(n_morceaux)) + 1):
-            if n_morceaux % r == 0:
-                c = n_morceaux // r
-                ratio = abs((r / c) - (hauteur / max(largeur, 1e-9)))
-                if ratio < best_ratio:
-                    best_ratio = ratio; best = (r, c)
-        n_rows, n_cols = best
-        dx = largeur / n_cols
-        dy = hauteur / n_rows
-        mode_desc = f"{n_morceaux} morceaux ({n_rows}×{n_cols})"
-    else:
-        n_rows = n_cols = 1
-        dx = largeur
-        dy = hauteur
-        mode_desc = "1 morceau (zone entière)"
-
-    sous_zones = []
-    for i_lat in range(n_rows):
-        y_s = y1 + i_lat * dy
-        y_n = min(y_s + dy, y2)
-        for i_lon in range(n_cols):
-            x_w = x1 + i_lon * dx
-            x_e = min(x_w + dx, x2)
-            sous_zones.append((i_lat, i_lon, x_w, y_s, x_e, y_n))
-    return sous_zones, mode_desc
+    """Façade historique vers le planificateur de grille extrait."""
+    return _calculer_sous_zones_priori_impl(
+        x1,
+        y1,
+        x2,
+        y2,
+        n_morceaux,
+        cote_km,
+        unite_m=unite_m,
+        n_cols=n_cols,
+        n_rows=n_rows,
+    )
 
 def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
     """Retourne la liste des Path des dalles valides présentes sur disque
@@ -13222,48 +11095,50 @@ def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, a
     _creer_fichiers(_reg)
 
 
+from _split_deliverables import (
+    _ResultatChunk,
+    _chunk_livrable_complet as _chunk_livrable_complet_impl,
+    _mbtiles_est_complete as _mbtiles_est_complete_impl,
+    _normaliser_resultat_chunk,
+)
+
+
 def _mbtiles_est_complete(mbt_path):
-    """Vérification silencieuse : True si le mbtiles existe, est un SQLite
-    lisible et contient >0 tuiles. Aucun side-effect, aucun print — utilisable
-    pour les checks de garde-fou dans les boucles de reprise (chunk-level
-    manifeste skip), où on veut savoir si un mbtiles "supposé fait" est
-    réellement utilisable."""
-    if not mbt_path.exists():
+    """Façade historique vers le validateur MBTiles extrait."""
+    return _mbtiles_est_complete_impl(mbt_path)
+
+
+def _chunk_livrable_complet(dossier_chunk, args, mbtiles_attendus=None):
+    """Façade historique conservant l'injection du validateur par monkeypatch."""
+    return _chunk_livrable_complet_impl(
+        dossier_chunk,
+        args,
+        mbtiles_attendus,
+        verifier_mbtiles=_mbtiles_est_complete,
+    )
+
+
+def _morceau_termine_reutilisable(manifeste, cle, dossier_chunk, args):
+    """Valide la preuve persistée avant de croire ``termine=True``.
+
+    Les anciens manifests sans ``mbtiles_attendus`` sont rejoués une fois : un
+    scan permissif du dossier pourrait prendre un ancien produit pour la sortie
+    courante. Une liste vide est au contraire une preuve explicite de zone hors
+    couverture et reste réutilisable sans fichier.
+    """
+    if not manifeste.deja_traite(cle):
         return False
-    try:
-        with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
-            return _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0] > 0
-    except (sqlite3.DatabaseError, sqlite3.OperationalError):
-        return False
-
-
-def _chunk_livrable_complet(dossier_chunk, args):
-    """True si le chunk a produit ses livrables tuilés attendus (garde-fou de
-    reprise dans _run_split_priori).
-
-    Quand SEULS rmap/sqlitedb sont demandés (pas --mbtiles), le mbtiles
-    intermédiaire est SUPPRIMÉ après conversion réussie (_convertir_un_mbtiles ;
-    gardé si échec). Mesurer alors la complétude sur les .rmap/.sqlitedb
-    survivants — écrits en .part+rename donc présents = complets — au lieu du
-    mbtiles absent : sinon un chunk réussi était marqué INCOMPLETE, rejoué en
-    boucle, et le cleanup refusait de purger le cache (R1#10). Dans tous les
-    autres cas (mbtiles demandé, ou aucun format tuilé) on valide le CONTENU des
-    .mbtiles présents (_mbtiles_est_complete, >0 tuiles)."""
-    dossier_chunk = Path(dossier_chunk)
-    # getattr défensif : _run_split_priori peut être appelé avec un args minimal
-    # (harnais de test) ; absence = format non demandé → repli sur le mbtiles.
-    _veut_mbt = getattr(args, "mbtiles", False)
-    _veut_rmap = getattr(args, "rmap", False)
-    _veut_db = getattr(args, "sqlitedb", False)
-    if not _veut_mbt and (_veut_rmap or _veut_db):
-        _deliv = []
-        if _veut_rmap:
-            _deliv += list(dossier_chunk.glob("*.rmap"))
-        if _veut_db:
-            _deliv += list(dossier_chunk.glob("*.sqlitedb"))
-        return bool(_deliv)
-    _mbts = list(dossier_chunk.glob("*.mbtiles"))
-    return bool(_mbts) and all(_mbtiles_est_complete(m) for m in _mbts)
+    attendus = manifeste.mbtiles_attendus_morceau(cle)
+    if attendus == ():
+        return True
+    if (attendus is not None
+            and _chunk_livrable_complet(dossier_chunk, args, attendus)):
+        return True
+    raison = ("legacy manifest without output proof" if attendus is None
+              else "expected deliverable missing or invalid")
+    print(f"  [{cle}] {raison} - replaying chunk")
+    manifeste.invalider_morceau(cle)
+    return False
 
 
 def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
@@ -13293,8 +11168,11 @@ def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
             pass
     # Distinguer fichier illisible vs vide pour un log clair
     try:
-        with sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True) as _c:
+        _c = sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True)
+        try:
             _n = _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+        finally:
+            _c.close()
     except (sqlite3.DatabaseError, sqlite3.OperationalError) as _e:
         print(f"  {mbt_path.name} → SQLite unreadable ({type(_e).__name__}), regenerating", flush=True)
         return True
@@ -13414,18 +11292,40 @@ def _extraire_bbox_wgs84(fichier):
     return None
 
 
-def _planche_depuis_dossier(dossier, args, nom_zone=None):
+def _planche_depuis_dossier(dossier, args, nom_zone=None, zone_bbox_wgs84=None):
     """Balaie un dossier projet et génère UNE planche d'assemblage PAR PRODUIT
     (ombrage / couche : lrm, svf, ortho…) : sinon leurs emprises se
     superposeraient sur une même planche, illisible. Groupe par (produit, cellule
     NNNxNNN) ; le produit = le nom de fichier sans le token de cellule ni
     l'extension → le mbtiles et le sqlitedb d'un même produit restent groupés.
     Indépendant du run (mode --planche DIR). Une cellule sans fichier (mer)
-    n'apparaît pas : c'est voulu."""
+    n'apparaît pas : c'est voulu.
+
+    zone_bbox_wgs84 : bbox WGS84 effectivement demandée par l'utilisateur
+    (lon_min, lat_min, lon_max, lat_max), si connue de l'appelant. Sert à
+    borner l'emprise lue dans les fichiers : le WFS IGN renvoie la géométrie
+    ENTIÈRE d'un itinéraire qui traverse seulement la zone (ex. un GR ou une
+    véloroute de plusieurs centaines de km pour une zone de quelques km), pas
+    la portion locale. Sans ce recadrage, l'emprise calculée peut dériver très
+    loin de la zone réelle, faire échouer le reverse-geocoding du département
+    et rendre la planche illisible (le point demandé devient invisible à
+    l'échelle de l'emprise entière). Absent en mode --planche DIR autonome
+    (pas de requête associée) : l'ancien comportement best-effort s'applique."""
     if not getattr(args, "index_map", True):
         return
     try:
         import re as _re
+
+        def _clip(bbox):
+            """Intersecte `bbox` avec la zone demandée, si connue. Conserve
+            `bbox` tel quel en l'absence d'intersection (défensif : ne doit
+            jamais produire une bbox vide ou inversée)."""
+            if zone_bbox_wgs84 is None:
+                return bbox
+            x0 = max(bbox[0], zone_bbox_wgs84[0]); y0 = max(bbox[1], zone_bbox_wgs84[1])
+            x1 = min(bbox[2], zone_bbox_wgs84[2]); y1 = min(bbox[3], zone_bbox_wgs84[3])
+            return (x0, y0, x1, y1) if (x0 < x1 and y0 < y1) else bbox
+
         d = Path(dossier)
         if not d.is_dir():
             print(f"  (index sheet: {d} is not a folder)", flush=True)
@@ -13451,7 +11351,7 @@ def _planche_depuis_dossier(dossier, args, nom_zone=None):
             if f.name.lower().endswith((".geojson", ".geojson.gz")):
                 bbox = _extraire_bbox_wgs84(f)
                 if bbox:
-                    geo_bboxes.append(bbox); geo_stems.append(stem)
+                    geo_bboxes.append(_clip(bbox)); geo_stems.append(stem)
                 continue
             m = _re.search(r"(\d{3})x(\d{3})", stem)
             cle = f"{m.group(1)}x{m.group(2)}" if m else "__single__"
@@ -13461,7 +11361,7 @@ def _planche_depuis_dossier(dossier, args, nom_zone=None):
                 continue
             bbox = _extraire_bbox_wgs84(f)
             if bbox:
-                cells[cle] = bbox
+                cells[cle] = _clip(bbox)
         if geo_bboxes:
             # Emprise du groupe = INTERSECTION des couches, pas l'union : les
             # couches d'itinéraires (GR) portent des features ENTIÈRES
@@ -13743,180 +11643,47 @@ def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
 
 
 def _signature_config(args, sous_zones):
-    """Signature des paramètres qui déterminent la GÉOMÉTRIE et le CONTENU des
-    chunks (R1#4). Stockée au manifeste : un changement entre deux runs du MÊME
-    projet invalide la reprise (cf. Manifeste.verifier_signature). Modèle
-    make-like : la 'recette' change → on refait.
+    """Façade historique injectant le provider actif dans la signature."""
+    return _signature_config_impl(args, sous_zones, provider=PROVIDER)
 
-    - Grille = origine (x1,y1) + pas de cellule (dx,dy). En split-width le pas est
-      FIXE (cote_km) : étendre la bbox garde la même grille → les chunks déjà
-      faits restent valides (pas de re-calcul). En grille explicite le pas =
-      largeur/n_cols : étendre la bbox rescale les cellules → signature change →
-      invalidation correcte. dx/dy = plus grande cellule (les cellules de BORD
-      sont rognées à la bbox, seule une cellule pleine donne le vrai pas).
-    - Contenu = allowlist des params qui changent les tuiles produites. getattr
-      avec défaut : un champ absent d'un pipeline (LiDAR vs WMTS) reste stable.
-      Sur-inclure est SÛR (au pire un re-calcul inutile) ; oublier un param = faux
-      silencieux → on ratisse large."""
-    import hashlib as _hl
-    x1 = min(z[2] for z in sous_zones)
-    y1 = min(z[3] for z in sous_zones)
-    dx = max(z[4] - z[2] for z in sous_zones)
-    dy = max(z[5] - z[3] for z in sous_zones)
-    grille = [round(x1, 3), round(y1, 3), round(dx, 3), round(dy, 3)]
-    _champs = ("zoom_min", "zoom_max", "formats_image", "qualite_image",
-               "shading_specs", "shading_preset", "svf_gamma", "svf_conv",
-               "svf_dist", "sweep_horizon", "layer", "style", "source",
-               "dfm", "dfm_ground", "elevation_soleil")
-    contenu = {k: getattr(args, k, None) for k in _champs}
-    _prov = getattr(PROVIDER, "CODE", None) or getattr(PROVIDER, "__name__", None)
-    payload = {"grille": grille, "contenu": contenu, "provider": str(_prov)}
-    _js = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
-    return _hl.md5(_js.encode("utf-8")).hexdigest()[:16]
+
+from _split_runner import (
+    _DependancesRunnerClassique,
+    _run_split_priori as _run_split_priori_impl,
+)
 
 
 def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
-                      overwrite_actif, entete_chunk, traiter_chunk, t_debut):
-    """Boucle de découpage a-priori commune aux pipelines LiDAR et WMTS.
-
-    Squelette partagé (itération des sous-zones + reprise via Manifeste + garde
-    disque + ETA + cleanup + gestion d'échec). Historiquement dupliqué entre les
-    deux mains (jumeaux ~90 %), source de drift : le skip couverture avait été
-    ajouté d'un seul côté. Les deux points de variation légitimes passent en
-    callbacks :
-      entete_chunk(coords) -> str : ligne « BBox ... (~N km²) » (unités et CRS
-                                    propres au pipeline : CRS natif du
-                                    provider en m pour LiDAR, WGS84° pour WMTS).
-      traiter_chunk(coords, nom_z, cle, manifeste) : le travail par chunk
-                                    (_traiter_bbox_lidar / _traiter_bbox_wmts).
-
-    coords = tuple bbox de la sous-zone (CRS natif du provider pour LiDAR,
-    WGS84 pour WMTS), opaque
-    pour la boucle : seuls les callbacks l'interprètent. Suppose len(sous_zones)>1
-    (les appelants font le garde-fou et le message « single pass »).
-
-    Un chunk entièrement hors couverture (ZoneHorsCouvertureWMTS, cas mer/hors
-    frontière côté WMTS) est sauté, pas fatal ; le LiDAR ne lève jamais cette
-    exception (il gère le vide dans son chunk), le catch lui est inoffensif.
-    Toute autre exception remonte (fail-fast + reprise via le manifeste)."""
-    manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
-    # R1#4 : invalider la reprise si la config de SORTIE a changé depuis le
-    # dernier run du même projet. En plus de vider les 'termine' (fait via
-    # verifier_signature), on FORCE l'overwrite des artefacts dépendant de la
-    # config : le gate de fraîcheur interne (_mbtiles_a_regenerer) recyclerait
-    # sinon un mbtiles/ombrage plus récent que sa source ("already present")
-    # malgré le changement de zoom/format/ombrage. La SOURCE (dalles/nuage) ne
-    # dépend PAS de ces params → on ne force pas son re-download.
-    if manifeste.verifier_signature(_signature_config(args, sous_zones)):
-        print("  ⚠ Output config changed since last run "
-              "(bbox/split/zoom/format/shading): reprocessing all chunks.")
-        if hasattr(args, "tuiles_ecraser"):
-            args.tuiles_ecraser = True
-        if hasattr(args, "ombrages_ecraser"):
-            args.ombrages_ecraser = True
-        overwrite_actif = True
-    n_total   = len(sous_zones)
-    nb_done   = sum(1 for z in sous_zones
-                    if manifeste.deja_traite(f"{z[0]+1:03d}x{z[1]+1:03d}"))
-    print(f"\n  ══ A-priori splitting: {mode_desc} ══")
-    print(f"  Manifeste : {manifeste.path}")
-    if nb_done:
-        print(f"  Resume: {nb_done}/{n_total} chunks already done")
-
-    nb_ok = 0
-    nb_incomplet = 0
-    for i_z, sz in enumerate(sous_zones):
-        # Tous les chunks tournent dans le même process (pas de sous-process
-        # par chunk) : un objet accroché par un cycle de références (datasets
-        # GDAL/rasterio notamment, connus pour ça) survivrait au refcounting
-        # normal et s'accumulerait silencieusement sur un split à N chunks.
-        # gc.collect() explicite en bordure de chunk = filet de sécurité peu
-        # coûteux (pas de leak connu à ce jour, juste une précaution).
-        gc.collect()
-        i_lat, i_lon = sz[0], sz[1]
-        coords = tuple(sz[2:])
-        cle   = f"{i_lat+1:03d}x{i_lon+1:03d}"
-        nom_z = f"{nom_zone}_{cle}"
-
-        if manifeste.deja_traite(cle) and not overwrite_actif:
-            print(f"  [{cle}] {nom_z}: already done")
-            nb_ok += 1
-            continue
-
-        _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
-                      cle, nb_ok, n_total)
-
-        print(f"\n  ── Chunk {cle}  ({i_z+1}/{n_total})  {nom_z} ──")
-        print(f"     {entete_chunk(coords)}")
-        _definir_chunk_log(cle)
-        manifeste.debut_morceau(cle, nom_z)
-        t0_z = time.time()
-        try:
-            traiter_chunk(coords, nom_z, cle, manifeste)
-            # Transactionnel (#1/#3, fix 2026-07-28) : ne marquer FAIT qu'un chunk
-            # dont la sortie est COMPLÈTE, et nettoyer AVANT fin_morceau (fait =>
-            # purgé). generer_mbtiles retourne None sur échec (rangées KO / 0 tuile
-            # depuis une source > 1 Mo) SANS lever ; l'ancien code appelait
-            # fin_morceau quand même → deja_traite sautait le chunk au re-run → trou
-            # de couverture PERMANENT (le « Rerun to complete » ne se rejouait
-            # jamais). Un chunk SANS couverture (discover {} : mer/hors frontière →
-            # aucun .tif au manifeste) reste légitimement vide-et-fait.
-            _dossier_chunk = racine_pr / nom_z
-            _complet    = _chunk_livrable_complet(_dossier_chunk, args)
-            _avait_couv = any(str(_f).lower().endswith(".tif")
-                              for _f in manifeste.fichiers_morceau(cle))
-            if _avait_couv and not _complet:
-                # Couverture présente mais mbtiles absent/vide = VRAI échec de
-                # tuilage. On NE marque PAS fait (rejoué au re-run), on garde les
-                # intermédiaires (cache de warp/nuage) pour la reprise.
-                print(f"  [{cle}] ⚠ INCOMPLETE (coverage present but no valid mbtiles)"
-                      f" - NOT marked done, rerun to complete (intermediates kept)")
-                nb_incomplet += 1
-                continue
-            if getattr(args, "nettoyage", False) and _complet:
-                # Cleanup AVANT fin_morceau : un crash entre les deux laisse le
-                # chunk à refaire (re-run : mbtiles présent → tuilage sauté →
-                # cleanup rejoué → fait). --cleanup-keep-tiles épargne le cache de
-                # dalles ET le cache de nuages .laz (cloud_cache_dir) : la
-                # reconversion sans re-download (pre_download) en dépend.
-                if getattr(args, "nettoyage_garder_dalles", False):
-                    _keep = [_dossier_dalles_actif(args)]
-                    _cloud_cache = getattr(args, "_cloud_cache_dir", None)
-                    if _cloud_cache is not None:
-                        _keep.append(_cloud_cache)
-                else:
-                    _keep = None
-                _supprimer_fichiers(manifeste.fichiers_morceau(cle), _keep)
-            manifeste.fin_morceau(cle, int(time.time() - t0_z))
-            print(f"  [{cle}] ✓ Done in {_hms(int(time.time() - t0_z))}")
-            _n_done, _eta = manifeste.eta_global(n_total)
-            if _eta:
-                print(f"  [{cle}] {_n_done}/{n_total} done, "
-                      f"ETA ~{_hms(_eta)} remaining (coarse)")
-            nb_ok += 1
-        except ZoneHorsCouvertureWMTS:
-            # Chunk auto-généré entièrement hors couverture (mer, hors frontière) :
-            # légitimement vide, pas une bbox erronée. On le marque fait et on
-            # continue — sinon un département côtier en grille meurt au premier
-            # chunk mer et le relaunch le rejoue à l'infini.
-            manifeste.fin_morceau(cle, int(time.time() - t0_z))
-            print(f"  [{cle}] ⊘ No coverage (sea / outside layer) - chunk skipped")
-            nb_ok += 1
-            continue
-        except Exception as _e_z:
-            print(f"  [{cle}] ✗ ERROR: {_e_z} - relaunch to resume")
-            raise
-
-    elapsed = int(time.time() - t_debut)
-    print(f"\n  ══ A-priori splitting done: {nb_ok}/{n_total} chunks ==")
-    if nb_incomplet:
-        print(f"  ⚠ {nb_incomplet} chunk(s) INCOMPLETE (not marked done) - "
-              f"rerun to complete them")
-    print(f"  Total time: {_hms(elapsed)}")
-
-    # Planche d'assemblage : balaie les livrables produits (mbtiles/sqlitedb/…)
-    # sous racine_pr et dessine emprise + cellules numérotées.
-    _planche_depuis_dossier(racine_pr, args, nom_zone)
+                      overwrite_actif, entete_chunk, traiter_chunk, t_debut,
+                      vide_sans_couverture_ok=True):
+    """Façade compatible vers le runner classique extrait."""
+    dependances = _DependancesRunnerClassique(
+        fabrique_manifeste=Manifeste,
+        signature_config=_signature_config,
+        morceau_termine_reutilisable=_morceau_termine_reutilisable,
+        garde_disque=_garde_disque,
+        definir_chunk_log=_definir_chunk_log,
+        normaliser_resultat_chunk=_normaliser_resultat_chunk,
+        chunk_livrable_complet=_chunk_livrable_complet,
+        dossier_dalles_actif=_dossier_dalles_actif,
+        supprimer_fichiers=_supprimer_fichiers,
+        formater_duree=_hms,
+        zone_hors_couverture=ZoneHorsCouvertureWMTS,
+        planche_depuis_dossier=_planche_depuis_dossier,
+    )
+    return _run_split_priori_impl(
+        args,
+        sous_zones,
+        mode_desc,
+        nom_zone,
+        racine_pr,
+        overwrite_actif,
+        entete_chunk,
+        traiter_chunk,
+        t_debut,
+        vide_sans_couverture_ok=vide_sans_couverture_ok,
+        dependances=dependances,
+    )
 
 
 def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
@@ -13950,6 +11717,8 @@ def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
     # coin (cisaillement de la reprojection) croît avec la taille du bloc.
     MARGE_HALO_M = max(300.0, 0.1 * min(bx2 - bx1, by2 - by1))
 
+    traitement_ok = True
+    mbtiles_attendus = []
     try:
         with _contexte_manifeste(manifeste, cle):
             bbox = (bx1, by1, bx2, by2)
@@ -14023,29 +11792,22 @@ def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
                 # (nominale, PAS bbox_marge) pour la frontière exacte avec les
                 # voisins directs ; tampon_coin_max_m borne le calcul du
                 # tampon de coin dans la marge halo ci-dessus.
-                _tuiler_tifs_ombrages(
+                traitement_ok = _tuiler_tifs_ombrages(
                     args, _lister_tifs_ombrages(dossier_ville, tifs_run),
                     dossier_ville, nom_z, bbox, decoupe_sortie=False,
-                    tampon_coin_max_m=MARGE_HALO_M)
+                    tampon_coin_max_m=MARGE_HALO_M,
+                    mbtiles_attendus=mbtiles_attendus)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
+    return _ResultatChunk(traitement_ok, mbtiles_attendus)
 
 
-def _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon):
-    """Chemins des dossiers voisins (jusqu'à 8, diagonales incluses) d'un
-    morceau de découpage à priori, filtrés aux indices valides de la grille.
-    N'exige PAS que le dossier existe déjà (le voisin peut ne pas avoir
-    encore passé l'étape ombrage) — à l'appelant de vérifier le contenu."""
-    voisins = []
-    for di in (-1, 0, 1):
-        for dj in (-1, 0, 1):
-            if di == 0 and dj == 0:
-                continue
-            vi, vj = i_lat + di, i_lon + dj
-            if 0 <= vi < n_lat and 0 <= vj < n_lon:
-                voisins.append(racine / f"{nom_zone_base}_{vi+1:03d}x{vj+1:03d}")
-    return voisins
+from _split_sliding import (
+    _DependancesRunnerGlissant,
+    _run_split_priori_lidar_glissant as _run_split_priori_lidar_glissant_impl,
+    _voisins_dossiers,
+)
 
 
 def _dalles_zone_lookahead(bbox_natif):
@@ -14209,6 +11971,8 @@ def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifest
     _nom_orig  = args.zone_nom
     args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
     args.zone_nom  = nom_z
+    conversion_ok = True
+    mbtiles_attendus = []
     try:
         if not (args.mbtiles or args.rmap or args.sqlitedb):
             return
@@ -14243,6 +12007,7 @@ def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifest
                     tif_source = tif   # bord de zone sans voisin encore prêt
 
                 mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
+                mbtiles_attendus.append(mbt_path)
                 mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
                 if mbt_neuf:
                     mbt_out = generer_mbtiles_lidar(
@@ -14256,162 +12021,53 @@ def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifest
                 else:
                     print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
                     mbt_out = mbt_path
-                _convertir_formats(mbt_out, args, decoupe_sortie=False, mbtiles_neuf=mbt_neuf)
-
-            if getattr(args, "nettoyage", False):
-                _supprimer_fichiers(manifeste.fichiers_morceau(cle_t), None)
+                conversion_ok = (_convertir_formats(
+                    mbt_out, args, decoupe_sortie=False,
+                    mbtiles_neuf=mbt_neuf) and conversion_ok)
     finally:
         args.zone_bbox = _bbox_orig
         args.zone_nom  = _nom_orig
+    return _ResultatChunk(conversion_ok, mbtiles_attendus)
 
 
-def _run_split_priori_lidar_glissant(args, sous_zones, nom_zone, racine_pr,
-                                     overwrite_actif, entete_chunk, t_debut):
-    """
-    Boucle à priori LiDAR SANS --block : VRT-voisins glissant par rangée
-    (cf. discussion "--block, mode rare, ne doit pas justifier un mouton à
-    5 pattes pour le cas majoritaire" — la marge fixe de _traiter_bbox_lidar
-    reste le choix pour --block, seul mode sans disque partagé entre
-    voisins). Remplace _run_split_priori (squelette partagé LiDAR/WMTS à 1
-    étape, toujours utilisé par WMTS et par --block) pour ce cas précis :
-    ici il faut 2 étapes décalées d'une rangée — calcul d'ombrage rangée R,
-    PUIS warp+tuilage rangée R-1 (qui a alors ses 3 rangées de voisines
-    calculées : R-2, R-1, R). Une rangée n'est purgée qu'une fois son
-    dernier consommateur (le tuilage de la rangée suivante) terminé : au
-    pic, 3 rangées de TIF d'ombrage coexistent, jamais le département
-    entier (les dalles brutes, elles, restent purgées immédiatement après
-    leur propre calcul dans _traiter_bbox_lidar_ombrage — c'est leur volume
-    qui domine, pas celui des TIF calculés).
-    """
-    manifeste = Manifeste(racine_pr / nom_zone / "manifeste.json")
-    if manifeste.verifier_signature(_signature_config(args, sous_zones)):
-        print("  ⚠ Output config changed since last run "
-              "(bbox/split/zoom/format/shading): reprocessing all chunks.")
-        if hasattr(args, "tuiles_ecraser"):
-            args.tuiles_ecraser = True
-        if hasattr(args, "ombrages_ecraser"):
-            args.ombrages_ecraser = True
-        overwrite_actif = True
-
-    n_total = len(sous_zones)
-    n_lat = max(z[0] for z in sous_zones) + 1
-    n_lon = max(z[1] for z in sous_zones) + 1
-    rangees = [[] for _ in range(n_lat)]
-    for sz in sous_zones:
-        rangees[sz[0]].append(sz)
-    for r in rangees:
-        r.sort(key=lambda z: z[1])
-
-    print(f"\n  ══ A-priori splitting (VRT voisins glissant): {n_lat} rangée(s), "
-          f"{n_total} chunk(s) ══")
-    print(f"  Manifeste : {manifeste.path}")
-
-    racine = (Path(args.dossier).resolve() if args.dossier
-              else DOSSIER_TRAVAIL / "Projets" / nom_zone / LIDAR_SUBDIR)
-
-    def _cle(sz):
-        return f"{sz[0]+1:03d}x{sz[1]+1:03d}"
-
-    # Ordre EXACT de traitement de l'ombrage (rangée par rangée, gauche à
-    # droite dans chaque rangée) : sert de référence pour savoir quel morceau
-    # précharger pendant le calcul du morceau courant (recouvrement
-    # download/calcul, cf. _PrefetchDalles). Simple aparté au flux existant :
-    # ne change ni l'ordre ni le résultat du traitement, juste QUAND le
-    # download du morceau suivant démarre.
-    flat_ombrage = [sz for r in rangees for sz in r]
-    _idx_ombrage = {_cle(sz): i for i, sz in enumerate(flat_ombrage)}
-    prefetch = _PrefetchDalles()
-
-    def _lancer_prefetch_suivant(cle_courant):
-        idx = _idx_ombrage[cle_courant] + 1
-        if idx >= len(flat_ombrage):
-            return
-        sz_suiv = flat_ombrage[idx]
-        cle_suiv = _cle(sz_suiv)
-        if manifeste.deja_traite(cle_suiv) and not overwrite_actif:
-            return  # déjà fait (reprise) : rien à précharger
-        prefetch.lancer(args, manifeste, racine_pr, nom_zone, sz_suiv, cle_suiv)
-
-    def _noms_dalles_morceau_suivant(cle_courant):
-        """Noms des dalles que le morceau SUIVANT va réclamer (R1#5/#9) —
-        appelé juste avant le cleanup du morceau courant pour épargner une
-        dalle de bord partagée. Best-effort (cf. _dalles_zone_lookahead) :
-        ne bloque jamais le cleanup normal."""
-        idx = _idx_ombrage[cle_courant] + 1
-        if idx >= len(flat_ombrage):
-            return None
-        sz_suiv = flat_ombrage[idx]
-        if manifeste.deja_traite(_cle(sz_suiv)) and not overwrite_actif:
-            return None
-        return _dalles_zone_lookahead(tuple(sz_suiv[2:]))
-
-    def _etape_ombrage(sz):
-        # Filet de sécurité (cf. _run_split_priori) : même process pour tous
-        # les chunks d'une rangée, gc.collect() en bordure de chunk contre un
-        # éventuel cycle de références (datasets GDAL/rasterio) qui
-        # survivrait au refcounting normal.
-        gc.collect()
-        cle = _cle(sz)
-        if manifeste.deja_traite(cle) and not overwrite_actif:
-            return
-        nom_z = f"{nom_zone}_{cle}"
-        _garde_disque(racine_pr, getattr(args, "min_free_gb", 0.0) or 0.0,
-                      cle, 0, n_total)
-        print(f"\n  ── Ombrage {cle}  {nom_z} ──")
-        print(f"     {entete_chunk(tuple(sz[2:]))}")
-        _definir_chunk_log(cle)
-        manifeste.debut_morceau(cle, nom_z)
-        t0 = time.time()
-        dalles_precharge = prefetch.recuperer(cle)
-        _traiter_bbox_lidar_ombrage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,
-                                    dalles_precharge=dalles_precharge,
-                                    on_download_done=lambda: _lancer_prefetch_suivant(cle),
-                                    noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle))
-        manifeste.fin_morceau(cle, int(time.time() - t0))
-        print(f"  [{cle}] ombrage done in {_hms(int(time.time() - t0))}")
-
-    def _etape_tuilage(sz):
-        cle = _cle(sz)
-        cle_t = cle + "_t"
-        if manifeste.deja_traite(cle_t) and not overwrite_actif:
-            return
-        nom_z = f"{nom_zone}_{cle}"
-        _definir_chunk_log(cle_t)
-        manifeste.debut_morceau(cle_t, nom_z)
-        t0 = time.time()
-        _traiter_bbox_lidar_tuilage(args, tuple(sz[2:]), nom_z, nom_zone, manifeste, cle,
-                                    sz[0], sz[1], n_lat, n_lon)
-        if _chunk_livrable_complet(racine / nom_z, args):
-            manifeste.fin_morceau(cle_t, int(time.time() - t0))
-            print(f"  [{cle}] tuilage done in {_hms(int(time.time() - t0))}")
-        else:
-            print(f"  [{cle}] ⚠ tuilage INCOMPLETE - not marked done, rerun to complete")
-
-    def _purger_rangee(r):
-        if not getattr(args, "nettoyage", False):
-            return
-        for sz in rangees[r]:
-            _supprimer_fichiers(manifeste.fichiers_morceau(_cle(sz)), None)
-
-    for r in range(n_lat):
-        for sz in rangees[r]:
-            _etape_ombrage(sz)
-        if r >= 1:
-            for sz in rangees[r - 1]:
-                _etape_tuilage(sz)
-            if r >= 2:
-                _purger_rangee(r - 2)
-    for sz in rangees[n_lat - 1]:
-        _etape_tuilage(sz)
-    if n_lat >= 2:
-        _purger_rangee(n_lat - 2)
-    _purger_rangee(n_lat - 1)
-    prefetch.purger()  # filet défensif : pas de thread de fond résiduel au retour
-
-    elapsed = int(time.time() - t_debut)
-    print(f"\n  ══ A-priori splitting done: {n_total} chunks ══")
-    print(f"  Total time: {_hms(elapsed)}")
-    _planche_depuis_dossier(racine_pr, args, nom_zone)
+def _run_split_priori_lidar_glissant(
+    args,
+    sous_zones,
+    nom_zone,
+    racine_pr,
+    overwrite_actif,
+    entete_chunk,
+    t_debut,
+):
+    """Façade compatible vers le runner LiDAR glissant extrait."""
+    dependances = _DependancesRunnerGlissant(
+        fabrique_manifeste=Manifeste,
+        signature_config=_signature_config,
+        morceau_termine_reutilisable=_morceau_termine_reutilisable,
+        fabrique_prefetch=_PrefetchDalles,
+        dalles_zone_lookahead=_dalles_zone_lookahead,
+        garde_disque=_garde_disque,
+        definir_chunk_log=_definir_chunk_log,
+        traiter_ombrage=_traiter_bbox_lidar_ombrage,
+        traiter_tuilage=_traiter_bbox_lidar_tuilage,
+        normaliser_resultat_chunk=_normaliser_resultat_chunk,
+        chunk_livrable_complet=_chunk_livrable_complet,
+        supprimer_fichiers=_supprimer_fichiers,
+        formater_duree=_hms,
+        planche_depuis_dossier=_planche_depuis_dossier,
+        dossier_travail=DOSSIER_TRAVAIL,
+        lidar_subdir=LIDAR_SUBDIR,
+    )
+    return _run_split_priori_lidar_glissant_impl(
+        args,
+        sous_zones,
+        nom_zone,
+        racine_pr,
+        overwrite_actif,
+        entete_chunk,
+        t_debut,
+        dependances=dependances,
+    )
 
 
 def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img_fmt, fmt_ext,
@@ -14425,6 +12081,8 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
     lon_w, lat_s, lon_e, lat_n = bbox_wgs84
     _nom_orig = args.zone_nom
     args.zone_nom = nom_z
+    traitement_ok = True
+    mbtiles_attendus = []
     try:
         with _contexte_manifeste(manifeste, cle):
             zoom_min = min(args.zoom_min, args.zoom_max)
@@ -14445,6 +12103,7 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
             nom_fichier    = _nom_mbtiles_wmts(nom_z, args.couche,
                                                zoom_min, zoom_max, _jpeg_q)
             chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
+            mbtiles_attendus.append(chemin_mbtiles)
             dossier_cache  = DOSSIER_CACHE / "ign_raster"
             dossier_cache.mkdir(parents=True, exist_ok=True)
             _mbt_neuf = _mbtiles_a_regenerer(chemin_mbtiles, args.tuiles_ecraser)
@@ -14469,10 +12128,14 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
                     ecraser_tuiles=args.tuiles_ecraser,
                     ecraser_dalles=args.telechargement_ecraser)
             if chemin_mbtiles.exists():
-                _convertir_formats(chemin_mbtiles, args, decoupe_sortie=False,
-                                   mbtiles_neuf=_mbt_neuf)
+                traitement_ok = _convertir_formats(
+                    chemin_mbtiles, args, decoupe_sortie=False,
+                    mbtiles_neuf=_mbt_neuf)
+            else:
+                traitement_ok = False
     finally:
         args.zone_nom = _nom_orig
+    return _ResultatChunk(traitement_ok, mbtiles_attendus)
 
 
 def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
@@ -14698,84 +12361,31 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
 
 
 def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
-    """Génère RMAP/SQLiteDB depuis un MBTiles.
-
-    mbtiles_neuf=True : MBTiles fraîchement généré dans cette exécution.
-        S'il n'a pas été demandé via --formats-fichier, il est traité comme
-        intermédiaire et removed après conversion.
-    mbtiles_neuf=False : MBTiles préexistant sur disque (run précédent ou
-        copié manuellement). JAMAIS removed — on respecte le travail de
-        l'utilisateur, même si seul --rmap/--sqlitedb a été demandé.
-
-    Livrables finaux (rmap/sqlitedb) régénérés d'office : cocher le format =
-    "je veux ce fichier à jour". Sinon un ancien fichier resterait "already
-    present" (schéma périmé, contenu obsolète) alors que le mbtiles source a
-    pu changer. Le coûteux (tuilage mbtiles) reste caché en amont
-    (_mbtiles_a_regenerer) ; "Écraser le fichier résultat" ne pilote plus que lui.
-    """
-    # Capturer les retours : les convertisseurs renvoient None SUR ÉCHEC.
-    # L'ancien code les ignorait puis supprimait le mbtiles -> sur un échec
-    # de conversion l'utilisateur perdait À LA FOIS la source ET les livrables.
-    ok = True
-    if args.rmap:
-        ok = (generer_rmap_depuis_mbtiles(sf, ecraser=True) is not None) and ok
-    if args.sqlitedb:
-        ok = (generer_sqlitedb_depuis_mbtiles(sf, ecraser=True) is not None) and ok
-    # Ne supprimer la source que si TOUTES les conversions demandées ont réussi.
-    if mbtiles_neuf and not args.mbtiles and sf.exists():
-        if ok:
-            sf.unlink()
-            print(f"  MBTiles removed: {sf.name}")
-        else:
-            print(f"  MBTiles kept (conversion failed): {sf.name}")
+    """Façade compatible vers la conversion unitaire extraite."""
+    return _convertir_un_mbtiles_impl(
+        sf,
+        args,
+        mbtiles_neuf=mbtiles_neuf,
+        generer_rmap=generer_rmap_depuis_mbtiles,
+        generer_sqlitedb=generer_sqlitedb_depuis_mbtiles,
+    )
 
 
-def _convertir_formats(mbt_out, args, decoupe_sortie=True, mbtiles_neuf=True):
-    """
-    Applique le découpage (grille cols×rows ou split_width) puis génère
-    RMAP/SQLiteDB pour chaque fichier résultant.
-    Supprime le MBTiles source uniquement s'il a été généré dans cette
-    exécution (mbtiles_neuf=True) ET non demandé via --formats-fichier.
-    decoupe_sortie=False → saute le découpage (mode morceau à priori).
-    """
-    if not mbt_out:
-        return
-
-    r_dec  = getattr(args, "split_width", 0.0)
-    n_cols = getattr(args, "cols_decoupe",  0)
-    n_rows = getattr(args, "rows_decoupe",  0)
-
-    # En mode morceau à priori : pas de re-découpage
-    if not decoupe_sortie:
-        _convertir_un_mbtiles(mbt_out, args, mbtiles_neuf=mbtiles_neuf)
-        return
-
-    if n_cols > 0 and n_rows > 0:
-        sous_fichiers = decouper_mbtiles(mbt_out, n_cols=n_cols, n_rows=n_rows,
-                                         dossier=mbt_out.parent,
-                                         ecraser=args.tuiles_ecraser)
-        if mbt_out.exists() and sous_fichiers and sous_fichiers != [mbt_out]:
-            # Découpage effectif : la source globale n'est gardée que si l'utilisateur
-            # l'a demandée OU si elle préexistait. Les sous-fichiers, eux, sont
-            # toujours frais (sortie du découpage).
-            if mbtiles_neuf and not args.mbtiles:
-                mbt_out.unlink()
-                print(f"  Source MBTiles removed: {mbt_out.name}")
-        for sf in sous_fichiers:
-            _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
-    elif r_dec > 0:
-        sous_fichiers = decouper_mbtiles(mbt_out, cote_km=r_dec,
-                                         dossier=mbt_out.parent,
-                                         ecraser=args.tuiles_ecraser)
-        if mbt_out.exists() and sous_fichiers and sous_fichiers != [mbt_out]:
-            if mbtiles_neuf and not args.mbtiles:
-                mbt_out.unlink()
-                print(f"  Source MBTiles removed: {mbt_out.name}")
-        for sf in sous_fichiers:
-            _convertir_un_mbtiles(sf, args, mbtiles_neuf=True)
-    else:
-        # Pas de découpage : on convertit directement le fichier passé
-        _convertir_un_mbtiles(mbt_out, args, mbtiles_neuf=mbtiles_neuf)
+def _convertir_formats(
+    mbt_out,
+    args,
+    decoupe_sortie=True,
+    mbtiles_neuf=True,
+):
+    """Façade compatible vers l'orchestration multi-format extraite."""
+    return _convertir_formats_impl(
+        mbt_out,
+        args,
+        decoupe_sortie=decoupe_sortie,
+        mbtiles_neuf=mbtiles_neuf,
+        decouper=decouper_mbtiles,
+        convertir_un=_convertir_un_mbtiles,
+    )
 
 
 def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
@@ -14957,6 +12567,7 @@ def main_decouper():
             [--tuiles-ecraser]
     """
     import argparse
+    t_debut = time.time()
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --split",
         description="A posteriori splitting of an existing MBTiles.")
@@ -14988,6 +12599,9 @@ def main_decouper():
     if src.suffix.lower() != ".mbtiles":
         print(f"  ERROR: --source expects a .mbtiles (got: {src.suffix})"); sys.exit(1)
 
+    _historique_debut()
+    dossier_resultat = str(src.resolve().parent)
+
     print("=" * 55)
     print("  Raster MBTiles splitting")
     print("=" * 55)
@@ -15001,6 +12615,12 @@ def main_decouper():
     sorties = decouper_mbtiles(src, cote_km=args.split_width,
                                n_cols=args.cols, n_rows=args.rows,
                                ecraser=args.tuiles_ecraser)
+    if not sorties:
+        print("\n  ERROR: splitting produced no output file.")
+        print(f"  Done! Folder: {dossier_resultat}")
+        _historique_depuis_argv(
+            int(time.time() - t_debut), dossier_resultat, statut="ko")
+        sys.exit(1)
     _nb_ko = 0
     for sf in sorties:
         # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
@@ -15020,14 +12640,17 @@ def main_decouper():
             sf.unlink()
     if _nb_ko:
         print(f"\n  Splitting done with {_nb_ko} conversion failure(s).")
+        print(f"  Done! Folder: {dossier_resultat}")
+        _historique_depuis_argv(
+            int(time.time() - t_debut), dossier_resultat, statut="ko")
         sys.exit(1)
     print("\n  Splitting done.")
+    print(f"  Done! Folder: {dossier_resultat}")
+    _historique_depuis_argv(int(time.time() - t_debut), dossier_resultat)
 
 
-def main_wmts():
-    import argparse
-    t_debut = time.time()
-
+def _construire_parser_wmts():
+    """Construit le parser argparse du workflow raster WMTS (--raster)."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -15131,6 +12754,12 @@ Examples:
                         help="Overwrite cached tiles (force re-download)")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="Overwrite existing MBTiles")
+    return parser
+
+
+def main_wmts():
+    t_debut = time.time()
+    parser = _construire_parser_wmts()
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -15269,10 +12898,15 @@ Examples:
                 return (f"BBox WGS84 : {lon_w:.4f},{lat_s:.4f} → "
                         f"{lon_e:.4f},{lat_n:.4f}  (~{surface:.0f} km²)")
             def _chunk_wmts(coords, nom_z, cle, manifeste):
-                _traiter_bbox_wmts(args, coords, nom_z, nom_zone, layer, style,
-                                   img_fmt, fmt_ext, apikey_requis, manifeste, cle)
-            _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
-                              _overwrite_actif, _entete_wmts, _chunk_wmts, t_debut)
+                return _traiter_bbox_wmts(
+                    args, coords, nom_z, nom_zone, layer, style,
+                    img_fmt, fmt_ext, apikey_requis, manifeste, cle)
+            _executer_split_historise(
+                lambda: _run_split_priori(
+                    args, sous_zones, mode_desc, nom_zone, racine_pr,
+                    _overwrite_actif, _entete_wmts, _chunk_wmts, t_debut,
+                    vide_sans_couverture_ok=False),
+                t_debut, racine_pr)
             return
         print("  A-priori splitting: zone too small -> single pass")
 
@@ -15372,16 +13006,27 @@ Examples:
         )
 
     # ── Découpage + RMAP + SQLiteDB ───────────────────────────────────────────
+    _livrables_raster_ok = False
     if chemin_mbtiles.exists():
-        _convertir_formats(chemin_mbtiles, args, mbtiles_neuf=_mbtiles_requis)
+        _livrables_raster_ok = bool(_convertir_formats(
+            chemin_mbtiles, args, mbtiles_neuf=_mbtiles_requis))
+    else:
+        print(f"  ERROR: expected MBTiles not produced: {chemin_mbtiles.name}")
 
     # ── Résumé ────────────────────────────────────────────────────────────────
     # Planche d'assemblage : balaie les livrables du dossier (best-effort).
-    _planche_depuis_dossier(dossier, args, nom_zone)
+    _planche_depuis_dossier(dossier, args, nom_zone,
+                            zone_bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
     elapsed = int(time.time() - t_debut)
     print(f"\n  Done in {_hms(elapsed)}")
     print(f"  Done! Folder: {dossier}")
-    _historique_depuis_argv(elapsed, str(dossier))
+    _historique_depuis_argv(
+        elapsed, str(dossier),
+        statut=("ok" if _livrables_raster_ok else "ko"))
+    if not _livrables_raster_ok:
+        raise RuntimeError(
+            "raster generation/conversion incomplete - partial outputs kept; "
+            "rerun to retry failed deliverables")
 
 
 # ============================================================
@@ -17681,7 +15326,8 @@ def main_wfs():
 
     # ── Bilan ─────────────────────────────────────────────────────────────────
     # Planche d'assemblage : balaie les livrables du dossier (best-effort).
-    _planche_depuis_dossier(dossier, args, nom_zone)
+    _planche_depuis_dossier(dossier, args, nom_zone,
+                            zone_bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
     elapsed = int(time.time() - t_debut)
     print(f"\n  Done in {_hms(elapsed)}: {len(sorties)}/{len(couches_resolues)} layers")
     print(f"  Done! Folder: {dossier}")
@@ -18670,6 +16316,58 @@ def _historique_fin_crash():
                            run_id=_HIST_RUN_ID, statut="ko")
     except Exception as e:
         print(f"  History 'ko' not saved: {e}", flush=True)
+
+
+def _executer_split_historise(traitement, t_debut, dossier_resultat):
+    """Exécute un split et finalise son historique sur tous les chemins.
+
+    Les runners renvoient ``True`` uniquement lorsque tous les livrables sont
+    complets. Une sortie partielle est enregistrée ``ko`` puis rendue visible
+    au lanceur par une exception : sans code processus non nul, le GUI la
+    réécrirait en succès. Toute exception ou interruption est marquée ``ko``
+    puis propagée intacte au gestionnaire de premier niveau.
+    """
+    def _finaliser(complet):
+        duree = max(0, int(time.time() - t_debut))
+        try:
+            _historique_depuis_argv(
+                duree, str(dossier_resultat),
+                statut=("ok" if complet else "ko"))
+        except Exception as e:
+            # L'historique est auxiliaire : son indisponibilité ne doit ni
+            # casser un traitement réussi, ni masquer l'exception d'origine.
+            print(f"  History split finalization failed: {e}", flush=True)
+
+    try:
+        complet = bool(traitement())
+    except BaseException:
+        print(f"  Done! Folder: {dossier_resultat}")
+        _finaliser(False)
+        raise
+    print(f"  Done! Folder: {dossier_resultat}")
+    _finaliser(complet)
+    if not complet:
+        raise RuntimeError(
+            "Split processing incomplete - rerun to complete missing chunks")
+    return complet
+
+
+def _bilan_historique_processus(code_retour, dossier_resultat):
+    """Statut GUI et dossier à conserver dans l'historique après un process."""
+    return ("ok" if code_retour == 0 else "ko", str(dossier_resultat or ""))
+
+
+def _historique_fin_batch_ko(t_debut):
+    """Force le bilan agrégé à ``ko`` en conservant le dernier dossier connu."""
+    if _hist_disabled():
+        return
+    dossier_resultat = ""
+    for entree in _lire_historique():
+        if entree.get("id") == _HIST_RUN_ID:
+            dossier_resultat = entree.get("resultat", "")
+            break
+    _historique_depuis_argv(
+        max(0, int(time.time() - t_debut)), dossier_resultat, statut="ko")
 
 
 def _historique_depuis_argv(duree_s: int, dossier_resultat: str = "",
@@ -20276,8 +17974,8 @@ def lancer_gui():
                 try:
                     _duree  = getattr(self, "_duree_run", 0) or \
                               int(time.time() - getattr(self, "_t_launch", time.time()))
-                    _statut = "ok" if self._retcode == 0 else "ko"
-                    _result = getattr(self, "_result_dir", "") if self._retcode == 0 else ""
+                    _statut, _result = _bilan_historique_processus(
+                        self._retcode, getattr(self, "_result_dir", ""))
                     _sauver_historique(
                         getattr(self, "_cfg_launch", {}),
                         _duree,
@@ -20543,6 +18241,7 @@ if __name__ == "__main__":
 
             if _deps and len(_deps) > 1:
                 _argv_base = sys.argv[:]
+                _batch_t_debut = time.time()
                 _sep = "═" * 55
                 # Détecter --zone-nom explicite : sera suffixé par _<dep> pour éviter
                 # que les sorties multi-département s'écrasent mutuellement.
@@ -20582,6 +18281,11 @@ if __name__ == "__main__":
                 if _deps_ko:
                     print(f"\n  ⚠ Failed departments: {','.join(_deps_ko)} "
                           f"(rerun the command to retry them)")
+                    # Le dernier département réussi a pu remettre le même
+                    # run_id à ``ok``. Restaurer l'argv agrégé puis imposer le
+                    # bilan global avant le SystemExit non nul.
+                    sys.argv = _argv_base[:]
+                    _historique_fin_batch_ko(_batch_t_debut)
                     # Code non-zéro : sans lui, GUI/scripts/CI voyaient un
                     # succès (exit 0) malgré des départements en échec.
                     sys.exit(1)

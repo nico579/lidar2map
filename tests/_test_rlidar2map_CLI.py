@@ -19,7 +19,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "tools" / "rlidar2map_CLI.py"
-FAKE_TRANSPORT = ROOT / "Tests" / "_fake_rlidar2map_CLI_transport.py"
+FAKE_TRANSPORT = Path(__file__).resolve().parent / "_fake_rlidar2map_CLI_transport.py"
 SPEC = importlib.util.spec_from_file_location("rlidar2map_CLI", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 rlidar2map_cli = importlib.util.module_from_spec(SPEC)

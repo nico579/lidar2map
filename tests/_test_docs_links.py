@@ -11,10 +11,25 @@ from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _source(local_name: str, published_name: str) -> Path:
+    """Choisit le nom du workspace local ou celui du dépôt publié."""
+    local = ROOT / local_name
+    return local if local.exists() else ROOT / published_name
+
+
+README_EN = _source("README_Github.md", "README.md")
+README_FR = _source("README_Github.fr.md", "README.fr.md")
+BUILD_DOC = _source("README_LIDAR2MAP.md", "BUILD.md")
+
+# Dans le workspace de livraison, les README/BUILD portent encore leurs noms
+# sources. deploy.py les renomme lors de la copie vers GitHub. En CI publiée,
+# ces alias sont des identités et ne changent donc rien.
 PUBLISHED_ALIASES = {
-    (ROOT / "README.md").resolve(): (ROOT / "README_Github.md").resolve(),
-    (ROOT / "README.fr.md").resolve(): (ROOT / "README_Github.fr.md").resolve(),
-    (ROOT / "BUILD.md").resolve(): (ROOT / "README_LIDAR2MAP.md").resolve(),
+    (ROOT / "README.md").resolve(): README_EN.resolve(),
+    (ROOT / "README.fr.md").resolve(): README_FR.resolve(),
+    (ROOT / "BUILD.md").resolve(): BUILD_DOC.resolve(),
 }
 
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
@@ -66,7 +81,7 @@ def _resolve_local(source: Path, raw_target: str) -> Optional[Path]:
 
 
 def main() -> int:
-    sources = [ROOT / "README_Github.md", ROOT / "README_Github.fr.md"]
+    sources = [README_EN, README_FR]
     sources.extend(sorted((ROOT / "docs").rglob("*.md")))
     sources.append(ROOT / "tools" / "README_rlidar2map.md")
 

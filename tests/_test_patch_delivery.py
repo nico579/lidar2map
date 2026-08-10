@@ -1,7 +1,10 @@
 """Tests sans réseau du contrat deploy.py ↔ update_app.py ↔ specs."""
 
+import ast
+import fnmatch
 import importlib.util
 import io
+import re
 import sys
 import tempfile
 import zipfile
@@ -21,6 +24,48 @@ def load(name, path):
 
 deploy = load("deploy_contract", ROOT / "deploy.py")
 update = load("update_contract", ROOT / "update_app.py")
+
+# Modules internes importés par le monolithe : la liste est DÉRIVÉE de l'AST de
+# lidar2map.py, pas recopiée à la main. Un module extrait lors d'une phase de
+# refonte et oublié dans deploy.MAP produirait un bundle où lidar2map.py importe
+# un fichier absent ; oublié dans is_rebuild_file, il serait livré par simple
+# patch de _internal/lidar2map.py (que update_app.py est seul à réécrire) et le
+# bundle casserait de la même façon. Le contrat est donc vérifié par
+# construction, et une phase 7/8 future n'a rien à ajouter ici.
+_source_l2m = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+_modules_locaux = set()
+for _node in ast.walk(ast.parse(_source_l2m)):
+    if isinstance(_node, ast.Import):
+        _noms = [alias.name for alias in _node.names]
+    elif isinstance(_node, ast.ImportFrom):
+        _noms = [_node.module] if (_node.level == 0 and _node.module) else []
+    else:
+        continue
+    for _nom in _noms:
+        _racine = _nom.split(".")[0]
+        if (ROOT / f"{_racine}.py").exists() and _racine != "lidar2map":
+            _modules_locaux.add(f"{_racine}.py")
+
+assert "_split_manifest.py" in _modules_locaux      # garde-fou de la détection
+assert "_raster_formats.py" in _modules_locaux
+assert "_mbtiles_wmts.py" in _modules_locaux
+
+# Les filtres `paths:` de la CI : un module non couvert ne déclencherait aucun
+# job sur une modification qui ne touche que lui.
+_ci_patterns = re.findall(
+    r"^\s+- '([^']+)'\s*$",
+    (ROOT / "ci_github.yml").read_text(encoding="utf-8"),
+    flags=re.MULTILINE,
+)
+
+for _mod in sorted(_modules_locaux):
+    assert deploy.MAP.get(_mod) == _mod, f"{_mod} absent de deploy.MAP"
+    assert deploy.is_rebuild_file(_mod), f"{_mod} n'est pas rebuild-gated"
+    assert any(fnmatch.fnmatch(_mod, pat) for pat in _ci_patterns), \
+        f"{_mod} n'est couvert par aucun filtre paths: de ci_github.yml"
+
+assert deploy.is_rebuild_file("_split_future.py")
+assert not deploy.is_rebuild_file("split_future.py")
 
 expected_sources = {
     "tools/__init__.py",

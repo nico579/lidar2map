@@ -4,19 +4,45 @@ on:
   push:
     paths:
       - 'lidar2map.py'
+      - '_split_*.py'
+      - '_raster_formats.py'
+      - '_mbtiles_*.py'
+      - '_loader.py'
       - 'deploy.py'
+      - 'update_app.py'
       - 'tests/**'
       - 'providers/**'
       - 'tools/**'
+      - 'gui/**'
+      - 'docs/**'
+      - 'screenshots/**'
+      - 'README*.md'
+      - '*.spec'
+      - '*_build.*'
+      - 'setup_build_*'
+      - 'tagmapping-min.xml'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'lidar2map.py'
+      - '_split_*.py'
+      - '_raster_formats.py'
+      - '_mbtiles_*.py'
+      - '_loader.py'
       - 'deploy.py'
+      - 'update_app.py'
       - 'tests/**'
       - 'providers/**'
       - 'tools/**'
+      - 'gui/**'
+      - 'docs/**'
+      - 'screenshots/**'
+      - 'README*.md'
+      - '*.spec'
+      - '*_build.*'
+      - 'setup_build_*'
+      - 'tagmapping-min.xml'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
@@ -47,6 +73,7 @@ jobs:
 
   test:
     name: ${{ matrix.os }}
+    needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -179,8 +206,10 @@ jobs:
           except SystemExit: pass
           codes = [f'{n:02d}' for n in range(1,20)] + [f'{n:02d}' for n in range(21,96)]
           codes += ['2A','2B','971','972','973','974','976']
-          print(f'Codes a couvrir : {len(codes)}')
-          print('_GEOFABRIK structure OK')
+          attendus = set(codes)
+          trouves = set(lidar2map._GEOFABRIK)
+          assert trouves == attendus, f'manquants={sorted(attendus-trouves)} extras={sorted(trouves-attendus)}'
+          print(f'_GEOFABRIK complet : {len(trouves)} codes')
           "
 
       - name: wgs84_to_lamb93_approx
@@ -250,6 +279,12 @@ jobs:
           print(f'Platform flags OK : WINDOWS={lidar2map.WINDOWS} LINUX={lidar2map.LINUX} MACOS={lidar2map.MACOS}')
           "
 
+      # Atomicité, contrats providers/façade, CLI distante, documentation et
+      # livraison. Exécutés sur les 3 OS ; les calculs Numba lourds restent
+      # dans le job Ubuntu ci-dessous.
+      - name: Regressions rapides hors reseau
+        run: python tests/run_tests.py fast
+
   # Tests de régression des calculs scientifiques (kernels Horn/SVF/openness,
   # LRM, RRIM, tuilage MBTiles/RMAP/SQLiteDB). Ubuntu uniquement : les calculs
   # sont identiques sur les 3 OS (numpy/numba), inutile de payer 3× la
@@ -257,6 +292,7 @@ jobs:
   # pour la syntaxe et les imports.
   tests-scientifiques:
     name: tests scientifiques (ubuntu)
+    needs: lint
     runs-on: ubuntu-latest
     env:
       LIDAR2MAP_BOOTSTRAP: none
@@ -277,17 +313,5 @@ jobs:
         # cloth-simulation-filter : idem pour le chemin --laz-ground csf (9a).
         run: pip install numpy scipy rasterio numba Pillow pyproj ijson fiona certifi laspy lazrs cloth-simulation-filter
 
-      - name: Tests calculs scientifiques
-        run: python tests/_test_corrections.py
-
-      - name: Tests tuilage MBTiles/RMAP/SQLiteDB
-        run: python tests/_test_tiling.py
-
-      - name: Tests robustesse reseau/pagination/cache (sans reseau, mocks)
-        run: python tests/_test_robustesse.py
-
-      - name: Tests interactions cache/flag/manifeste (sans reseau, mocks)
-        run: python tests/_test_interactions.py
-
-      - name: Tests partage telephone (chemins Linux, GUI et serveur local)
-        run: python tests/test_phone_share.py
+      - name: Suite scientifique complete (sans reseau)
+        run: python tests/run_tests.py scientific

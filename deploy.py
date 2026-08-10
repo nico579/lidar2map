@@ -7,6 +7,7 @@ Un seul script pour tout :
   • action :
         - docs / meta seulement                 -> push seul
         - lidar2map.py seul                     -> push + patch des 3 bundles (sans rebuild)
+        - module Python compilé (_split_*.py)   -> push puis rebuild des 3 bundles
         - .spec / _loader / build.* / xml       -> push puis STOP : rebuild via release.yml
                                                    (via --new-tag ; le tag est dérivé
                                                     de la constante VERSION du code)
@@ -66,6 +67,15 @@ REPO_URL = f"https://github.com/{REPO_DEFAULT}"
 MAP = {
     # Source
     "lidar2map.py":                  "lidar2map.py",
+    "_split_deliverables.py":        "_split_deliverables.py",
+    "_split_manifest.py":            "_split_manifest.py",
+    "_split_planning.py":            "_split_planning.py",
+    "_split_runner.py":              "_split_runner.py",
+    "_split_sliding.py":             "_split_sliding.py",
+    "_raster_formats.py":            "_raster_formats.py",
+    "_mbtiles_wmts.py":              "_mbtiles_wmts.py",
+    "_mbtiles_lidar.py":             "_mbtiles_lidar.py",
+    "_mbtiles_wmts_helpers.py":      "_mbtiles_wmts_helpers.py",
     "_loader.py":                    "_loader.py",
     "update_app.py":                 "update_app.py",
     "tagmapping-min.xml":            "tagmapping-min.xml",
@@ -142,6 +152,11 @@ REMOVE = [
 def is_rebuild_file(name: str) -> bool:
     return (
         name == "_loader.py"
+        or (name.startswith("_split_") and name.endswith(".py"))
+        or name == "_raster_formats.py"
+        or name == "_mbtiles_wmts.py"
+        or name == "_mbtiles_lidar.py"
+        or name == "_mbtiles_wmts_helpers.py"
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"
         or name.endswith(".entitlements")
