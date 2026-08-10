@@ -2391,7 +2391,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.33.0"
+VERSION      = "1.34.0"
 VERSION_DATE = "2026-08"
 
 
@@ -9680,99 +9680,15 @@ Examples:
     return parser
 
 
-def main():
-    t_debut = time.time()
-    parser = _construire_parser_lidar()
+def _traiter_source_autonome(args):
+    """Gère --source : conversion autonome selon l'extension et le CRS.
 
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(0)
-
-    args = parser.parse_args()
-
-    # Contrat CLI utile et minimal : un workflow explicite + une zone suffit.
-    # Les conversions --source constituent leur propre intention et restent
-    # utilisables sans --lidar. --osm est géré dans ce même parser.
-    if not args.ignlidar and not args.osm and not args.source:
-        parser.error("choose a workflow: --lidar or --osm (or pass --source for a conversion)")
-
-    _valider_contrat_cli_lidar(args, parser)
-
-    _source_ext_cli = Path(args.source).suffix.lower() if args.source else ""
-    if (not _zone_cli_presente(args)
-            and _source_ext_cli not in (".mbtiles",)):
-        parser.error(
-            "one geographic area is required: --zone-city, --zone-gps, "
-            "--zone-bbox, --zone-department, or --zone-region"
-        )
-
-    _appliquer_defauts_cli_lidar(args)
-
-    _valider_zooms(args, parser)
-    _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
-    _appliquer_production_dir(args)   # racine des .tif LAZ (produits)
-    _configurer_cloud_cache(args)     # nuage .laz au cache, .tif en production
-
-    # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
-    # reflétés dans args.ombrages pour que les gates existants (qui testent
-    # la présence d'ombrages demandés) voient ces instances ; au dispatch,
-    # les types couverts par une instance explicite sont RETIRÉS de choix
-    # (sinon ils seraient aussi générés aux params par défaut).
-    args.shading_instances = None
-    if getattr(args, "shading_specs", None):
-        _insts = []
-        for _spec in args.shading_specs:
-            try:
-                _insts.append(parser_shading_spec(_spec))
-            except ValueError as _e_spec:
-                parser.error(f"--shading : {_e_spec}")
-        args.shading_instances = _insts
-        args.ombrages = list(dict.fromkeys(
-            (args.ombrages or []) + [t for t, _ in _insts]))
-
-    # Preset de stack par resolution (opt-in) : ajoute svf/opos/lrm dimensionnes
-    # en metres pour la resolution du provider (+ multi/slope), via le meme
-    # mecanisme d'instances (nommage/cache preserves). Les types couverts par une
-    # instance ne sont pas re-generes aux params par defaut (cf. dispatch).
-    if getattr(args, "shading_preset", None):
-        _pname, _pinsts, _pelev = _resoudre_preset_shading(args.shading_preset, RESOLUTION_M)
-        args.shading_instances = (args.shading_instances or []) + _pinsts
-        args.ombrages = list(dict.fromkeys(
-            (args.ombrages or []) + ["multi", "slope"] + [t for t, _ in _pinsts]))
-        if args.ombrages_elevation is None:
-            args.ombrages_elevation = _pelev
-        _pd = _pinsts[0][1]["dist"]; _ps = _pinsts[2][1]["sigma"]
-        print(f"  Shadings preset '{_pname}' (res {RESOLUTION_M:g} m): "
-              f"svf/opos radius {_pd:g} m, lrm sigma {_ps:g} m, sun "
-              f"{args.ombrages_elevation}°")
-
-    # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
-    if hasattr(PROVIDER, "set_apikey"):
-        PROVIDER.set_apikey(args.apikey)
-
-    # Résolution --formats-fichier → flags booléens
-    _ff = args.formats_fichier
-    args.mbtiles  = "mbtiles"  in _ff
-    args.rmap     = "rmap"     in _ff
-    args.sqlitedb = "sqlitedb" in _ff
-    args.transparent_raster = "transparent-raster" in _ff
-
-    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
-    # Si le pipeline crashe, l'entrée reste → diagnostic facile.
-    _historique_debut()
-
-    _osm_seul = args.osm and not args.telechargement and not args.ombrages and not args.mbtiles
-
-    print("=" * 55)
-    if _osm_seul:
-        print("  OSM vector map")
-    else:
-        print(f"  LiDAR : {PROVIDER.NAME}")
-        print("  Pipeline rasterio + numpy (numba for SVF)")
-    print("=" * 55)
-    print(f"  Folder : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
-    print()
-
+    - .mbtiles : conversion RMAP/SQLiteDB directe, sortie immédiate (sys.exit).
+    - .pbf/.osm : source OSM, laissée dans args.source pour la section --osm
+      plus loin dans main() (aucune sortie ici).
+    - .tif/.tiff : détection CRS (déjà en EPSG:3857 → tuilage direct, sinon
+      warp requis) ; nécessite une zone pour la bbox, résolue par l'appelant
+      (aucune sortie ici non plus)."""
     # ── --source : mode autonome selon l'extension + CRS ────────────────────────
     # .mbtiles → RMAP (requiert --rmap, exit immédiat)
     # .pbf     → OSM  (requiert --osm, injecté dans args.source pour usage ultérieur)
@@ -9841,10 +9757,21 @@ def main():
             print("  Accepted extensions: .tif .tiff .mbtiles .pbf .osm")
             sys.exit(1)
 
-    # -------------------------------------------------------
-    # Sélection de zone → liste de dalles
-    # -------------------------------------------------------
-    # --source .tif nécessite une zone pour la bbox
+
+def _resoudre_zone_lidar(args, _osm_seul):
+    """Résout la zone géographique du run LiDAR/OSM (--lidar/--osm) depuis les
+    5 options --zone-* (region/departement/bbox/gps/city), applique le suffixe
+    de variante provider, calcule la grille (modes ville/gps), puis le sharding
+    --block. Retourne (bbox, nom_zone, cx, cy, blk) : bbox en CRS natif du
+    provider actif (sentinel (0,0,0,0) en mode OSM-seul région, cf. commentaire
+    ci-dessous ; le PBF régional est alors traité entier), cx/cy le centre en
+    CRS natif (0.0, 0.0 si non pertinent : bbox/département/région), blk le
+    résultat de `_parse_block` (None hors --block) redonné à l'appelant qui en
+    a aussi besoin plus loin (marge fixe entre blocs, cf. `_traiter_bbox_lidar`).
+
+    Extrait de main() en 8c : appelé une seule fois, avant --laz-parallel (qui
+    ne lit ni bbox ni nom_zone -- l'ordre relatif des deux n'a pas d'effet,
+    réordonné sans risque pour permettre cette extraction contiguë)."""
     _source_tif_sans_zone = (
         args.source and Path(args.source).suffix.lower() in (".tif", ".tiff") and
         not args.zone_departement and not args.zone_bbox and
@@ -9999,23 +9926,6 @@ def main():
         largeur = args.zone_width or 20.0
         bbox = calculer_grille(cx, cy, largeur / 2.0)
 
-    # --laz-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
-    # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
-    # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
-    # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
-    # OMP=tous, sur une VM multi-coeurs. HISSÉ ICI, avant le branchement découpé :
-    # sinon le return du mode --split-* saute cette config et sérialise TOUT un run
-    # découpé (le pool de download est bien dimensionné L11208, mais _CONV_SEM reste
-    # à 1). Un département SE traite en découpé : c'est là que le bug mordait.
-    if getattr(args, "laz_parallel", 1) and args.laz_parallel > 1:
-        _cores = os.cpu_count() or 1
-        _omp = max(1, _cores // args.laz_parallel)
-        os.environ["OMP_NUM_THREADS"] = str(_omp)
-        from providers import common as _common_par
-        _common_par.set_laz_parallelism(args.laz_parallel)
-        print(f"  LAZ parallel : {args.laz_parallel} conversions simultanees "
-              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.laz_parallel} Go RAM")
-
     # --block i/M : sharding géographique INTER-machines (distinct du découpage
     # interne --split-*). On restreint la bbox du run au i-ème des M blocs (le
     # chemin n_morceaux de _calculer_sous_zones_priori divise le rectangle
@@ -10036,6 +9946,127 @@ def main():
         nom_zone = f"{nom_zone}_b{_bi}"
         print(f"  Block {_bi}/{_bM} ({len(_blocs)} blocs): this run = bbox "
               f"{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f} → project {nom_zone}")
+
+    return bbox, nom_zone, cx, cy, _blk
+
+
+def main():
+    t_debut = time.time()
+    parser = _construire_parser_lidar()
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args()
+
+    # Contrat CLI utile et minimal : un workflow explicite + une zone suffit.
+    # Les conversions --source constituent leur propre intention et restent
+    # utilisables sans --lidar. --osm est géré dans ce même parser.
+    if not args.ignlidar and not args.osm and not args.source:
+        parser.error("choose a workflow: --lidar or --osm (or pass --source for a conversion)")
+
+    _valider_contrat_cli_lidar(args, parser)
+
+    _source_ext_cli = Path(args.source).suffix.lower() if args.source else ""
+    if (not _zone_cli_presente(args)
+            and _source_ext_cli not in (".mbtiles",)):
+        parser.error(
+            "one geographic area is required: --zone-city, --zone-gps, "
+            "--zone-bbox, --zone-department, or --zone-region"
+        )
+
+    _appliquer_defauts_cli_lidar(args)
+
+    _valider_zooms(args, parser)
+    _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
+    _appliquer_production_dir(args)   # racine des .tif LAZ (produits)
+    _configurer_cloud_cache(args)     # nuage .laz au cache, .tif en production
+
+    # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
+    # reflétés dans args.ombrages pour que les gates existants (qui testent
+    # la présence d'ombrages demandés) voient ces instances ; au dispatch,
+    # les types couverts par une instance explicite sont RETIRÉS de choix
+    # (sinon ils seraient aussi générés aux params par défaut).
+    args.shading_instances = None
+    if getattr(args, "shading_specs", None):
+        _insts = []
+        for _spec in args.shading_specs:
+            try:
+                _insts.append(parser_shading_spec(_spec))
+            except ValueError as _e_spec:
+                parser.error(f"--shading : {_e_spec}")
+        args.shading_instances = _insts
+        args.ombrages = list(dict.fromkeys(
+            (args.ombrages or []) + [t for t, _ in _insts]))
+
+    # Preset de stack par resolution (opt-in) : ajoute svf/opos/lrm dimensionnes
+    # en metres pour la resolution du provider (+ multi/slope), via le meme
+    # mecanisme d'instances (nommage/cache preserves). Les types couverts par une
+    # instance ne sont pas re-generes aux params par defaut (cf. dispatch).
+    if getattr(args, "shading_preset", None):
+        _pname, _pinsts, _pelev = _resoudre_preset_shading(args.shading_preset, RESOLUTION_M)
+        args.shading_instances = (args.shading_instances or []) + _pinsts
+        args.ombrages = list(dict.fromkeys(
+            (args.ombrages or []) + ["multi", "slope"] + [t for t, _ in _pinsts]))
+        if args.ombrages_elevation is None:
+            args.ombrages_elevation = _pelev
+        _pd = _pinsts[0][1]["dist"]; _ps = _pinsts[2][1]["sigma"]
+        print(f"  Shadings preset '{_pname}' (res {RESOLUTION_M:g} m): "
+              f"svf/opos radius {_pd:g} m, lrm sigma {_ps:g} m, sun "
+              f"{args.ombrages_elevation}°")
+
+    # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
+    if hasattr(PROVIDER, "set_apikey"):
+        PROVIDER.set_apikey(args.apikey)
+
+    # Résolution --formats-fichier → flags booléens
+    _ff = args.formats_fichier
+    args.mbtiles  = "mbtiles"  in _ff
+    args.rmap     = "rmap"     in _ff
+    args.sqlitedb = "sqlitedb" in _ff
+    args.transparent_raster = "transparent-raster" in _ff
+
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    # Si le pipeline crashe, l'entrée reste → diagnostic facile.
+    _historique_debut()
+
+    _osm_seul = args.osm and not args.telechargement and not args.ombrages and not args.mbtiles
+
+    print("=" * 55)
+    if _osm_seul:
+        print("  OSM vector map")
+    else:
+        print(f"  LiDAR : {PROVIDER.NAME}")
+        print("  Pipeline rasterio + numpy (numba for SVF)")
+    print("=" * 55)
+    print(f"  Folder : {args.dossier or str(DOSSIER_TRAVAIL / LIDAR_SUBDIR)}")
+    print()
+
+    _traiter_source_autonome(args)
+
+    # -------------------------------------------------------
+    # Sélection de zone → liste de dalles
+    # -------------------------------------------------------
+    bbox, nom_zone, cx, cy, _blk = _resoudre_zone_lidar(args, _osm_seul)
+
+    # --laz-parallel N : N conversions LAZ simultanees. On pose OMP_NUM_THREADS
+    # (coeurs/N) AVANT le 1er import CSF (lazy) et on elargit le semaphore de
+    # conversion. Chaque conversion ~3 Go de RAM : c'est a l'utilisateur de tenir
+    # la RAM (N x 3 Go). CSF scale mal en threads -> N conv a OMP=coeurs/N > 1 a
+    # OMP=tous, sur une VM multi-coeurs. HISSÉ ICI, avant le branchement découpé :
+    # sinon le return du mode --split-* saute cette config et sérialise TOUT un run
+    # découpé (le pool de download est bien dimensionné L11208, mais _CONV_SEM reste
+    # à 1). Un département SE traite en découpé : c'est là que le bug mordait.
+    if getattr(args, "laz_parallel", 1) and args.laz_parallel > 1:
+        _cores = os.cpu_count() or 1
+        _omp = max(1, _cores // args.laz_parallel)
+        os.environ["OMP_NUM_THREADS"] = str(_omp)
+        from providers import common as _common_par
+        _common_par.set_laz_parallelism(args.laz_parallel)
+        print(f"  LAZ parallel : {args.laz_parallel} conversions simultanees "
+              f"x {_omp} threads OMP ({_cores} coeurs) — prevoir ~{3*args.laz_parallel} Go RAM")
+
 
     # ── A-priori splitting: traitement séquentiel morceau par morceau ────────
     _cols_pr  = getattr(args, "cols_decoupe", 0) or 0
@@ -12757,32 +12788,11 @@ Examples:
     return parser
 
 
-def main_wmts():
-    t_debut = time.time()
-    parser = _construire_parser_wmts()
-
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(0)
-
-    args = parser.parse_args()
-    if not args.source and not _zone_cli_presente(args):
-        parser.error(
-            "one geographic area is required: --zone-city, --zone-gps, "
-            "--zone-bbox, --zone-department, or --zone-region"
-        )
-    _valider_zooms(args, parser)
-    _appliquer_cache_dir(args)   # avant le cache WMTS ign_raster
-    # Résolution --formats-fichier → flags booléens
-    _ff = args.formats_fichier
-    args.mbtiles  = "mbtiles"  in _ff
-    args.rmap     = "rmap"     in _ff
-    args.sqlitedb = "sqlitedb" in _ff
-    args.transparent_raster = "transparent-raster" in _ff
-
-    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
-    _historique_debut()
-
+def _traiter_source_wmts(args):
+    """Gère --source pour le workflow raster WMTS (--raster) : conversion
+    autonome d'un .mbtiles existant vers RMAP/SQLiteDB, sortie immédiate
+    (sys.exit). Jumeau simplifié de `_traiter_source_autonome` (pas de TIF ni
+    de PBF côté WMTS) : ne rien faire si `args.source` est vide."""
     # ── --source : conversion autonome MBTiles → RMAP (exit immédiat) ────────
     if args.source:
         p = Path(args.source)
@@ -12809,11 +12819,14 @@ def main_wmts():
                                 statut=("ok" if _conv_ok else "ko"))
         sys.exit(0 if _conv_ok else 1)
 
-    # ── Normalisation des sorties ────────────────────────────────────────────
-    # Si aucune sortie explicite → MBTiles par défaut
-    if not args.mbtiles and not args.rmap and not args.sqlitedb:
-        args.mbtiles = True
 
+def _resoudre_couche_wmts(args):
+    """Résout la couche WMTS demandée (alias court ou identifiant complet)
+    et plafonne les zooms selon les capacités réelles de la couche
+    (GetCapabilities IGN ou table XYZ). Mute `args.zoom_min`/`args.zoom_max`
+    (pour que `_traiter_bbox_wmts` hérite des bornes capées côté split) et
+    retourne (layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max)
+    pour le reste de `main_wmts()`."""
     # ── Résolution de la couche ───────────────────────────────────────────────
     # --couche peut être un alias court (planign) ou un identifiant complet
     # (GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2). Si absent → planign par défaut.
@@ -12873,6 +12886,45 @@ def main_wmts():
             zoom_min = _zmin_reel
             zoom_max = max(zoom_max, zoom_min)
     args.zoom_min, args.zoom_max = zoom_min, zoom_max
+
+    return layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max
+
+
+def main_wmts():
+    t_debut = time.time()
+    parser = _construire_parser_wmts()
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    args = parser.parse_args()
+    if not args.source and not _zone_cli_presente(args):
+        parser.error(
+            "one geographic area is required: --zone-city, --zone-gps, "
+            "--zone-bbox, --zone-department, or --zone-region"
+        )
+    _valider_zooms(args, parser)
+    _appliquer_cache_dir(args)   # avant le cache WMTS ign_raster
+    # Résolution --formats-fichier → flags booléens
+    _ff = args.formats_fichier
+    args.mbtiles  = "mbtiles"  in _ff
+    args.rmap     = "rmap"     in _ff
+    args.sqlitedb = "sqlitedb" in _ff
+    args.transparent_raster = "transparent-raster" in _ff
+
+    # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
+    _historique_debut()
+
+    _traiter_source_wmts(args)
+
+    # ── Normalisation des sorties ────────────────────────────────────────────
+    # Si aucune sortie explicite → MBTiles par défaut
+    if not args.mbtiles and not args.rmap and not args.sqlitedb:
+        args.mbtiles = True
+
+    layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max = (
+        _resoudre_couche_wmts(args))
 
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
     lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)

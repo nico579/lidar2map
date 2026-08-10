@@ -1,6 +1,6 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 10 août 2026 (phase 8 en cours, sous-phase 8a).
+Dernière mise à jour : 10 août 2026 (phase 8 en cours, sous-phase 8d).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -126,7 +126,7 @@ n'avaient qu'un seul point d'entrée chacune.
 | 5. Runner classique | Terminée | `_run_split_priori` extrait dans `_split_runner.py` avec ses dépendances explicites | reprise, overwrite, hors couverture, échec partiel |
 | 6. Runner glissant | Terminée | Ordonnancement ombrage/tuilage, voisinage 3×3 et purge différée extraits dans `_split_sliding.py` | reprise après perte d’un livrable, préchargement et coutures |
 | 7. Pipelines raster | **Terminée** | Conversions RMAP/SQLiteDB, producteur MBTiles WMTS, producteur MBTiles LiDAR et helpers WMTS extraits | tuilage, publications atomiques et formats multiples |
-| 8. Points d’entrée | En cours | Parser argparse extrait en fonctions dédiées pour `main()` et `main_wmts()` ; reste : finalisation des args et corps de dispatch | tests d’historique monolithique et CLI |
+| 8. Points d’entrée | En cours | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; reste : corps de dispatch | tests d’historique monolithique et CLI |
 
 ## Travail déjà sécurisé
 
@@ -581,24 +581,133 @@ puis vérifie que l'émprise clippée correspond exactement à la zone demandée
 stricte à la zone). Profils `scientific` (397,8 s) et `fast` (157,1 s)
 complets, tous verts.
 
+### Sous-phase 8b : `--source` extrait (terminée)
+
+En relisant le corps de `main()` pour scoper 8b, la « finalisation des args »
+que j'avais envisagée s'est révélée être en réalité le cœur métier de
+`main()` : résolution de la zone géographique sur 5 branches
+(`--zone-region`/`--zone-department`/`--zone-bbox`/`--zone-gps`/`--zone-city`),
+conversions CRS, `--block`, décision split/non-split — truffé de `sys.exit()`
+conditionnels et de variables (`bbox`, `nom_zone`, `cx`, `cy`) posées
+différemment selon la branche puis réutilisées plus loin. Une erreur de
+recopie y corromprait silencieusement la zone traitée, pas juste un test.
+Ce n'est plus une extraction mécanique comme 8a : reportée (cf. « Reste à
+faire » ci-dessous), le temps d'un tour de conception dédié plutôt que de la
+faire vite sur du code qui décide silencieusement ce qui est traité.
+
+8b s'est donc scopée sur un sous-bloc réellement isolé et sans risque
+équivalent : le traitement de `--source` (conversion autonome MBTiles→RMAP/
+SQLiteDB, détection CRS d'un TIF, relais PBF/OSM), 66 lignes, extrait tel
+quel dans `_traiter_source_autonome(args)`. Contrairement à la résolution de
+zone, ce bloc ne lit ni n'écrit `bbox`/`nom_zone`/`cx`/`cy` (la zone n'est pas
+encore résolue à ce point) : sa seule interface avec le reste de `main()` est
+`args` lui-même et des `sys.exit()` directs, aucune dépendance croisée.
+
+- **Bug pré-existant caractérisé, pas corrigé** : un `--source zone.tif`
+  pointant vers un fichier absent affiche « Recompute from tiles... » (laissant
+  entendre que le run continue sans source) puis tombe quand même dans la
+  branche « unrecognised extension » et sort en code 1 — `ext` devient `""`
+  après `args.source = None`, ce qui ne correspond à aucune branche du
+  `if/elif`. Existait avant 8b, non introduit par l'extraction. Caractérisé
+  par `test_missing_tif_source_exits_despite_recompute_message` pour que
+  l'extraction ne le fasse pas dériver ; un vrai correctif reste un changement
+  de comportement séparé, pas fait ici par discipline de périmètre.
+- Validation : 11 nouveaux contrats (`SourceAutonomeContractTests`) couvrant
+  les 4 extensions (`.mbtiles`, `.pbf`/`.osm`, `.tif`/`.tiff`, inconnue), les
+  codes de sortie, et le quirk ci-dessus ; CLI réel (`--version`, erreur
+  `--source` inexistant) ; 39 contrats de façade au total, profils `fast`
+  (26,5 s) et `scientific` (81,1 s) complets, tous verts. Ruff propre.
+
+### Sous-phase 8c : résolution de zone extraite (terminée)
+
+La pièce que j'avais reportée en 8b (5 branches --zone-*, --block, ~190 lignes,
+interdépendances `bbox`/`nom_zone`/`cx`/`cy`) est extraite dans
+`_resoudre_zone_lidar(args, _osm_seul)`, qui retourne
+`(bbox, nom_zone, cx, cy, blk)`.
+
+**Deux bugs trouvés par relecture et par ruff avant tout test, corrigés avant
+publication :**
+
+1. Le corps déplacé référence `_osm_seul` (nom de variable historique dans
+   `main()`), mais le paramètre de la nouvelle fonction avait été nommé
+   `osm_seul` (sans underscore) lors de la rédaction de la signature —
+   `NameError` certain à l'exécution, invisible à la compilation (Python ne
+   vérifie pas les noms statiquement). Trouvé en relisant le corps généré
+   avant de lancer le moindre test. Corrigé en renommant le paramètre
+   `_osm_seul` pour matcher le corps déplacé tel quel.
+2. `_blk` (résultat de `_parse_block`, calculé en toute fin du bloc extrait)
+   est réutilisé PLUS LOIN dans `main()`, dans le dispatch a-priori
+   (`if _blk:` conditionne la marge fixe entre blocs voisins,
+   `_traiter_bbox_lidar`) — un usage que je n'avais pas repéré en découpant
+   les bornes du bloc à extraire. `ruff check` (F821 : nom non défini) l'a
+   détecté immédiatement après le premier passage, avant tout test aussi.
+   Corrigé en ajoutant `blk` comme 5ᵉ valeur de retour, recapturée par
+   l'appelant.
+
+Ces deux bugs valident la prudence prise en 8b (ne pas extraire sans
+caractérisation) : une extraction en apparence mécanique sur du code aussi
+interdépendant produit des bugs runtime silencieux, que seule une relecture
+attentive + linter + tests dédiés attrapent — aucun des deux n'aurait été vu
+par `py_compile` seul.
+
+- Validation : CLI réel (mode bbox complet, jusqu'au téléchargement de
+  tuiles réelles — bbox/aire/nom de zone corrects, interrompu volontairement
+  une fois le comportement confirmé pour ne pas télécharger pour rien) ; 23
+  nouveaux contrats (`ResolutionZoneContractTests`) couvrant les 5 branches
+  (succès + échecs caractéristiques de chacune), le suffixe de variante
+  provider, le calcul largeur/grille (mode ville/gps uniquement), le sharding
+  `--block` (narrowing + suffixe + skip en mode OSM-seul) ; géocodeurs réseau
+  (`geocoder_region`/`geocoder_departement`/`geocoder_ville_natif`) mockés,
+  conversions CRS pures non mockées (déterministes, déjà couvertes ailleurs).
+  62 contrats de façade au total, profils `fast` (41,4 s) et `scientific`
+  (119,5 s) complets, tous verts. Ruff propre.
+- `main()` passe de ~1157 à ~922 lignes de corps propre (8a+8b+8c cumulés :
+  1407 → 922, soit -34 %, sans bouger l'indicateur de volume sorti du
+  monolithe puisque ces fonctions restent dans `lidar2map.py` par design,
+  cf. plus haut).
+
+### Sous-phase 8d : `main_wmts()` allégée (terminée)
+
+Équivalent de 8b+8c côté point d'entrée `--raster`. Contrairement à `main()`,
+`main_wmts()` partageait déjà `_resoudre_zone_wgs84(args)` avec `main_wfs()`
+(extrait bien avant cette phase) : pas de bloc de résolution de zone à
+démêler ici. Deux extractions plus ciblées :
+
+- `_traiter_source_wmts(args)` (25 lignes) : jumeau simplifié de
+  `_traiter_source_autonome` (8b) — conversion `.mbtiles`→RMAP/SQLiteDB
+  uniquement (pas de cas TIF/PBF côté WMTS).
+- `_resoudre_couche_wmts(args)` (59 lignes) : résolution de l'alias/identifiant
+  de couche IGN (`layer`/`style`/`img_fmt`/`apikey_requis`/`fmt_ext`) et
+  plafonnement des zooms selon les capacités réelles (GetCapabilities ou table
+  XYZ), avec mutation de `args.zoom_min`/`args.zoom_max` pour que
+  `_traiter_bbox_wmts` hérite des bornes capées côté split.
+
+`main_wmts()` : 342 → 261 lignes (-24 %). Aucun bug d'extraction cette fois
+(contrairement à 8c) : le bloc est resté correctement délimité au premier
+passage, confirmé par `ruff` propre immédiatement.
+
+- Validation : run CLI réel bout-en-bout (`--raster --layer planign
+  --zone-bbox ... --zoom-min 8 --zoom-max 10`, 3 tuiles téléchargées, MBTiles
+  + planche produits) ; 12 nouveaux contrats
+  (`SourceEtCoucheWmtsContractTests`) couvrant les erreurs `--source`, la
+  résolution d'alias/identifiant direct, le plafonnement de zoom (rétréci,
+  no-op, bornes inversées normalisées) ; 74 contrats de façade au total,
+  profils `fast` (26,4 s) et `scientific` (79,9 s) complets, tous verts. Ruff
+  propre.
+
 ### Reste à faire en phase 8
 
-- **Finalisation des args** : après `parser.parse_args()`, `main()` enchaîne
-  ~350 lignes de validation/dérivation (`_valider_contrat_cli_lidar`,
-  résolution `--shading`/`--shading-preset`, flags `--file-formats`, etc.) avant
-  d'atteindre le corps d'orchestration. Prochaine sous-phase candidate : isoler
-  ce bloc dans une fonction `_finaliser_args_lidar(args, parser)`, plus risqué
-  que 8a car il a des effets de bord (`parser.error`, mutation d'`args`, prints).
-- **Corps de dispatch** : ce qui doit *rester* dans `main()`/`main_wmts()` une
-  fois 8a/8b faits — l'enchaînement `_run_split_priori(...)`,
-  `generer_mbtiles_lidar(...)`, `generer_geojson_osm(...)`, etc. C'est la
-  vraie « orchestration » visée par le nom de la phase.
+- **Corps de dispatch** : ce qui doit *rester* dans `main()`/`main_wmts()` —
+  l'enchaînement `_run_split_priori(...)`, `generer_mbtiles_lidar(...)`,
+  `generer_mbtiles_wmts(...)`, `generer_geojson_osm(...)`, etc. C'est la vraie
+  « orchestration » visée par le nom de la phase ; à ce stade `main()` et
+  `main_wmts()` en sont déjà proches (parsing, --source, résolution de
+  zone/couche tous extraits).
 - **Dette des jumeaux WMTS** (identifiée en phase 7c) : `main_wmts()` et
   `_traiter_bbox_wmts()` construisent tous deux le nom du MBTiles et la
   qualité de sortie via `_nom_mbtiles_wmts` et `_jpeg_quality_sortie`. Ces deux
   jumeaux avaient déjà divergé une fois (R2#14, R2#18) ; leur source de vérité
-  commune est en place mais leur appelant ne l'est pas. À traiter quand le
-  corps de `main_wmts()` sera retouché.
+  commune est en place mais leur appelant ne l'est pas.
 - `main_decouper()`, `main_wfs()`, `main_fusionner()`, `main_serve()` n'ont pas
   été audités pour un parser aussi volumineux ; à vérifier avant de les
   considérer hors périmètre de la phase 8.

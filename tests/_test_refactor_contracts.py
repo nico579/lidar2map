@@ -460,6 +460,454 @@ class WmtsDownloadFacadeContractTests(unittest.TestCase):
         self.assertEqual(deps.http_ua, L._HTTP_UA)
 
 
+class SourceAutonomeContractTests(unittest.TestCase):
+    """Caractérise `_traiter_source_autonome`, extraite de `main()` en 8b.
+
+    Extraction mécanique (aucun changement de comportement visé) : ces tests
+    verrouillent le comportement observé AVANT l'extraction pour détecter toute
+    dérive, y compris les quirks pré-existants qui ne sont pas corrigés ici.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_no_source_is_a_no_op(self):
+        args = SimpleNamespace(source=None)
+        self.assertIsNone(L._traiter_source_autonome(args))
+        self.assertIsNone(args.source)
+
+    def test_missing_non_tif_source_exits_with_error(self):
+        args = SimpleNamespace(source=str(self.tmp / "absent.mbtiles"))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_missing_tif_source_exits_despite_recompute_message(self):
+        """Quirk PRÉ-EXISTANT (non introduit par 8b, non corrigé ici) : le
+        message « Recompute from tiles... » laisse entendre que le run continue
+        sans --source, mais `ext` devient "" après `args.source = None` et tombe
+        dans la branche « unrecognised extension » → sys.exit(1) quand même.
+        Caractérisé tel quel pour que l'extraction ne dérive pas ce comportement
+        au passage ; un vrai correctif est un changement de comportement séparé."""
+        args = SimpleNamespace(source=str(self.tmp / "absent.tif"))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertIsNone(args.source)
+
+    def test_unreadable_extension_exits_with_error(self):
+        f = self.tmp / "notes.txt"
+        f.write_text("x", encoding="utf-8")
+        args = SimpleNamespace(source=str(f))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_mbtiles_source_without_output_format_exits_with_error(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = SimpleNamespace(source=str(f), rmap=False, sqlitedb=False)
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_mbtiles_source_converts_and_exits_zero_on_success(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = SimpleNamespace(source=str(f), rmap=True, sqlitedb=True)
+        with mock.patch.object(
+            L, "generer_rmap_depuis_mbtiles", return_value=Path("zone.rmap"),
+        ) as rmap_impl, mock.patch.object(
+            L, "generer_sqlitedb_depuis_mbtiles", return_value=Path("zone.sqlitedb"),
+        ) as sqlitedb_impl, mock.patch.object(
+            L, "_historique_depuis_argv",
+        ) as hist:
+            with self.assertRaises(SystemExit) as ctx:
+                L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 0)
+        rmap_impl.assert_called_once_with(f, ecraser=True)
+        sqlitedb_impl.assert_called_once_with(f, ecraser=True)
+        hist.assert_called_once()
+        self.assertEqual(hist.call_args.kwargs.get("statut"), "ok")
+
+    def test_mbtiles_source_conversion_failure_exits_nonzero(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = SimpleNamespace(source=str(f), rmap=True, sqlitedb=False)
+        with mock.patch.object(
+            L, "generer_rmap_depuis_mbtiles", return_value=None,
+        ), mock.patch.object(L, "_historique_depuis_argv") as hist:
+            with self.assertRaises(SystemExit) as ctx:
+                L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertEqual(hist.call_args.kwargs.get("statut"), "ko")
+
+    def test_pbf_source_without_osm_flag_exits_with_error(self):
+        f = self.tmp / "region.pbf"
+        f.write_bytes(b"fake")
+        args = SimpleNamespace(source=str(f), osm=False)
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_autonome(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_pbf_source_with_osm_flag_passes_through_unchanged(self):
+        f = self.tmp / "region.pbf"
+        f.write_bytes(b"fake")
+        args = SimpleNamespace(source=str(f), osm=True)
+        self.assertIsNone(L._traiter_source_autonome(args))
+        self.assertEqual(args.source, str(f))
+
+    def test_tif_source_epsg3857_marks_already_warped(self):
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+        f = self.tmp / "warped.tif"
+        with rasterio.open(str(f), "w", driver="GTiff", dtype="uint8", count=1,
+                           height=4, width=4, crs="EPSG:3857",
+                           transform=from_origin(0, 0, 1, 1)) as ds:
+            ds.write(np.zeros((4, 4), dtype=np.uint8), 1)
+        args = SimpleNamespace(source=str(f))
+        self.assertIsNone(L._traiter_source_autonome(args))
+        self.assertTrue(args._source_already_warped)
+
+    def test_tif_source_other_crs_requires_warp(self):
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+        f = self.tmp / "natif.tif"
+        with rasterio.open(str(f), "w", driver="GTiff", dtype="uint8", count=1,
+                           height=4, width=4, crs="EPSG:2154",
+                           transform=from_origin(900000, 6250000, 1, 1)) as ds:
+            ds.write(np.zeros((4, 4), dtype=np.uint8), 1)
+        args = SimpleNamespace(source=str(f))
+        self.assertIsNone(L._traiter_source_autonome(args))
+        self.assertFalse(args._source_already_warped)
+
+
+class SourceEtCoucheWmtsContractTests(unittest.TestCase):
+    """Caractérise `_traiter_source_wmts` et `_resoudre_couche_wmts`, extraites
+    de `main_wmts()` (jumeau de 8b/8c pour le point d'entrée `--raster`)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _args_source(self, **kw):
+        base = dict(source=None, rmap=False, sqlitedb=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_source_no_op_when_absent(self):
+        self.assertIsNone(L._traiter_source_wmts(self._args_source()))
+
+    def test_source_missing_file_exits_with_error(self):
+        args = self._args_source(source=str(self.tmp / "absent.mbtiles"))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_wmts(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_source_wrong_extension_exits_with_error(self):
+        f = self.tmp / "notes.txt"
+        f.write_text("x", encoding="utf-8")
+        args = self._args_source(source=str(f))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_wmts(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_source_without_output_format_exits_with_error(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = self._args_source(source=str(f))
+        with self.assertRaises(SystemExit) as ctx:
+            L._traiter_source_wmts(args)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_source_converts_and_exits_zero_on_success(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = self._args_source(source=str(f), rmap=True, sqlitedb=True)
+        with mock.patch.object(
+            L, "generer_rmap_depuis_mbtiles", return_value=Path("zone.rmap"),
+        ) as rmap_impl, mock.patch.object(
+            L, "generer_sqlitedb_depuis_mbtiles", return_value=Path("zone.sqlitedb"),
+        ) as sqlitedb_impl, mock.patch.object(L, "_historique_depuis_argv") as hist:
+            with self.assertRaises(SystemExit) as ctx:
+                L._traiter_source_wmts(args)
+        self.assertEqual(ctx.exception.code, 0)
+        rmap_impl.assert_called_once_with(f, ecraser=True)
+        sqlitedb_impl.assert_called_once_with(f, ecraser=True)
+        self.assertEqual(hist.call_args.kwargs.get("statut"), "ok")
+
+    def test_source_conversion_failure_exits_nonzero(self):
+        f = self.tmp / "zone.mbtiles"
+        f.write_bytes(b"fake")
+        args = self._args_source(source=str(f), rmap=True)
+        with mock.patch.object(
+            L, "generer_rmap_depuis_mbtiles", return_value=None,
+        ), mock.patch.object(L, "_historique_depuis_argv") as hist:
+            with self.assertRaises(SystemExit) as ctx:
+                L._traiter_source_wmts(args)
+        self.assertEqual(ctx.exception.code, 1)
+        self.assertEqual(hist.call_args.kwargs.get("statut"), "ko")
+
+    def _args_couche(self, **kw):
+        base = dict(couche=None, formats_image="auto", zoom_min=10,
+                    zoom_max=15, apikey="")
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_default_couche_resolves_to_planign(self):
+        args = self._args_couche()
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
+            layer, style, img_fmt, apikey_requis, fmt_ext, zmin, zmax = (
+                L._resoudre_couche_wmts(args))
+        self.assertEqual(args.couche, "planign")
+        self.assertEqual(layer, "GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2")
+        self.assertEqual(fmt_ext, "png")
+        self.assertFalse(apikey_requis)
+
+    def test_known_alias_resolves_from_couches_table(self):
+        args = self._args_couche(couche="ortho")
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
+            layer, style, img_fmt, apikey_requis, fmt_ext, zmin, zmax = (
+                L._resoudre_couche_wmts(args))
+        self.assertEqual(layer, L.COUCHES["ortho"][0])
+        self.assertEqual(fmt_ext, "jpg")
+
+    def test_direct_layer_identifier_infers_format_and_apikey(self):
+        args = self._args_couche(couche="GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN100")
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
+            layer, style, img_fmt, apikey_requis, fmt_ext, zmin, zmax = (
+                L._resoudre_couche_wmts(args))
+        self.assertEqual(layer, "GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN100")
+        self.assertTrue(apikey_requis)   # "MAPS" déclenche apikey_requis
+        self.assertEqual(fmt_ext, "jpg")  # "MAPS" déclenche aussi le format JPEG
+
+    def test_zoom_capping_narrows_to_layer_capabilities(self):
+        args = self._args_couche(couche="planign", zoom_min=5, zoom_max=20)
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=(8, 18)):
+            *_, zmin, zmax = L._resoudre_couche_wmts(args)
+        self.assertEqual((zmin, zmax), (8, 18))
+        self.assertEqual((args.zoom_min, args.zoom_max), (8, 18))
+
+    def test_zoom_capping_noop_when_capabilities_unavailable(self):
+        args = self._args_couche(couche="planign", zoom_min=5, zoom_max=20)
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
+            *_, zmin, zmax = L._resoudre_couche_wmts(args)
+        self.assertEqual((zmin, zmax), (5, 20))
+
+    def test_zoom_min_max_normalized_when_swapped(self):
+        args = self._args_couche(couche="planign", zoom_min=15, zoom_max=10)
+        with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
+            *_, zmin, zmax = L._resoudre_couche_wmts(args)
+        self.assertEqual((zmin, zmax), (10, 15))
+
+
+class ResolutionZoneContractTests(unittest.TestCase):
+    """Caractérise `_resoudre_zone_lidar`, extraite de `main()` en 8c.
+
+    Les 5 branches --zone-* et le sharding --block sont interdépendants
+    (bbox/nom_zone/cx/cy réutilisés d'une section à l'autre) : contrairement à
+    8a/8b, une erreur de recopie ici corromprait silencieusement la zone
+    traitée plutôt que de casser un test. Les géocodeurs réseau
+    (`geocoder_region`/`geocoder_departement`/`geocoder_ville_natif`) sont
+    mockés ; les conversions CRS pures (`_wgs84_vers_natif`,
+    `_bbox_enveloppe_transform`, `calculer_grille_bbox`, `calculer_grille`)
+    tournent réellement (déterministes, sans réseau, déjà couvertes ailleurs).
+    """
+
+    def _args(self, **kw):
+        base = dict(
+            source=None, zone_departement=None, zone_bbox=None,
+            zone_ville=None, zone_gps=None, zone_region=None,
+            zone_nom=None, zone_width=None, block="",
+        )
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    def test_no_zone_option_exits_with_error(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(self._args(), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_source_tif_without_zone_exits_with_error(self):
+        args = self._args(source="dem.tif")
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(args, False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_departement_mode_resolves_bbox_and_name(self):
+        with mock.patch.object(
+            L, "geocoder_departement",
+            return_value=("Var", 900000, 6200000, 950000, 6250000),
+        ):
+            bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+                self._args(zone_departement="83"), False)
+        self.assertEqual(nom_zone, "var_83")
+        self.assertIsNone(blk)
+        # calculer_grille_bbox (LiDAR, non osm_seul) borne un carré >= l'enveloppe.
+        self.assertLessEqual(bbox[0], 900000)
+        self.assertGreaterEqual(bbox[2], 950000)
+
+    def test_departement_mode_osm_seul_uses_raw_department_bbox(self):
+        with mock.patch.object(
+            L, "geocoder_departement",
+            return_value=("Var", 900000, 6200000, 950000, 6250000),
+        ):
+            bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+                self._args(zone_departement="83"), True)
+        self.assertEqual(bbox, (900000, 6200000, 950000, 6250000))
+
+    def test_departement_mode_geocoder_failure_exits(self):
+        with mock.patch.object(L, "geocoder_departement",
+                               return_value=(None, 0, 0, 0, 0)):
+            with self.assertRaises(SystemExit) as ctx:
+                L._resoudre_zone_lidar(self._args(zone_departement="999"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_region_mode_lidar_geocodes_union_bbox(self):
+        with mock.patch.object(
+            L, "geocoder_region",
+            return_value=("Provence-Alpes-Côte d'Azur", 800000, 6100000,
+                         1000000, 6300000),
+        ) as geocode:
+            bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+                self._args(zone_region="paca"), False)
+        geocode.assert_called_once()
+        self.assertEqual(nom_zone, "paca")
+
+    def test_region_mode_osm_seul_skips_geocoding_uses_sentinel(self):
+        with mock.patch.object(L, "_regions_disponibles",
+                               return_value=["paca"]), \
+             mock.patch.object(L, "geocoder_region") as geocode:
+            bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+                self._args(zone_region="paca"), True)
+        geocode.assert_not_called()
+        self.assertEqual(bbox, (0.0, 0.0, 0.0, 0.0))
+
+    def test_region_mode_osm_seul_unknown_region_exits(self):
+        with mock.patch.object(L, "_regions_disponibles", return_value=["paca"]):
+            with self.assertRaises(SystemExit) as ctx:
+                L._resoudre_zone_lidar(self._args(zone_region="atlantide"), True)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_bbox_mode_valid_converts_crs_and_centers(self):
+        bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.0,43.3,6.1,43.4"), False)
+        self.assertIsNotNone(bbox)
+        self.assertNotEqual((cx, cy), (0.0, 0.0))
+        self.assertIsNone(blk)
+
+    def test_bbox_mode_swapped_corners_are_reordered_not_rejected(self):
+        # W,S,E,N inversé (E,N,W,S) : le code réordonne au lieu d'exiger la
+        # bonne convention (message d'aide séparé côté producteur WMTS, R2#17).
+        bbox_ok, _, _, _, _ = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.0,43.3,6.1,43.4"), False)
+        bbox_swapped, _, _, _, _ = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.1,43.4,6.0,43.3"), False)
+        self.assertEqual(bbox_ok, bbox_swapped)
+
+    def test_bbox_mode_invalid_format_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(self._args(zone_bbox="not,a,bbox"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_bbox_mode_degenerate_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(
+                self._args(zone_bbox="6.0,43.3,6.0,43.4"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_bbox_mode_out_of_range_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(
+                self._args(zone_bbox="600.0,43.3,601.0,43.4"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_gps_mode_valid_converts_to_native_crs(self):
+        bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+            self._args(zone_gps="43.3156,6.0423", zone_width=5.0), False)
+        self.assertNotEqual((cx, cy), (0.0, 0.0))
+        self.assertIsNotNone(bbox)
+
+    def test_gps_mode_invalid_format_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(self._args(zone_gps="invalid"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_gps_mode_out_of_range_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(self._args(zone_gps="200.0,6.0"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_city_mode_resolves_via_geocoder(self):
+        with mock.patch.object(L, "geocoder_ville_natif",
+                               return_value=(920000, 6230000)):
+            bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+                self._args(zone_ville="gareoult", zone_width=5.0), False)
+        self.assertEqual((cx, cy), (920000, 6230000))
+        self.assertEqual(nom_zone, "gareoult")
+
+    def test_city_mode_geocoder_failure_exits(self):
+        with mock.patch.object(L, "geocoder_ville_natif",
+                               return_value=(None, None)):
+            with self.assertRaises(SystemExit) as ctx:
+                L._resoudre_zone_lidar(self._args(zone_ville="nulle_part"), False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_city_mode_width_grid_uses_zone_width_or_20km_default(self):
+        with mock.patch.object(L, "geocoder_ville_natif",
+                               return_value=(920000, 6230000)), \
+             mock.patch.object(L, "calculer_grille") as grille:
+            grille.return_value = (0, 0, 1, 1)
+            L._resoudre_zone_lidar(
+                self._args(zone_ville="gareoult", zone_width=None), False)
+        grille.assert_called_once_with(920000, 6230000, 10.0)   # 20/2 par défaut
+
+    def test_variant_tag_suffixes_zone_name(self):
+        ancien_provider = L.PROVIDER
+        try:
+            L.PROVIDER = SimpleNamespace(
+                CRS_NATIF=ancien_provider.CRS_NATIF,
+                variant_tag=lambda: "laz",
+            )
+            with mock.patch.object(L, "geocoder_ville_natif",
+                                   return_value=(920000, 6230000)):
+                _, nom_zone, _, _, _ = L._resoudre_zone_lidar(
+                    self._args(zone_ville="gareoult", zone_width=5.0), False)
+        finally:
+            L.PROVIDER = ancien_provider
+        self.assertTrue(nom_zone.endswith("_laz"))
+
+    def test_block_sharding_narrows_bbox_and_suffixes_name(self):
+        bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.0,43.3,6.4,43.7", block="1/4"), False)
+        self.assertEqual(blk, (1, 4))
+        self.assertTrue(nom_zone.endswith("_b1"))
+        # Le bloc est un quart de l'emprise totale (partition par ligne/colonne).
+        largeur_bloc = bbox[2] - bbox[0]
+        with_no_block, _, _, _, _ = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.0,43.3,6.4,43.7"), False)
+        largeur_totale = with_no_block[2] - with_no_block[0]
+        self.assertLess(largeur_bloc, largeur_totale)
+
+    def test_block_invalid_spec_exits(self):
+        with self.assertRaises(SystemExit) as ctx:
+            L._resoudre_zone_lidar(
+                self._args(zone_bbox="6.0,43.3,6.1,43.4", block="not-a-block"),
+                False)
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_block_skipped_when_osm_seul(self):
+        bbox, nom_zone, cx, cy, blk = L._resoudre_zone_lidar(
+            self._args(zone_bbox="6.0,43.3,6.1,43.4", block="1/4"), True)
+        self.assertEqual(blk, (1, 4))          # parsé et retourné...
+        self.assertFalse(nom_zone.endswith("_b1"))   # ...mais pas appliqué
+
+
 class RasterFormatFacadeContractTests(unittest.TestCase):
     def test_rmap_facade_injects_current_atomic_services(self):
         expected = object()
