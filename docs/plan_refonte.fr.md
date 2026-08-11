@@ -1,6 +1,6 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 11 août 2026 (phase 9 terminée à ce niveau de risque, sous-phase 9d).
+Dernière mise à jour : 11 août 2026 (phase 9 terminée, déployée en v1.35.0 ; état des lieux et candidats pour la phase 10 ajoutés).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -136,6 +136,7 @@ n'avaient qu'un seul point d'entrée chacune.
 | 6. Runner glissant | Terminée | Ordonnancement ombrage/tuilage, voisinage 3×3 et purge différée extraits dans `_split_sliding.py` | reprise après perte d’un livrable, préchargement et coutures |
 | 7. Pipelines raster | **Terminée** | Conversions RMAP/SQLiteDB, producteur MBTiles WMTS, producteur MBTiles LiDAR et helpers WMTS extraits | tuilage, publications atomiques et formats multiples |
 | 8. Points d’entrée | **Terminée** | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; corps de dispatch déjà atteint ; autres points d'entrée audités, extraction non justifiée | tests d’historique monolithique et CLI |
+| 9. Bloc ombrages/COG | **Terminée** | IO raster + kernels numba + algorithmes par type (9b), fetch provider + composites VAT/MSTP (9c), types/presets/parsing (9d) ; `generer_ombrages` volontairement laissée en orchestrateur | `_test_corrections.py`, 83 contrats de façade, profils `fast`/`scientific` |
 
 ## Travail déjà sécurisé
 
@@ -960,4 +961,55 @@ par type (9b), fetch provider et composites (9c), types/presets/parsing
 (9d). Il ne reste que `generer_ombrages` elle-même, volontairement laissée en
 l'état (voir ci-dessus). Sauf décision de caractériser cet orchestrateur en
 profondeur, la phase 9 est considérée terminée à ce niveau de risque
-acceptable.
+acceptable. Déployée en **v1.35.0** (11 août 2026).
+
+Déployé : bump `VERSION` 1.34.0 → 1.35.0, `deploy.py --new-tag`, tag
+`v1.35.0` poussé, `release.yml` déclenché (build Windows/macOS×2/Linux).
+
+## Phase 10 (candidats) : état des lieux post-phase 9
+
+`lidar2map.py` compte encore 15 895 lignes. Relevé frais des sections
+délimitées par des bannières `# ====`, avec un premier tri par nombre de
+fonctions top-level (proxy rapide de couplage : peu de fonctions sur
+beaucoup de lignes = probablement une poignée de blocs continus, pas des
+briques indépendantes) :
+
+| Section | Lignes | Fonctions top-level | Profil |
+|---|---:|---:|---|
+| Installation automatique des dépendances (bootstrap) | 1 348 | 30 | nombreuses petites fonctions, plausiblement indépendantes |
+| Génération RMAP (osmosis/JRE/mapwriter + pipeline) | 2 571 | 38 | mélange : téléchargement d'outils (indépendant) + pipeline de génération (couplé) |
+| Découpage à priori — fonctions utilitaires | 2 214 | 45 | déjà identifié comme couplé au runner de split (`_split_runner.py`), risque connu |
+| Conversion GeoJSON IGN → OSM XML → Mapsforge .map | 1 128 | 31 | géométrie/rendu, forte densité de petites fonctions (clip, projection) — bon candidat |
+| Téléchargement bulk BD TOPO IGN (département entier) | 853 | 12 | peu de fonctions, blocs plus longs, à lire avant de trancher |
+| Pipeline fusion GeoJSON | 653 | 22 | contient son propre parsing CLI (`main_fusionner`), potentiellement autonome |
+| Interface graphique (PyWebView) | 1 821 | 50 | contient `lancer_gui()`, décrite en amont (avant la phase 9) comme une fonction unique de ~1400 lignes — à vérifier, le décompte de fonctions ne le confirme pas directement |
+
+Ce tableau est un **repérage**, pas une décision : le nombre de fonctions
+top-level ne dit rien du couplage réel (état partagé, closures, ordre
+d'appel implicite) — exactement ce que la lecture complète de
+`generer_ombrages` avait révélé en 9d malgré une section qui semblait, de
+loin, être « juste une grosse fonction ». Avant de lancer une sous-phase sur
+l'une de ces sections, la méthode déjà éprouvée s'applique : lecture
+complète du bloc visé, analyse AST des dépendances libres, grep des tests
+existants pour repérer d'éventuels monkeypatches sur des noms internes (le
+motif `_wmts_fetch`/`_extraire_tiff_multipart`), avant tout choix de
+frontière d'extraction.
+
+Deux pistes se distinguent à ce stade comme probablement les moins risquées,
+sur la seule base de ce tri :
+
+- **Conversion GeoJSON → Mapsforge** (1 128 lignes) : nombreuses petites
+  fonctions géométriques (clip, intersection, projection) qui ressemblent
+  structurellement aux kernels numba de 9b — de bons candidats à un module
+  d'algorithmes purs.
+- **Bootstrap des dépendances** (1 348 lignes) : le téléchargement/preparation
+  d'outils (osmosis, JRE, mapwriter, venv) est déjà largement autonome par
+  nature (I/O réseau + filesystem, peu d'état partagé avec le reste du
+  pipeline) — mais son exécution a lieu très tôt au démarrage (avant même
+  l'import complet du reste du script dans certains chemins), ce qui mérite
+  une vérification spécifique avant d'y toucher.
+
+Aucune de ces pistes n'est engagée : elles sont documentées ici pour
+permettre de choisir la suite, suivant le même principe qu'aux points de
+décision précédents (phase 8, sous-phase 9d) plutôt que de trancher
+unilatéralement.
