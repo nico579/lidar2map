@@ -31,6 +31,9 @@ import lidar2map as L  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
+import _ombrages_provider as ombrages_provider  # noqa: E402
+import _shading_specs as shading_specs  # noqa: E402
+import _ombrages_pures as ombrages_pures  # noqa: E402
 import _raster_formats as raster_formats  # noqa: E402
 import _split_deliverables as split_deliverables  # noqa: E402
 import _split_manifest as split_manifest  # noqa: E402
@@ -128,6 +131,60 @@ class PublicFacadeContractTests(unittest.TestCase):
         self.assertIs(
             L._wmts_close_all_conns, mbtiles_wmts_helpers._wmts_close_all_conns,
         )
+        self.assertIs(L.SVF_GAMMA, ombrages_pures.SVF_GAMMA)
+        self.assertIs(L._stop_event, ombrages_pures._stop_event)
+        self.assertIs(L._NUMBA_KERNELS_CACHE, ombrages_pures._NUMBA_KERNELS_CACHE)
+        self.assertIs(
+            L._get_numba_svf_opos_kernel, ombrages_pures._get_numba_svf_opos_kernel,
+        )
+        self.assertIs(L._hillshade_numpy, ombrages_pures._hillshade_numpy)
+        self.assertIs(
+            L._hillshade_multi_numpy, ombrages_pures._hillshade_multi_numpy,
+        )
+        self.assertIs(L._slope_numpy, ombrages_pures._slope_numpy)
+        self.assertIs(L._hillshade_chunked, ombrages_pures._hillshade_chunked)
+        self.assertIs(
+            L._hillshade_chunked_multi, ombrages_pures._hillshade_chunked_multi,
+        )
+        self.assertIs(L._lire_dem_rasterio, ombrages_pures._lire_dem_rasterio)
+        self.assertIs(L._lrm_array, ombrages_pures._lrm_array)
+        self.assertIs(L._lrm_chunked, ombrages_pures._lrm_chunked)
+        self.assertIs(L._nodata_mask, ombrages_pures._nodata_mask)
+        self.assertIs(L._rrim_chunked, ombrages_pures._rrim_chunked)
+        self.assertIs(L._source_a_des_donnees, ombrages_pures._source_a_des_donnees)
+        self.assertIs(L._svf_chunked, ombrages_pures._svf_chunked)
+        self.assertIs(L._svf_numpy, ombrages_pures._svf_numpy)
+        self.assertIs(L._svf_opos_chunked, ombrages_pures._svf_opos_chunked)
+        self.assertIs(
+            L._sauver_array_georef_impl, ombrages_pures._sauver_array_georef,
+        )
+        self.assertIs(
+            L._publier_tif_atomique_impl, ombrages_pures._publier_tif_atomique,
+        )
+        self.assertIs(L._build_vrt_xml_impl, ombrages_pures._build_vrt_xml)
+        self.assertIs(
+            L._DependancesFetchProvider, ombrages_provider._DependancesFetchProvider,
+        )
+        self.assertIs(
+            L._extraire_tiff_multipart_impl, ombrages_provider._extraire_tiff_multipart,
+        )
+        self.assertIs(
+            L._post_fetch_si_besoin_impl, ombrages_provider._post_fetch_si_besoin,
+        )
+        self.assertIs(
+            L._fetch_provider_shadings_impl,
+            ombrages_provider._fetch_provider_shadings,
+        )
+        self.assertIs(L._vat_compose, ombrages_provider._vat_compose)
+        self.assertIs(L._mstp_chunked, ombrages_provider._mstp_chunked)
+        self.assertIs(L._e4mstp_compose, ombrages_provider._e4mstp_compose)
+        self.assertIs(L._SHADING_TYPES, shading_specs._SHADING_TYPES)
+        self.assertIs(L.SHADING_TYPES_ORDRE, shading_specs.SHADING_TYPES_ORDRE)
+        self.assertIs(L.SHADING_TOUS, shading_specs.SHADING_TOUS)
+        self.assertIs(
+            L._resoudre_preset_shading, shading_specs._resoudre_preset_shading,
+        )
+        self.assertIs(L.parser_shading_spec, shading_specs.parser_shading_spec)
         self.assertIs(L._blob_vers_jpeg, raster_formats._blob_vers_jpeg)
         self.assertIs(L._build_map_info, raster_formats._build_map_info)
         self.assertIs(
@@ -906,6 +963,120 @@ class ResolutionZoneContractTests(unittest.TestCase):
             self._args(zone_bbox="6.0,43.3,6.1,43.4", block="1/4"), True)
         self.assertEqual(blk, (1, 4))          # parsé et retourné...
         self.assertFalse(nom_zone.endswith("_b1"))   # ...mais pas appliqué
+
+
+class OmbragesProviderFacadeContractTests(unittest.TestCase):
+    """`_extraire_tiff_multipart`/`_post_fetch_si_besoin`/`_fetch_provider_shadings`
+    gardent leur signature historique ; l'injection (PROVIDER, callable
+    `_extraire_tiff_multipart`) est absorbée par la façade."""
+
+    def test_extraire_tiff_multipart_facade_injects_current_chunk_size(self):
+        with mock.patch.object(
+            L, "_extraire_tiff_multipart_impl", return_value=None,
+        ) as impl:
+            L._extraire_tiff_multipart("chemin.tif")
+        self.assertEqual(impl.call_args.args, ("chemin.tif",))
+        self.assertEqual(impl.call_args.kwargs["http_chunk_size"], L.HTTP_CHUNK_SIZE)
+
+    def test_post_fetch_facade_injects_current_provider_and_extraction(self):
+        with mock.patch.object(
+            L, "_post_fetch_si_besoin_impl", return_value=None,
+        ) as impl:
+            L._post_fetch_si_besoin("chemin.tif")
+        self.assertEqual(impl.call_args.args, ("chemin.tif",))
+        self.assertIs(impl.call_args.kwargs["provider"], L.PROVIDER)
+        self.assertIs(
+            impl.call_args.kwargs["extraire_tiff_multipart"],
+            L._extraire_tiff_multipart,
+        )
+
+    def test_post_fetch_facade_reads_monkeypatched_extraction_at_call_time(self):
+        """Reproduit le style de `_test_atomic_downloads.py` : `_extraire_tiff_multipart`
+        est remplacée en bloc, puis un appelant qui en dépend est invoqué —
+        l'appel interne doit voir le remplacement (même piège que `_wmts_fetch`,
+        cf. 7c)."""
+        remplacant = mock.Mock(name="_extraire_tiff_multipart-patché")
+        with mock.patch.object(L, "_extraire_tiff_multipart", remplacant), \
+             mock.patch.object(L, "_post_fetch_si_besoin_impl") as impl:
+            L._post_fetch_si_besoin("chemin.tif")
+        self.assertIs(impl.call_args.kwargs["extraire_tiff_multipart"], remplacant)
+
+    def test_fetch_provider_shadings_facade_injects_current_seams(self):
+        with mock.patch.object(
+            L, "_fetch_provider_shadings_impl", return_value=None,
+        ) as impl:
+            L._fetch_provider_shadings([], (0, 0, 1, 1), Path("."), "zone",
+                                       False, {})
+        deps = impl.call_args.kwargs["dependances"]
+        self.assertIs(deps.provider, L.PROVIDER)
+        self.assertIs(deps.extraire_tiff_multipart, L._extraire_tiff_multipart)
+        self.assertIs(deps.chemin_part, L._chemin_part)
+        self.assertIs(deps.creer_fichier, L._creer_fichier)
+        self.assertIs(deps.formater_duree, L._hms)
+        self.assertIs(deps.valider_tif, L._valider_tif_dalle)
+        self.assertIs(deps.normaliser_nom, L.normaliser_nom)
+        self.assertEqual(deps.http_chunk_size, L.HTTP_CHUNK_SIZE)
+
+    def test_fetch_provider_shadings_facade_reads_reassigned_provider(self):
+        ancien_provider = L.PROVIDER
+        try:
+            L.PROVIDER = SimpleNamespace(WCS_URL="https://example.invalid")
+            with mock.patch.object(
+                L, "_fetch_provider_shadings_impl", return_value=None,
+            ) as impl:
+                L._fetch_provider_shadings([], (0, 0, 1, 1), Path("."), "zone",
+                                           False, {})
+            self.assertIs(
+                impl.call_args.kwargs["dependances"].provider, L.PROVIDER,
+            )
+        finally:
+            L.PROVIDER = ancien_provider
+
+
+class OmbragesPuresFacadeContractTests(unittest.TestCase):
+    """Les 3 fonctions à couture (`_sauver_array_georef`, `_publier_tif_atomique`,
+    `_build_vrt_xml`) restent appelables avec leur signature historique
+    (3 positionnels) : la façade absorbe l'injection sans toucher aux points
+    d'appel existants ni aux tests qui les monkeypatchent en bloc."""
+
+    def test_sauver_array_georef_facade_injects_current_formater_duree(self):
+        expected = object()
+        with mock.patch.object(
+            L, "_sauver_array_georef_impl", return_value=expected,
+        ) as impl:
+            result = L._sauver_array_georef("arr", "src", "dst")
+        self.assertIs(result, expected)
+        self.assertEqual(impl.call_args.args, ("arr", "src", "dst"))
+        self.assertIs(impl.call_args.kwargs["formater_duree"], L._hms)
+
+    def test_publier_tif_atomique_facade_injects_current_valider_tif(self):
+        expected = object()
+        with mock.patch.object(
+            L, "_publier_tif_atomique_impl", return_value=expected,
+        ) as impl:
+            result = L._publier_tif_atomique("part", "final")
+        self.assertIs(result, expected)
+        self.assertEqual(impl.call_args.args, ("part", "final"))
+        self.assertIs(impl.call_args.kwargs["valider_tif"], L._valider_tif_dalle)
+
+    def test_publier_tif_atomique_facade_reads_monkeypatched_validator(self):
+        remplacant = mock.Mock(name="_valider_tif_dalle-patché")
+        with mock.patch.object(L, "_valider_tif_dalle", remplacant), \
+             mock.patch.object(L, "_publier_tif_atomique_impl") as impl:
+            L._publier_tif_atomique("part", "final")
+        self.assertIs(impl.call_args.kwargs["valider_tif"], remplacant)
+
+    def test_build_vrt_xml_facade_injects_current_ecrire_texte_atomique(self):
+        expected = object()
+        with mock.patch.object(
+            L, "_build_vrt_xml_impl", return_value=expected,
+        ) as impl:
+            result = L._build_vrt_xml(["a.tif"], "out.vrt", 0.5)
+        self.assertIs(result, expected)
+        self.assertEqual(impl.call_args.args, (["a.tif"], "out.vrt", 0.5))
+        self.assertIs(
+            impl.call_args.kwargs["ecrire_texte_atomique"], L._ecrire_texte_atomique,
+        )
 
 
 class RasterFormatFacadeContractTests(unittest.TestCase):

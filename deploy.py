@@ -76,6 +76,9 @@ MAP = {
     "_mbtiles_wmts.py":              "_mbtiles_wmts.py",
     "_mbtiles_lidar.py":             "_mbtiles_lidar.py",
     "_mbtiles_wmts_helpers.py":      "_mbtiles_wmts_helpers.py",
+    "_ombrages_pures.py":            "_ombrages_pures.py",
+    "_ombrages_provider.py":         "_ombrages_provider.py",
+    "_shading_specs.py":             "_shading_specs.py",
     "_loader.py":                    "_loader.py",
     "update_app.py":                 "update_app.py",
     "tagmapping-min.xml":            "tagmapping-min.xml",
@@ -157,6 +160,9 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_mbtiles_wmts.py"
         or name == "_mbtiles_lidar.py"
         or name == "_mbtiles_wmts_helpers.py"
+        or name == "_ombrages_pures.py"
+        or name == "_ombrages_provider.py"
+        or name == "_shading_specs.py"
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"
         or name.endswith(".entitlements")

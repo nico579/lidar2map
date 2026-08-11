@@ -1,6 +1,6 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 10 août 2026 (phase 8 en cours, sous-phase 8d).
+Dernière mise à jour : 11 août 2026 (phase 9 terminée à ce niveau de risque, sous-phase 9d).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -35,14 +35,18 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _raster_formats.py      conversions RMAP/SQLiteDB et orchestration
 ├── _mbtiles_wmts.py        producteur MBTiles WMTS/XYZ (téléchargement, cache)
 ├── _mbtiles_lidar.py       producteur MBTiles LiDAR (warp, overviews, tuilage)
-└── _mbtiles_wmts_helpers.py  grille XYZ, URL, connexions, fetch HTTP
+├── _mbtiles_wmts_helpers.py  grille XYZ, URL, connexions, fetch HTTP
+├── _ombrages_pures.py      IO raster, kernels numba, hillshade/SVF/LRM/RRIM
+├── _ombrages_provider.py   fetch WCS provider, composites VAT/MSTP
+└── _shading_specs.py       types d'ombrages, presets, parsing --shading
 ```
 
 Tous ces modules sont privés (préfixe `_`). Leur interface stable est la façade
 conservée dans `lidar2map.py`. Le préfixe `_split_` est réservé aux composants du
 traitement découpé ; les producteurs et convertisseurs raster portent un nom de
 domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
-`_mbtiles_wmts_helpers`).
+`_mbtiles_wmts_helpers`, `_ombrages_pures`, `_ombrages_provider`,
+`_shading_specs`).
 
 ## Volume déjà transféré
 
@@ -75,8 +79,13 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Nettoyage d’imports morts des phases 5 et 7 | 2 | 0,01 % |
 | `_mbtiles_lidar.py` (7e, mesuré) | 828 | 3,89 % |
 | `_mbtiles_wmts_helpers.py` (7c, mesuré) | 307 | 1,44 % |
-| **Total sorti du monolithe (mesuré)** | **3 024** | **14,19 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **18 291** | **85,81 %** |
+| Phase 8 (8a-d, en-fichier par design) | 0 | 0,00 % |
+| Relocalisation 9a (en-fichier, pas d'extraction) | 0 | 0,00 % |
+| `_ombrages_pures.py` (9b, mesuré) | 1 961 | 9,20 % |
+| `_ombrages_provider.py` (9c, mesuré) | 412 | 1,93 % |
+| `_shading_specs.py` (9d, mesuré) | 111 | 0,52 % |
+| **Total sorti du monolithe (mesuré)** | **5 420** | **25,43 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **15 895** | **74,57 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -126,7 +135,7 @@ n'avaient qu'un seul point d'entrée chacune.
 | 5. Runner classique | Terminée | `_run_split_priori` extrait dans `_split_runner.py` avec ses dépendances explicites | reprise, overwrite, hors couverture, échec partiel |
 | 6. Runner glissant | Terminée | Ordonnancement ombrage/tuilage, voisinage 3×3 et purge différée extraits dans `_split_sliding.py` | reprise après perte d’un livrable, préchargement et coutures |
 | 7. Pipelines raster | **Terminée** | Conversions RMAP/SQLiteDB, producteur MBTiles WMTS, producteur MBTiles LiDAR et helpers WMTS extraits | tuilage, publications atomiques et formats multiples |
-| 8. Points d’entrée | En cours | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; reste : corps de dispatch | tests d’historique monolithique et CLI |
+| 8. Points d’entrée | **Terminée** | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; corps de dispatch déjà atteint ; autres points d'entrée audités, extraction non justifiée | tests d’historique monolithique et CLI |
 
 ## Travail déjà sécurisé
 
@@ -485,10 +494,12 @@ nouveaux sur `telecharger_tuile`/`_lire_zoom_limites_wmts`), `_test_atomic_downl
 
 ## Déploiement et compatibilité des bundles
 
-Les nouveaux modules `_split_*.py`, `_raster_formats.py` et `_mbtiles_*.py`
-(WMTS et LiDAR) sont copiés vers le dépôt par `deploy.py` et surveillés par la
-CI (filtre `paths:` en glob `_mbtiles_*.py`, pour ne pas devoir rééditer
-`ci_github.yml` à chaque nouveau producteur `_mbtiles_*`). Ils sont
+Les nouveaux modules `_split_*.py`, `_raster_formats.py`, `_mbtiles_*.py`
+(WMTS et LiDAR) et `_ombrages_pures.py` sont copiés vers le dépôt par
+`deploy.py` et surveillés par la CI (filtre `paths:` en glob `_mbtiles_*.py`
+pour ne pas devoir rééditer `ci_github.yml` à chaque nouveau producteur
+`_mbtiles_*` ; entrée explicite pour `_ombrages_pures.py`, hors de ce glob).
+Ils sont
 compilés dans les bundles PyInstaller : leur ajout ou leur modification déclenche
 donc un **rebuild**, pas un patch limité à `_internal/lidar2map.py`. Le garde de
 `deploy.py` empêche de publier un bundle qui contiendrait le nouveau
@@ -703,17 +714,250 @@ passage, confirmé par `ruff` propre immédiatement.
   « orchestration » visée par le nom de la phase ; à ce stade `main()` et
   `main_wmts()` en sont déjà proches (parsing, --source, résolution de
   zone/couche tous extraits).
-- **Dette des jumeaux WMTS** (identifiée en phase 7c) : `main_wmts()` et
-  `_traiter_bbox_wmts()` construisent tous deux le nom du MBTiles et la
-  qualité de sortie via `_nom_mbtiles_wmts` et `_jpeg_quality_sortie`. Ces deux
-  jumeaux avaient déjà divergé une fois (R2#14, R2#18) ; leur source de vérité
-  commune est en place mais leur appelant ne l'est pas.
-- `main_decouper()`, `main_wfs()`, `main_fusionner()`, `main_serve()` n'ont pas
-  été audités pour un parser aussi volumineux ; à vérifier avant de les
-  considérer hors périmètre de la phase 8.
+- ~~**Dette des jumeaux WMTS**~~ **CLOS (vérifié 10 août 2026)** : comparaison
+  ligne à ligne des deux appelants (`main_wmts()` passe simple et
+  `_traiter_bbox_wmts()` découpé) sur `_jpeg_quality_sortie`,
+  `_nom_mbtiles_wmts` et l'appel complet à `generer_mbtiles_wmts` — arguments
+  strictement identiques partout, à l'exception du nom de zone et de la bbox
+  (`nom_z`/bbox du morceau vs `nom_zone`/bbox entière), une spécialisation
+  requise et non une dérive accidentelle. Déjà corrigé dans une session
+  antérieure (cf. commentaires R2#14/R2#18 dans le code) ; le plan le
+  signalait encore comme ouvert par erreur.
+- **Points d'entrée restants audités (10 août 2026)** : `main_decouper()` (90
+  lignes) et `main_serve()` (53 lignes) sont déjà légers, rien à extraire.
+  `main_fusionner()` (139 lignes) et `main_wfs()` (243 lignes) ont un poids
+  marginal comparé aux 1400/450 lignes initiales de `main()`/`main_wmts()` —
+  le rapport valeur/risque d'une extraction façon 8a-8d n'est plus favorable
+  ici (même travers que la partie basse valeur de 7c). Phase 8 considérée
+  fonctionnellement complète pour les points d'entrée : il ne reste que le
+  « corps de dispatch » ci-dessus, qui décrit un état déjà largement atteint
+  plutôt qu'un chantier restant.
 - Le plan mesure des lignes, pas du couplage. Un indicateur complémentaire utile
   pour les sous-phases suivantes : le nombre de symboles de `lidar2map.py`
   référencés depuis les modules extraits (zéro, par construction) et le nombre
   de coutures injectées par façade (12 pour le runner classique, 15 pour le
   producteur WMTS). Une façade qui dépasserait la vingtaine de coutures
   signalerait un découpage fait au mauvais endroit.
+
+## Phase 9 : bloc ombrages/COG
+
+Après la phase 8, `lidar2map.py` contient encore une section de 3758 lignes
+("ASSEMBLAGE COG (rasterio)") regroupant les kernels numba, les algorithmes
+de calcul par type d'ombrage (hillshade, SVF, LRM, RRIM), les composites
+(VAT, MSTP) et leur orchestrateur `generer_ombrages`. Exploration fine menée
+le 10 août 2026 (lecture complète + analyse AST des noms libres par
+sous-groupe) avant toute extraction, contrairement à la phase 8 où le premier
+passage sur `_resoudre_zone_lidar` avait révélé deux bugs après coup.
+
+Constat principal : le module réel (hors bloc mal placé, cf. 9a) a un
+couplage externe faible pour sa taille — ~11 dépendances non-stdlib
+(`PROVIDER`, `_chemin_part`, `_creer_fichier`, `_hms`, `_valider_tif_dalle`,
+`_stop_event`, `normaliser_nom`, `SVF_GAMMA`, `HTTP_CHUNK_SIZE`,
+`ELEVATION_SOLEIL`, `RESOLUTION_M`) pour ~3317 lignes, un bien meilleur ratio
+que le parser de `main()` (10 dépendances pour 250 lignes). `_valider_tif_dalle`
+est déjà monkeypatché 8 fois dans les tests existants : le schéma d'injection
+par façade (comme 7b/7e) s'y applique directement. `_test_corrections.py`
+contient déjà 140 références aux ombrages : contrairement à la résolution de
+zone en 8c, ce domaine est déjà largement caractérisé.
+
+Découpage retenu :
+
+| Sous-phase | État | Action | Volume | Risque |
+|---|---|---|---:|---|
+| 9a | **Terminée** | Reloger le bootstrap osmosis/JRE/mapwriter mal placé | 394 lignes déplacées | Nul (relocalisation pure) |
+| 9b | **Terminée** | Extraire IO raster + kernels numba + algorithmes par type | 1996 lignes | **1961 lignes mesurées** |
+| 9c | **Terminée** | Extraire TIFF multipart + fetch provider + composites VAT/MSTP | 460 lignes | **412 lignes mesurées** |
+| 9d | **Scindée** | Presets/parsing extraits ; `generer_ombrages` reste en l'état (voir ci-dessous) | 118 lignes | **111 lignes mesurées** |
+
+### Sous-phase 9a : bootstrap osmosis/JRE/mapwriter relogé (terminée)
+
+`_promouvoir_dossier`, `_bin_outil`, `_telecharger_osmosis_local`,
+`_telecharger_jre_local`, `_trouver_java`, `_trouver_osmosis`,
+`_verifier_mapwriter` (394 lignes, y compris le bloc exécutable
+`if _TELECHARGER_OUTILS:` de la commande `--telecharger-outils`) n'avaient
+aucun rapport avec les ombrages — dérive historique, avec leur propre jeu de
+dépendances distinct (`BUNDLE_DIR`, `LIDAR2MAP_HOME`, `WINDOWS`,
+`_TELECHARGER_OUTILS`, `_safe_zip_extractall`) absent du reste de la section.
+Relogées juste avant `_java_opts_extra`/`_preparer_osmosis`, leur seul
+consommateur réel dans le fichier, consolidant toute la logique
+osmosis/JRE/mapwriter en un seul endroit contigu.
+
+Relocalisation pure au sein de `lidar2map.py` (aucun nouveau fichier, aucune
+ligne créée hors un court commentaire d'explication) : pas de changement de
+comportement possible par construction, donc pas de caractérisation dédiée
+requise au-delà de la suite existante.
+
+- Validation : CLI réel (`--version`), les tests touchant déjà à
+  osmosis/mapwriter (`_test_atomic_publications.py`,
+  `_test_corrections.py`), profils `fast` (26,5 s) et `scientific` (83,2 s)
+  complets, tous verts. Ruff propre.
+
+### Sous-phase 9b : couche pure extraite (terminée)
+
+`_ombrages_pures.py` (2041 lignes) contient désormais l'IO raster
+(`_sauver_array_georef`, `_publier_tif_atomique`, `_lire_dem_rasterio`,
+`_nodata_mask`, `_source_a_des_donnees`, `_percentiles_grille`), les kernels
+numba (horn, SVF ×3 variantes, cache JIT), et les algorithmes de calcul par
+type (`_hillshade_*`, `_slope_numpy`, `_lrm_*`, `_svf_*`, `_rrim_chunked`,
+`_build_vrt_xml`). C'est la plus grosse extraction du plan à ce jour — plus
+que toute la phase 7 réunie.
+
+**Deux décisions de conception, prises après une analyse AST précise du
+couplage (12 noms libres avant transformation, dont 7 stdlib) :**
+
+1. **`SVF_GAMMA` et `_stop_event` ont leur foyer canonique déplacé dans le
+   nouveau module**, plutôt qu'injectés. Motif : plusieurs fonctions
+   (`_hillshade_chunked_multi`, `_svf_chunked`, `_svf_opos_chunked`,
+   `_svf_numpy`, `_rrim_chunked`) lisent `_stop_event` en variable libre et
+   sont appelées **directement par les tests** (`_test_corrections.py`,
+   des dizaines d'appels positionnels sans façade) — les injecter aurait
+   cassé tous ces appels. `lidar2map.py` réexporte les deux noms
+   (`from _ombrages_pures import SVF_GAMMA, _stop_event`) : identité
+   d'objet préservée, donc le handler SIGINT de `lidar2map.py` continue de
+   piloter l'annulation correctement (mutation via `.set()`/`.clear()`,
+   jamais de réaffectation — vérifié sur toutes les suites avant de choisir
+   cette voie).
+2. **3 fonctions (`_sauver_array_georef`, `_publier_tif_atomique`,
+   `_build_vrt_xml`) reçoivent une dépendance keyword-only** (`formater_duree`,
+   `valider_tif`, `ecrire_texte_atomique` respectivement) **dans le nouveau
+   module**, mais leur **façade dans `lidar2map.py` garde la signature
+   positionnelle historique** — l'injection est absorbée par la façade,
+   aucun appelant existant à modifier. Ce choix a été validé a posteriori :
+   le test qui monkeypatche `_build_vrt_xml` en bloc
+   (`mock.patch.object(L, "_build_vrt_xml", side_effect=build_vrt)`, avec un
+   faux à 3 arguments) est passé sans aucune modification, exactement parce
+   que la façade absorbe le 4ᵉ argument avant de déléguer.
+3. **8 fonctions purement internes au nouveau module** (`_appliquer_z_factor`,
+   `_calc_slope_aspect`, `_ensure_numba`, 3 des 4 accesseurs de kernels numba,
+   `_percentiles_grille`, `_remplir_nodata_moyenne`) **ne sont pas réexportées** :
+   ruff (F401) a confirmé qu'aucun code restant dans `lidar2map.py` ni aucun
+   test ne les référence — les réexporter aurait été du bruit. 4 autres
+   fonctions (`_hillshade_numpy`, `_hillshade_multi_numpy`, `_slope_numpy`,
+   `_get_numba_svf_opos_kernel`) sont réexportées avec un `noqa` motivé
+   (testées directement, mais sans consommateur restant dans `lidar2map.py`).
+- `_NUMBA_KERNELS_CACHE` (dict de cache JIT) a été oublié à la première passe
+  de la façade — trouvé par `_test_corrections.py` qui le mute directement
+  (`l2m._NUMBA_KERNELS_CACHE["horn"] = None`) pour forcer une recompilation
+  entre deux scénarios de test. Corrigé en l'ajoutant au réexport (même
+  logique de partage d'identité que `_stop_event`).
+
+- Validation : `_test_corrections.py` (140 références au domaine, résultats
+  numba bit-exacts confirmés), 4 nouveaux contrats de façade
+  (`OmbragesPuresFacadeContractTests`, dont un qui vérifie que le
+  monkeypatch direct de `_valider_tif_dalle` est bien vu par
+  `_publier_tif_atomique`), 78 contrats au total, profils `fast` (24,3 s) et
+  `scientific` (82,1 s) complets, tous verts. Ruff propre. Garde de
+  déploiement (`_test_patch_delivery.py`) a détecté le nouveau module
+  automatiquement et a d'abord échoué avant l'enregistrement dans
+  `deploy.py`/`ci_github.yml` — exactement le rôle qu'il doit jouer.
+
+`lidar2map.py` : 18 379 → 16 418 lignes (**-1961**, dont ~2000 lignes de code
+déplacé net d'environ 45 lignes de façades). Total sorti du monolithe :
+**4 897 lignes, 22,97 %** du périmètre figé — la plus forte progression
+mesurée sur une seule sous-phase de tout le plan.
+
+### Sous-phase 9c : fetch provider + composites VAT/MSTP extraits (terminée)
+
+`_ombrages_provider.py` (507 lignes) regroupe deux familles distinctes
+colocalisées : le téléchargement/désencapsulation d'ombrages précalculés WCS
+(`_extraire_tiff_multipart`, `_post_fetch_si_besoin`, `_fetch_provider_shadings`)
+et les composites qui blendent des couches déjà produites par
+`_ombrages_pures` (`_vat_compose`, `_mstp_chunked`, `_e4mstp_compose`).
+
+**Le groupe composite (VAT/MSTP) s'est révélé sans couplage applicatif du
+tout** — analyse AST : seuls `_nodata_mask`/`_stop_event` (déjà réexportés
+depuis `_ombrages_pures.py`, import cross-module direct, aucune duplication)
+et deux constantes propres (`VAT_OPOS_OPACITY`, `VAT_SLOPE_OPACITY`, utilisées
+uniquement comme défauts de `_vat_compose`) — réexport pur, aucune façade.
+
+**Le groupe fetch provider a reproduit intentionnellement le correctif
+`_wmts_fetch` de la phase 7c**, cette fois anticipé plutôt que découvert après
+coup : un test (`_test_atomic_downloads.py`) remplace `L._extraire_tiff_multipart`
+en bloc puis appelle `L._fetch_provider_shadings`, et attend que l'appel
+interne voie le remplacement. `_extraire_tiff_multipart` est donc injectée
+comme *callable* dans `_post_fetch_si_besoin` et `_fetch_provider_shadings`
+(pas un bare-name interne), lues depuis la façade `lidar2map.py` à chaque
+appel — exactement le schéma qui avait dû être corrigé après un run cassé en
+7c. Repéré cette fois par lecture du code AVANT l'extraction (grep des
+monkeypatches existants), pas par un test qui casse.
+
+`PROVIDER` est injecté comme objet entier (pas une valeur dérivée comme
+`CRS_NATIF` en 7e) : les fonctions font plusieurs `getattr(PROVIDER, "...",
+défaut)` sur des attributs différents (`post_fetch`, `WCS_URL`,
+`WCS_AXIS_LABELS`, `_SSL_CTX`), donc seul l'objet complet, relu à chaque
+appel, couvre tous les cas — validé par un contrat qui réaffecte `L.PROVIDER`
+en cours de test.
+
+- Validation : `_test_atomic_downloads.py` (le test `_extraire_tiff_multipart`
+  + `_fetch_provider_shadings` mentionné ci-dessus, et les tests d'ombrages
+  provider truncated/validated), `_test_corrections.py` (VAT/MSTP/e4MSTP,
+  `_extraire_tiff_multipart`, réassignation directe historique de
+  `_post_fetch_si_besoin`), 5 nouveaux contrats de façade
+  (`OmbragesProviderFacadeContractTests`), 83 contrats au total, profils
+  `fast` (25,9 s) et `scientific` (81,3 s) complets, tous verts. Ruff propre.
+  Garde de déploiement dérivé de l'AST : détection automatique du nouveau
+  module, aucune modification manuelle du test lui-même.
+
+`lidar2map.py` : 16 418 → 16 006 lignes (**-412**, cohérent avec l'estimation
+de ~470 lignes candidates). Total sorti du monolithe : **5 309 lignes,
+24,91 %** du périmètre figé.
+
+### Sous-phase 9d : presets/parsing extraits, `generer_ombrages` scindée du périmètre (terminée)
+
+Lecture complète de `generer_ombrages` (736 lignes) avant toute extraction —
+verdict tranché avec Nico plutôt qu'exécuté directement, décision documentée
+ici pour la suite du plan.
+
+**Livré : `_shading_specs.py`** (132 lignes) — `_SHADING_TYPES`,
+`SHADING_TYPES_ORDRE`, `SHADING_TOUS`, `SHADING_PRESETS`,
+`_resoudre_preset_shading`, `parser_shading_spec`. Analyse AST confirmée :
+**zéro dépendance externe**, réexport pur sans façade, même sûreté que les
+helpers de 7e.
+
+**`generer_ombrages` elle-même reste dans `lidar2map.py`, décision
+délibérée, pas un report technique.** Contrairement à la résolution de zone
+de 8c (5 branches indépendantes, 190 lignes), c'est une **seule fonction
+continue de 736 lignes** :
+
+- 3 closures internes (`_preparer_sortie_ombrage`, `_abandonner_sortie_ombrage`,
+  `_publier_sortie_ombrage`) fermant sur un état partagé
+  (`_parts_ombrages_actifs`, `_sorties_a_regenerer`) qui traverse toute la
+  fonction ;
+- ~9 chemins de dispatch par type d'ombrage (hillshade/slope, SVF/opos/oneg,
+  LRM, RRIM, VAT, e4MSTP), chacun avec son propre repli mémoire pleine et son
+  propre nettoyage ;
+- un `try/finally` global dont la cohérence dépend de tous ces chemins ;
+- une couverture de **test directe** de l'orchestrateur elle-même fine (6
+  références dans toute la suite, contre 140+ pour les briques déjà extraites
+  en 9b) : la sécurité actuelle vient de tester les *pièces* (déjà extraites),
+  pas l'*orchestration* (dédoublonnage d'instances, construction VRT,
+  complétude finale des cibles).
+
+Extraire cette fonction sans caractérisation dédiée aurait reproduit le
+risque déjà signalé deux fois (8c, 9c) — sauf que cette fois aucun test
+existant n'aurait détecté une régression de comportement dans la logique
+d'orchestration elle-même. Décision : laisser `generer_ombrages` comme
+orchestrateur légitime dans `lidar2map.py`, cohérent avec la règle du plan
+« extraire d'abord les composants purs, puis les orchestrateurs » — tous les
+composants purs du domaine ombrages sont désormais extraits (9b, 9c, 9d),
+l'orchestrateur peut attendre un investissement dédié en caractérisation s'il
+est un jour repris.
+
+- Validation : CLI réel (`--help`, `--shadings`), `_test_corrections.py`
+  (parsing/presets/types), `_test_interactions.py` (cohérence GUI ↔
+  `_SHADING_TYPES`), 83 contrats de façade (assertions d'identité ajoutées,
+  pas de nouvelle classe puisque réexport pur), profils `fast` (28,0 s) et
+  `scientific` (93,1 s) complets, tous verts. Ruff propre.
+
+`lidar2map.py` : 16 006 → 15 895 lignes (**-111**, cohérent avec les 118
+lignes du bloc pur). Total sorti du monolithe : **5 420 lignes, 25,43 %**.
+
+### Prochaine étape
+
+Le bloc ombrages/COG (phase 9) est fonctionnellement épuisé de ses
+composants purs à risque raisonnable : IO raster, kernels numba, algorithmes
+par type (9b), fetch provider et composites (9c), types/presets/parsing
+(9d). Il ne reste que `generer_ombrages` elle-même, volontairement laissée en
+l'état (voir ci-dessus). Sauf décision de caractériser cet orchestrateur en
+profondeur, la phase 9 est considérée terminée à ce niveau de risque
+acceptable.
