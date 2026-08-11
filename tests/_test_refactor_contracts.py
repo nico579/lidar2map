@@ -28,6 +28,10 @@ APP = ROOT / "lidar2map.py"
 sys.path.insert(0, str(ROOT))
 
 import lidar2map as L  # noqa: E402
+import _geojson_geometry as geojson_geometry  # noqa: E402
+import _geojson_mapsforge as geojson_mapsforge  # noqa: E402
+import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
+import _geojson_raster as geojson_raster  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
@@ -190,6 +194,49 @@ class PublicFacadeContractTests(unittest.TestCase):
         self.assertIs(
             L._sqlitedb_schema_courant,
             raster_formats._sqlitedb_schema_courant,
+        )
+        for name in (
+            "_IGN_LAYER_TAGS",
+            "_IGN_SIMPLIFY_EPSILON",
+            "_OVERLAY_DEFAUT",
+            "_OVERLAY_STYLE",
+            "_OVERLAY_TILE_WARN",
+            "_clip_polygone_rect",
+            "_douglas_peucker",
+            "_epsilon_depuis_surface_km2",
+            "_overlay_sequences",
+            "_overlay_style_key",
+            "_seg_inter_box",
+            "_tags_pour_layer",
+        ):
+            with self.subTest(geojson_symbol=name):
+                self.assertIs(
+                    getattr(L, name),
+                    getattr(geojson_geometry, name),
+                )
+        self.assertIs(
+            L._DependancesGeojsonOsmXml,
+            geojson_osm_xml._DependancesGeojsonOsmXml,
+        )
+        self.assertIs(
+            L._geojson_ign_vers_osm_xml_impl,
+            geojson_osm_xml.geojson_ign_vers_osm_xml,
+        )
+        self.assertIs(
+            L._DependancesRasterGeojson,
+            geojson_raster._DependancesRasterGeojson,
+        )
+        self.assertIs(
+            L._rasteriser_geojson_transparent_impl,
+            geojson_raster.rasteriser_geojson_transparent,
+        )
+        self.assertIs(
+            L._DependancesGeojsonMapsforge,
+            geojson_mapsforge._DependancesGeojsonMapsforge,
+        )
+        self.assertIs(
+            L._generer_map_depuis_geojson_ign_impl,
+            geojson_mapsforge.generer_map_depuis_geojson_ign,
         )
 
     def _cli(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -1232,6 +1279,371 @@ class ProviderContractTests(unittest.TestCase):
                     else:
                         expected = str(expected)
                     self.assertEqual(actual, expected)
+
+
+class GeojsonMapsforgeFacadeContractTests(unittest.TestCase):
+    def _capturer_dependances(self, **surcharges):
+        expected = object()
+        with contextlib.ExitStack() as stack:
+            for name, value in surcharges.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            implementation = stack.enter_context(mock.patch.object(
+                L,
+                "_generer_map_depuis_geojson_ign_impl",
+                return_value=expected,
+            ))
+            result = L.generer_map_depuis_geojson_ign(
+                "source.geojson",
+                "sortie",
+                "zone",
+                (6.0, 43.0, 6.1, 43.1),
+                ecraser=True,
+                epsilon=0.001,
+            )
+
+        self.assertIs(result, expected)
+        implementation.assert_called_once()
+        self.assertEqual(
+            implementation.call_args.args,
+            (
+                "source.geojson",
+                "sortie",
+                "zone",
+                (6.0, 43.0, 6.1, 43.1),
+            ),
+        )
+        self.assertTrue(implementation.call_args.kwargs["ecraser"])
+        self.assertEqual(implementation.call_args.kwargs["epsilon"], 0.001)
+        return implementation.call_args.kwargs["dependances"]
+
+    def test_facade_keeps_its_signature_and_injects_current_seams(self):
+        self.assertEqual(
+            list(inspect.signature(L.generer_map_depuis_geojson_ign).parameters),
+            [
+                "geojson_src",
+                "dossier_ville",
+                "nom_zone",
+                "bbox_wgs84",
+                "ecraser",
+                "epsilon",
+            ],
+        )
+        deps = self._capturer_dependances()
+        self.assertIs(
+            deps.convertir_geojson_osm_xml,
+            L.geojson_ign_vers_osm_xml,
+        )
+        self.assertIs(deps.preparer_osmosis, L._preparer_osmosis)
+        self.assertIs(deps.run_osmosis_streaming, L._run_osmosis_streaming)
+        self.assertIs(deps.chemin_part, L._chemin_part)
+        self.assertIs(deps.hash_config, L._hash_config)
+        self.assertIs(deps.sig_sidecar_stale, L._sig_sidecar_stale)
+        self.assertIs(deps.sig_sidecar_ecrire, L._sig_sidecar_ecrire)
+        self.assertIs(deps.java_opts_extra, L._java_opts_extra)
+        self.assertIs(deps.log_req, L._log_req)
+        self.assertIs(deps.formater_duree, L._hms)
+        self.assertIs(deps.windows, L.WINDOWS)
+
+    def test_facade_reads_reassigned_seams_at_call_time(self):
+        seams = {
+            "geojson_ign_vers_osm_xml": mock.Mock(name="convertir_xml"),
+            "_preparer_osmosis": mock.Mock(name="preparer_osmosis"),
+            "_run_osmosis_streaming": mock.Mock(name="run_osmosis"),
+            "_chemin_part": mock.Mock(name="chemin_part"),
+            "_hash_config": mock.Mock(name="hash_config"),
+            "_sig_sidecar_stale": mock.Mock(name="sig_stale"),
+            "_sig_sidecar_ecrire": mock.Mock(name="sig_ecrire"),
+            "_java_opts_extra": mock.Mock(name="java_opts_extra"),
+            "_log_req": mock.Mock(name="log_req"),
+            "_hms": mock.Mock(name="hms"),
+            "WINDOWS": not L.WINDOWS,
+        }
+        deps = self._capturer_dependances(**seams)
+
+        self.assertIs(
+            deps.convertir_geojson_osm_xml,
+            seams["geojson_ign_vers_osm_xml"],
+        )
+        self.assertIs(deps.preparer_osmosis, seams["_preparer_osmosis"])
+        self.assertIs(
+            deps.run_osmosis_streaming,
+            seams["_run_osmosis_streaming"],
+        )
+        self.assertIs(deps.chemin_part, seams["_chemin_part"])
+        self.assertIs(deps.hash_config, seams["_hash_config"])
+        self.assertIs(deps.sig_sidecar_stale, seams["_sig_sidecar_stale"])
+        self.assertIs(deps.sig_sidecar_ecrire, seams["_sig_sidecar_ecrire"])
+        self.assertIs(deps.java_opts_extra, seams["_java_opts_extra"])
+        self.assertIs(deps.log_req, seams["_log_req"])
+        self.assertIs(deps.formater_duree, seams["_hms"])
+        self.assertIs(deps.windows, seams["WINDOWS"])
+
+
+class GeojsonRasterFacadeContractTests(unittest.TestCase):
+    def _capturer_dependances(self, **surcharges):
+        expected = object()
+        with contextlib.ExitStack() as stack:
+            for name, value in surcharges.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            implementation = stack.enter_context(mock.patch.object(
+                L,
+                "_rasteriser_geojson_transparent_impl",
+                return_value=expected,
+            ))
+            result = L.rasteriser_geojson_transparent(
+                "source.geojson",
+                "sortie.sqlitedb",
+                13,
+                17,
+                ecraser=True,
+                supersample=3,
+                bbox_wgs84=(6.0, 43.0, 6.1, 43.1),
+            )
+
+        self.assertIs(result, expected)
+        implementation.assert_called_once()
+        self.assertEqual(
+            implementation.call_args.args,
+            ("source.geojson", "sortie.sqlitedb", 13, 17),
+        )
+        self.assertEqual(
+            implementation.call_args.kwargs,
+            {
+                "ecraser": True,
+                "supersample": 3,
+                "bbox_wgs84": (6.0, 43.0, 6.1, 43.1),
+                "dependances": implementation.call_args.kwargs["dependances"],
+            },
+        )
+        return implementation.call_args.kwargs["dependances"]
+
+    def test_facade_keeps_its_signature_and_injects_current_seams(self):
+        self.assertEqual(
+            list(inspect.signature(L.rasteriser_geojson_transparent).parameters),
+            [
+                "geojson_path",
+                "sqlitedb_out",
+                "zoom_min",
+                "zoom_max",
+                "ecraser",
+                "supersample",
+                "bbox_wgs84",
+            ],
+        )
+        deps = self._capturer_dependances()
+        self.assertIs(deps.chemin_part, L._chemin_part)
+        self.assertIs(deps.nettoyer_sqlite_part, L._nettoyer_sqlite_part)
+        self.assertIs(deps.valider_sqlite_part, L._valider_sqlite_part)
+        self.assertIs(deps.stop_event, L._stop_event)
+        self.assertIs(deps.deg_to_tile, L.deg_to_tile)
+        self.assertIs(deps.overlay_style, L._OVERLAY_STYLE)
+        self.assertIs(deps.overlay_defaut, L._OVERLAY_DEFAUT)
+        self.assertIs(deps.overlay_tile_warn, L._OVERLAY_TILE_WARN)
+        self.assertIs(deps.overlay_style_key, L._overlay_style_key)
+        self.assertIs(deps.overlay_sequences, L._overlay_sequences)
+        self.assertIs(deps.clip_polygone_rect, L._clip_polygone_rect)
+        self.assertIs(deps.seg_inter_box, L._seg_inter_box)
+
+    def test_facade_reads_reassigned_seams_at_call_time(self):
+        seams = {
+            "_chemin_part": mock.Mock(name="chemin_part"),
+            "_nettoyer_sqlite_part": mock.Mock(name="nettoyer_sqlite_part"),
+            "_valider_sqlite_part": mock.Mock(name="valider_sqlite_part"),
+            "_stop_event": mock.Mock(name="stop_event"),
+            "deg_to_tile": mock.Mock(name="deg_to_tile"),
+            "_OVERLAY_STYLE": {"test": ((1, 2, 3, 4), 1, False)},
+            "_OVERLAY_DEFAUT": ((5, 6, 7, 8), 2, True),
+            "_OVERLAY_TILE_WARN": 123,
+            "_overlay_style_key": mock.Mock(name="overlay_style_key"),
+            "_overlay_sequences": mock.Mock(name="overlay_sequences"),
+            "_clip_polygone_rect": mock.Mock(name="clip_polygone_rect"),
+            "_seg_inter_box": mock.Mock(name="seg_inter_box"),
+        }
+        deps = self._capturer_dependances(**seams)
+
+        self.assertIs(deps.chemin_part, seams["_chemin_part"])
+        self.assertIs(
+            deps.nettoyer_sqlite_part, seams["_nettoyer_sqlite_part"]
+        )
+        self.assertIs(
+            deps.valider_sqlite_part, seams["_valider_sqlite_part"]
+        )
+        self.assertIs(deps.stop_event, seams["_stop_event"])
+        self.assertIs(deps.deg_to_tile, seams["deg_to_tile"])
+        self.assertIs(deps.overlay_style, seams["_OVERLAY_STYLE"])
+        self.assertIs(deps.overlay_defaut, seams["_OVERLAY_DEFAUT"])
+        self.assertEqual(deps.overlay_tile_warn, 123)
+        self.assertIs(deps.overlay_style_key, seams["_overlay_style_key"])
+        self.assertIs(deps.overlay_sequences, seams["_overlay_sequences"])
+        self.assertIs(deps.clip_polygone_rect, seams["_clip_polygone_rect"])
+        self.assertIs(deps.seg_inter_box, seams["_seg_inter_box"])
+
+
+class GeojsonOsmXmlFacadeContractTests(unittest.TestCase):
+    def _capturer_dependances(self, **surcharges):
+        with contextlib.ExitStack() as stack:
+            for name, value in surcharges.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            implementation = stack.enter_context(mock.patch.object(
+                L,
+                "_geojson_ign_vers_osm_xml_impl",
+                return_value=True,
+            ))
+            self.assertTrue(L.geojson_ign_vers_osm_xml(
+                "source.geojson",
+                "sortie.osm",
+                epsilon=0.0123,
+            ))
+
+        implementation.assert_called_once()
+        self.assertEqual(
+            implementation.call_args.args,
+            ("source.geojson", "sortie.osm"),
+        )
+        self.assertEqual(implementation.call_args.kwargs["epsilon"], 0.0123)
+        return implementation.call_args.kwargs["dependances"]
+
+    def test_facade_keeps_its_signature_and_injects_current_seams(self):
+        self.assertEqual(
+            list(inspect.signature(L.geojson_ign_vers_osm_xml).parameters),
+            ["geojson_path", "osm_xml_path", "epsilon"],
+        )
+        deps = self._capturer_dependances()
+        self.assertIs(deps.chemin_part, L._chemin_part)
+        self.assertIs(deps.stop_event, L._stop_event)
+        self.assertIs(deps.layer_tags, L._IGN_LAYER_TAGS)
+        self.assertIs(deps.tags_pour_layer, L._tags_pour_layer)
+        self.assertIs(deps.douglas_peucker, L._douglas_peucker)
+        self.assertIs(deps.epsilon_defaut, L._IGN_SIMPLIFY_EPSILON)
+
+    def test_facade_reads_reassigned_seams_at_call_time(self):
+        chemin_part = mock.Mock(name="chemin_part")
+        stop_event = mock.Mock(name="stop_event")
+        layer_tags = {"test": {"note": "test"}}
+        tags_pour_layer = mock.Mock(name="tags_pour_layer")
+        douglas_peucker = mock.Mock(name="douglas_peucker")
+        deps = self._capturer_dependances(
+            _chemin_part=chemin_part,
+            _stop_event=stop_event,
+            _IGN_LAYER_TAGS=layer_tags,
+            _tags_pour_layer=tags_pour_layer,
+            _douglas_peucker=douglas_peucker,
+            _IGN_SIMPLIFY_EPSILON=0.987,
+        )
+
+        self.assertIs(deps.chemin_part, chemin_part)
+        self.assertIs(deps.stop_event, stop_event)
+        self.assertIs(deps.layer_tags, layer_tags)
+        self.assertIs(deps.tags_pour_layer, tags_pour_layer)
+        self.assertIs(deps.douglas_peucker, douglas_peucker)
+        self.assertEqual(deps.epsilon_defaut, 0.987)
+
+
+class GeojsonGeometryContractTests(unittest.TestCase):
+    """Contrats purs du domaine GeoJSON, indépendants des IO et d'osmosis."""
+
+    def test_layer_tags_and_overlay_style_keep_their_precedence(self):
+        self.assertIs(
+            L._tags_pour_layer("batiment"),
+            geojson_geometry._IGN_LAYER_TAGS["batiment"],
+        )
+        self.assertEqual(
+            L._tags_pour_layer("zone_ign_troncon_hydrographique"),
+            {"waterway": "stream"},
+        )
+        self.assertEqual(
+            L._tags_pour_layer("couche_inconnue"),
+            {"note": "couche_inconnue"},
+        )
+        self.assertEqual(
+            L._overlay_style_key(
+                {"_cle": "railway", "source": "zone_ign_batiment"},
+            ),
+            "railway",
+        )
+        self.assertEqual(
+            L._overlay_style_key({"source": "zone_ign_batiment"}),
+            "building",
+        )
+        self.assertEqual(
+            L._overlay_style_key({}, "zone_ign_plan_d_eau"),
+            "natural",
+        )
+        self.assertEqual(L._overlay_style_key({"highway": "track"}), "highway")
+        self.assertIsNone(L._overlay_style_key({"name": "sans style"}))
+
+    def test_geometry_collection_preserves_polygon_holes(self):
+        exterior = [[0, 0], [4, 0], [4, 4], [0, 0]]
+        hole = [[1, 1], [2, 1], [1, 2], [1, 1]]
+        geometry = {
+            "type": "GeometryCollection",
+            "geometries": [
+                {"type": "LineString", "coordinates": [[0, 0], [1, 1]]},
+                {"type": "Polygon", "coordinates": [exterior, hole]},
+                {"type": "Point", "coordinates": [2, 2]},
+            ],
+        }
+
+        lines, polygons = L._overlay_sequences(geometry)
+
+        self.assertEqual(lines, [[[0, 0], [1, 1]]])
+        self.assertEqual(polygons, [[exterior, hole]])
+
+    def test_multi_geometries_are_flattened_without_points(self):
+        polygon_a = [[[0, 0], [1, 0], [0, 1], [0, 0]]]
+        polygon_b = [[[2, 2], [3, 2], [2, 3], [2, 2]]]
+
+        lines, polygons = L._overlay_sequences({
+            "type": "GeometryCollection",
+            "geometries": [
+                {
+                    "type": "MultiLineString",
+                    "coordinates": [
+                        [[0, 0], [1, 1]],
+                        [[2, 2], [3, 3]],
+                    ],
+                },
+                {
+                    "type": "MultiPolygon",
+                    "coordinates": [polygon_a, polygon_b],
+                },
+                {"type": "MultiPoint", "coordinates": [[4, 4], [5, 5]]},
+            ],
+        })
+
+        self.assertEqual(
+            lines,
+            [[[0, 0], [1, 1]], [[2, 2], [3, 3]]],
+        )
+        self.assertEqual(polygons, [polygon_a, polygon_b])
+
+    def test_douglas_peucker_keeps_endpoints_and_significant_turns(self):
+        points = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (2.0, 1.0)]
+        original = list(points)
+
+        simplified = L._douglas_peucker(points, epsilon=0.1)
+
+        self.assertEqual(simplified, [points[0], points[2], points[3]])
+        self.assertEqual(points[0], simplified[0])
+        self.assertEqual(points[-1], simplified[-1])
+        self.assertEqual(points, original)
+
+    def test_surface_epsilon_keeps_documented_thresholds(self):
+        metres_par_degre = 111_000.0
+        cases = (
+            (199.9, 3.0),
+            (200.0, 8.0),
+            (999.9, 8.0),
+            (1_000.0, 15.0),
+            (15_000.0, 25.0),
+            (100_000.0, 40.0),
+        )
+        for surface, metres in cases:
+            with self.subTest(surface=surface):
+                self.assertEqual(
+                    L._epsilon_depuis_surface_km2(surface),
+                    metres / metres_par_degre,
+                )
 
 
 class ManifestContractTests(unittest.TestCase):

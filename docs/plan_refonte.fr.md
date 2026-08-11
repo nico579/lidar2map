@@ -1,6 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 11 août 2026 (phase 9 terminée, déployée en v1.35.0 ; état des lieux et candidats pour la phase 10 ajoutés).
+Dernière mise à jour : 11 août 2026 (phase 10 terminée localement : noyau
+GeoJSON, conversion XML, rasteriseur et runner Mapsforge extraits ; rebuild
+v1.36.0 préparé, v1.35.0 reste la dernière release avant ce déploiement).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -38,7 +40,11 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _mbtiles_wmts_helpers.py  grille XYZ, URL, connexions, fetch HTTP
 ├── _ombrages_pures.py      IO raster, kernels numba, hillshade/SVF/LRM/RRIM
 ├── _ombrages_provider.py   fetch WCS provider, composites VAT/MSTP
-└── _shading_specs.py       types d'ombrages, presets, parsing --shading
+├── _shading_specs.py       types d'ombrages, presets, parsing --shading
+├── _geojson_geometry.py    tags/styles et algorithmes géométriques purs
+├── _geojson_osm_xml.py     streaming GeoJSON IGN → OSM XML atomique
+├── _geojson_raster.py      overlay PNG transparent → SQLite OsmAnd atomique
+└── _geojson_mapsforge.py   cache, Java/osmosis et publication .map atomique
 ```
 
 Tous ces modules sont privés (préfixe `_`). Leur interface stable est la façade
@@ -46,7 +52,8 @@ conservée dans `lidar2map.py`. Le préfixe `_split_` est réservé aux composan
 traitement découpé ; les producteurs et convertisseurs raster portent un nom de
 domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_mbtiles_wmts_helpers`, `_ombrages_pures`, `_ombrages_provider`,
-`_shading_specs`).
+`_shading_specs`, `_geojson_geometry`, `_geojson_osm_xml`, `_geojson_raster`,
+`_geojson_mapsforge`).
 
 ## Volume déjà transféré
 
@@ -84,8 +91,12 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_ombrages_pures.py` (9b, mesuré) | 1 961 | 9,20 % |
 | `_ombrages_provider.py` (9c, mesuré) | 412 | 1,93 % |
 | `_shading_specs.py` (9d, mesuré) | 111 | 0,52 % |
-| **Total sorti du monolithe (mesuré)** | **5 420** | **25,43 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **15 895** | **74,57 %** |
+| `_geojson_geometry.py` (10a, mesuré) | 254 | 1,19 % |
+| `_geojson_osm_xml.py` (10b, mesuré) | 296 | 1,39 % |
+| `_geojson_raster.py` (10c, mesuré) | 369 | 1,73 % |
+| `_geojson_mapsforge.py` (10d, mesuré) | 81 | 0,38 % |
+| **Total sorti du monolithe (mesuré)** | **6 420** | **30,12 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **14 895** | **69,88 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -123,11 +134,35 @@ partagé — le coût fixe d'injection se paie une fois par point d'entrée, pas
 une fois par module, contrairement aux deux extractions précédentes qui
 n'avaient qu'un seul point d'entrée chacune.
 
+`_geojson_geometry.py` contient 246 lignes physiques pour une réduction nette
+mesurée de 254 lignes (`lidar2map.py` : 15 895 → 15 641). Le module est ici
+légèrement plus court que le bloc sorti : les longues explications historiques
+restent dans le plan et les docstrings du module ont été resserrées, sans
+modifier les algorithmes ni leurs valeurs de configuration.
+
+`_geojson_osm_xml.py` contient 370 lignes physiques pour une réduction nette
+mesurée de 296 lignes (`lidar2map.py` : 15 641 → 15 345). Les 74 lignes d'écart
+sont l'en-tête, la dataclass de six dépendances, leur réouverture locale et le
+coût de la façade reconstruite à chaque appel. Elles incluent aussi le
+durcissement explicite du nettoyage si la création du staging XML final échoue.
+
+`_geojson_raster.py` contient 565 lignes physiques pour une réduction nette
+mesurée de 369 lignes (`lidar2map.py` : 15 345 → 14 976). Les 196 lignes d'écart
+viennent du formatage des blocs historiquement compactés, de la dataclass de
+douze dépendances, de la façade et du garde transactionnel qui ferme SQLite puis
+nettoie le fichier `.part` et ses sidecars sur toute sortie exceptionnelle.
+
+`_geojson_mapsforge.py` contient 187 lignes physiques pour une réduction nette
+mesurée de 81 lignes (`lidar2map.py` : 14 976 → 14 895). Les 106 lignes d'écart
+correspondent aux imports, à la dataclass de onze dépendances, à leur réouverture
+locale, au formatage de la commande osmosis et à la façade. Ce ratio confirme le
+faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
+
 ## Avancement
 
 | Phase | État | Contenu | Validation principale |
 |---|---|---|---|
-| 0. Caractérisation | Terminée | Runner hors réseau explicite et contrats de façade | 12 suites hors réseau |
+| 0. Caractérisation | Terminée | Runner hors réseau explicite et contrats de façade | 16 suites hors réseau |
 | 1. Fiabilisation du split | Terminée | Historique succès/échec, conversion multi-format, reprise et nettoyage 3×3 | `_test_split_history.py`, `_test_interactions.py` |
 | 2. Manifeste | Terminée | `Manifeste`, contexte thread-local et enregistrement des fichiers dans `_split_manifest.py` | concurrence, imbrication et reprise |
 | 3. Livrables | Terminée | `_ResultatChunk`, normalisation et validation MBTiles/RMAP/SQLiteDB dans `_split_deliverables.py` | stems attendus, fichiers périmés et MBTiles corrompus |
@@ -137,6 +172,7 @@ n'avaient qu'un seul point d'entrée chacune.
 | 7. Pipelines raster | **Terminée** | Conversions RMAP/SQLiteDB, producteur MBTiles WMTS, producteur MBTiles LiDAR et helpers WMTS extraits | tuilage, publications atomiques et formats multiples |
 | 8. Points d’entrée | **Terminée** | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; corps de dispatch déjà atteint ; autres points d'entrée audités, extraction non justifiée | tests d’historique monolithique et CLI |
 | 9. Bloc ombrages/COG | **Terminée** | IO raster + kernels numba + algorithmes par type (9b), fetch provider + composites VAT/MSTP (9c), types/presets/parsing (9d) ; `generer_ombrages` volontairement laissée en orchestrateur | `_test_corrections.py`, 83 contrats de façade, profils `fast`/`scientific` |
+| 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
 
 ## Travail déjà sécurisé
 
@@ -795,7 +831,7 @@ requise au-delà de la suite existante.
 
 ### Sous-phase 9b : couche pure extraite (terminée)
 
-`_ombrages_pures.py` (2041 lignes) contient désormais l'IO raster
+`_ombrages_pures.py` (2042 lignes) contient désormais l'IO raster
 (`_sauver_array_georef`, `_publier_tif_atomique`, `_lire_dem_rasterio`,
 `_nodata_mask`, `_source_a_des_donnees`, `_percentiles_grille`), les kernels
 numba (horn, SVF ×3 variantes, cache JIT), et les algorithmes de calcul par
@@ -859,7 +895,7 @@ mesurée sur une seule sous-phase de tout le plan.
 
 ### Sous-phase 9c : fetch provider + composites VAT/MSTP extraits (terminée)
 
-`_ombrages_provider.py` (507 lignes) regroupe deux familles distinctes
+`_ombrages_provider.py` (508 lignes) regroupe deux familles distinctes
 colocalisées : le téléchargement/désencapsulation d'ombrages précalculés WCS
 (`_extraire_tiff_multipart`, `_post_fetch_si_besoin`, `_fetch_provider_shadings`)
 et les composites qui blendent des couches déjà produites par
@@ -909,7 +945,7 @@ Lecture complète de `generer_ombrages` (736 lignes) avant toute extraction —
 verdict tranché avec Nico plutôt qu'exécuté directement, décision documentée
 ici pour la suite du plan.
 
-**Livré : `_shading_specs.py`** (132 lignes) — `_SHADING_TYPES`,
+**Livré : `_shading_specs.py`** (133 lignes) — `_SHADING_TYPES`,
 `SHADING_TYPES_ORDRE`, `SHADING_TOUS`, `SHADING_PRESETS`,
 `_resoudre_preset_shading`, `parser_shading_spec`. Analyse AST confirmée :
 **zéro dépendance externe**, réexport pur sans façade, même sûreté que les
@@ -966,50 +1002,225 @@ acceptable. Déployée en **v1.35.0** (11 août 2026).
 Déployé : bump `VERSION` 1.34.0 → 1.35.0, `deploy.py --new-tag`, tag
 `v1.35.0` poussé, `release.yml` déclenché (build Windows/macOS×2/Linux).
 
-## Phase 10 (candidats) : état des lieux post-phase 9
+## Phase 10 : GeoJSON/Mapsforge (terminée localement)
 
-`lidar2map.py` compte encore 15 895 lignes. Relevé frais des sections
-délimitées par des bannières `# ====`, avec un premier tri par nombre de
-fonctions top-level (proxy rapide de couplage : peu de fonctions sur
-beaucoup de lignes = probablement une poignée de blocs continus, pas des
-briques indépendantes) :
+L'état des lieux initial a été corrigé avant d'engager cette phase. La colonne
+précédemment nommée « fonctions top-level » comptait en réalité **tous** les
+`FunctionDef` de l'AST, y compris les closures et méthodes. Les vrais nombres de
+fonctions top-level du snapshot post-phase 9 étaient : bootstrap 15, RMAP 30,
+split 36, GeoJSON/Mapsforge 10, bulk BD TOPO 6, fusion 12 et interface graphique
+7. Cette correction confirme notamment que `lancer_gui()` reste une fonction de
+1 401 lignes et que le bloc GeoJSON est dominé par trois orchestrateurs longs,
+pas par 31 petites fonctions indépendantes.
 
-| Section | Lignes | Fonctions top-level | Profil |
-|---|---:|---:|---|
-| Installation automatique des dépendances (bootstrap) | 1 348 | 30 | nombreuses petites fonctions, plausiblement indépendantes |
-| Génération RMAP (osmosis/JRE/mapwriter + pipeline) | 2 571 | 38 | mélange : téléchargement d'outils (indépendant) + pipeline de génération (couplé) |
-| Découpage à priori — fonctions utilitaires | 2 214 | 45 | déjà identifié comme couplé au runner de split (`_split_runner.py`), risque connu |
-| Conversion GeoJSON IGN → OSM XML → Mapsforge .map | 1 128 | 31 | géométrie/rendu, forte densité de petites fonctions (clip, projection) — bon candidat |
-| Téléchargement bulk BD TOPO IGN (département entier) | 853 | 12 | peu de fonctions, blocs plus longs, à lire avant de trancher |
-| Pipeline fusion GeoJSON | 653 | 22 | contient son propre parsing CLI (`main_fusionner`), potentiellement autonome |
-| Interface graphique (PyWebView) | 1 821 | 50 | contient `lancer_gui()`, décrite en amont (avant la phase 9) comme une fonction unique de ~1400 lignes — à vérifier, le décompte de fonctions ne le confirme pas directement |
+### Audit de frontière
 
-Ce tableau est un **repérage**, pas une décision : le nombre de fonctions
-top-level ne dit rien du couplage réel (état partagé, closures, ordre
-d'appel implicite) — exactement ce que la lecture complète de
-`generer_ombrages` avait révélé en 9d malgré une section qui semblait, de
-loin, être « juste une grosse fonction ». Avant de lancer une sous-phase sur
-l'une de ces sections, la méthode déjà éprouvée s'applique : lecture
-complète du bloc visé, analyse AST des dépendances libres, grep des tests
-existants pour repérer d'éventuels monkeypatches sur des noms internes (le
-motif `_wmts_fetch`/`_extraire_tiff_multipart`), avant tout choix de
-frontière d'extraction.
+Deux candidats ont été lus intégralement et comparés avant modification :
 
-Deux pistes se distinguent à ce stade comme probablement les moins risquées,
-sur la seule base de ce tri :
+- **bootstrap** : extraction différée. Sa bannière de 1 348 lignes mélange le
+  cœur bootstrap, des commandes top-level et le logger. Le cœur s'exécute à
+  l'import, avant l'insertion normale du répertoire des modules, et peut muter
+  l'environnement, relancer le processus, installer via pip ou sortir. Les
+  suites actuelles le neutralisent avec `LIDAR2MAP_BOOTSTRAP=none` ; elles ne
+  caractérisent donc presque aucun de ses chemins actifs ;
+- **GeoJSON/Mapsforge** : le bloc initial de 1 128 lignes contenait un noyau pur
+  bien séparable, puis `rasteriser_geojson_transparent` (409 lignes),
+  `geojson_ign_vers_osm_xml` (320 lignes) et
+  `generer_map_depuis_geojson_ign` (119 lignes). Ces trois orchestrateurs ont
+  des coutures IO/atomiques et des monkeypatches existants ; l'audit a donc
+  imposé une extraction séquentielle avec caractérisation propre à chacun.
 
-- **Conversion GeoJSON → Mapsforge** (1 128 lignes) : nombreuses petites
-  fonctions géométriques (clip, intersection, projection) qui ressemblent
-  structurellement aux kernels numba de 9b — de bons candidats à un module
-  d'algorithmes purs.
-- **Bootstrap des dépendances** (1 348 lignes) : le téléchargement/preparation
-  d'outils (osmosis, JRE, mapwriter, venv) est déjà largement autonome par
-  nature (I/O réseau + filesystem, peu d'état partagé avec le reste du
-  pipeline) — mais son exécution a lieu très tôt au démarrage (avant même
-  l'import complet du reste du script dans certains chemins), ce qui mérite
-  une vérification spécifique avant d'y toucher.
+### Sous-phase 10a : noyau GeoJSON pur extrait (terminée)
 
-Aucune de ces pistes n'est engagée : elles sont documentées ici pour
-permettre de choisir la suite, suivant le même principe qu'aux points de
-décision précédents (phase 8, sous-phase 9d) plutôt que de trancher
-unilatéralement.
+`_geojson_geometry.py` (246 lignes) contient désormais :
+
+- les correspondances IGN→OSM et styles d'overlay (`_IGN_LAYER_TAGS`,
+  `_OVERLAY_STYLE`, `_tags_pour_layer`, `_overlay_style_key`) ;
+- la décomposition des géométries et le maintien des trous de polygones
+  (`_overlay_sequences`) ;
+- les algorithmes Liang–Barsky et Sutherland–Hodgman (`_seg_inter_box`,
+  `_clip_polygone_rect`) ;
+- Douglas–Peucker, sa constante historique et le choix d'epsilon selon la
+  surface (`_douglas_peucker`, `_IGN_SIMPLIFY_EPSILON`,
+  `_epsilon_depuis_surface_km2`).
+
+Le module ne dépend que de `math` et ne réalise aucune IO. Ses douze symboles
+historiques sont réexportés directement par `lidar2map.py`. Les dictionnaires de
+styles restent les mêmes objets : `_tags_pour_layer` continue donc de renvoyer
+les mêmes valeurs par identité. Aucun de ces symboles n'était réassigné ou
+monkeypatché dans les suites existantes.
+
+Tests ajoutés **avant** l'extraction : priorité tags/styles, conservation des
+trous dans une `GeometryCollection`, simplification avec coude significatif et
+frontières exactes des quatre seuils d'epsilon. La matrice multi-géométries et
+le repli `layer_hint` complètent ce contrat. Après extraction, les contrats
+d'identité façade↔module ont été ajoutés pour les douze symboles. Les tests déjà
+présents continuent de couvrir le clipping de segment, le clipping de polygone,
+la rasterisation transparente réelle, les trous, les anneaux dégénérés et les
+publications atomiques OSM/Mapsforge.
+
+- Validation ciblée : compilation, Ruff, 10 contrats ciblés, garde de livraison,
+  `_test_tiling.py`, `_test_corrections.py` et les 19 tests de
+  `_test_atomic_publications.py`, tous verts.
+- Validation globale : profil `fast` (27,8 s, 8 suites) et profil `scientific`
+  (88,6 s, 5 suites), tous verts.
+- Déploiement : `_geojson_geometry.py` ajouté à `deploy.MAP`, rebuild requis par
+  le motif `_geojson_*.py`, et même motif ajouté aux filtres push/PR de la CI.
+- Mesure : `lidar2map.py` 15 895 → 15 641 lignes (**-254**) ; total sorti
+  **5 674 lignes, 26,62 %** du périmètre figé.
+
+### Sous-phase 10b : conversion GeoJSON IGN → OSM XML extraite (terminée)
+
+`_geojson_osm_xml.py` (370 lignes) porte désormais le convertisseur streaming
+de 320 lignes. `lidar2map.py` conserve la signature historique exacte
+`(geojson_path, osm_xml_path, epsilon=None)` et reconstruit à chaque appel une
+dataclass frozen de six coutures :
+
+- `_chemin_part` et `_stop_event`, déjà patchés ou mutés par les tests ;
+- la table `_IGN_LAYER_TAGS`, `_tags_pour_layer`, `_douglas_peucker` et
+  `_IGN_SIMPLIFY_EPSILON`, relus eux aussi depuis la façade afin qu'une
+  réassignation future ne soit pas figée dans le module extrait.
+
+La nouvelle suite `_test_geojson_osm.py`, enregistrée dans le profil `fast`, a
+d'abord été exécutée sur l'implémentation monolithique. Ses huit scénarios
+verrouillent :
+
+- Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon et les
+  cinq sous-types historiquement pris en charge dans `GeometryCollection` ;
+- IDs négatifs, fermeture des anneaux, références valides et ordre strict
+  `bounds → nodes → ways` ;
+- bounds à sept décimales, tags IGN et échappement XML des cinq caractères
+  sensibles ;
+- epsilon par défaut/explicite, lecture `.geojson.gz`, flux tronqué après une
+  première feature, entrée vide, échec de publication et nettoyage des `.part`.
+
+Un défaut préexistant a été révélé par le scénario dédié au troisième appel à
+`_chemin_part` (staging XML final) : si cette création de chemin levait,
+les bodies `nodes` et `ways` restaient orphelins. Le test a d'abord échoué avec
+les deux fichiers présents ; le correctif conserve la propagation de
+l'exception mais les supprime désormais systématiquement.
+
+Deux contrats de façade supplémentaires vérifient la signature, l'identité de
+l'implémentation et la relecture des six coutures après réassignation. Le patch
+historique de `L.geojson_ign_vers_osm_xml` depuis le runner Mapsforge reste
+valide, car `generer_map_depuis_geojson_ign` demeure dans `lidar2map.py`.
+
+- Validation ciblée : compilation, Ruff, 12 contrats ciblés, 8 scénarios OSM
+  XML, garde de livraison, 19 publications atomiques et suite de corrections,
+  tous verts.
+- Validation globale : profil `fast` (29,4 s, 9 suites) et profil `scientific`
+  (84,9 s, 5 suites), tous verts.
+- Déploiement : `_geojson_osm_xml.py` ajouté à `deploy.MAP`; le rebuild et les
+  deux filtres CI étaient déjà couverts par `_geojson_*.py` depuis 10a.
+- Mesure : `lidar2map.py` 15 641 → 15 345 lignes (**-296**) ; total sorti
+  **5 970 lignes, 28,01 %** du périmètre figé.
+
+Limite volontairement conservée : dans une `GeometryCollection`, `MultiPoint`
+et une autre `GeometryCollection` imbriquée sont ignorés, comme avant 10b. Une
+évolution de ce comportement devra être traitée comme une fonctionnalité, pas
+glissée dans une extraction structurelle.
+
+### Sous-phase 10c : rasteriseur GeoJSON transparent extrait (terminée)
+
+`_geojson_raster.py` (565 lignes) porte désormais l'ancien orchestrateur de
+409 lignes. La façade conserve strictement la signature historique
+`(geojson_path, sqlitedb_out, zoom_min, zoom_max, ecraser=False,
+supersample=2, bbox_wgs84=None)` et reconstruit à chaque appel une dataclass
+frozen de douze coutures :
+
+- publication atomique : `_chemin_part`, `_nettoyer_sqlite_part` et
+  `_valider_sqlite_part` ;
+- arrêt et grille : `_stop_event` et `deg_to_tile` ;
+- styles/géométrie : les trois valeurs `_OVERLAY_*` et les quatre helpers
+  `_overlay_style_key`, `_overlay_sequences`, `_clip_polygone_rect` et
+  `_seg_inter_box`.
+
+Les mappings mutables et l'événement partagé sont injectés par identité, jamais
+copiés. Pillow reste importé dans la fonction et `ijson` dans l'itérateur :
+l'import de `lidar2map` ne gagne donc aucun prérequis. Les trois appelants
+`main`, `main_wfs` et `main_fusionner` continuent d'utiliser le nom de façade.
+
+La nouvelle suite `_test_geojson_raster.py`, ajoutée au profil `fast`, a été
+exécutée **avant** le déplacement. Sur le monolithe, cinq scénarios passaient et
+trois échouaient réellement :
+
+- `KeyboardInterrupt` après ouverture SQLite laissait le `.part` ;
+- une exception ordinaire au même endroit produisait la même fuite ;
+- un échec du `replace` de publication conservait également le staging.
+
+Le correctif transactionnel ferme maintenant la connexion dans un `finally` et
+nettoie le chantier SQLite complet (`.part`, `-wal`, `-shm`, `-journal`) sur
+toute `BaseException`, y compris un échec de publication. L'ancien livrable
+final n'est jamais supprimé avant le remplacement réussi. Les huit tests sont
+désormais verts et couvrent aussi la réutilisation sans `--overwrite`, la source
+absente, les géométries non dessinables/hors zone, l'entrée gzip, le schéma
+OsmAnd, les PNG RGBA, le rejet du validateur et l'arrêt avant ouverture.
+
+Deux contrats de façade supplémentaires vérifient la signature exacte,
+l'identité implémentation/module et la relecture des douze coutures après
+réassignation. Les scénarios réels de `_test_tiling.py` confirment en plus les
+traits, bâtiments, trous transparents, niveaux de zoom et métadonnées SQLite.
+
+- Validation ciblée : compilation, Ruff, 8 scénarios raster, 14 contrats
+  GeoJSON/façade ciblés, rendu réel, garde de livraison et publications
+  atomiques, tous verts.
+- Validation globale : profil `fast` (32,8 s, 10 suites) et profil `scientific`
+  (89,0 s, 5 suites), tous verts.
+- Déploiement : `_geojson_raster.py` ajouté à `deploy.MAP`; rebuild, filtres CI
+  et analyse PyInstaller déjà couverts par le motif `_geojson_*.py`.
+- Mesure : `lidar2map.py` 15 345 → 14 976 lignes (**-369**) ; total sorti
+  **6 339 lignes, 29,74 %** du périmètre figé.
+
+### Sous-phase 10d : runner GeoJSON IGN → Mapsforge extrait (terminée)
+
+`_geojson_mapsforge.py` (187 lignes) porte désormais l'ancien orchestrateur de
+119 lignes. La façade conserve la signature exacte
+`(geojson_src, dossier_ville, nom_zone, bbox_wgs84, ecraser=False,
+epsilon=None)` et reconstruit à chaque appel une dataclass frozen de onze
+coutures : convertisseur XML, préparation et exécution osmosis, staging,
+signature/cache, options Java, journalisation, formatage de durée et indicateur
+Windows.
+
+La suite `_test_geojson_mapsforge.py`, enregistrée dans le profil `fast`, a été
+exécutée **avant** l'extraction. Sept de ses huit scénarios passaient ; le
+huitième révélait qu'un échec du `Path.replace` final préservait bien l'ancien
+`.map`, mais laissait le nouveau `.map.part`. Le garde couvre désormais toute
+l'exécution et la publication : `RuntimeError`, `KeyboardInterrupt` et échec de
+renommage nettoient le staging, tandis que l'OSM intermédiaire reste disponible
+pour diagnostic.
+
+Les contrats verrouillent également :
+
+- le payload de signature (nom, mtime arrondi, bbox à six décimales, epsilon),
+  la migration douce sans sidecar et l'invalidation du cache ;
+- le succès atomique et les trois sorties infructueuses d'une invocation
+  osmosis (code non nul, fichier vide, fichier absent) ;
+- la commande POSIX, la commande `.bat` quotée, l'ordre de la bbox,
+  `JAVA_HOME`, le respect d'un `JAVA_OPTS` existant et son défaut ;
+- l'identité implémentation/module et la relecture dynamique des onze coutures
+  après monkeypatch de la façade.
+
+Le test historique de publication IGN reste vert : les patches de
+`L.geojson_ign_vers_osm_xml`, `L._preparer_osmosis` et
+`L._run_osmosis_streaming` continuent donc de traverser la façade.
+
+- Validation ciblée : compilation, Ruff, 8 scénarios Mapsforge, 16 contrats
+  GeoJSON/façade ciblés, 19 publications atomiques et garde de livraison, tous
+  verts.
+- Validation globale : profil `fast` (36,8 s, 11 suites) et profil `scientific`
+  (89,8 s, 5 suites), tous verts.
+- Déploiement : `_geojson_mapsforge.py` ajouté à `deploy.MAP`; le motif
+  `_geojson_*.py` impose le rebuild et couvre déjà les filtres CI/PyInstaller.
+- Version de rebuild : `VERSION` passe de 1.35.0 à **1.36.0** ; le tag est dérivé
+  par `deploy.py --new-tag` après push et validation de la CI.
+- Mesure : `lidar2map.py` 14 976 → 14 895 lignes (**-81**) ; total sorti
+  **6 420 lignes, 30,12 %** du périmètre figé.
+
+### Prochaine phase proposée : 11 — bootstrap
+
+Commencer par des tests de caractérisation du bootstrap actif, actuellement
+presque toujours neutralisé par `LIDAR2MAP_BOOTSTRAP=none`. Les contrats à poser
+avant tout déplacement concernent la résolution CLI/environnement, la relance
+Windows/Unix, les codes de sortie, TLS, pip et le mode frozen. Le premier lot de
+code éventuel restera volontairement petit et pur ; le cœur bootstrap complet ne
+sera déplacé qu'après ces garde-fous.

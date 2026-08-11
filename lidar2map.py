@@ -2391,7 +2391,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.35.0"
+VERSION      = "1.36.0"
 VERSION_DATE = "2026-08"
 
 
@@ -10941,1129 +10941,129 @@ def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
 # CONVERSION GEOJSON IGN → OSM XML → MAPSFORGE .map
 # ============================================================
 
-# Correspondance typename WFS IGN → tags OSM pour mapwriter
-_IGN_LAYER_TAGS = {
-    # hydrographie — rendu bleu natif dans tous les thèmes
-    "cours_d_eau":              {"waterway": "river"},
-    "troncon_hydrographique":   {"waterway": "stream"},
-    "plan_d_eau":               {"natural": "water"},
-    "detail_hydrographique":    {"natural": "spring"},
-    # bâti / structures
-    "batiment":                 {"building": "yes"},
-    "construction_surfacique":  {"building": "wall"},
-    "cimetiere":                {"landuse": "cemetery"},
-    # transport
-    "troncon_de_route":         {"highway": "unclassified"},
-    "itineraire_autre":         {"highway": "track"},
-    # orographie
-    "ligne_orographique":       {"natural": "ridge"},
-    "detail_orographique":      {"natural": "rock"},
-    # végétation / milieu
-    "foret_publique":           {"landuse": "forest"},
-    "parc_ou_reserve":          {"leisure": "nature_reserve"},
-    # cadastre/admin : barrier=fence → trait fin sans remplissage dans tous les thèmes,
-    # sémantiquement juste (limite de propriété) et non conflictuel avec landuse OSM
-    "commune":                  {"boundary": "administrative", "admin_level": "8"},
-    "parcelle":                 {"barrier": "fence"},
-    # lieux-dits
-    "lieu_dit_non_habite":      {"place": "locality"},
-    # RPG
-    "parcelles_graphiques":     {"landuse": "farmland"},
-}
+from _geojson_geometry import (
+    _IGN_LAYER_TAGS,
+    _IGN_SIMPLIFY_EPSILON,
+    _OVERLAY_DEFAUT,
+    _OVERLAY_STYLE,
+    _OVERLAY_TILE_WARN,
+    _clip_polygone_rect,
+    _douglas_peucker,
+    _epsilon_depuis_surface_km2,
+    _overlay_sequences,
+    _overlay_style_key,
+    _seg_inter_box,
+    _tags_pour_layer,
+)
 
 
-def _tags_pour_layer(layer_short: str) -> dict:
-    """Retourne les tags OSM à appliquer pour un layer WFS IGN (nom court)."""
-    for k, v in _IGN_LAYER_TAGS.items():
-        if k in layer_short:
-            return v
-    return {"note": layer_short}
+from _geojson_raster import (
+    _DependancesRasterGeojson,
+    rasteriser_geojson_transparent as _rasteriser_geojson_transparent_impl,
+)
 
 
-# ── Overlay raster transparent (--file-formats transparent-raster) ───────────
-# Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent, ecrites dans un
-# .sqlitedb OsmAnd/Locus. Sert a superposer un vecteur (chemins, cours d'eau,
-# bati IGN...) par-dessus le LiDAR dans OsmAnd, qui n'a pas de couche vecteur
-# transparente native (seulement des overlays raster). Cle de style = cle de tag
-# OSM top-level ; l'IGN y est ramene via _IGN_LAYER_TAGS. Le pivot commun aux deux
-# sources est le GeoJSON, donc un seul rasteriseur sert les deux.
-_OVERLAY_STYLE = {
-    # cle OSM      trait RGBA            largeur_px  remplir_polygone
-    "highway":  ((232,  80,  20, 255),   1.4,        False),
-    "waterway": (( 30, 110, 220, 255),   1.4,        False),
-    "railway":  (( 70,  70,  70, 255),   1.2,        False),
-    "building": ((150, 100,  70, 255),   1.0,        True),
-    "natural":  (( 30, 140, 200, 255),   1.2,        False),
-    "landuse":  (( 70, 150,  70, 255),   1.0,        False),
-    "leisure":  (( 70, 150,  90, 255),   1.0,        False),
-    "boundary": ((160,  70, 160, 255),   0.9,        False),
-    "barrier":  ((150, 120,  40, 255),   0.8,        False),
-    "place":    (( 90,  90,  90, 255),   1.2,        False),
-}
-_OVERLAY_DEFAUT = ((120, 120, 120, 255), 1.0, False)
-
-# Au-dela de ce nombre de tuiles de grille (toutes profondeurs), on previent que
-# l'overlay transparent peut etre long. Depuis le binning, le cout suit la densite
-# de geometrie (tuiles non vides) plus que la grille : ~155k tuiles de grille sur
-# un trace clairseme = ~50s ; le seuil vise la zone franchement grande.
-_OVERLAY_TILE_WARN = 200_000
+def _dependances_geojson_raster():
+    return _DependancesRasterGeojson(
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        stop_event=_stop_event,
+        deg_to_tile=deg_to_tile,
+        overlay_style=_OVERLAY_STYLE,
+        overlay_defaut=_OVERLAY_DEFAUT,
+        overlay_tile_warn=_OVERLAY_TILE_WARN,
+        overlay_style_key=_overlay_style_key,
+        overlay_sequences=_overlay_sequences,
+        clip_polygone_rect=_clip_polygone_rect,
+        seg_inter_box=_seg_inter_box,
+    )
 
 
-def _overlay_style_key(props, layer_hint=""):
-    """Cle de style d'une feature GeoJSON : la cle de tag OSM top-level.
-    - GeoJSON OSM : la propriete '_cle' porte deja la cle (highway, waterway...).
-    - GeoJSON IGN : deduite de 'source' (ou du nom de fichier) via _IGN_LAYER_TAGS.
-    - Sinon : 1er tag connu present dans les proprietes. None => style par defaut.
-    """
-    cle = props.get("_cle")
-    if cle:
-        return cle
-    src = str(props.get("source", "")) or layer_hint
-    for k, tagd in _IGN_LAYER_TAGS.items():
-        if k in src:
-            return next(iter(tagd))
-    for k in _OVERLAY_STYLE:
-        if k in props:
-            return k
-    return None
+def rasteriser_geojson_transparent(
+    geojson_path,
+    sqlitedb_out,
+    zoom_min,
+    zoom_max,
+    ecraser=False,
+    supersample=2,
+    bbox_wgs84=None,
+):
+    return _rasteriser_geojson_transparent_impl(
+        geojson_path,
+        sqlitedb_out,
+        zoom_min,
+        zoom_max,
+        ecraser=ecraser,
+        supersample=supersample,
+        bbox_wgs84=bbox_wgs84,
+        dependances=_dependances_geojson_raster(),
+    )
+
+from _geojson_osm_xml import (
+    _DependancesGeojsonOsmXml,
+    geojson_ign_vers_osm_xml as _geojson_ign_vers_osm_xml_impl,
+)
 
 
-def _overlay_sequences(geom):
-    """Decompose une geometrie GeoJSON en (lignes, polygones).
-    - lignes : liste de sequences ouvertes (LineString/MultiLineString).
-    - polygones : liste de polygones, chacun = [anneau_ext, trou1, trou2, ...].
-      Le GROUPEMENT ext/trous est preserve (R2#34) : un trou doit etre soustrait
-      du remplissage, pas peint comme un polygone plein. Avant, tous les anneaux
-      etaient aplatis en une liste plate -> chaque trou rendu plein (une cour
-      interieure de batiment se retrouvait comblee).
-    Point/MultiPoint ignores (pas de trait a l'echelle overlay)."""
-    gt = geom.get("type", "")
-    co = geom.get("coordinates", [])
-    lignes, polygones = [], []
-    if gt == "LineString":
-        lignes.append(co)
-    elif gt == "MultiLineString":
-        lignes.extend(co)
-    elif gt == "Polygon":
-        if co:
-            polygones.append(list(co))
-    elif gt == "MultiPolygon":
-        for poly in co:
-            if poly:
-                polygones.append(list(poly))
-    elif gt == "GeometryCollection":
-        for sub in geom.get("geometries", []):
-            sl, sp = _overlay_sequences(sub)
-            lignes.extend(sl); polygones.extend(sp)
-    return lignes, polygones
+def _dependances_geojson_osm_xml():
+    return _DependancesGeojsonOsmXml(
+        chemin_part=_chemin_part,
+        stop_event=_stop_event,
+        layer_tags=_IGN_LAYER_TAGS,
+        tags_pour_layer=_tags_pour_layer,
+        douglas_peucker=_douglas_peucker,
+        epsilon_defaut=_IGN_SIMPLIFY_EPSILON,
+    )
 
-
-def _seg_inter_box(ax, ay, bx, by, x0, y0, x1, y1):
-    """Liang-Barsky : le segment (ax,ay)->(bx,by) coupe-t-il la box axis-aligned
-    [x0,x1]×[y0,y1] ? Sert à ne binner un segment QUE dans les tuiles qu'il
-    traverse réellement, au lieu de tout son rectangle englobant. Un long segment
-    diagonal touche O(N) tuiles mais son rectangle en fait O(N²) : rivières, GR,
-    limites administratives, courbes de niveau (R2#35). Algorithme de clipping de
-    segment standard (1978), ici détourné en simple test booléen d'intersection."""
-    dx = bx - ax
-    dy = by - ay
-    if dx == 0 and dy == 0:                      # segment dégénéré (point)
-        return x0 <= ax <= x1 and y0 <= ay <= y1
-    t0, t1 = 0.0, 1.0
-    for p, q in ((-dx, ax - x0), (dx, x1 - ax), (-dy, ay - y0), (dy, y1 - ay)):
-        if p == 0:
-            if q < 0:
-                return False                     # parallèle à ce bord, hors tranche
-        else:
-            r = q / p
-            if p < 0:
-                if r > t1:
-                    return False
-                if r > t0:
-                    t0 = r
-            else:
-                if r < t0:
-                    return False
-                if r < t1:
-                    t1 = r
-    return True
-
-
-def _clip_polygone_rect(ring, x0, y0, x1, y1):
-    """Sutherland-Hodgman (1974) : clippe un anneau ferme contre le rectangle
-    axis-aligned [x0,x1]×[y0,y1] (ici en lon/lat). Retourne un anneau clippe
-    FERME qui suit les bords du rectangle la ou l'anneau en sort, [] si vide.
-
-    Corrige deux artefacts du splitter de lignes `_clip_seq` applique aux
-    polygones (R2#34) : (b) un anneau qui deborde la zone etait coupe en arcs
-    OUVERTS que `dr.polygon` refermait par une corde droite en travers de la
-    zone ; et un polygone CONTENANT la zone (sa frontiere loin, aucun segment
-    pres du bord) etait entierement jete -> aucun remplissage. Le clipping SH
-    contre le rectangle rend le premier sans corde (la fermeture longe le bord)
-    et le second comme le rectangle plein."""
-    pts = ring[:-1] if len(ring) >= 2 and ring[0] == ring[-1] else list(ring)
-    if len(pts) < 3:
-        return []
-
-    def _clip_bord(poly, dedans, inter):
-        # Un cote du rectangle : garde les sommets DEDANS, insere l'intersection
-        # a chaque traversee du bord (entree comme sortie).
-        out = []
-        for i in range(len(poly)):
-            cur, prv = poly[i], poly[i - 1]
-            c_in, p_in = dedans(cur), dedans(prv)
-            if c_in:
-                if not p_in:
-                    out.append(inter(prv, cur))
-                out.append(cur)
-            elif p_in:
-                out.append(inter(prv, cur))
-        return out
-
-    def _ix(a, b, t):
-        return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-
-    # 4 demi-plans ; l'intersection interpole lineairement le point de traversee
-    # (le denominateur ne s'annule jamais : un segment qui traverse le bord a des
-    # extremites de part et d'autre, donc des coordonnees distinctes sur cet axe).
-    poly = _clip_bord(pts, lambda p: p[0] >= x0,
-                      lambda a, b: _ix(a, b, (x0 - a[0]) / (b[0] - a[0])))
-    if poly:
-        poly = _clip_bord(poly, lambda p: p[0] <= x1,
-                          lambda a, b: _ix(a, b, (x1 - a[0]) / (b[0] - a[0])))
-    if poly:
-        poly = _clip_bord(poly, lambda p: p[1] >= y0,
-                          lambda a, b: _ix(a, b, (y0 - a[1]) / (b[1] - a[1])))
-    if poly:
-        poly = _clip_bord(poly, lambda p: p[1] <= y1,
-                          lambda a, b: _ix(a, b, (y1 - a[1]) / (b[1] - a[1])))
-    if len(poly) < 3:
-        return []
-    poly.append(poly[0])   # refermer l'anneau
-    return poly
-
-
-def rasteriser_geojson_transparent(geojson_path, sqlitedb_out, zoom_min, zoom_max,
-                                   ecraser=False, supersample=2, bbox_wgs84=None):
-    """Rend un GeoJSON (OSM ou IGN) en tuiles PNG a fond transparent -> .sqlitedb
-    OsmAnd (schema RMaps, tilenumbering='simple', cf. generer_sqlitedb_...).
-    CIBLE OsmAnd, PAS Locus : 'simple' fait refuser le fichier par Locus (entree
-    grisee), qui attend la numerotation BigPlanet ; pour Locus on livre le MBTiles
-    (lu nativement). L'ancienne docstring "OsmAnd/Locus" ici etait fausse (R2#36).
-
-    Chaque feature est stylee par sa cle de tag OSM (_OVERLAY_STYLE) : trait pour
-    les LineString, contour (+ remplissage leger) pour les polygones. Seules les
-    tuiles non vides sont ecrites, ce qui donne un vrai overlay transparent.
-
-    Charge la geometrie en RAM (usage a l'echelle d'une zone, pas d'un departement
-    entier : un overlay dept serait enorme et sans objet). Streaming ijson en
-    lecture pour ne pas exploser sur un GeoJSON de plusieurs centaines de Mo.
-
-    Retourne le Path du sqlitedb, ou None si aucune tuile produite.
-    """
-    import io as _io
-    from PIL import Image as _Image, ImageDraw as _ImageDraw
-
-    geojson_path = Path(geojson_path)
-    sqlitedb_out = Path(sqlitedb_out)
-    if sqlitedb_out.exists() and not ecraser:
-        print(f"  {sqlitedb_out.name} -> already present")
-        return sqlitedb_out
-    if not geojson_path.exists():
-        print(f"  ERROR: {geojson_path.name} not found")
-        return None
-
-    TILE = 256
-    SS = max(1, int(supersample))
-    layer_hint = ""
-    _stem = geojson_path.name
-    if "_ign_" in _stem:
-        layer_hint = _stem.split("_ign_", 1)[1].split(".geojson", 1)[0]
-
-    def _deg2num_f(lat, lon, z):
-        n = 1 << z
-        x = (lon + 180.0) / 360.0 * n
-        y = (1.0 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2.0 * n
-        return x, y
-
-    # ── Lecture GeoJSON (streaming) -> liste de features stylees ─────────────
-    opener = ((lambda: gzip.open(geojson_path, "rb"))
-              if geojson_path.suffix == ".gz"
-              else (lambda: open(geojson_path, "rb")))
-
-    def _iter_features():
-        try:
-            import ijson as _ijson
-            with opener() as fh:
-                for feat in _ijson.items(fh, "features.item"):
-                    yield feat
-            return
-        except ImportError:
-            pass
-        except (OSError, ValueError):
-            pass
-        with opener() as fh:
-            payload = fh.read()
-        if isinstance(payload, bytes):
-            payload = payload.decode("utf-8", errors="replace")
-        for feat in json.loads(payload).get("features", []):
-            yield feat
-
-    # Clip des segments à la zone (marge ~15%) dès la lecture. Une feature IGN
-    # peut courir sur des dizaines/centaines de km hors zone (itinéraire GR :
-    # 45 000 sommets, 380 km). Sans clip on reprojetterait tous ces sommets pour
-    # chaque tuile (lent), ou on rendrait des tuiles vides sur toute l'étendue.
-    # On ne garde que les sous-séquences dont un segment touche la zone.
-    _clip = None
-    if bbox_wgs84:
-        _bl, _bs, _br, _bn = bbox_wgs84
-        _mlon = (_br - _bl) * 0.15 + 1e-4
-        _mlat = (_bn - _bs) * 0.15 + 1e-4
-        _clip = (_bl - _mlon, _bs - _mlat, _br + _mlon, _bn + _mlat)
-
-    def _clip_seq(seq):
-        """Sous-séquences de seq dont un segment intersecte la bbox de clip
-        (test bbox segment × bbox zone). Sans clip → la séquence entière."""
-        if _clip is None or len(seq) < 2:
-            return [seq] if len(seq) >= 2 else []
-        cw, cs, ce, cn = _clip
-        out, cur = [], []
-        for i in range(len(seq) - 1):
-            (x0, y0), (x1, y1) = seq[i], seq[i + 1]
-            if (max(x0, x1) >= cw and min(x0, x1) <= ce
-                    and max(y0, y1) >= cs and min(y0, y1) <= cn):
-                if not cur:
-                    cur.append(seq[i])
-                cur.append(seq[i + 1])
-            else:
-                if len(cur) >= 2:
-                    out.append(cur)
-                cur = []
-        if len(cur) >= 2:
-            out.append(cur)
-        return out
-
-    def _clip_poly(ring):
-        """Anneau de POLYGONE clippe a la zone (SH). Sans clip, ou anneau
-        entierement dans la zone+marge : renvoye tel quel (fast-path, sortie
-        bit-identique + pas de cout SH). Sinon clip Sutherland-Hodgman contre
-        le rectangle (anneau ferme, pas de corde). [] si hors zone."""
-        if _clip is None or len(ring) < 3:
-            return ring
-        cw, cs, ce, cn = _clip
-        xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
-        if min(xs) >= cw and max(xs) <= ce and min(ys) >= cs and max(ys) <= cn:
-            return ring
-        return _clip_polygone_rect(ring, cw, cs, ce, cn)
-
-    feats = []   # (color, width, fill, lignes[list of seq], polys[(ext, trous)])
-    lon_min = lat_min = float("inf")
-    lon_max = lat_max = float("-inf")
-    for feat in _iter_features():
-        if _stop_event.is_set():
-            raise KeyboardInterrupt("transparent-raster interrompu")
-        geom = feat.get("geometry")
-        if not geom:
-            continue
-        props = feat.get("properties") or {}
-        color, width, fill = _OVERLAY_STYLE.get(
-            _overlay_style_key(props, layer_hint), _OVERLAY_DEFAUT)
-        lignes, polygones = _overlay_sequences(geom)
-        if not lignes and not polygones:
-            continue
-        # ijson rend les nombres en Decimal → caster en float une fois pour
-        # toutes (sinon deg_to_tile plante sur Decimal + float), puis clip zone.
-        lignes = [s for seq in lignes
-                  for s in _clip_seq([(float(c[0]), float(c[1])) for c in seq])]
-        # Polygones : traitement selon le remplissage (R2#34).
-        # - fill=True (bâtiments) : anneaux fermés par SH (pas de corde) + trous
-        #   GROUPÉS avec leur extérieur pour un fill correct. Quasi toujours
-        #   fast-path (un bâtiment tient dans la zone+marge) → coût SH nul.
-        # - fill=False (landuse/natural/limites...) : contour SEUL → on garde le
-        #   splitter de lignes (arcs près de la zone, cheap, pas de fill donc pas
-        #   de corde). Bit-identique, aucune régression sur un gros polygone qui
-        #   enclot la zone (SH le rendrait en rectangle plein = tuiles inutiles).
-        polys = []
-        for poly in polygones:
-            rings = [[(float(c[0]), float(c[1])) for c in ring] for ring in poly]
-            if fill:
-                ext = _clip_poly(rings[0])
-                if len(ext) < 3:
-                    continue
-                trous = []
-                for h in rings[1:]:
-                    hc = _clip_poly(h)
-                    if len(hc) >= 3:
-                        trous.append(hc)
-                polys.append((ext, trous))
-            else:
-                for ring in rings:
-                    for s in _clip_seq(ring):
-                        polys.append((s, []))
-        if not lignes and not polys:
-            continue
-        for ext, _trous in polys:   # les trous sont inclus dans l'extérieur
-            for lon, lat in ext:
-                if lon < lon_min: lon_min = lon
-                if lon > lon_max: lon_max = lon
-                if lat < lat_min: lat_min = lat
-                if lat > lat_max: lat_max = lat
-        for seq in lignes:
-            for lon, lat in seq:
-                if lon < lon_min: lon_min = lon
-                if lon > lon_max: lon_max = lon
-                if lat < lat_min: lat_min = lat
-                if lat > lat_max: lat_max = lat
-        feats.append((color, width, fill, lignes, polys))
-
-    if not feats or lon_min > lon_max:
-        # Cas fréquent en IGN : des features existent mais aucune ne traverse la
-        # petite zone (elles la frôlent). Message actionnable plutôt que cryptique.
-        if bbox_wgs84:
-            print("  transparent-raster: no feature within the zone "
-                  "(features exist nearby but none cross it - try a larger --zone-width)")
-        else:
-            print(f"  transparent-raster: no drawable feature in {geojson_path.name}")
-        return None
-    # Clip de la grille à la zone demandée. Indispensable côté IGN : le WFS
-    # renvoie les features ENTIÈRES qui touchent la bbox (un itinéraire ancien
-    # peut courir sur des dizaines de km hors zone). Sans ce clip, la grille de
-    # tuiles couvrirait toute l'étendue de la feature → des millions de tuiles
-    # et un run qui ne finit jamais. OSM ne le montrait pas (osmosis pré-clippe).
-    if bbox_wgs84:
-        _bl, _bs, _br, _bn = bbox_wgs84
-        lon_min = max(lon_min, _bl); lat_min = max(lat_min, _bs)
-        lon_max = min(lon_max, _br); lat_max = min(lat_max, _bn)
-    if lon_min > lon_max or lat_min > lat_max:
-        print("  transparent-raster: features outside the requested zone")
-        return None
-    print(f"  transparent-raster <- {geojson_path.name} "
-          f"({len(feats)} features, z{zoom_min}-{zoom_max})...", flush=True)
-    _t0 = time.time()
-
-    # Garde-fou : compter la grille avant de rendre. Le hang est déjà évité (clip
-    # zone), mais une grande zone ou un zoom élevé reste lent en silence : on
-    # prévient au lieu de laisser croire à un blocage.
-    _grid_total = 0
-    for _z in range(zoom_min, zoom_max + 1):
-        _a, _b = deg_to_tile(lat_max, lon_min, _z)
-        _c, _d = deg_to_tile(lat_min, lon_max, _z)
-        _grid_total += (_c - _a + 1) * (_d - _b + 1)
-    if _grid_total > _OVERLAY_TILE_WARN:
-        print(f"  WARNING: large overlay ({_grid_total:,} grid tiles) - this may "
-              f"take a while; reduce the zone or lower --zoom-max.", flush=True)
-
-    SCALE = TILE * SS   # côté d'une tuile en pixels supersamplés
-
-    def _proj_pt(lon, lat, z):
-        fx, fy = _deg2num_f(lat, lon, z)
-        return fx * SCALE, fy * SCALE
-
-    # ── Ecriture sqlitedb (schema lidar2map + tilenumbering='simple') ────────
-    # Pas d'unlink de l'ancien sqlitedb ici : out_part.replace(sqlitedb_out)
-    # l'écrase atomiquement en fin de génération (R2#49). Le supprimer maintenant
-    # ferait perdre le livrable précédent si ce run échoue (le .part est jeté).
-    out_part = _chemin_part(sqlitedb_out)
-    con = sqlite3.connect(str(out_part))
-    con.execute("PRAGMA journal_mode=MEMORY;")
-    con.execute("PRAGMA synchronous=OFF;")   # .part jeté sur échec, cf. WMTS
-    con.executescript("""
-        CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);
-        CREATE TABLE android_metadata (locale TEXT);
-        CREATE TABLE info (minzoom INT, maxzoom INT, tilenumbering TEXT);
-        CREATE UNIQUE INDEX idx_tiles ON tiles (x, y, z, s);
-    """)
-    con.execute("INSERT INTO android_metadata VALUES (?)", ("fr_FR",))
-    con.execute("INSERT INTO info VALUES (?, ?, ?)", (zoom_min, zoom_max, "simple"))
-
-    total = 0
-    for z in range(zoom_min, zoom_max + 1):
-        # Binning : ranger chaque SEGMENT (et chaque anneau) dans les tuiles qu'il
-        # couvre, puis ne rendre QUE les tuiles non vides. On ne parcourt jamais la
-        # grille entière → coût borné par la géométrie, pas par la grille (une zone
-        # de 30 km ne fait plus exploser le temps). C'est le standard des serveurs
-        # de tuiles. gtx/gty : bornes de la zone (ignore ce qui déborde).
-        gtx0, gty0 = deg_to_tile(lat_max, lon_min, z)
-        gtx1, gty1 = deg_to_tile(lat_min, lon_max, z)
-        buckets = {}   # (tx,ty) -> liste d'items ("lin"/"pol", ...)
-
-        def _add(tx, ty, item):
-            if gtx0 <= tx <= gtx1 and gty0 <= ty <= gty1:
-                buckets.setdefault((tx, ty), []).append(item)
-
-        for color, width, fill, lignes, polys in feats:
-            wpx = max(1, int(round(width * SS)))
-            mg  = wpx + 2 * SS   # marge = demi-largeur du liseré
-            for seq in lignes:
-                gp = [_proj_pt(lon, lat, z) for lon, lat in seq]
-                for i in range(len(gp) - 1):
-                    p0, p1 = gp[i], gp[i + 1]
-                    itm = ("lin", color, wpx, p0, p1)
-                    for tx in range(int((min(p0[0], p1[0]) - mg) // SCALE),
-                                    int((max(p0[0], p1[0]) + mg) // SCALE) + 1):
-                        _bx0 = tx * SCALE - mg
-                        _bx1 = tx * SCALE + SCALE + mg
-                        for ty in range(int((min(p0[1], p1[1]) - mg) // SCALE),
-                                        int((max(p0[1], p1[1]) + mg) // SCALE) + 1):
-                            # R2#35 : ne binner que les tuiles réellement
-                            # traversées par le segment (box tuile élargie de mg,
-                            # marge = footprint du liseré + pastilles), pas tout
-                            # le rectangle englobant (quadratique sur les
-                            # diagonales). mg > demi-largeur → conservateur, sortie
-                            # identique, buckets et rendus effondrés.
-                            if _seg_inter_box(p0[0], p0[1], p1[0], p1[1],
-                                              _bx0, ty * SCALE - mg,
-                                              _bx1, ty * SCALE + SCALE + mg):
-                                _add(tx, ty, itm)
-            for ext, trous in polys:
-                gp = [_proj_pt(lon, lat, z) for lon, lat in ext]
-                if len(gp) < 2:
-                    continue
-                # Trous projetés une fois ici (⊂ extérieur → même binning que gp).
-                trous_gp = [[_proj_pt(lon, lat, z) for lon, lat in h]
-                            for h in trous]
-                xs = [p[0] for p in gp]; ys = [p[1] for p in gp]
-                itm = ("pol", color, wpx, fill, gp, trous_gp)
-                for tx in range(int((min(xs) - mg) // SCALE),
-                                int((max(xs) + mg) // SCALE) + 1):
-                    for ty in range(int((min(ys) - mg) // SCALE),
-                                    int((max(ys) + mg) // SCALE) + 1):
-                        _add(tx, ty, itm)
-
-        # Rendu d'une tuile → tuple d'INSERT (ou None si vide). Pur PIL sur
-        # données locales : thread-safe, et Pillow relâche le GIL pendant
-        # resize/save → un pool de threads donne un vrai parallélisme (même
-        # pattern que l'encodage du tileur WMTS). Mesures 2026-07-11 (tuile
-        # dense 512² → 256) : draw 1,2 ms, LANCZOS 7 ms, save optimize=True
-        # 13,3 ms. Le run Var z13-18 (580 k tuiles) prenait 2 h 54 en série.
-        def _rendre_tuile(job, _z=z):
-            (tx, ty), items = job
-            ox, oy = tx * SCALE, ty * SCALE
-            big = _Image.new("RGBA", (SCALE, SCALE), (0, 0, 0, 0))
-            dr = _ImageDraw.Draw(big)
-            # Polygones (fond) : remplissage léger + contour
-            for it in items:
-                if it[0] != "pol":
-                    continue
-                _, color, wpx, fill, gp, trous_gp = it
-                pts = [(x - ox, y - oy) for x, y in gp]
-                if fill:
-                    if trous_gp:
-                        # R2#34 : trous SOUSTRAITS. Masque L (ext=70, trous=0)
-                        # composé une fois → le fill leger suit la couronne, le
-                        # trou reste transparent (une cour de bâtiment n'est plus
-                        # comblée). Chemin lent réservé aux polygones à trou.
-                        mask = _Image.new("L", (SCALE, SCALE), 0)
-                        md = _ImageDraw.Draw(mask)
-                        md.polygon(pts, fill=70)
-                        for h in trous_gp:
-                            md.polygon([(x - ox, y - oy) for x, y in h], fill=0)
-                        layer = _Image.new("RGBA", (SCALE, SCALE),
-                                           (color[0], color[1], color[2], 0))
-                        layer.putalpha(mask)
-                        big.alpha_composite(layer)
-                    else:
-                        dr.polygon(pts, fill=(color[0], color[1], color[2], 70))
-                dr.line(pts, fill=color, width=wpx, joint="curve")
-                for h in trous_gp:   # contour du trou aussi
-                    dr.line([(x - ox, y - oy) for x, y in h],
-                            fill=color, width=wpx, joint="curve")
-            # Liserés blancs : segment + pastilles aux jonctions (traits continus
-            # malgré le rendu segment par segment), sous tous les traits colorés...
-            for it in items:
-                if it[0] != "lin":
-                    continue
-                _, color, wpx, p0, p1 = it
-                a = (p0[0] - ox, p0[1] - oy); b = (p1[0] - ox, p1[1] - oy)
-                r = (wpx + 2 * SS) / 2.0
-                dr.line([a, b], fill=(255, 255, 255, 210), width=wpx + 2 * SS)
-                for cx, cy in (a, b):
-                    dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 210))
-            # ...puis les traits colorés
-            for it in items:
-                if it[0] != "lin":
-                    continue
-                _, color, wpx, p0, p1 = it
-                a = (p0[0] - ox, p0[1] - oy); b = (p1[0] - ox, p1[1] - oy)
-                r = wpx / 2.0
-                dr.line([a, b], fill=color, width=wpx)
-                for cx, cy in (a, b):
-                    dr.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
-            # Résolution du supersampling : BOX = moyenne 2×2 exacte, c'est LE
-            # resolve SSAA standard — rendu identique à l'œil sur du trait,
-            # ~4× plus rapide que LANCZOS (1,7 ms vs 7 ms).
-            small = big.resize((TILE, TILE), _Image.BOX) if SS > 1 else big
-            if small.getbbox() is None:
-                return None
-            buf = _io.BytesIO()
-            # PNG standard (compress 6) : optimize=True coûtait 3× l'encodage
-            # pour une taille égale ou PIRE (mesuré 28 169 o vs 27 981 o).
-            small.save(buf, "PNG")
-            return (tx, ty, _z, 0, buf.getvalue())
-
-        zt = 0
-        batch_ins = []
-        _jobs = list(buckets.items())
-        _n_workers = max(2, min(8, os.cpu_count() or 4))
-
-        def _consommer(res):
-            nonlocal zt
-            if res is None:
-                return
-            batch_ins.append(res)
-            zt += 1
-            if len(batch_ins) >= 500:
-                con.executemany(
-                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch_ins)
-                batch_ins.clear()
-
-        if len(_jobs) >= 64:
-            with ThreadPoolExecutor(max_workers=_n_workers) as _pool:
-                for res in _pool.map(_rendre_tuile, _jobs):
-                    if _stop_event.is_set():
-                        raise KeyboardInterrupt("transparent-raster interrompu")
-                    _consommer(res)
-        else:
-            # Petites grilles : le coût du pool dépasse le gain (cf. WMTS).
-            for job in _jobs:
-                _consommer(_rendre_tuile(job))
-        if batch_ins:
-            con.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?,?)", batch_ins)
-            batch_ins.clear()
-        total += zt
-        if zt:
-            print(f"    z{z}: {zt} tiles", flush=True)
-    con.commit()
-    con.close()
-
-    if total == 0:
-        _nettoyer_sqlite_part(out_part)
-        print("  transparent-raster: no non-empty tile")
-        return None
-    try:
-        _valider_sqlite_part(
-            out_part, {"tiles": total, "android_metadata": 1, "info": 1}
-        )
-    except BaseException:
-        _nettoyer_sqlite_part(out_part)
-        raise
-    out_part.replace(sqlitedb_out)
-    print(f"  {sqlitedb_out.name} : {total} tiles  "
-          f"({sqlitedb_out.stat().st_size / 1024:.0f} Ko)  {time.time() - _t0:.1f}s")
-    return sqlitedb_out
-
-
-def _douglas_peucker(coords, epsilon):
-    """
-    Simplifie une liste de coordonnées [lon, lat] avec l'algorithme Douglas-Peucker.
-    epsilon en degrés (~0.00015 ≈ 15 m).
-    Conserve toujours le premier et le dernier point.
-    """
-    if len(coords) <= 2:
-        return coords
-    # Distance perpendiculaire d'un point à la droite (p1, p2)
-    def _perp_dist(p, p1, p2):
-        x0, y0 = p[0], p[1]
-        x1, y1 = p1[0], p1[1]
-        x2, y2 = p2[0], p2[1]
-        dx, dy = x2 - x1, y2 - y1
-        if dx == 0 and dy == 0:
-            return math.hypot(x0 - x1, y0 - y1)
-        t = ((x0 - x1) * dx + (y0 - y1) * dy) / (dx * dx + dy * dy)
-        t = max(0.0, min(1.0, t))
-        return math.hypot(x0 - (x1 + t * dx), y0 - (y1 + t * dy))
-
-    def _rdp(pts):
-        if len(pts) <= 2:
-            return pts
-        dmax, idx = 0.0, 0
-        for i in range(1, len(pts) - 1):
-            d = _perp_dist(pts[i], pts[0], pts[-1])
-            if d > dmax:
-                dmax, idx = d, i
-        if dmax > epsilon:
-            left  = _rdp(pts[:idx + 1])
-            right = _rdp(pts[idx:])
-            return left[:-1] + right
-        return [pts[0], pts[-1]]
-
-    return _rdp(list(coords))
-
-
-# Tolérance de simplification pour la conversion IGN → OSM XML (en degrés).
-# 0.00015° ≈ 15 m — réduit la densité IGN (~1 pt/3 m) de 80 %
-# sans impact visuel sur une carte Mapsforge à l'échelle département.
-_IGN_SIMPLIFY_EPSILON = 0.00015
-
-
-def _epsilon_depuis_surface_km2(surface_km2: float) -> float:
-    """
-    Calcule automatiquement l'epsilon de simplification Douglas-Peucker
-    en fonction de la surface de la zone, en degrés WGS84.
-
-    Surface        Epsilon    Contexte typique
-    < 200 km²      3 m        Zone locale, rayon ~8 km
-    < 1 000 km²    8 m        Arrondissement
-    < 15 000 km²   15 m       Un département
-    < 100 000 km²  25 m       Plusieurs départements
-    ≥ 100 000 km²  40 m       Region entière
-    """
-    # Conversion mètres → degrés : 1° ≈ 111 000 m
-    _M_PAR_DEG = 111_000.0
-    if surface_km2 < 200:
-        metres = 3.0
-    elif surface_km2 < 1_000:
-        metres = 8.0
-    elif surface_km2 < 15_000:
-        metres = 15.0
-    elif surface_km2 < 100_000:
-        metres = 25.0
-    else:
-        metres = 40.0
-    return metres / _M_PAR_DEG
 
 def geojson_ign_vers_osm_xml(geojson_path, osm_xml_path, epsilon=None):
-    """
-    Convertit un GeoJSON IGN (produit par telecharger_wfs / fusionner_geojson)
-    en fichier OSM XML lisible par osmosis + mapwriter.
-
-    Stratégie :
-      - Points   → <node>
-      - Lignes   → <way> avec <nd ref=…> (nœuds interpolés)
-      - Polygones→ <way> fermé (outer ring uniquement pour MultiPolygon)
-
-    Les tags OSM sont déduits du nom de couche (propriété 'source' ou nom fichier).
-    Identifiants négatifs (convention OSM pour données non-officielles).
-
-    Streaming : lit le GeoJSON via ijson (pas de json.load() qui ferait OOM
-    sur 1 Go de données dept-scale). Écrit nodes et ways dans un fichier
-    XML body temporaire au fil de l'eau, puis compose header + bounds + body
-    + footer. Bounds calculés en passe unique (pas 4× _coords_flat).
-    Format XML bit-fidèle à ElementTree (osmosis est un parseur Java strict).
-    """
-    from xml.sax.saxutils import escape as _xml_escape
-    import decimal as _dec
-    import traceback as _tb
-
-    # Valeur d'attribut XML : délimitée par " → il faut aussi échapper les
-    # guillemets doubles (saxutils.escape ne gère que & < >). Sinon un nom IGN
-    # contenant " (ex: 'Circuit "le Serre Sommet"') casse le XML et osmosis
-    # échoue au parsing. On échappe aussi ' par sûreté.
-    def _xml_attr(s):
-        return _xml_escape(str(s), {'"': "&quot;", "'": "&apos;"})
-
-    geojson_path = Path(geojson_path)
-    osm_xml_path = Path(osm_xml_path)
-    _eps = epsilon if epsilon is not None else _IGN_SIMPLIFY_EPSILON
-    _TS  = "1970-01-01T00:00:00Z"   # timestamp factice — requis par osmosis 0.6
-
-    # ── Itérateur features (streaming si ijson dispo, fallback sinon) ────────
-    def _iter_features():
-        try:
-            import ijson
-        except ImportError:
-            print("  ⚠ ijson missing - full RAM load of the GeoJSON")
-            try:
-                if geojson_path.suffix == ".gz":
-                    with gzip.open(geojson_path, "rt", encoding="utf-8") as f:
-                        gj = json.load(f)
-                else:
-                    gj = json.loads(geojson_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
-                print(f"  ERROR reading GeoJSON ({type(e).__name__}): {e}")
-                return
-            yield from gj.get("features", [])
-            return
-
-        try:
-            opener = ((lambda: gzip.open(geojson_path, "rb"))
-                      if geojson_path.suffix == ".gz"
-                      else (lambda: open(geojson_path, "rb")))
-            with opener() as f:
-                yield from ijson.items(f, "features.item")
-        except (OSError, ValueError) as e:
-            # #10 : PROPAGER (ne pas `return`). Une erreur ijson mi-parcours
-            # laissait un GeoJSON tronqué passer pour un flux terminé -> .map
-            # partielle publiée. En levant, le handler de geojson_ign_vers_osm_xml
-            # retourne False -> pas de .map depuis des données partielles.
-            print(f"  ERROR streaming GeoJSON ({type(e).__name__}): {e}")
-            raise
-
-    # ── Helpers d'écriture XML brute (bien plus rapide qu'ElementTree) ───────
-    def _f(v):
-        """Convertit Decimal (ijson) → float ; passe-plat sinon."""
-        return float(v) if isinstance(v, _dec.Decimal) else v
-
-    def _emit_node(out, nid, lat, lon, tags=None):
-        # Format reproduit ElementTree : ordre id/lat/lon/version/timestamp/visible,
-        # self-closing avec espace avant slash, pas d'indentation.
-        attrs = (f'id="{nid}" lat="{lat:.7f}" lon="{lon:.7f}" '
-                 f'version="1" timestamp="{_TS}" visible="true"')
-        if tags:
-            out.write(f'<node {attrs}>')
-            for k, v in tags.items():
-                out.write(f'<tag k="{_xml_attr(k)}" v="{_xml_attr(v)}" />')
-            out.write('</node>')
-        else:
-            out.write(f'<node {attrs} />')
-
-    def _emit_way(out, wid, nd_refs, tags):
-        out.write(f'<way id="{wid}" version="1" timestamp="{_TS}" visible="true">')
-        for r in nd_refs:
-            out.write(f'<nd ref="{r}" />')
-        if tags:
-            for k, v in tags.items():
-                out.write(f'<tag k="{_xml_attr(k)}" v="{_xml_attr(v)}" />')
-        out.write('</way>')
-
-    # ── Compteurs et bounds (passe unique, sans _coords_flat × 4) ────────────
-    state = {"node_id": -1, "way_id": -1, "nb_nodes": 0, "nb_ways": 0,
-             "lon_min":  float("inf"),  "lon_max": float("-inf"),
-             "lat_min":  float("inf"),  "lat_max": float("-inf"),
-             "bounds_valid": False,
-             "nb_inner_skipped": 0,   # rings intérieurs (trous) non émis
-             "nb_rings_degen": 0}     # contours dégénérés (<3 sommets, R2#33)
-
-    def _track_bounds(lon, lat):
-        if lon < state["lon_min"]: state["lon_min"] = lon
-        if lon > state["lon_max"]: state["lon_max"] = lon
-        if lat < state["lat_min"]: state["lat_min"] = lat
-        if lat > state["lat_max"]: state["lat_max"] = lat
-        state["bounds_valid"] = True
-
-    def _emit_node_track(out_nodes, lat, lon, tags=None):
-        nid = state["node_id"]
-        _emit_node(out_nodes, nid, lat, lon, tags)
-        _track_bounds(lon, lat)
-        state["nb_nodes"] += 1
-        state["node_id"] -= 1
-        return nid
-
-    def _emit_linestring(out_nodes, out_ways, raw_coords, osm_tags):
-        # Convertir Decimal→float : _douglas_peucker utilise math.hypot et
-        # max(0.0, ...) qui ne supportent pas le mixage Decimal/float.
-        coords = [(_f(c[0]), _f(c[1])) for c in raw_coords]
-        coords = _douglas_peucker(coords, _eps)
-        if len(coords) < 2:
-            return
-        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in coords]
-        wid = state["way_id"]
-        _emit_way(out_ways, wid, nd_refs, osm_tags)
-        state["nb_ways"] += 1
-        state["way_id"] -= 1
-
-    def _emit_ring(out_nodes, out_ways, raw_coords, osm_tags):
-        coords = [(_f(c[0]), _f(c[1])) for c in raw_coords]
-        coords = _douglas_peucker(coords, _eps)
-        # Un anneau valide (aire non nulle) exige >=3 sommets DISTINCTS. Un
-        # contour dégénéré — 2 sommets, ou points colinéaires réduits à 2 par la
-        # simplification — donnait un "polygone" a->b->a d'aire nulle (nœud
-        # dupliqué, segment nul) : mapsforge/osmosis le rejette ou le rend en
-        # trait parasite (R2#33). On déduplique les sommets consécutifs, on
-        # retire la fermeture pour compter, et on saute si < 3 distincts.
-        dd = []
-        for c in coords:
-            if not dd or c != dd[-1]:
-                dd.append(c)
-        if len(dd) >= 2 and dd[0] == dd[-1]:
-            dd.pop()                       # retirer la fermeture avant le compte
-        if len(dd) < 3:
-            state["nb_rings_degen"] += 1
-            return
-        nd_refs = [_emit_node_track(out_nodes, c[1], c[0]) for c in dd]
-        nd_refs.append(nd_refs[0])         # fermeture explicite du contour
-        wid = state["way_id"]
-        _emit_way(out_ways, wid, nd_refs, osm_tags)
-        state["nb_ways"] += 1
-        state["way_id"] -= 1
-
-    # ── Passe unique : streaming features → 2 fichiers temporaires ───────────
-    # OSM XML impose strictement l'ordre nodes → ways → relations (osmosis
-    # plante sinon). On écrit donc nodes et ways dans des fichiers séparés
-    # puis on les concatène dans l'ordre.
-    nodes_tmp = _chemin_part(
-        osm_xml_path.parent / (osm_xml_path.name + ".nodes")
+    return _geojson_ign_vers_osm_xml_impl(
+        geojson_path,
+        osm_xml_path,
+        epsilon=epsilon,
+        dependances=_dependances_geojson_osm_xml(),
     )
-    ways_tmp = _chemin_part(
-        osm_xml_path.parent / (osm_xml_path.name + ".ways")
+
+from _geojson_mapsforge import (
+    _DependancesGeojsonMapsforge,
+    generer_map_depuis_geojson_ign as _generer_map_depuis_geojson_ign_impl,
+)
+
+
+def _dependances_geojson_mapsforge():
+    return _DependancesGeojsonMapsforge(
+        convertir_geojson_osm_xml=geojson_ign_vers_osm_xml,
+        preparer_osmosis=_preparer_osmosis,
+        run_osmosis_streaming=_run_osmosis_streaming,
+        chemin_part=_chemin_part,
+        hash_config=_hash_config,
+        sig_sidecar_stale=_sig_sidecar_stale,
+        sig_sidecar_ecrire=_sig_sidecar_ecrire,
+        java_opts_extra=_java_opts_extra,
+        log_req=_log_req,
+        formater_duree=_hms,
+        windows=WINDOWS,
     )
-    nodes_tmp.parent.mkdir(parents=True, exist_ok=True)
 
-    out_nodes = None
-    out_ways  = None
-    # R2#32 : repli sur le nom de fichier. Une couche WFS mono-couche téléchargée
-    # par telecharger_wfs n'a PAS de propriété 'source' sur ses features (seule
-    # fusionner_geojson l'ajoute). Sans repli, layer_short restait "" → tags
-    # {"note": ""} → mapwriter ignorait la couche (carte vide). Le nom du fichier
-    # (`<zone>_ign_<layer>.geojson[.gz]`) porte la clé de couche, comme la
-    # convention de fusion et comme le repli déjà présent dans _overlay_style_key.
-    _src_fallback = geojson_path.name
-    try:
-        out_nodes = open(nodes_tmp, "w", encoding="utf-8")
-        out_ways  = open(ways_tmp,  "w", encoding="utf-8")
-        for feat in _iter_features():
-            if _stop_event.is_set():
-                raise KeyboardInterrupt("Interrompu par utilisateur")
-            props = feat.get("properties") or {}
-            geom  = feat.get("geometry")
-            if not geom:
-                continue
 
-            # Déduire le layer depuis la propriété 'source' (ex: "gareoult_ign_cours_d_eau")
-            src = props.get("source", "") or _src_fallback
-            layer_short = ""
-            for k in _IGN_LAYER_TAGS:
-                if k in src:
-                    layer_short = k
-                    break
-            osm_tags = _tags_pour_layer(layer_short)
-            # Ajouter le nom si disponible
-            for name_key in ("nom", "name", "toponyme", "libelle", "NOM"):
-                if props.get(name_key):
-                    osm_tags = dict(osm_tags)
-                    osm_tags["name"] = str(props[name_key])
-                    break
-
-            gtype = geom.get("type", "")
-            coords = geom.get("coordinates", [])
-
-            if gtype == "Point":
-                _emit_node_track(out_nodes, _f(coords[1]), _f(coords[0]), osm_tags)
-            elif gtype == "MultiPoint":
-                for pt in coords:
-                    _emit_node_track(out_nodes, _f(pt[1]), _f(pt[0]), osm_tags)
-            elif gtype == "LineString":
-                _emit_linestring(out_nodes, out_ways, coords, osm_tags)
-            elif gtype == "MultiLineString":
-                for line in coords:
-                    _emit_linestring(out_nodes, out_ways, line, osm_tags)
-            elif gtype == "Polygon":
-                if coords:
-                    _emit_ring(out_nodes, out_ways, coords[0], osm_tags)
-                    state["nb_inner_skipped"] += max(0, len(coords) - 1)
-            elif gtype == "MultiPolygon":
-                for poly in coords:
-                    if poly:
-                        _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
-                        state["nb_inner_skipped"] += max(0, len(poly) - 1)
-            elif gtype == "GeometryCollection":
-                for sub in geom.get("geometries", []):
-                    sub_coords = sub.get("coordinates", [])
-                    sub_type   = sub.get("type", "")
-                    if sub_type == "Point":
-                        _emit_node_track(out_nodes, _f(sub_coords[1]),
-                                                    _f(sub_coords[0]), osm_tags)
-                    elif sub_type == "LineString":
-                        _emit_linestring(out_nodes, out_ways, sub_coords, osm_tags)
-                    elif sub_type == "MultiLineString":
-                        for line in sub_coords:
-                            _emit_linestring(out_nodes, out_ways, line, osm_tags)
-                    elif sub_type == "Polygon" and sub_coords:
-                        _emit_ring(out_nodes, out_ways, sub_coords[0], osm_tags)
-                        state["nb_inner_skipped"] += max(0, len(sub_coords) - 1)
-                    elif sub_type == "MultiPolygon":
-                        for poly in sub_coords:
-                            if poly:
-                                _emit_ring(out_nodes, out_ways, poly[0], osm_tags)
-                                state["nb_inner_skipped"] += max(0, len(poly) - 1)
-        out_nodes.close(); out_nodes = None
-        out_ways.close();  out_ways  = None
-    except KeyboardInterrupt:
-        if out_nodes: out_nodes.close()
-        if out_ways:  out_ways.close()
-        nodes_tmp.unlink(missing_ok=True)
-        ways_tmp.unlink(missing_ok=True)
-        raise
-    except Exception:
-        print("\n  ERROR in geojson_ign_vers_osm_xml:")
-        _tb.print_exc()
-        if out_nodes: out_nodes.close()
-        if out_ways:  out_ways.close()
-        nodes_tmp.unlink(missing_ok=True)
-        ways_tmp.unlink(missing_ok=True)
-        return False
-
-    if state["nb_nodes"] == 0:
-        print("  Empty GeoJSON - nothing to convert.")
-        nodes_tmp.unlink(missing_ok=True)
-        ways_tmp.unlink(missing_ok=True)
-        return False
-
-    # ── Composition du XML final : header + bounds + nodes + ways + footer ───
-    # Format reproduit fidèlement ElementTree.write(xml_declaration=True) :
-    # prologue avec apostrophes simples, encoding utf-8 minuscule.
-    osm_xml_part = _chemin_part(osm_xml_path)
-    try:
-        with open(osm_xml_part, "w", encoding="utf-8") as out:
-            out.write("<?xml version='1.0' encoding='utf-8'?>\n")
-            out.write('<osm version="0.6" generator="lidar2map">')
-            if state["bounds_valid"]:
-                # <bounds> requis par mapsforge mapwriter pour initialiser le tile store
-                out.write(
-                    f'<bounds minlat="{state["lat_min"]:.7f}"'
-                    f' minlon="{state["lon_min"]:.7f}"'
-                    f' maxlat="{state["lat_max"]:.7f}"'
-                    f' maxlon="{state["lon_max"]:.7f}" />'
-                )
-            # Concat des bodies en chunks de 64 KB (pas de read() global)
-            for tmp in (nodes_tmp, ways_tmp):
-                with open(tmp, "r", encoding="utf-8") as src:
-                    while True:
-                        chunk = src.read(1 << 16)
-                        if not chunk:
-                            break
-                        out.write(chunk)
-            out.write('</osm>')
-        if osm_xml_part.stat().st_size <= 0:
-            raise IOError("OSM XML staging file is empty")
-        osm_xml_part.replace(osm_xml_path)
-    except KeyboardInterrupt:
-        osm_xml_part.unlink(missing_ok=True)
-        raise
-    except Exception:
-        print("\n  ERROR publishing OSM XML:")
-        _tb.print_exc()
-        osm_xml_part.unlink(missing_ok=True)
-        return False
-    finally:
-        nodes_tmp.unlink(missing_ok=True)
-        ways_tmp.unlink(missing_ok=True)
-
-    sz = osm_xml_path.stat().st_size / 1e6
-    print(f"  OSM XML: {state['nb_nodes']} nodes, {state['nb_ways']} ways "
-          f"→ {osm_xml_path.name} ({sz:.1f} MB)")
-    if state["nb_inner_skipped"]:
-        # Mapsforge mapwriter ne supporte pas les multi-polygones avec trous via
-        # OSM XML (il faut des relations type=multipolygon, hors scope ici).
-        # On documente la perte plutôt que de la cacher.
-        print(f"  ⚠ {state['nb_inner_skipped']} inner ring(s) skipped "
-              f"(polygon holes, not supported in .map output)")
-    if state["nb_rings_degen"]:
-        print(f"  ⚠ {state['nb_rings_degen']} degenerate ring(s) skipped "
-              f"(< 3 distinct vertices, zero-area)")
-    return True
-
-def generer_map_depuis_geojson_ign(geojson_src, dossier_ville, nom_zone,
-                                    bbox_wgs84, ecraser=False, epsilon=None):
-    """
-    Pipeline complet : GeoJSON IGN → OSM XML → osmosis+mapwriter → .map Mapsforge.
-    Réutilise _verifier_mapwriter(), _trouver_osmosis(), _trouver_java() du mode OSM.
-    """
-
-    dossier_ville = Path(dossier_ville)
-    chemin_osm_xml = dossier_ville / f"{nom_zone}_ign.osm"
-    chemin_map     = dossier_ville / f"{nom_zone}_ign.map"
-
-    # R2#30 (jumeau OSM) : signature source/bbox/epsilon. Un .map IGN présent
-    # sous le même nom mais issu d'un autre GeoJSON (WFS re-téléchargé), d'une
-    # autre emprise ou d'un autre epsilon était réutilisé tel quel. On inclut le
-    # mtime du GeoJSON : un source rafraîchi ⇒ .map régénéré.
-    _sig_ign = _hash_config({
-        "src":       Path(geojson_src).name,
-        "src_mtime": (round(Path(geojson_src).stat().st_mtime, 1)
-                      if Path(geojson_src).exists() else None),
-        "bbox":      [round(float(c), 6) for c in bbox_wgs84] if bbox_wgs84 else None,
-        "eps":       epsilon,
-    })
-
-    if chemin_map.exists() and not ecraser:
-        if chemin_map.stat().st_size == 0:
-            print("  IGN .map exists but empty - forced regeneration.")
-        elif _sig_sidecar_stale(chemin_map, _sig_ign):
-            print(f"  {chemin_map.name} → IGN config changed (source/bbox/eps), regenerating")
-            # Pas d'unlink : .part+replace écrase atomiquement (R2#49).
-        else:
-            if not Path(str(chemin_map) + ".sig").exists():
-                _sig_sidecar_ecrire(chemin_map, _sig_ign)   # migration douce
-            print(f"  IGN .map already present: {chemin_map.name} - skipped")
-            return chemin_map
-
-    if chemin_map.exists() and ecraser:
-        # Pas d'unlink ici : chemin_map_part.replace(chemin_map) écrase
-        # atomiquement en fin de génération (R2#49). Le supprimer maintenant
-        # perdrait le .map précédent si osmosis échoue (le .part est jeté).
-        print(f"  Carte IGN .map : overwrite {chemin_map.name}")
-
-    # ── Étape 1 : GeoJSON → OSM XML ──────────────────────────────────────────
-    print("  Converting GeoJSON → OSM XML...", flush=True)
-    ok = geojson_ign_vers_osm_xml(geojson_src, chemin_osm_xml, epsilon=epsilon)
-    if not ok:
-        return None
-
-    # ── Étape 2 : OSM XML → .map via osmosis + mapwriter ─────────────────────
-    _osmosis_exe, _java_home = _preparer_osmosis()
-    if not _osmosis_exe:
-        chemin_osm_xml.unlink(missing_ok=True)
-        return None
-    _env_map = os.environ.copy()
-    _env_map["JAVA_HOME"] = _java_home
-    if "JAVA_OPTS" not in _env_map:
-        _env_map["JAVA_OPTS"] = "-Xmx4g" + _java_opts_extra()
-
-    lon_min, lat_min, lon_max, lat_max = bbox_wgs84
-    t0 = time.time()
-    print(f"  osmosis → {chemin_map.name}...", flush=True)
-
-    # Écriture via .map.part + rename, comme generer_carte_osm : un .map présent
-    # est toujours complet (un kill mi-écriture laissait un binaire tronqué
-    # repris tel quel par le check "already present" au run suivant).
-    chemin_map_part = _chemin_part(chemin_map)
-
-    cmd = [
-        _osmosis_exe,
-        "--read-xml", f"file={chemin_osm_xml}",
-        "--mapfile-writer",
-        f"file={chemin_map_part}",
-        f"bbox={lat_min:.6f},{lon_min:.6f},{lat_max:.6f},{lon_max:.6f}",
-        "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
-        "tag-values=true", "polygon-clipping=true",
-        "way-clipping=true", "label-position=true",
-        # type=hd retiré : bug HDTileBasedDataProcessor sur gros volumes
-    ]
-
-    _shell = WINDOWS and str(_osmosis_exe).endswith(".bat")
-    if _shell:
-        cmd_str = " ".join(
-            f'"{a}"' if (" " in str(a) or "=" in str(a)) else str(a)
-            for a in cmd
-        )
-    _log_req(cmd)
-    try:
-        rc, stderr_diag = _run_osmosis_streaming(
-            cmd_str if _shell else cmd,
-            shell=_shell, env=_env_map,
-        )
-    except BaseException:
-        chemin_map_part.unlink(missing_ok=True)
-        raise
-
-    # #10 : exiger rc==0 (comme generer_carte_osm). Un mapwriter en échec
-    # pouvait laisser un .map.part non vide qu'on publiait sans vérifier le code
-    # retour d'osmosis.
-    if rc == 0 and chemin_map_part.exists() and chemin_map_part.stat().st_size > 0:
-        chemin_map_part.replace(chemin_map)
-        _sig_sidecar_ecrire(chemin_map, _sig_ign)   # R2#30 : mémoriser la config
-        chemin_osm_xml.unlink(missing_ok=True)  # succès seulement
-        taille_b = chemin_map.stat().st_size
-        if taille_b < 1_000_000:
-            print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
-        else:
-            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
-        return chemin_map
-    elif chemin_map_part.exists() and chemin_map_part.stat().st_size == 0:
-        chemin_map_part.unlink(missing_ok=True)
-        print(f"  ⚠ {chemin_map.name} created but empty - no feature recognised by mapwriter.")
-        print(f"  {chemin_osm_xml.name} kept for diagnostics.")
-        return None
-    else:
-        chemin_map_part.unlink(missing_ok=True)
-        print(f"  ERROR osmosis mapfile-writer IGN (code {rc})")
-        if stderr_diag:
-            print(f"  {stderr_diag.strip()[:2000]}")
-        print(f"  {chemin_osm_xml.name} kept - rerun osmosis after fixing.")
-        return None
-
+def generer_map_depuis_geojson_ign(
+    geojson_src,
+    dossier_ville,
+    nom_zone,
+    bbox_wgs84,
+    ecraser=False,
+    epsilon=None,
+):
+    return _generer_map_depuis_geojson_ign_impl(
+        geojson_src,
+        dossier_ville,
+        nom_zone,
+        bbox_wgs84,
+        ecraser=ecraser,
+        epsilon=epsilon,
+        dependances=_dependances_geojson_mapsforge(),
+    )
 
 # ============================================================
 # TÉLÉCHARGEMENT BULK BD TOPO IGN (département entier)
