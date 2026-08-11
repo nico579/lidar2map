@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 11 août 2026 (phase 10 terminée localement : noyau
-GeoJSON, conversion XML, rasteriseur et runner Mapsforge extraits ; rebuild
-v1.36.0 préparé, v1.35.0 reste la dernière release avant ce déploiement).
+Dernière mise à jour : 11 août 2026 (phase 10 terminée et déployée en
+**v1.36.0** : noyau GeoJSON, conversion XML, rasteriseur et runner Mapsforge
+extraits ; CI et rebuild multiplateformes validés).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -1002,7 +1002,7 @@ acceptable. Déployée en **v1.35.0** (11 août 2026).
 Déployé : bump `VERSION` 1.34.0 → 1.35.0, `deploy.py --new-tag`, tag
 `v1.35.0` poussé, `release.yml` déclenché (build Windows/macOS×2/Linux).
 
-## Phase 10 : GeoJSON/Mapsforge (terminée localement)
+## Phase 10 : GeoJSON/Mapsforge (terminée et déployée)
 
 L'état des lieux initial a été corrigé avant d'engager cette phase. La colonne
 précédemment nommée « fonctions top-level » comptait en réalité **tous** les
@@ -1211,8 +1211,16 @@ Le test historique de publication IGN reste vert : les patches de
   (89,8 s, 5 suites), tous verts.
 - Déploiement : `_geojson_mapsforge.py` ajouté à `deploy.MAP`; le motif
   `_geojson_*.py` impose le rebuild et couvre déjà les filtres CI/PyInstaller.
-- Version de rebuild : `VERSION` passe de 1.35.0 à **1.36.0** ; le tag est dérivé
-  par `deploy.py --new-tag` après push et validation de la CI.
+- Version de rebuild : `VERSION` passe de 1.35.0 à **1.36.0**. Le code a été
+  poussé sur `main`, puis deux hypothèses de tests propres au layout local ont
+  été rendues portables (workflow CI renommé dans le clone GitHub et chemins
+  temporaires canoniques macOS/Windows). La CI `main` et la CI du tag sont vertes.
+- Livraison : `deploy.py --new-tag` a créé le tag annoté `v1.36.0` sur le commit
+  `30f9b7434f7b8ba6456a9268feb9f0af9e385683`. Le
+  [workflow de release](https://github.com/nico579/lidar2map/actions/runs/31488074568)
+  a construit et publié avec succès les quatre archives Windows x86_64, Linux
+  x86_64, macOS arm64 et macOS x86_64. Leurs digests GitHub correspondent tous à
+  la table SHA-256 de la [release v1.36.0](https://github.com/nico579/lidar2map/releases/tag/v1.36.0).
 - Mesure : `lidar2map.py` 14 976 → 14 895 lignes (**-81**) ; total sorti
   **6 420 lignes, 30,12 %** du périmètre figé.
 
