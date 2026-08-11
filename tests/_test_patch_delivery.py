@@ -14,6 +14,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def workflow_path(name):
+    """Résout un workflow dans le workspace ou dans le clone déployé."""
+    candidates = (
+        ROOT / f"{name}_github.yml",
+        ROOT / ".github" / "workflows" / f"{name}.yml",
+    )
+    matches = [path for path in candidates if path.is_file()]
+    assert len(matches) == 1, \
+        f"workflow {name!r} introuvable ou ambigu : {candidates}"
+    return matches[0]
+
+
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, str(path))
     module = importlib.util.module_from_spec(spec)
@@ -54,7 +66,7 @@ assert "_mbtiles_wmts.py" in _modules_locaux
 # job sur une modification qui ne touche que lui.
 _ci_patterns = re.findall(
     r"^\s+- '([^']+)'\s*$",
-    (ROOT / "ci_github.yml").read_text(encoding="utf-8"),
+    workflow_path("ci").read_text(encoding="utf-8"),
     flags=re.MULTILINE,
 )
 
@@ -62,7 +74,7 @@ for _mod in sorted(_modules_locaux):
     assert deploy.MAP.get(_mod) == _mod, f"{_mod} absent de deploy.MAP"
     assert deploy.is_rebuild_file(_mod), f"{_mod} n'est pas rebuild-gated"
     assert any(fnmatch.fnmatch(_mod, pat) for pat in _ci_patterns), \
-        f"{_mod} n'est couvert par aucun filtre paths: de ci_github.yml"
+        f"{_mod} n'est couvert par aucun filtre paths: du workflow CI"
 
 assert deploy.is_rebuild_file("_split_future.py")
 assert not deploy.is_rebuild_file("split_future.py")

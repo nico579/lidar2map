@@ -197,7 +197,10 @@ class SplitEntryPointHistoryTests(HistoryFixture):
         runner.assert_called_once()
         entry = self._entry()
         self.assertEqual(entry["statut"], "ko")
-        self.assertEqual(entry["resultat"], str(self.tmp / "lidar-result"))
+        self.assertEqual(
+            Path(entry["resultat"]).resolve(),
+            (self.tmp / "lidar-result").resolve(),
+        )
 
     def test_lidar_block_split_marks_successful_run_ok(self):
         argv = self._lidar_argv(block=True)
@@ -216,7 +219,10 @@ class SplitEntryPointHistoryTests(HistoryFixture):
         runner.assert_called_once()
         entry = self._entry()
         self.assertEqual(entry["statut"], "ok")
-        self.assertEqual(entry["resultat"], str(self.tmp / "lidar-result"))
+        self.assertEqual(
+            Path(entry["resultat"]).resolve(),
+            (self.tmp / "lidar-result").resolve(),
+        )
 
     def test_wmts_split_marks_successful_run_ok(self):
         result_dir = self.tmp / "wmts-result"
@@ -244,7 +250,10 @@ class SplitEntryPointHistoryTests(HistoryFixture):
             runner.call_args.kwargs["vide_sans_couverture_ok"])
         entry = self._entry()
         self.assertEqual(entry["statut"], "ok")
-        self.assertEqual(entry["resultat"], str(result_dir))
+        self.assertEqual(
+            Path(entry["resultat"]).resolve(),
+            result_dir.resolve(),
+        )
 
 
 class MonolithicConversionHistoryTests(HistoryFixture):
