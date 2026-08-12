@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 11 août 2026 (phase 10 terminée et déployée en
-**v1.36.0** : noyau GeoJSON, conversion XML, rasteriseur et runner Mapsforge
-extraits ; CI et rebuild multiplateformes validés).
+Dernière mise à jour : 11 août 2026 (phase 11d terminée et intégrée au lot
+**v1.37.0** : TLS précoce extrait, fallback non vérifié supprimé et CA
+utilisateur préservées).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -29,6 +29,9 @@ Les règles suivantes sont obligatoires :
 
 ```text
 lidar2map.py                 façade, CLI et intégration des modes
+├── _bootstrap_policy.py    résolution argv/environnement et dépendances GUI pures
+├── _bootstrap_runtime.py   orchestration, venv, relance du processus et pip
+├── _bootstrap_tls.py       configuration CA et restauration TLS strictes
 ├── _split_manifest.py      état persistant et suivi des intermédiaires
 ├── _split_deliverables.py  résultats et validation des livrables
 ├── _split_planning.py      grille, sharding, identifiants et signature
@@ -53,7 +56,8 @@ traitement découpé ; les producteurs et convertisseurs raster portent un nom d
 domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_mbtiles_wmts_helpers`, `_ombrages_pures`, `_ombrages_provider`,
 `_shading_specs`, `_geojson_geometry`, `_geojson_osm_xml`, `_geojson_raster`,
-`_geojson_mapsforge`).
+`_geojson_mapsforge`, `_bootstrap_policy`, `_bootstrap_runtime`,
+`_bootstrap_tls`).
 
 ## Volume déjà transféré
 
@@ -95,8 +99,12 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_geojson_osm_xml.py` (10b, mesuré) | 296 | 1,39 % |
 | `_geojson_raster.py` (10c, mesuré) | 369 | 1,73 % |
 | `_geojson_mapsforge.py` (10d, mesuré) | 81 | 0,38 % |
-| **Total sorti du monolithe (mesuré)** | **6 420** | **30,12 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **14 895** | **69,88 %** |
+| `_bootstrap_policy.py` (11a, mesuré) | 47 | 0,22 % |
+| `_bootstrap_runtime.py` (11b, mesuré) | 499 | 2,34 % |
+| Politique CLI et orchestration bootstrap (11c, mesuré) | 79 | 0,37 % |
+| `_bootstrap_tls.py` (11d, mesuré) | 36 | 0,17 % |
+| **Total sorti du monolithe (mesuré)** | **7 081** | **33,22 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **14 234** | **66,78 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -158,6 +166,52 @@ correspondent aux imports, à la dataclass de onze dépendances, à leur réouve
 locale, au formatage de la commande osmosis et à la façade. Ce ratio confirme le
 faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 
+## Cible structurelle : 30 à 35 % dans le script principal
+
+La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
+référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
+cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
+post-11d est de 14 234 lignes (66,78 %) : il reste donc à sortir **6 774 à 7 839
+lignes nettes** pour atteindre cette zone.
+
+Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
+la lisibilité. Sous 30 %, il faudrait probablement déplacer la façade publique,
+le dispatch ou des adaptateurs de compatibilité dont la présence dans le point
+d'entrée reste utile. Toute poursuite sous ce seuil demandera une décision
+explicite et un nouveau plan.
+
+### Feuille de route indicative après la phase 11d
+
+Les gains ci-dessous sont des **réductions nettes estimées du monolithe**, et non
+la taille brute des futurs modules. Chaque phase pourra être divisée en lots plus
+petits après audit et caractérisation.
+
+| Phase future | Frontière principale | Gain net indicatif | Contrats préalables |
+|---|---|---:|---|
+| 11e–g. Maintenance précoce | `--installer-deps`, puis désinstallation et diagnostic dans des lots séparés | 300–500 lignes | codes de sortie, catalogue de paquets, cibles de suppression, ordre top-level |
+| 12. Infrastructure partagée | plateforme, configuration, logger, secrets, HTTP et helpers atomiques encore centraux | 1 000–1 400 lignes | imports précoces, TLS, redaction des secrets, publications atomiques |
+| 13. Pipelines vectoriels restants | OSM, WFS, BD TOPO, fusion et générateurs GeoJSON encore dans la façade | 1 500–1 900 lignes | caches/signatures, streaming, géométries et sorties partielles |
+| 14. Orchestration terrain restante | `generer_ombrages`, téléchargement de dalles, zones, planches et sources autonomes | 1 600–2 100 lignes | équivalence scientifique, historique, reprise, nettoyage et logs par bloc |
+| 15. CLI et points d'entrée | builders argparse, résolution des modes, `main*` et dispatch applicatif | 1 400–1 800 lignes | surface CLI, valeurs par défaut, codes d'erreur et façades monkeypatchables |
+| 16. GUI | déplacement de `lancer_gui` et de son état vers le paquet `gui` | 1 100–1 350 lignes | commandes générées, persistance, VM, masquages pays et smoke sans affichage |
+
+La somme indicative dépasse volontairement le besoin minimal : la refonte doit
+s'arrêter dès que `lidar2map.py` entre durablement dans la zone 30–35 % avec une
+façade cohérente. Les lots les plus risqués ou les moins rentables pourront alors
+rester dans le script principal.
+
+### Critères de sortie à 30–35 %
+
+- `lidar2map.py` conserve l'entrée CLI, le dispatch, les réexports historiques et
+  les adaptateurs nécessaires, mais plus aucun moteur métier massif ;
+- chaque extraction possède des dépendances explicites et une façade de signature
+  compatible lorsqu'un nom historique est public ou monkeypatché ;
+- les profils FAST et scientifique, les contrats de livraison et les builds
+  multiplateformes restent verts à chaque palier ;
+- la progression continue d'être mesurée par la baisse nette du monolithe ;
+- aucune phase ne combine déplacement structurel, nouveau comportement métier et
+  suppression destructive sans tests correctifs séparés.
+
 ## Avancement
 
 | Phase | État | Contenu | Validation principale |
@@ -173,6 +227,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 | 8. Points d’entrée | **Terminée** | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; corps de dispatch déjà atteint ; autres points d'entrée audités, extraction non justifiée | tests d’historique monolithique et CLI |
 | 9. Bloc ombrages/COG | **Terminée** | IO raster + kernels numba + algorithmes par type (9b), fetch provider + composites VAT/MSTP (9c), types/presets/parsing (9d) ; `generer_ombrages` volontairement laissée en orchestrateur | `_test_corrections.py`, 83 contrats de façade, profils `fast`/`scientific` |
 | 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
+| 11. Bootstrap | **En cours** | Politique GUI/CLI pure, moteur venv/pip, orchestration et TLS strict extraits (11a-d) | 64 contrats bootstrap hors réseau, façades, import isolé et profils complets |
 
 ## Travail déjà sécurisé
 
@@ -1232,3 +1287,231 @@ avant tout déplacement concernent la résolution CLI/environnement, la relance
 Windows/Unix, les codes de sortie, TLS, pip et le mode frozen. Le premier lot de
 code éventuel restera volontairement petit et pur ; le cœur bootstrap complet ne
 sera déplacé qu'après ces garde-fous.
+
+## Phase 11 : bootstrap (en cours)
+
+### Sous-phase 11a : contrats actifs et politique GUI pure (terminée localement)
+
+L'audit a séparé le vrai cœur bootstrap (726 lignes, de la résolution du mode à
+l'orchestrateur) de la bannière beaucoup plus large qui contient aussi des
+commandes top-level et le logger. Ce cœur s'exécute avant le logger et peut
+modifier `sys.argv`, l'environnement et TLS, créer un venv, lancer pip,
+remplacer le processus ou appeler `sys.exit`. Il n'est donc pas déplacé en bloc.
+
+La nouvelle suite FAST `_test_bootstrap.py` exerce **24 contrats hors réseau**.
+Tous les subprocessus dangereux sont simulés, à l'exception d'un interpréteur
+Python isolé utilisé uniquement pour contrôler l'import. Les scénarios couvrent :
+
+- résolution défaut/environnement, deux syntaxes CLI, priorité et trois alias
+  historiques, avec conservation des autres arguments ;
+- aide dédiée, routage et ordre exact des modes `auto`, `pip`, `none`, ainsi que
+  le court-circuit d'un bundle frozen ;
+- portée temporaire de `LIDAR2MAP_BOOTSTRAP`, y compris lorsqu'une exception
+  remonte ;
+- relance Unix par `execv`, relance Windows avec les trois flux, propagation du
+  code enfant et conversion de `KeyboardInterrupt` en code 130 ;
+- pip déjà présent, repli `ensurepip`, échec fatal, garde `venv` Linux et les
+  trois stratégies d'installation hors venv ;
+- matrice GUI Darwin/Linux/Windows/plateforme inconnue, listes indépendantes et
+  relecture tardive de `platform.system()` par la façade ;
+- import complet de `lidar2map.py` par `spec_from_file_location`, sous `python
+  -I` et depuis un répertoire de travail étranger.
+
+Le premier déplacement reste volontairement pur. `_bootstrap_policy.py`
+(40 lignes) expose `dependances_gui_plateforme(systeme)` et ne réalise aucune
+IO, aucun import tiers et aucune mutation globale. `lidar2map.py` conserve la
+façade historique `_gui_deps_plateforme()` sans argument ; celle-ci relit la
+plateforme à chaque appel, de sorte que les monkeypatches existants continuent
+de fonctionner. L'insertion de `_MODULE_DIR` a été avancée juste avant cet
+import précoce, ce qui reproduit aussi le comportement normal de
+`python lidar2map.py` pour les intégrateurs utilisant un chargement par spec.
+
+La livraison est préparée sans publication : module ajouté à `deploy.MAP`,
+rebuild imposé par `_bootstrap_*.py`, filtres push et pull request de la CI
+complétés, suite inscrite dans le profil FAST. Les spécifications PyInstaller ne
+nécessitent aucun hidden import puisque l'import est statique. La version reste
+**1.36.0** tant qu'aucun déploiement n'est demandé.
+
+Validation locale : compilation Python et Ruff propres, 24 contrats bootstrap,
+94 contrats de façade et garde de livraison verts ; profil FAST complet
+(12 suites, 34,0 s) et profil scientifique complet (5 suites, 82,7 s), tous
+verts.
+
+Mesure nette : `lidar2map.py` 14 895 → 14 848 lignes (**-47**, soit **0,22 %**
+du périmètre figé). Total sorti : **6 467 lignes, 30,34 %**. La faible taille est
+assumée : cette sous-phase construit d'abord le filet de sécurité du bootstrap.
+
+### Sous-phase 11b : moteur venv/pip extrait (terminée localement)
+
+Dix-neuf contrats supplémentaires ont été ajoutés autour du déplacement.
+La suite bootstrap porte désormais **43 tests hors réseau**. Les nouveaux cas
+couvrent :
+
+- modes `none` et `pip`, imports critiques présents ou manquants ;
+- venv géré déjà actif, priorité de `CONDA_PREFIX`, environnement virtuel
+  externe et refus d'un venv parallèle ;
+- chemins `bin/python` et `Scripts/python.exe`, contrôle d'un venv existant,
+  création réussie ou en erreur et relance avec le bon indicateur OS ;
+- installation groupée, retry des seules dépendances critiques, optionnelles
+  essayées individuellement et échec critique fatal ;
+- signatures et docstrings exactes des cinq façades historiques après
+  extraction.
+
+Quatre tests correctifs ont d'abord matérialisé les deux défauts observés à
+l'audit : ils donnaient trois `SystemExit(1)` et une absence de revalidation.
+Le correctif apporte maintenant :
+
+1. les trois stratégies `standard`, `--break-system-packages` et `--user` au
+   retry des seules dépendances critiques, y compris hors venv ; une roue
+   optionnelle cassée ne condamne donc plus le pipeline principal ;
+2. une table unique paquet pip → module Python, utilisée à la détection comme à
+   chaque validation. Elle traduit notamment `Pillow`/`PIL`,
+   `pywebview`/`webview` et les frameworks PyObjC vers `WebKit`/`Cocoa`. Le
+   retry critique revalide aussi les dépendances GUI et `certifi`.
+
+Les trois branches du retry critique (`standard`, PEP 668 et `--user`) sont
+atteintes séparément par les tests ; le mapping `pywebview`/`webview` possède
+également son contrat dédié.
+
+`_bootstrap_runtime.py` (570 lignes) contient désormais les cinq fonctions à
+effets : garde Linux de `venv`, création/réparation du venv, relance Unix ou
+Windows, amorçage d'`ensurepip` et installation des dépendances. Le module
+n'exécute aucun effet à son import et ne dépend que de la bibliothèque standard.
+
+`lidar2map.py` conserve cinq façades de signatures historiques. Le moteur reçoit
+à chaque appel les coutures courantes — résolveur du mode, politique GUI, garde
+Linux et relance — afin que les monkeypatches et intégrateurs existants restent
+fonctionnels. Les modules stdlib (`sys`, `subprocess`, `platform`, `os`) et la
+classe `Path` sont partagés, ce que les tests Windows/Linux vérifient également.
+La docstring du moteur est réaffectée à la façade : `--help-bootstrap` garde son
+texte et son code de sortie.
+
+La livraison reste préparée sans publication : `_bootstrap_runtime.py` est dans
+`deploy.MAP`; le motif `_bootstrap_*.py` de 11a impose déjà un rebuild et couvre
+les deux filtres CI. L'import étant statique et précoce, aucune modification des
+spécifications PyInstaller n'est nécessaire. La version reste **1.36.0**.
+
+Validation locale : compilation Python, Ruff, garde de livraison et commande
+réelle `--help-bootstrap` verts ; profil FAST complet (12 suites, 33,8 s) et
+profil scientifique complet (5 suites, 200,6 s), tous verts.
+
+Mesure nette : `lidar2map.py` 14 848 → 14 349 lignes (**-499**, soit **2,34 %**
+du périmètre figé). Total sorti : **6 966 lignes, 32,68 %**.
+
+### Sous-phase 11c : politique CLI et orchestration extraites (terminée localement)
+
+Douze contrats supplémentaires portent la suite bootstrap à **55 tests hors
+réseau**. Ils verrouillent la mutation en place de `sys.argv`, l'atomicité des
+erreurs, la priorité fixe des alias historiques, l'aide prioritaire, le nettoyage
+des options dans un bundle frozen, l'arrêt au premier effet en erreur, la pureté
+de la politique et la compatibilité syntaxique Python 3.9.
+
+Le premier run correctif a matérialisé sept échecs attendus : cinq variantes de
+valeur CLI invalide étaient silencieusement acceptées ou avalaient l'option
+suivante, et les deux scénarios frozen ne résolvaient ni les options ni l'aide.
+
+`_bootstrap_policy.py` expose désormais `ResolutionModeBootstrap` et
+`resoudre_mode_bootstrap(argv, environnement)`. La politique travaille sur une
+copie, retourne un tuple `argv` immuable et ne modifie aucun objet reçu. Les
+valeurs CLI invalides ou absentes produisent maintenant une erreur claire de code
+2 sans avaler l'option suivante ; `--help-bootstrap` conserve sa priorité et son
+code 0. Une valeur d'environnement invalide reste volontairement assimilée à une
+absence pour préserver la compatibilité. Les autres priorités historiques restent
+inchangées : CLI moderne sur environnement, puis alias legacy dans leur ordre
+fixe, avec `--no-venv` gagnant.
+
+La façade `_resoudre_mode_bootstrap()` conserve sa signature, applique le résultat
+par tranche (`sys.argv[:]`) afin de préserver l'identité de la liste, et garde
+l'impression de l'aide ou des erreurs. `_bootstrap_runtime.py` contient maintenant
+`orchestrer_bootstrap`, qui reçoit toutes ses étapes par injection et conserve
+l'ordre `auto`/`pip`/`none` ainsi que la propagation immédiate des exceptions. La
+résolution précède désormais le court-circuit frozen : les options précoces et
+l'aide fonctionnent aussi dans les exécutables, tandis qu'aucun effet venv, pip ou
+TLS n'y est lancé.
+
+Le wrapper `bootstrap_venv_avec_mode` conserve explicitement la sémantique
+historique : `LIDAR2MAP_BOOTSTRAP` est visible pendant l'appel puis supprimée,
+même si une valeur existait auparavant. Une restauration naïve ferait fuir le
+mode synthétique dans l'enfant pendant une ré-exécution ; une éventuelle évolution
+de ce protocole reste donc séparée. Les trois façades historiques gardent leurs
+signatures et les docstrings des implémentations.
+
+Aucun nouveau fichier livrable n'est créé. `_bootstrap_policy.py` et
+`_bootstrap_runtime.py` figurent déjà dans `deploy.MAP` ; le motif
+`_bootstrap_*.py` impose le rebuild et couvre les deux filtres CI. Les imports
+restent statiques, donc les spécifications PyInstaller n'ont besoin d'aucun hidden
+import. La version reste **1.36.0** en l'absence de déploiement.
+
+Validation locale : compilation Python, Ruff, 55 contrats bootstrap, 94 contrats
+de façade, garde de livraison et commande réelle `--help-bootstrap` verts ; profil
+FAST complet (12 suites, 36,7 s) et profil scientifique complet (5 suites,
+102,5 s), tous verts.
+
+Mesure nette : `lidar2map.py` 14 349 → 14 270 lignes (**-79**, soit **0,37 %**
+du périmètre figé). `_bootstrap_policy.py` compte maintenant 116 lignes physiques
+et `_bootstrap_runtime.py` 624, mais seule la baisse nette du monolithe mesure la
+progression. Total sorti : **7 045 lignes, 33,05 %**.
+
+### Sous-phase 11d : TLS précoce extrait et durci (terminée localement)
+
+Neuf contrats supplémentaires portent la suite bootstrap à **64 tests hors
+réseau**. Ils couvrent la façade historique, `certifi` présent ou absent, la
+distinction entre paquet absent et installation cassée, la priorité d'une CA
+utilisateur, la publication transactionnelle, la restauration répétée et la
+priorité du vrai module TLS lors d'un import par spec hostile.
+
+Le nouveau module `_bootstrap_tls.py` (108 lignes) ne produit aucun effet à son
+import et ne dépend que de la bibliothèque standard. `initialiser_tls` et
+`restaurer_tls_strict` reçoivent explicitement l'environnement et le module
+`ssl` ; `certifi` reste chargé à l'intérieur des fonctions afin de préserver le
+premier lancement sur un Python nu et les launchers qui l'excluent.
+
+Le fallback historique non vérifié a été supprimé. Il ne pouvait pas aider les
+installations pip, exécutées dans des sous-processus, et laissait en revanche le
+processus courant en mode fail-open. Sans `certifi` ni CA utilisateur, lidar2map
+rétablit désormais `ssl.create_default_context` et ne publie jamais
+`_create_unverified_context`.
+
+Une CA fournie par l'utilisateur garde priorité ; le chemin `certifi` ne complète
+que les variables absentes. Le contexte strict est créé avant toute mutation de
+l'environnement ou de la fabrique HTTPS : une CA illisible laisse donc l'état
+précédent intact. Seule l'absence réelle du paquet est tolérée ; une installation
+`certifi` cassée reste une erreur visible et provoque volontairement un arrêt
+fail-closed. Le contexte strict est partagé par choix de performance, afin de ne
+pas recharger le bundle CA pour chaque connexion ou tuile HTTPS. `urllib` peut y
+répéter ses réglages idempotents ALPN/PHA ; aucun appelant ne doit affaiblir
+`verify_mode` ni `check_hostname`.
+
+L'insertion de `_MODULE_DIR` a été avancée avant l'import TLS et le dossier du
+script est désormais replacé en tête de `sys.path`. La configuration reste ainsi
+exécutée avant le launcher et les modes distants, l'import par spec depuis un
+répertoire étranger reste fonctionnel et un module homonyme placé plus tôt dans
+`sys.path` ne peut pas détourner ce bootstrap. `lidar2map.py` garde
+`_SSL_CTX_CERTIFI` et la
+façade `_restaurer_tls_strict()` de signature historique.
+
+La livraison est préparée sans publication : `_bootstrap_tls.py` est ajouté à
+`deploy.MAP` ; le motif `_bootstrap_*.py` impose déjà le rebuild et couvre les
+deux filtres CI. L'import est statique, `certifi` est déjà collecté par les specs
+et aucun hidden import supplémentaire n'est requis. La version reste **1.36.0**.
+
+Validation locale : compilation Python, Ruff, 64 contrats bootstrap, garde de
+livraison, 320 liens et commande réelle `--help-bootstrap` verts ; profil FAST
+complet (12 suites, 40,4 s) et profil scientifique complet (5 suites, 126,9 s),
+tous verts.
+
+Mesure nette : `lidar2map.py` 14 270 → 14 234 lignes (**-36**, soit **0,17 %**
+du périmètre figé). `_bootstrap_tls.py` compte 108 lignes physiques, mais seule la
+baisse nette du monolithe mesure la progression. Total sorti : **7 081 lignes,
+33,22 %**.
+
+### Prochaine étape proposée : 11e — commande de maintenance `--installer-deps`
+
+Caractériser puis extraire séparément le bloc top-level `--installer-deps`. Ce
+lot devra supprimer la duplication du catalogue paquet pip → module déjà présent
+dans le runtime, verrouiller la sélection GUI par plateforme, le traitement non
+fatal des dépendances optionnelles et le code de sortie. `--desinstaller` restera
+un lot ultérieur distinct en raison de ses suppressions récursives ; `--smoketest`
+relève du diagnostic et ne sera pas mélangé au bootstrap. Le futur runtime CPython
+3.12 décrit dans `correctif_bootstrap_python312_multiplateforme.md` demeure un
+chantier distinct.

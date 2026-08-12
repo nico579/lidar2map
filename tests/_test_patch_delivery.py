@@ -63,18 +63,30 @@ assert "_raster_formats.py" in _modules_locaux
 assert "_mbtiles_wmts.py" in _modules_locaux
 
 # Les filtres `paths:` de la CI : un module non couvert ne déclencherait aucun
-# job sur une modification qui ne touche que lui.
-_ci_patterns = re.findall(
-    r"^\s+- '([^']+)'\s*$",
-    workflow_path("ci").read_text(encoding="utf-8"),
-    flags=re.MULTILINE,
-)
+# job sur une modification qui ne touche que lui. Push et pull request sont
+# contrôlés séparément pour empêcher qu'un motif présent dans un seul bloc ne
+# masque son oubli dans l'autre.
+_ci_text = workflow_path("ci").read_text(encoding="utf-8")
+_ci_patterns_by_event = {}
+for _event in ("push", "pull_request"):
+    _match = re.search(
+        rf"(?ms)^  {_event}:\s*\n    paths:\s*\n"
+        r"(?P<body>(?:      - '[^']+'[ \t]*(?:\r?\n|$))+)",
+        _ci_text,
+    )
+    assert _match, f"bloc paths CI absent pour {_event}"
+    _ci_patterns_by_event[_event] = re.findall(
+        r"^[ \t]+- '([^']+)'[ \t]*$",
+        _match.group("body"),
+        flags=re.MULTILINE,
+    )
 
 for _mod in sorted(_modules_locaux):
     assert deploy.MAP.get(_mod) == _mod, f"{_mod} absent de deploy.MAP"
     assert deploy.is_rebuild_file(_mod), f"{_mod} n'est pas rebuild-gated"
-    assert any(fnmatch.fnmatch(_mod, pat) for pat in _ci_patterns), \
-        f"{_mod} n'est couvert par aucun filtre paths: du workflow CI"
+    for _event, _patterns in _ci_patterns_by_event.items():
+        assert any(fnmatch.fnmatch(_mod, pat) for pat in _patterns), \
+            f"{_mod} n'est pas couvert par paths: pour {_event}"
 
 assert deploy.is_rebuild_file("_split_future.py")
 assert not deploy.is_rebuild_file("split_future.py")

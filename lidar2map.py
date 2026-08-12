@@ -482,9 +482,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   mapwriter      Téléchargé automatiquement (plugin osmosis)
 
   GUI (mode sans arguments) :
-                 Windows : WebView2 natif (préinstallé Win10+)
-                 macOS   : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés)
-                           pyobjc-framework-WebKit (backend natif, optionnel)
+                 Windows : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés)
+                 macOS   : PyQt6 + PyQt6-WebEngine + qtpy, plus les backends
+                           natifs Cocoa/WebKit (auto-installés)
                  Linux   : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés via pip)
                            Pré-requis système (Ubuntu/Debian, une seule fois) :
                              sudo apt install python3-venv
@@ -559,60 +559,33 @@ import uuid
 import re
 import sys
 import ssl
+from pathlib import Path
 
-# certifi fournit un bundle de certificats CA à jour, indispensable sur
-# Windows 11 et macOS où les certificats système sont parfois absents ou
-# périmés (erreur "certificate verify failed" sur les API IGN).
-#
-# Problème d'œuf/poule : cet import arrive AVANT _bootstrap_environnement()
-# (ligne ~1088), donc avant que l'auto-installeur ait pu installer certifi.
-# On protège donc l'import par un try/except :
-#   • certifi déjà installé (cas normal après le 1er lancement)  → setup complet
-#   • certifi absent (tout 1er lancement, Python nu)             → fallback propre
-#     Le bootstrap installe certifi juste après, puis re-exécute le script
-#     (mode auto/venv) ou l'import réussira dès le prochain appel (mode pip).
-try:
-    import certifi as _certifi
-    os.environ['SSL_CERT_FILE']       = _certifi.where()
-    os.environ['REQUESTS_CA_BUNDLE']  = _certifi.where()
-    # Contexte HTTPS par défaut adossé au bundle certifi. http.client et
-    # urllib appellent ssl._create_default_https_context() sans argument :
-    # les variables d'environnement ci-dessus ne suffisent pas partout
-    # (leur prise en compte dépend du build OpenSSL). Un contexte partagé
-    # unique garantit la vérification TLS avec des CA à jour pour TOUT le
-    # trafic, y compris les téléchargements exécutés ensuite (JRE Temurin,
-    # osmosis). Ne JAMAIS remplacer par un contexte non-vérifiant ici.
-    _SSL_CTX_CERTIFI = ssl.create_default_context(cafile=_certifi.where())
-    ssl._create_default_https_context = lambda: _SSL_CTX_CERTIFI
-except ImportError:
-    # certifi absent : uniquement possible au tout premier lancement, avant
-    # que le bootstrap ne l'installe. Filet transitoire : contexte
-    # non-vérifiant pour que pip et l'install initiale passent même avec
-    # des certificats système périmés (Windows 11, macOS). Dès que certifi
-    # est installé (relance auto du bootstrap ou lancement suivant), la
-    # branche ci-dessus rétablit la vérification stricte.
-    _SSL_CTX_CERTIFI = None
-    ssl._create_default_https_context = ssl._create_unverified_context
+# ``spec_from_file_location`` n'ajoute pas le dossier du script à sys.path.
+# Le TLS est configuré avant le launcher et avant le bootstrap des dépendances :
+# rendre les modules privés importables dès ce point préserve aussi ce scénario.
+_MODULE_DIR = str(Path(__file__).resolve().parent)
+while _MODULE_DIR in sys.path:
+    sys.path.remove(_MODULE_DIR)
+sys.path.insert(0, _MODULE_DIR)
+
+import _bootstrap_tls as _bootstrap_tls_impl
+
+_SSL_CTX_CERTIFI = _bootstrap_tls_impl.initialiser_tls(
+    environnement=os.environ,
+    module_ssl=ssl,
+)
 
 
 def _restaurer_tls_strict():
-    """Rétablit la vérification TLS stricte si certifi est désormais importable.
-
-    Au tout premier lancement (certifi absent), le bloc d'import ci-dessus a posé
-    un contexte NON vérifiant, filet transitoire pour que pip passe. En mode auto
-    un re-exec du venv ré-importe certifi (vérification stricte d'emblée), mais en
-    mode pip il n'y a PAS de re-exec : sans ce rappel, tout le trafic HTTPS du run
-    (JRE, osmosis, tuiles) resterait non vérifié APRÈS l'install de certifi (R2#2).
-    Idempotent : no-op si le contexte est déjà strict."""
     global _SSL_CTX_CERTIFI
-    try:
-        import certifi as _cf
-    except ImportError:
-        return
-    os.environ['SSL_CERT_FILE']      = _cf.where()
-    os.environ['REQUESTS_CA_BUNDLE'] = _cf.where()
-    _SSL_CTX_CERTIFI = ssl.create_default_context(cafile=_cf.where())
-    ssl._create_default_https_context = lambda: _SSL_CTX_CERTIFI
+    _SSL_CTX_CERTIFI = _bootstrap_tls_impl.restaurer_tls_strict(
+        environnement=os.environ,
+        module_ssl=ssl,
+    )
+
+
+_restaurer_tls_strict.__doc__ = _bootstrap_tls_impl.restaurer_tls_strict.__doc__
 
 
 # Forcer stdout/stderr en UTF-8 dès le démarrage. Sur Windows la code page
@@ -1066,8 +1039,11 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import platform
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import _bootstrap_runtime as _bootstrap_runtime_impl
+import _bootstrap_policy as _bootstrap_policy_impl
+from _bootstrap_policy import dependances_gui_plateforme as _dependances_gui_plateforme
 
 # Vérification version Python
 # Python 3.9 minimum RÉEL : argparse.BooleanOptionalAction (utilisé par
@@ -1084,731 +1060,101 @@ if sys.version_info < (3, 9):
 # ============================================================
 
 def _resoudre_mode_bootstrap():
-    """Détermine le mode de bootstrap (auto|pip|none) et nettoie sys.argv.
-
-    Source de vérité unique pour le mode — appelée par _bootstrap_environnement
-    avant tout autre travail d'init. Avant ce refactor le mode était résolu
-    en interne dans _bootstrap_venv_si_besoin, ce qui empêchait l'orchestrateur
-    de conditionner les autres appels (pip, install_deps) sur ce mode.
-
-    Priorité (du plus faible au plus fort) :
-      1. Défaut          : "auto"
-      2. Variable d'env  : LIDAR2MAP_BOOTSTRAP={auto|pip|none}
-      3. Argument CLI    : --bootstrap={auto|pip|none}
-      4. Aliases legacy  : --no-bootstrap → none, --venv → auto, --no-venv → pip
-
-    Effet de bord : retire de sys.argv tous les flags consommés (pour qu'ils
-    n'arrivent pas à argparse plus loin).
-    """
-    mode = "auto"   # défaut
-
-    # Variable d'env (priorité basse)
-    env_mode = os.environ.get("LIDAR2MAP_BOOTSTRAP", "").lower().strip()
-    if env_mode in ("auto", "pip", "none"):
-        mode = env_mode
-
-    # Argument CLI (priorité haute) — supporte --bootstrap=X et --bootstrap X
-    args_to_remove = []
-    for i, arg in enumerate(sys.argv):
-        if arg.startswith("--bootstrap="):
-            v = arg.split("=", 1)[1].lower().strip()
-            if v in ("auto", "pip", "none"):
-                mode = v
-            args_to_remove.append(i)
-        elif arg == "--bootstrap" and i + 1 < len(sys.argv):
-            v = sys.argv[i+1].lower().strip()
-            if v in ("auto", "pip", "none"):
-                mode = v
-            args_to_remove.append(i)
-            args_to_remove.append(i+1)
-
-    # Aide
-    if "--help-bootstrap" in sys.argv:
+    """Détermine le mode de bootstrap et nettoie ``sys.argv`` en place."""
+    try:
+        resolution = _bootstrap_policy_impl.resoudre_mode_bootstrap(
+            sys.argv,
+            os.environ,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
+    if resolution.aide:
         print(_bootstrap_venv_si_besoin.__doc__)
         sys.exit(0)
-
-    # Compatibilité descendante avec les anciens flags
-    if "--no-bootstrap" in sys.argv:
-        mode = "none"
-    if "--venv" in sys.argv:
-        mode = "auto"  # = venv (qui est désormais le défaut)
-    if "--no-venv" in sys.argv:
-        mode = "pip"
-
-    # Retirer --bootstrap=X et --bootstrap X EN PREMIER : les indices ont été
-    # relevés sur le sys.argv intact — toute suppression préalable (flags
-    # legacy ci-dessous) les décalerait et ferait supprimer de mauvais tokens.
-    for i in sorted(args_to_remove, reverse=True):
-        if i < len(sys.argv):
-            del sys.argv[i]
-    # Puis retirer les flags legacy pour qu'argparse ne les voie pas
-    for _flag in ("--no-bootstrap", "--venv", "--no-venv", "--help-bootstrap"):
-        while _flag in sys.argv:
-            sys.argv.remove(_flag)
-
-    return mode
+    sys.argv[:] = resolution.argv
+    return resolution.mode
 
 
 def _gui_deps_plateforme():
-    """Retourne les dépendances GUI spécifiques à la plateforme.
-
-    pywebview a besoin d'un backend graphique natif selon l'OS :
-
-      Windows  WebView2 natif (EdgeHTML/Chromium), pré-installé depuis Win10.
-               Aucune dépendance pip supplémentaire.
-
-      macOS    Backend natif Cocoa/WebKit via pyobjc (léger, ~20 MB).
-               pyobjc est inclus avec Python installé depuis python.org, mais
-               PAS avec Homebrew, conda, pyenv ou miniforge. Dans ce cas,
-               pywebview ne trouve pas de backend et plante au lancement.
-               → On installe pyobjc-framework-WebKit en priorité (natif).
-               → Si pyobjc est already present, rien n'est installé (pas de Qt).
-               → Qt (PyQt6) est en fallback uniquement si pyobjc échoue
-                 (cas rare : macOS très ancien, architecture non supportée).
-
-      Linux    Pas de backend natif. Qt (PyQt6 + PyQt6-WebEngine + qtpy) est
-               le seul backend disponible via pip de façon fiable.
-               GTK est une alternative théorique mais ses wheels pip sont
-               inexistants ou cassés — on l'évite.
-
-    Retourne (critiques, optionnelles) :
-      critiques    : installées systématiquement, bloquantes si échec total
-      optionnelles : tentées une par une, non bloquantes si échec
-    """
-    _sys = platform.system()
-    if _sys == "Darwin":
-        # macOS : on installe TOUJOURS les deux backends.
-        # • pyobjc (Cocoa/WebKit natif) : léger, fonctionne sur Mac avec display
-        # • PyQt6 : requis quand la machine est headless (VM SSH, Scaleway M1)
-        #   NB : on ne peut pas savoir au moment du bootstrap si le Mac aura
-        #   un display au moment de l'exécution — donc on installe Qt
-        #   systématiquement plutôt que de le laisser en fallback optionnel.
-        return (
-            ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa",
-             "PyQt6", "PyQt6-WebEngine", "qtpy"],   # critiques (tous)
-            [],
-        )
-    elif _sys == "Linux":
-        # Linux : Qt est le seul backend viable via pip.
-        return (
-            ["PyQt6", "PyQt6-WebEngine", "qtpy"],   # critiques
-            [],
-        )
-    else:
-        # Windows : on force le backend Qt (PYWEBVIEW_GUI=qt) au lieu de
-        # WinForms/WebView2+pythonnet. pythonnet 3.1.0 régresse (récursion
-        # infinie dans la sérialisation .NET -> bridge JS<->Python cassé ->
-        # GUI gelée) et WinForms freeze par intermittence. Qt = même moteur
-        # Chromium que Linux/macOS, plus aucune couche .NET.
-        return (["PyQt6", "PyQt6-WebEngine", "qtpy"], [])
+    """Façade historique relisant la plateforme à chaque appel."""
+    return _dependances_gui_plateforme(platform.system())
 
 
 def _verifier_venv_linux():
-    """Sur Linux/Ubuntu, vérifie que le module venv est disponible.
+    return _bootstrap_runtime_impl.verifier_venv_linux()
 
-    Sur Debian/Ubuntu, python3-venv est un paquet système SÉPARÉ de python3
-    (décision de packaging Debian). Il est donc absent sur un Python nu, ce
-    qui fait planter la création de venv sans message clair.
 
-    Cette fonction est appelée AVANT toute tentative de création de venv.
-    Elle détecte l'absence du module et imprime les instructions apt.
-    """
-    if platform.system() != "Linux":
-        return
-    try:
-        import venv as _venv_test  # noqa: F401
-        return  # module présent, tout va bien
-    except ImportError:
-        pass
-    # Détecter aussi via subprocess pour couvrir les cas où le module
-    # est présent mais pas importable depuis le Python courant.
-    r = subprocess.run(
-        [sys.executable, "-m", "venv", "--help"],
-        capture_output=True)
-    if r.returncode == 0:
-        return  # disponible
-    # Module absent : message clair et arrêt propre
-    _py = f"python{sys.version_info.major}.{sys.version_info.minor}"
-    print()
-    print("  ╔══════════════════════════════════════════════════════════════╗")
-    print("  ║  ERROR: module Python 'venv' absent                        ║")
-    print("  ╚══════════════════════════════════════════════════════════════╝")
-    print()
-    print("  On Ubuntu/Debian, this module is in a separate package.")
-    print("  Install it with (once):")
-    print()
-    print("    sudo apt install python3-venv")
-    print(f"    # or, if you use Python {sys.version_info.major}.{sys.version_info.minor} explicitly:")
-    print(f"    sudo apt install {_py}-venv")
-    print()
-    print("  Then relaunch the script.")
-    sys.exit(1)
+_verifier_venv_linux.__doc__ = _bootstrap_runtime_impl.verifier_venv_linux.__doc__
 
 
 def _bootstrap_venv_si_besoin():
-    """Bootstrap automatique d'un environnement Python isolé.
+    return _bootstrap_runtime_impl.bootstrap_venv_si_besoin(
+        resoudre_mode=_resoudre_mode_bootstrap,
+        gui_deps_plateforme=_gui_deps_plateforme,
+        verifier_venv_linux=_verifier_venv_linux,
+        relancer_dans_venv=_relancer_dans_venv,
+    )
 
-    Comportement par défaut : crée un venv dans ``~/.lidar2map/`` (Mac/Linux)
-    ou ``%USERPROFILE%\\.lidar2map\\`` (Windows) au 1er lancement, y installe
-    les dépendances, et y relance le script. Comportement uniforme sur les 3 OS.
 
-    Avantages du venv par défaut sur toutes plateformes :
-      - Isolation : zéro pollution du Python système
-      - Désinstallation propre : suppression d'un dossier suffit
-      - Cohérent avec la bonne pratique Python (un venv par projet)
-      - Évite les conflits de versions de modules avec d'autres outils
-      - Contourne PEP 668 sur Mac/Linux récents nativement
-
-    Flags utilisateur (lus directement depuis sys.argv pour bypasser argparse
-    qui n'est pas encore initialisé à ce stade du démarrage) :
-
-      --bootstrap=auto    : venv automatique (défaut, recommandé). Si un env
-                            isolé est déjà actif (conda / venv), s'arrête et
-                            oriente vers --bootstrap=pip|none au lieu de créer
-                            un venv parallèle.
-      --bootstrap=pip     : install directe dans l'env Python courant
-                            (utilise --break-system-packages si PEP 668)
-      --bootstrap=none    : pas d'install — vérifie les imports et plante
-                            avec un message clair si manquants. Utile pour
-                            ceux qui gèrent leur propre env (conda, venv
-                            manuel, install système contrôlée).
-      --help-bootstrap    : affiche cette aide et quitte
-
-    Variables d'environnement équivalentes :
-      LIDAR2MAP_BOOTSTRAP=auto|pip|none
-
-    Suppression du venv à tout moment :
-      rm -rf ~/.lidar2map                       (Mac/Linux)
-      rmdir /s /q %USERPROFILE%\\.lidar2map     (Windows)
-    Le script en recréera un au prochain lancement si besoin.
-    """
-    mode = _resoudre_mode_bootstrap()
-
-    # Deps réellement critiques pour le pipeline LiDAR principal.
-    # numba et osmium sont optionnelles (numba accélère SVF, osmium pour
-    # OSM→GeoJSON) — leur absence ne doit pas planter le bootstrap.
-    deps_critiques = ["PIL", "pyproj", "numpy", "scipy", "ijson",
-                      "rasterio", "fiona", "certifi"]
-
-    # ── Mode "none" : juste vérifier les imports, planter clairement si KO ─
-    if mode == "none":
-        manquantes = []
-        for mod in deps_critiques:
-            try:
-                __import__(mod)
-            except ImportError:
-                manquantes.append(mod)
-        if manquantes:
-            pkg_map = {"PIL": "Pillow", "pyproj": "pyproj", "numpy": "numpy",
-                       "scipy": "scipy", "ijson": "ijson",
-                       "rasterio": "rasterio", "fiona": "fiona",
-                       "numba":    "numba",     "certifi": "certifi"}
-            pkgs_pip = [pkg_map.get(m, m) for m in deps_critiques]
-            print()
-            print("  ╔══════════════════════════════════════════════════════════════╗")
-            print("  ║  Mode --bootstrap=none: auto-install disabled              ║")
-            print("  ╚══════════════════════════════════════════════════════════════╝")
-            print(f"  Missing Python modules: {', '.join(manquantes)}")
-            print()
-            print("  Install them yourself with your preferred method:")
-            print(f"    pip install {' '.join(pkgs_pip)} pywebview")
-            print(f"    # ou : conda install -c conda-forge {' '.join(pkgs_pip)} pywebview")
-            print()
-            sys.exit(1)
-        return
-
-    # ── Mode "pip" : install dans l'env Python courant ───────────────────
-    # Délégué à _installer_deps() plus bas (avec stratégie 3 niveaux :
-    # standard → --break-system-packages → --user)
-    if mode == "pip":
-        return  # rien à faire ici, _installer_deps() prend le relais
-
-    # ── Mode "auto" : créer/utiliser un venv ─────────────────────────────
-    # Tout le runtime lidar2map (venv Python, JRE Java, osmosis, etc.) est
-    # centralisé dans ~/.lidar2map/ — un seul dossier à supprimer pour
-    # un nettoyage complet, et partagé entre tous les dossiers de travail.
-    is_windows  = platform.system() == "Windows"
-    lidar_home  = Path.home() / ".lidar2map"
-    venv_path   = lidar_home / "venv"
-
-    # Détecter si on est déjà dans le bon venv (ré-entrance après os.execv)
-    try:
-        if Path(sys.prefix).resolve() == venv_path.resolve():
-            return
-    except Exception:
-        pass
-
-    # ── Garde : environnement Python actif (conda / venv) ────────────────
-    # Si l'utilisateur a déjà un env isolé actif, créer en silence un venv
-    # parallèle dans ~/.lidar2map/ le surprend (cas signalé par un
-    # utilisateur conda). On s'arrête et on l'oriente vers les modes adaptés
-    # plutôt que de piétiner son env. Détection par variables d'env standard
-    # (déterministe — contrairement à un scan des deps dans sys.path, cf.
-    # NB ci-dessous). Non atteint en ré-entrance : le check venv ci-dessus a
-    # déjà return quand sys.prefix == ~/.lidar2map/venv.
-    _env_actif = os.environ.get("CONDA_PREFIX") or os.environ.get("VIRTUAL_ENV")
-    if _env_actif:
-        print()
-        print("  ╔" + "═" * 62 + "╗")
-        print("  ║ " + "Active Python environment detected (conda / venv)".ljust(60) + " ║")
-        print("  ╚" + "═" * 62 + "╝")
-        print(f"  Env actif : {_env_actif}")
-        print()
-        print("  To avoid creating a parallel venv in ~/.lidar2map/:")
-        print("    python lidar2map.py --bootstrap=pip    # install the deps in this env")
-        print("    python lidar2map.py --bootstrap=none   # if the deps are already there")
-        print()
-        print("  (or deactivate the active env to use the isolated venv by default)")
-        print()
-        sys.exit(1)
-
-    # NB : on ne shortcut PAS sur "deps importables dans le Python courant".
-    # Avant ce refactor, la présence des deps quelque part dans le sys.path
-    # courant (système, conda, autre venv) faisait que ~/.lidar2map/venv
-    # n'était jamais créé → comportement non-déterministe selon l'historique
-    # de la machine. Maintenant, le mode "auto" crée toujours le venv.
-    # Pour utiliser un autre env, passer explicitement par :
-    #   --bootstrap=pip   (install dans l'env Python courant)
-    #   --bootstrap=none  (assume que tout est déjà là)
-
-    # Sous Windows : Scripts/ au lieu de bin/
-    venv_bin    = venv_path / ("Scripts" if is_windows else "bin")
-    venv_python = venv_bin / ("python.exe" if is_windows else "python")
-    venv_pip    = venv_bin / ("pip.exe"    if is_windows else "pip")
-
-    # Si le venv existe déjà avec les déps : juste re-exécuter dedans
-    if venv_python.exists():
-        check_cmd = [str(venv_python), "-c",
-                     "import " + ", ".join(deps_critiques)]
-        r_check = subprocess.run(check_cmd, capture_output=True)
-        if r_check.returncode == 0:
-            print(f"  Relaunching in venv : {venv_path}")
-            _relancer_dans_venv(venv_python, is_windows)
-            # Ne retourne pas — soit os.execv (Unix), soit sys.exit (Windows)
-
-    # Créer le venv s'il n'existe pas encore
-    if not venv_python.exists():
-        # Sur Linux/Ubuntu : vérifier python3-venv AVANT de tenter la création
-        _verifier_venv_linux()
-        suppr_cmd = ("rmdir /s /q %USERPROFILE%\\.lidar2map" if is_windows
-                     else "rm -rf ~/.lidar2map")
-        print()
-        print("  ╔══════════════════════════════════════════════════════════════╗")
-        print("  ║  First launch - creating an isolated Python environment".ljust(63) + " ║")
-        print("  ║  (~50 MB once deps are installed). This env is local to".ljust(63) + " ║")
-        print("  ║  the project and does not touch your system Python.".ljust(63) + " ║")
-        print("  ║".ljust(63) + " ║")
-        print(f"  ║  To remove it: {suppr_cmd}".ljust(63) + " ║")
-        print("  ║".ljust(63) + " ║")
-        print("  ║  To use a direct install (no venv):".ljust(63) + " ║")
-        print("  ║    python lidar2map.py --bootstrap=pip".ljust(63) + " ║")
-        print("  ╚══════════════════════════════════════════════════════════════╝")
-        print(f"  Creating venv {venv_path}...")
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(venv_path)],
-                check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"  ERROR creating venv: {e}")
-            print("  Install Python 3.8+ with the venv module.")
-            sys.exit(1)
-
-    # Déps installées dans le venv. numba est inclus systématiquement :
-    # il accélère le calcul SVF de ×15 à ×50. osmium est inclus pour le
-    # pipeline OSM → GeoJSON (sans, ce pipeline n'est pas disponible).
-    # Si l'install d'une dep optionnelle (osmium, numba) échoue, on retry
-    # sans elle plutôt que de bloquer tout le script.
-    #
-    # Deps GUI : spécifiques à la plateforme (Qt sur macOS/Linux).
-    # Traitées comme optionnelles au sens du retry (si PyQt6 échoue, on
-    # continue — la GUI sera non fonctionnelle mais le CLI marchera).
-    _gui_crit, _gui_opt = _gui_deps_plateforme()
-    deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                       "rasterio", "fiona", "pywebview", "certifi"] + _gui_crit
-    deps_optionnelles = ["osmium", "numba"] + _gui_opt
-    deps_pip = deps_critiques + deps_optionnelles
-    print("  Installing dependencies in the venv (3-5 min)...")
-
-    def _pip_install(pkgs):
-        """Tente pip install. Retourne (success, stderr_msg)."""
-        try:
-            r = subprocess.run(
-                [str(venv_pip), "install", "-q",
-                 "--disable-pip-version-check"] + pkgs,
-                capture_output=True, text=True, timeout=900)
-            return r.returncode == 0, (r.stderr or "")[-500:]
-        except subprocess.TimeoutExpired:
-            return False, "pip install timeout (>900s, reseau bloque ?)"
-        except subprocess.CalledProcessError as e:
-            return False, str(e)
-
-    install_ok, err_msg = _pip_install(deps_pip)
-    if not install_ok:
-        # Retry sans les deps optionnelles : si l'une d'elles est cassée
-        # (cas pyrosm 0.6.2 sur Python 3.12), on garde au moins le pipeline
-        # principal (LiDAR + raster).
-        print("  Bulk install failed, retrying without optional deps...")
-        install_ok, err_msg = _pip_install(deps_critiques)
-        if install_ok:
-            # Tenter ensuite chaque optionnelle individuellement.
-            print("  Critical deps installed. Trying optional deps one by one...")
-            opt_failed = []
-            for opt in deps_optionnelles:
-                ok_one, _ = _pip_install([opt])
-                if not ok_one:
-                    opt_failed.append(opt)
-                    print(f"    ⚠ {opt} : install failed - associated pipeline unavailable")
-                else:
-                    print(f"    ✓ {opt} : OK")
-            if opt_failed:
-                print(f"  ⚠ Optional deps not installed: {', '.join(opt_failed)}")
-                print(f"     Retry manuel possible : {venv_pip} install {' '.join(opt_failed)}")
-        else:
-            print("  ERROR installing critical deps in the venv:")
-            print(f"  {err_msg}")
-            print("  Check your internet connection, then try:")
-            print(f"    {venv_pip} install {' '.join(deps_critiques)}")
-            sys.exit(1)
-    print("  ✓ Dependencies installed.")
-
-    # Relancer le script avec le Python du venv
-    print("  Relaunching in venv...")
-    _relancer_dans_venv(venv_python, is_windows)
+_bootstrap_venv_si_besoin.__doc__ = (
+    _bootstrap_runtime_impl.bootstrap_venv_si_besoin.__doc__
+)
 
 
 def _relancer_dans_venv(venv_python, is_windows):
-    """Relance le script avec le Python du venv, comportement OS-spécifique.
+    return _bootstrap_runtime_impl.relancer_dans_venv(
+        venv_python,
+        is_windows,
+    )
 
-    Unix : os.execv remplace le process courant — le shell ne récupère
-           la main qu'après terminaison du child. C'est le comportement
-           attendu, économique en RAM (pas de double process).
 
-    Windows : os.execv y a un comportement différent de Unix — le parent
-              termine immédiatement et le child tourne en arrière-plan, ce
-              qui fait que le shell affiche son prompt avant la sortie du
-              child. Pour éviter cette confusion d'affichage, on utilise
-              subprocess.run + sys.exit : on attend la fin du child et on
-              propage son code retour avant de rendre la main au shell.
-
-              IMPORTANT : on passe explicitement stdout=sys.stdout et
-              stderr=sys.stderr au child, sinon quand le parent est lancé
-              par la GUI avec stdout=PIPE, le pipe ne se propage pas au
-              child venv, et la GUI ne voit jamais rien des messages que
-              le child écrit. Sans ce flush du parent au préalable, les
-              traces "[trace]" et "[init]" du parent se mélangent avec
-              celles du child à cause du buffering.
-    """
-    if is_windows:
-        try:
-            sys.stdout.flush()
-            sys.stderr.flush()
-            r = subprocess.run([str(venv_python)] + sys.argv,
-                               stdout=sys.stdout, stderr=sys.stderr,
-                               stdin=sys.stdin)
-            sys.exit(r.returncode)
-        except KeyboardInterrupt:
-            sys.exit(130)
-    else:
-        os.execv(str(venv_python),
-                 [str(venv_python)] + sys.argv)
+_relancer_dans_venv.__doc__ = _bootstrap_runtime_impl.relancer_dans_venv.__doc__
 
 
 def _bootstrap_pip():
-    """S'assure que pip est disponible via ensurepip si nécessaire."""
-    r = subprocess.run([sys.executable, "-m", "pip", "--version"],
-                       capture_output=True)
-    if r.returncode == 0:
-        return  # pip déjà disponible
-    print("  pip missing, bootstrap via ensurepip...")
-    try:
-        import ensurepip
-        ensurepip.bootstrap(upgrade=True)
-        print("  pip installed.")
-    except Exception as e:
-        print(f"  ERROR bootstrap pip: {e}")
-        print("  Install pip manually: https://pip.pypa.io/en/stable/installation/")
-        sys.exit(1)
+    return _bootstrap_runtime_impl.bootstrap_pip()
+
+
+_bootstrap_pip.__doc__ = _bootstrap_runtime_impl.bootstrap_pip.__doc__
 
 
 def _installer_deps():
-    """Vérifie et installe les dépendances Python requises au démarrage.
+    return _bootstrap_runtime_impl.installer_deps(
+        gui_deps_plateforme=_gui_deps_plateforme,
+    )
 
-    Stratégie d'installation, par ordre d'essai :
-    1. ``pip install <deps>`` standard
-    2. ``pip install --break-system-packages <deps>`` (PEP 668 — Linux récent,
-       Homebrew Mac récent)
-    3. ``pip install --user <deps>`` (fallback dernière chance)
 
-    Si toutes échouent, on s'arrête PROPREMENT avec un message clair plutôt
-    que de continuer pour planter sur le premier ``import pyproj`` venu.
-    """
-    # Deps GUI spécifiques à la plateforme (Qt sur macOS/Linux, rien sur Windows)
-    _gui_crit, _gui_opt = _gui_deps_plateforme()
-
-    # find_spec ne charge pas le module — beaucoup plus rapide que __import__
-    # pour les modules lourds (rasterio, scipy, PIL, PyQt6 prennent 200-500 ms
-    # chacun à l'import). Gain typique au démarrage à froid : 2-3 s.
-    import importlib.util as _ilu
-
-    def _module_present(name: str) -> bool:
-        try:
-            return _ilu.find_spec(name) is not None
-        except (ImportError, ValueError):
-            # ValueError : module parent absent (PyQt6.X quand PyQt6 manque)
-            return False
-
-    deps = []
-    for mod, pkg in [
-        ("PIL",       "Pillow"),
-        ("pyproj",    "pyproj"),
-        ("numpy",     "numpy"),
-        ("scipy",     "scipy"),
-        ("ijson",     "ijson"),       # streaming JSON (BD TOPO dept-scale, OSM XML)
-        ("rasterio",  "rasterio"),    # I/O raster + reprojection (remplace gdalwarp/gdal_translate)
-        ("fiona",     "fiona"),       # I/O vecteur (remplace ogr2ogr CLI)
-        ("certifi",   "certifi"),     # bundle CA à jour (fix SSL Windows 11 / macOS)
-        ("webview",   "pywebview"),   # GUI (mode sans arguments)
-        ("osmium",    "osmium"),      # parseur PBF OSM (remplace ogr2ogr OSM)
-        ("numba",     "numba"),       # accélération SVF ×15-50 (LLVM JIT)
-    ]:
-        if not _module_present(mod):
-            deps.append(pkg)
-
-    # Ajouter les deps GUI plateforme non encore installées
-    for pkg in _gui_crit + _gui_opt:
-        # Correspondance pkg pip → nom de module importable
-        _mod_map = {
-            "PyQt6":                  "PyQt6",
-            "PyQt6-WebEngine":        "PyQt6.QtWebEngineWidgets",
-            "qtpy":                   "qtpy",
-            "pyobjc-framework-WebKit":"WebKit",
-            "pyobjc-framework-Cocoa": "Cocoa",
-        }
-        _mod = _mod_map.get(pkg, pkg)
-        if not _module_present(_mod):
-            if pkg not in deps:
-                deps.append(pkg)
-
-    if not deps:
-        return
-
-    # Distinguer deps critiques (sans elles, le script ne tourne pas) et
-    # deps optionnelles (utiles pour certains pipelines spécifiques).
-    # Les deps optionnelles ne doivent pas bloquer si elles échouent à
-    # s'installer — sinon un wheel buggé empêcherait toute utilisation
-    # du script (cas vécu avec pyrosm 0.6.2 cassé sur Python 3.12).
-    # Les deps GUI optionnelles (pyobjc sur macOS) sont aussi dans ce set.
-    DEPS_OPTIONNELLES = ({"osmium", "numba", "py7zr", "mapbox-vector-tile"}
-                         | set(_gui_opt))
-    deps_crit = [d for d in deps if d not in DEPS_OPTIONNELLES]
-    deps_opt  = [d for d in deps if d in DEPS_OPTIONNELLES]
-
-    print(f"  Installing dependencies: {', '.join(deps)}...")
-
-    # Détecter si on est dans un venv. Dans un venv, --user n'a aucun sens
-    # (pip refuse) — il faut juste tenter l'install standard.
-    in_venv = (hasattr(sys, "real_prefix")
-               or (hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix))
-
-    base_cmd = [sys.executable, "-m", "pip", "install", "-q",
-                "--disable-pip-version-check"]
-    if in_venv:
-        # Dans un venv : juste tenter standard, pas de --user, pas de --break-system-packages
-        strategies = [
-            (base_cmd + deps,                                "standard (venv)"),
-        ]
-    else:
-        strategies = [
-            (base_cmd + deps,                                "standard"),
-            (base_cmd + deps + ["--break-system-packages"],  "--break-system-packages (PEP 668)"),
-            (base_cmd + deps + ["--user"],                   "--user (install locale)"),
-        ]
-
-    last_stderr = ""
-    install_ok = False
-    for cmd, label in strategies:
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-        except (OSError, FileNotFoundError) as e:
-            last_stderr = f"pip not found : {e}"
-            continue
-        except subprocess.TimeoutExpired:
-            last_stderr = f"pip install timeout (>900s) : {label}"
-            continue
-        if r.returncode == 0:
-            # Vérifier que les imports critiques fonctionnent.
-            # Les deps optionnelles ne sont PAS dans cette vérification —
-            # leur absence ne doit pas bloquer.
-            rates = []
-            for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
-                             ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
-                             ("fiona","fiona"),("certifi","certifi"),("webview","pywebview")]:
-                if pkg in deps_crit:
-                    try:
-                        __import__(mod)
-                    except ImportError:
-                        rates.append(pkg)
-            # Vérifier aussi les GUI deps critiques plateforme
-            for pkg in _gui_crit:
-                if pkg in deps_crit:
-                    _mod_map = {"PyQt6": "PyQt6", "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
-                                "qtpy": "qtpy"}
-                    try:
-                        __import__(_mod_map.get(pkg, pkg))
-                    except ImportError:
-                        rates.append(pkg)
-            if not rates:
-                print(f"  ✓ Install succeeded ({label})")
-                install_ok = True
-                break
-            print(f"  Tentative {label} : pip OK but critical imports fail ({', '.join(rates)})")
-            last_stderr = f"installation faite mais imports {rates} indisponibles"
-        else:
-            last_stderr = (r.stderr or r.stdout or "").strip()
-            if last_stderr:
-                last_stderr = last_stderr.split("\n")[-3:]
-                last_stderr = "\n  ".join(last_stderr)
-
-    # Si install groupée a échoué, retry avec deps_crit seules (sans les
-    # optionnelles qui peuvent être en cause). Cas typique : osmium Cython
-    # cassé sur Python 3.12 → l'install groupée plante, mais les autres
-    # deps critiques s'installent très bien seules.
-    if not install_ok and deps_opt and deps_crit:
-        print(f"  Retry without optional deps ({', '.join(deps_opt)})...")
-        cmd_crit_only = base_cmd + deps_crit
-        if in_venv:
-            try:
-                r = subprocess.run(cmd_crit_only, capture_output=True, text=True,
-                                   timeout=900)
-            except (OSError, FileNotFoundError, subprocess.TimeoutExpired):
-                r = None
-            if r is not None and r.returncode == 0:
-                rates = []
-                for mod, pkg in [("PIL","Pillow"),("pyproj","pyproj"),("numpy","numpy"),
-                                 ("scipy","scipy"),("ijson","ijson"),("rasterio","rasterio"),
-                                 ("fiona","fiona"),("webview","pywebview")]:
-                    if pkg in deps_crit:
-                        try:
-                            __import__(mod)
-                        except ImportError:
-                            rates.append(pkg)
-                if not rates:
-                    print(f"  ✓ Critical deps installed (without: {', '.join(deps_opt)})")
-                    print("  ⚠ Optional deps not installed: associated pipelines unavailable")
-                    print("     - osmium : --osm --file-formats geojson")
-                    print("     - numba  : SVF lent (×15 fois plus)")
-                    install_ok = True
-
-    # Cas limite : il ne restait QUE des deps optionnelles à installer et elles
-    # ont échoué. Rien de critique ne manque, donc rien ne justifie d'arrêter.
-    # Sans ce garde-fou, le retry ci-dessus est sauté (il exige deps_crit non
-    # vide) et on tombe dans le message d'erreur fatal avec un "Missing
-    # modules:" VIDE. Cas vécu : macOS x86_64, llvmlite n'a plus de wheel donc
-    # numba ne s'installe pas, et tout le build s'arrêtait là.
-    if not install_ok and deps_opt and not deps_crit:
-        print(f"  ⚠ Optional deps not installed: {', '.join(deps_opt)}")
-        print("     Reduced functionality, nothing critical is missing.")
-        print("     - osmium : --osm --file-formats geojson")
-        print("     - numba  : SVF lent (×15 fois plus)")
-        install_ok = True
-
-    if install_ok:
-        return
-
-    # Toutes les tentatives ont échoué — on arrête ici avec un message clair.
-    import platform as _plat
-    _is_mac   = _plat.system() == "Darwin"
-    _is_linux = _plat.system() == "Linux"
-    print()
-    print("  ╔══════════════════════════════════════════════════════════════╗")
-    print("  ║  ERROR: cannot install the Python dependencies      ║")
-    print("  ╚══════════════════════════════════════════════════════════════╝")
-    print(f"  Missing modules: {', '.join(deps_crit)}")
-    if last_stderr:
-        print(f"  Dernier message pip :\n  {last_stderr}")
-    print()
-    print("  Solutions possibles :")
-    if _is_mac:
-        print("    1. Install in a venv:")
-        print("       python3 -m venv ~/mon-venv-lidar")
-        print("       source ~/mon-venv-lidar/bin/activate")
-        print(f"       pip install {' '.join(deps_crit)}")
-        print("       Then relaunch: python lidar2map.py --bootstrap=none")
-        print()
-        print("    2. Force a system install (not recommended):")
-        print(f"       pip install --break-system-packages {' '.join(deps)}")
-    elif _is_linux:
-        print("    1. Install via the package manager:")
-        print(f"       sudo apt install python3-{' python3-'.join(d.lower() for d in deps)}")
-        print()
-        print("    2. Use a venv:")
-        print("       python3 -m venv ~/mon-venv-lidar")
-        print("       source ~/mon-venv-lidar/bin/activate")
-        print(f"       pip install {' '.join(deps)}")
-    else:
-        print(f"    pip install {' '.join(deps)}")
-    print()
-    sys.exit(1)
+_installer_deps.__doc__ = _bootstrap_runtime_impl.installer_deps.__doc__
 
 
 def _bootstrap_environnement():
-    """Orchestrateur unique du démarrage : mode → venv → pip → install deps.
-
-    Avant ce refactor, trois appels top-level se succédaient sans qu'aucun
-    point du code ne décide globalement de la stratégie. Résultat :
-    `_bootstrap_pip()` était systématiquement exécuté même en mode `auto`
-    où il est inutile (le venv post-re-exec garantit pip), et même en mode
-    `none` où c'est en contradiction avec l'intention de l'utilisateur ("je
-    gère mes deps moi-même").
-
-    Maintenant : un seul point d'entrée, qui décide en fonction du mode :
-      - "auto" : crée un venv si nécessaire (re-exec) puis install deps via
-                 le pip du venv (forcément présent, _bootstrap_pip inutile).
-      - "pip"  : pas de venv, mais on n'a pas la garantie que pip soit
-                 dispo (Python système nu, distrib exotique) → bootstrap pip
-                 via ensurepip puis install deps.
-      - "none" : ni venv ni install. _bootstrap_venv_si_besoin se charge
-                 lui-même de vérifier les imports critiques et d'avorter
-                 proprement avec un message si manquants. Pas d'appel à
-                 _installer_deps qui forcerait une install non voulue.
-
-    Quand cette fonction retourne, les imports critiques sont garantis pour
-    les modes auto et pip. Pour none, soit les imports marchent, soit on a
-    déjà sys.exit(1) avec un message clair.
-    """
-    # En mode frozen (PyInstaller), toutes les deps Python sont déjà embarquées
-    # dans le bundle — pas de venv ni de pip à exécuter.
-    if getattr(sys, "frozen", False):
-        return
-    mode = _resoudre_mode_bootstrap()
-    _bootstrap_venv_si_besoin_avec_mode(mode)
-    if mode == "pip":
-        _bootstrap_pip()
-    if mode != "none":
-        _installer_deps()
-        # certifi vient (peut-être) d'être installé : rétablir la vérification
-        # TLS stricte pour le reste du run (surtout mode pip, sans re-exec) (R2#2).
-        _restaurer_tls_strict()
+    return _bootstrap_runtime_impl.orchestrer_bootstrap(
+        frozen=getattr(sys, "frozen", False),
+        resoudre_mode=_resoudre_mode_bootstrap,
+        bootstrap_venv_avec_mode=_bootstrap_venv_si_besoin_avec_mode,
+        bootstrap_pip=_bootstrap_pip,
+        installer_dependances=_installer_deps,
+        restaurer_tls_strict=_restaurer_tls_strict,
+    )
 
 
-# Petit wrapper pour conserver _bootstrap_venv_si_besoin sans paramètre côté
-# usage (notamment l'aide accessible via __doc__) tout en évitant la double
-# résolution du mode quand il est appelé depuis l'orchestrateur.
+_bootstrap_environnement.__doc__ = (
+    _bootstrap_runtime_impl.orchestrer_bootstrap.__doc__
+)
+
+
 def _bootstrap_venv_si_besoin_avec_mode(mode):
-    """Appelle _bootstrap_venv_si_besoin avec un mode pré-résolu.
+    return _bootstrap_runtime_impl.bootstrap_venv_avec_mode(
+        mode,
+        environnement=os.environ,
+        bootstrap_venv=_bootstrap_venv_si_besoin,
+    )
 
-    On stocke le mode dans une variable d'environnement temporaire que la
-    fonction lira en priorité, court-circuitant sa propre résolution.
-    Solution moins invasive que de modifier la signature publique de
-    _bootstrap_venv_si_besoin (qui est documentée et stable).
-    """
-    os.environ["LIDAR2MAP_BOOTSTRAP"] = mode
-    try:
-        _bootstrap_venv_si_besoin()
-    finally:
-        # Nettoyer pour ne pas laisser fuir le mode dans les sub-processes
-        # ou le venv post-re-exec qui ferait sa propre résolution.
-        os.environ.pop("LIDAR2MAP_BOOTSTRAP", None)
+
+_bootstrap_venv_si_besoin_avec_mode.__doc__ = (
+    _bootstrap_runtime_impl.bootstrap_venv_avec_mode.__doc__
+)
 
 
 _INSTALL_ALL_DEPS   = "--installer-deps"     in sys.argv
@@ -2391,7 +1737,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.36.0"
+VERSION      = "1.37.0"
 VERSION_DATE = "2026-08"
 
 
@@ -2442,13 +1788,6 @@ MACOS   = platform.system() == "Darwin"
 
 import threading as _threading
 from contextlib import contextmanager as _contextmanager
-
-# ``spec_from_file_location`` (tests et intégrateurs) n'ajoute pas le dossier
-# du script à sys.path, contrairement à ``python lidar2map.py``. Rétablir cette
-# sémantique garantit que les modules privés voisins restent importables.
-_MODULE_DIR = str(Path(__file__).resolve().parent)
-if _MODULE_DIR not in sys.path:
-    sys.path.insert(0, _MODULE_DIR)
 
 from _split_manifest import (
     Manifeste,

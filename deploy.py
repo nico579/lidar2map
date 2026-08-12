@@ -79,6 +79,9 @@ MAP = {
     "_ombrages_pures.py":            "_ombrages_pures.py",
     "_ombrages_provider.py":         "_ombrages_provider.py",
     "_shading_specs.py":             "_shading_specs.py",
+    "_bootstrap_policy.py":          "_bootstrap_policy.py",
+    "_bootstrap_runtime.py":         "_bootstrap_runtime.py",
+    "_bootstrap_tls.py":             "_bootstrap_tls.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_osm_xml.py":           "_geojson_osm_xml.py",
@@ -167,6 +170,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_ombrages_pures.py"
         or name == "_ombrages_provider.py"
         or name == "_shading_specs.py"
+        or (name.startswith("_bootstrap_") and name.endswith(".py"))
         or (name.startswith("_geojson_") and name.endswith(".py"))
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"
