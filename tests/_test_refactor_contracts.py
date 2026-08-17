@@ -32,6 +32,7 @@ import lidar2map as L  # noqa: E402
 import _geojson_geometry as geojson_geometry  # noqa: E402
 import _geojson_merge as geojson_merge  # noqa: E402
 import _geojson_merge_cli as geojson_merge_cli  # noqa: E402
+import _geojson_osm_export as geojson_osm_export  # noqa: E402
 import _geojson_mapsforge as geojson_mapsforge  # noqa: E402
 import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
 import _geojson_raster as geojson_raster  # noqa: E402
@@ -52,6 +53,9 @@ import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
 import _bdtopo_layers as bdtopo_layers  # noqa: E402
 import _vector_acquisition as vector_acquisition  # noqa: E402
 import _vector_outputs as vector_outputs  # noqa: E402
+import _osm_outputs as osm_outputs  # noqa: E402
+import _osm_map_pipeline as osm_map_pipeline  # noqa: E402
+import _osm_policy as osm_policy  # noqa: E402
 
 
 class PublicFacadeContractTests(unittest.TestCase):
@@ -1889,6 +1893,69 @@ class VectorAcquisitionContractTests(unittest.TestCase):
         self.assertEqual(executor.maximum, 2)
 
 
+class OsmGeojsonExportContractTests(unittest.TestCase):
+    def test_facade_keeps_signature_and_delegates_to_extracted_module(self):
+        self.assertIs(
+            L._generer_geojson_osm_impl,
+            geojson_osm_export.generer_geojson_osm,
+        )
+        self.assertEqual(
+            str(inspect.signature(L.generer_geojson_osm)),
+            "(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=None, "
+            "ecraser_tuiles=False, formats=None)",
+        )
+        marker = object()
+        with mock.patch.object(
+                L, "_generer_geojson_osm_impl", return_value=marker,
+        ) as implementation:
+            result = L.generer_geojson_osm(
+                (1, 2, 3, 4), "out", "zone", "source.pbf",
+                osm_tags=["highway=*"], ecraser_tuiles=True,
+                formats=["gz", "geojson"],
+            )
+
+        self.assertIs(result, marker)
+        self.assertEqual(implementation.call_args.args[:4], (
+            (1, 2, 3, 4), "out", "zone", "source.pbf",
+        ))
+        self.assertIsInstance(
+            implementation.call_args.kwargs["dependances"],
+            geojson_osm_export.DependancesExportOsm,
+        )
+
+    def test_dependencies_are_rebuilt_from_late_bound_facade_seams(self):
+        seams = {
+            "_osm_filtre_cles": mock.Mock(),
+            "_osm_cle_match": mock.Mock(),
+            "_chemin_part": mock.Mock(),
+            "_gunzip_vers_fichier": mock.Mock(),
+            "_publier_groupe_atomique": mock.Mock(),
+            "_hms": mock.Mock(),
+        }
+        patches = [mock.patch.object(L, name, value)
+                   for name, value in seams.items()]
+        for patcher in patches:
+            patcher.start()
+        try:
+            dependencies = L._dependances_export_osm()
+        finally:
+            for patcher in reversed(patches):
+                patcher.stop()
+
+        self.assertIs(dependencies.osm_filtre_cles, seams["_osm_filtre_cles"])
+        self.assertIs(dependencies.osm_cle_match, seams["_osm_cle_match"])
+        self.assertIs(dependencies.chemin_part, seams["_chemin_part"])
+        self.assertIs(
+            dependencies.gunzip_vers_fichier,
+            seams["_gunzip_vers_fichier"],
+        )
+        self.assertIs(
+            dependencies.publier_groupe_atomique,
+            seams["_publier_groupe_atomique"],
+        )
+        self.assertIs(dependencies.formater_duree, seams["_hms"])
+
+
 class GeojsonMergeContractTests(unittest.TestCase):
     def test_facade_keeps_signature_and_delegates_to_extracted_module(self):
         self.assertIs(L._fusionner_geojson_impl, geojson_merge.fusionner_geojson)
@@ -2085,6 +2152,180 @@ class VectorOutputContractTests(unittest.TestCase):
             self.assertAlmostEqual(generated_map.call_args.kwargs["epsilon"],
                                    10.0 / 111_000.0)
             generated_raster.assert_called_once()
+
+
+class OsmOutputContractTests(unittest.TestCase):
+    def test_facade_keeps_signature_and_reads_dependencies_late(self):
+        self.assertEqual(
+            str(inspect.signature(L._produire_sorties_osm)),
+            "(bbox_wgs84, dossier, nom_zone, osm_pbf, *, formats, "
+            "osm_tags=None, ecraser=False, skip_bbox=False, zoom_min=8, "
+            "zoom_max=18)",
+        )
+        marker = object()
+        with mock.patch.object(
+            L, "_produire_sorties_osm_impl", return_value=marker
+        ) as implementation, mock.patch.object(
+            L, "generer_carte_osm"
+        ) as map_generator, mock.patch.object(
+            L, "rasteriser_geojson_transparent"
+        ) as rasterizer:
+            result = L._produire_sorties_osm(
+                (1, 2, 3, 4), "output", "zone", "source.pbf",
+                formats=["map"],
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIsInstance(dependencies, osm_outputs.DependancesSortiesOsm)
+        self.assertIs(dependencies.generer_carte, map_generator)
+        self.assertIs(dependencies.rasteriser, rasterizer)
+
+    def test_map_failure_makes_the_aggregate_incomplete(self):
+        dependencies = osm_outputs.DependancesSortiesOsm(
+            generer_carte=mock.Mock(return_value=None),
+            rasteriser=mock.Mock(),
+        )
+        result = osm_outputs.produire_sorties_osm(
+            (1, 2, 3, 4), "output", "zone", "source.pbf",
+            formats=["map"], dependances=dependencies,
+        )
+        self.assertFalse(result.complet)
+        dependencies.rasteriser.assert_not_called()
+
+    def test_missing_overlay_source_is_an_explicit_failure(self):
+        dependencies = osm_outputs.DependancesSortiesOsm(
+            generer_carte=mock.Mock(return_value=Path("output/zone.map")),
+            rasteriser=mock.Mock(),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = osm_outputs.produire_sorties_osm(
+                (1, 2, 3, 4), temporary, "zone", "source.pbf",
+                formats=["transparent-raster"], dependances=dependencies,
+            )
+        self.assertFalse(result.complet)
+        dependencies.rasteriser.assert_not_called()
+
+    def test_all_requested_outputs_are_attempted_and_must_succeed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "zone_osm.geojson.gz"
+            source.write_bytes(b"geojson")
+            generated_map = root / "zone.map"
+            generated_map.write_bytes(b"map")
+            dependencies = osm_outputs.DependancesSortiesOsm(
+                generer_carte=mock.Mock(return_value=generated_map),
+                rasteriser=mock.Mock(return_value=None),
+            )
+            result = osm_outputs.produire_sorties_osm(
+                (1, 2, 3, 4), root, "zone", "source.pbf",
+                formats=["map", "transparent-raster"], zoom_min=8,
+                zoom_max=18, dependances=dependencies,
+            )
+        self.assertFalse(result.complet)
+        dependencies.rasteriser.assert_called_once()
+        self.assertEqual(dependencies.rasteriser.call_args.args[2:4], (13, 18))
+
+
+class OsmMapPipelineContractTests(unittest.TestCase):
+    def test_facade_keeps_signature_and_delegates_to_extracted_module(self):
+        self.assertIs(
+            L._generer_carte_osm_impl,
+            osm_map_pipeline.generer_carte_osm,
+        )
+        self.assertEqual(
+            str(inspect.signature(L.generer_carte_osm)),
+            "(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=None, "
+            "export_geojson=True, ecraser_tuiles=False, skip_bbox=False, "
+            "geojson_formats=None, want_map=True)",
+        )
+        marker = object()
+        with mock.patch.object(
+            L, "_generer_carte_osm_impl", return_value=marker
+        ) as implementation:
+            result = L.generer_carte_osm(
+                (1, 2, 3, 4), "output", "zone", "source.pbf",
+                osm_tags=["highway=*"], export_geojson=False,
+                ecraser_tuiles=True, skip_bbox=True,
+                geojson_formats=["geojson"], want_map=True,
+            )
+        self.assertIs(result, marker)
+        self.assertIsInstance(
+            implementation.call_args.kwargs["dependances"],
+            osm_map_pipeline.DependancesCarteOsm,
+        )
+
+    def test_dependencies_are_rebuilt_from_late_bound_facade_seams(self):
+        seams = {
+            "_chemin_part": mock.Mock(),
+            "_preparer_osmosis": mock.Mock(),
+            "_run_osmosis_streaming": mock.Mock(),
+            "generer_geojson_osm": mock.Mock(),
+            "_verifier_mapwriter": mock.Mock(),
+            "_publier_groupe_atomique": mock.Mock(),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            dependencies = L._dependances_carte_osm()
+        self.assertIs(dependencies.chemin_part, seams["_chemin_part"])
+        self.assertIs(dependencies.preparer_osmosis, seams["_preparer_osmosis"])
+        self.assertIs(
+            dependencies.executer_osmosis, seams["_run_osmosis_streaming"]
+        )
+        self.assertIs(
+            dependencies.generer_geojson, seams["generer_geojson_osm"]
+        )
+        self.assertIs(
+            dependencies.verifier_mapwriter, seams["_verifier_mapwriter"]
+        )
+        self.assertIs(
+            dependencies.publier_groupe_atomique,
+            seams["_publier_groupe_atomique"],
+        )
+
+
+class OsmPolicyContractTests(unittest.TestCase):
+    def test_historical_facades_keep_signatures_and_delegate(self):
+        self.assertIs(L._OSM_TAG_RE, osm_policy.OSM_TAG_RE)
+        expected = {
+            "_valider_osm_tags": "(osm_tags)",
+            "_osm_filtre_cles": "(osm_tags)",
+            "_osm_cle_match": "(tags, cles, vals_par_cle)",
+            "_hash_config": "(payload)",
+            "_sig_sidecar_stale": "(chemin, sig)",
+            "_sig_sidecar_ecrire": "(chemin, sig)",
+            "_signature_osm": "(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)",
+        }
+        for name, signature in expected.items():
+            self.assertEqual(str(inspect.signature(getattr(L, name))), signature)
+
+        marker = object()
+        with mock.patch.object(
+            L._osm_policy_impl, "osm_filtre_cles", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._osm_filtre_cles(["highway=path"]), marker)
+        implementation.assert_called_once_with(["highway=path"])
+
+    def test_signature_and_sidecar_rebuild_late_bound_dependencies(self):
+        signature = object()
+        with mock.patch.object(L, "_hash_config", return_value=signature) as hasher:
+            self.assertIs(
+                L._signature_osm((1, 2, 3, 4), ["highway=*"], "x.pbf", False),
+                signature,
+            )
+        hasher.assert_called_once()
+
+        writer = mock.Mock()
+        with mock.patch.object(L, "_ecrire_texte_atomique", writer):
+            L._sig_sidecar_ecrire("zone.map", "signature")
+        writer.assert_called_once_with(Path("zone.map.sig"), "signature")
+
+    def test_invalid_filter_keeps_historical_exit_and_message(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            L._valider_osm_tags(["highway=* & whoami"])
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("no shell metacharacters", output.getvalue())
 
 
 class BdtopoLayerContractTests(unittest.TestCase):

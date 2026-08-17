@@ -68,3 +68,34 @@ def valider_sqlite_part(path, tables_attendues):
                 )
     finally:
         connexion.close()
+
+
+def publier_groupe_atomique(paires, creer_sauvegarde=chemin_part):
+    """Promeut plusieurs stagings ou restaure l'ensemble des anciens finals.
+
+    ``paires`` contient des couples ``(staging, final)``. Les anciens finals
+    sont d'abord déplacés vers des sauvegardes voisines uniques ; ils ne sont
+    supprimés qu'une fois toutes les promotions réussies.
+    """
+    paires = [(Path(stage), Path(final)) for stage, final in paires]
+    sauvegardes = []
+    publies = []
+    try:
+        for _stage, final in paires:
+            if final.exists():
+                sauvegarde = Path(creer_sauvegarde(final))
+                final.replace(sauvegarde)
+                sauvegardes.append((sauvegarde, final))
+        for stage, final in paires:
+            stage.replace(final)
+            publies.append(final)
+    except BaseException:
+        for final in reversed(publies):
+            final.unlink(missing_ok=True)
+        for sauvegarde, final in reversed(sauvegardes):
+            if sauvegarde.exists():
+                sauvegarde.replace(final)
+        raise
+    finally:
+        for sauvegarde, _final in sauvegardes:
+            sauvegarde.unlink(missing_ok=True)

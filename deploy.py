@@ -95,10 +95,14 @@ MAP = {
     "_bdtopo_layers.py":             "_bdtopo_layers.py",
     "_vector_acquisition.py":        "_vector_acquisition.py",
     "_vector_outputs.py":            "_vector_outputs.py",
+    "_osm_outputs.py":               "_osm_outputs.py",
+    "_osm_map_pipeline.py":          "_osm_map_pipeline.py",
+    "_osm_policy.py":                "_osm_policy.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_merge.py":             "_geojson_merge.py",
     "_geojson_merge_cli.py":         "_geojson_merge_cli.py",
+    "_geojson_osm_export.py":        "_geojson_osm_export.py",
     "_geojson_osm_xml.py":           "_geojson_osm_xml.py",
     "_geojson_raster.py":            "_geojson_raster.py",
     "_loader.py":                    "_loader.py",
@@ -199,6 +203,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_bdtopo_layers.py"
         or name == "_vector_acquisition.py"
         or name == "_vector_outputs.py"
+        or (name.startswith("_osm_") and name.endswith(".py"))
         or (name.startswith("_geojson_") and name.endswith(".py"))
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"

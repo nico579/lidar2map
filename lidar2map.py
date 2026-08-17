@@ -1245,7 +1245,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.40.0"
+VERSION      = "1.41.0"
 VERSION_DATE = "2026-08"
 
 
@@ -2162,6 +2162,13 @@ def _nettoyer_sqlite_part(path):
     pour une sortie autonome par un outil de synchronisation.
     """
     return _atomic_files_impl.nettoyer_sqlite_part(path)
+
+
+def _publier_groupe_atomique(paires):
+    """Promeut plusieurs fichiers en conservant un rollback complet."""
+    return _atomic_files_impl.publier_groupe_atomique(
+        paires, creer_sauvegarde=_chemin_part,
+    )
 
 
 def _valider_sqlite_part(path, tables_attendues):
@@ -5151,365 +5158,104 @@ def _nettoyer_osmosis_temp_orphelins(verbose=False, min_age_s=300):
 # valeur `--layer` contenant `& | > ^ " %`… serait interprétée par le shell
 # (injection de commande, R2#1). On valide en amont par ALLOWLIST (rejet strict)
 # plutôt que d'échapper au cas par cas : plus sûr et indépendant de la plateforme.
-_OSM_TAG_RE = re.compile(r"^[\w:][\w:.\-*/+ ]*(=[\w:.\-*/+, ]*)?$", re.UNICODE)
+import _osm_policy as _osm_policy_impl
+
+
+_OSM_TAG_RE = _osm_policy_impl.OSM_TAG_RE
 
 
 def _valider_osm_tags(osm_tags):
-    """Rejette tout token `--layer` hors grammaire osmosis (anti-injection, R2#1).
-
-    Lève SystemExit(1) au premier token invalide, avec un message clair pointant
-    le token fautif. Retourne la liste inchangée si tout est valide."""
-    for _t in osm_tags:
-        if not _OSM_TAG_RE.match(str(_t)):
-            print(f"  ERROR: invalid --layer filter {str(_t)!r} : only "
-                  f"osmosis tag filters are allowed (key or key=value[,value]), "
-                  f"no shell metacharacters.")
-            sys.exit(1)
+    """Rejette les filtres hors grammaire Osmosis (anti-injection)."""
+    invalide = _osm_policy_impl.valider_osm_tags(osm_tags)
+    if invalide is not None:
+        print(f"  ERROR: invalid --layer filter {str(invalide)!r} : only "
+              f"osmosis tag filters are allowed (key or key=value[,value]), "
+              f"no shell metacharacters.")
+        sys.exit(1)
     return osm_tags
 
 
 def _osm_filtre_cles(osm_tags):
-    """Parse les tokens --layer (grammaire osmosis `clé`|`clé=val[,val…]`) en
-    (liste ordonnée de clés thématiques, dict clé->set(valeurs)|None). L'ordre
-    d'apparition fixe la priorité de couche (déterministe, R2#28) ; None ou `*`
-    = toutes les valeurs de la clé. Sans tokens : ensemble outdoor par défaut."""
-    cles = []
-    vals = {}
-    for _t in (osm_tags or []):
-        _tok = str(_t)
-        if "=" in _tok:
-            _k, _v = _tok.split("=", 1)
-            _k = _k.strip()
-            _vset = {x.strip() for x in _v.split(",") if x.strip()}
-        else:
-            _k, _vset = _tok.strip(), None
-        if not _k:
-            continue
-        if _k not in vals:
-            cles.append(_k)
-            vals[_k] = set()
-        # None (clé nue) ou `*` = « toutes valeurs » : absorbant sur la clé.
-        if _vset is None or "*" in _vset:
-            vals[_k] = None
-        elif vals[_k] is not None:
-            vals[_k] |= _vset
-    if not cles:
-        cles = ["highway", "waterway", "natural", "boundary", "landuse",
-                "building", "railway", "leisure", "place", "historic"]
-        vals = {_k: None for _k in cles}
-    return cles, vals
+    return _osm_policy_impl.osm_filtre_cles(osm_tags)
 
 
 def _osm_cle_match(tags, cles, vals_par_cle):
-    """(clé, valeur) du 1er filtre satisfait dans l'ORDRE de `cles` (couche
-    déterministe, R2#28). Une clé présente mais de valeur hors filtre est
-    ignorée : "highway=path" ne retient pas "highway=motorway". None sinon."""
-    for _k in cles:
-        if _k in tags:
-            _accept = vals_par_cle.get(_k)
-            if _accept is None or tags[_k] in _accept:
-                return _k, tags[_k]
-    return None, None
+    return _osm_policy_impl.osm_cle_match(tags, cles, vals_par_cle)
 
 
 def _hash_config(payload):
-    """Hash md5 court d'un payload JSON-sérialisable (signature de cache)."""
-    import hashlib as _hl
-    _js = json.dumps(payload, sort_keys=True, default=str, ensure_ascii=False)
-    return _hl.md5(_js.encode("utf-8")).hexdigest()[:16]
+    return _osm_policy_impl.hash_config(payload)
 
 
 def _sig_sidecar_stale(chemin, sig):
-    """True si un fichier <chemin>.sig existe ET diffère de `sig` (config de
-    sortie changée → le livrable est périmé, régénérer). Sidecar ABSENT =
-    livrable d'avant ce mécanisme → PAS périmé (migration douce : on le pose
-    sans régénérer). R2#30, analogue pour les livrables OSM/.map de la signature
-    de config du pipeline split (R1#4)."""
-    sc = Path(str(chemin) + ".sig")
-    try:
-        return sc.read_text(encoding="utf-8").strip() != sig
-    except OSError:
-        return False   # absent/illisible → pas de régénération forcée
+    return _osm_policy_impl.sig_sidecar_stale(chemin, sig)
 
 
 def _sig_sidecar_ecrire(chemin, sig):
-    """Écrit la signature de config à côté du livrable (best-effort)."""
-    try:
-        _ecrire_texte_atomique(Path(str(chemin) + ".sig"), sig)
-    except OSError:
-        pass
+    return _osm_policy_impl.sig_sidecar_ecrire(
+        chemin, sig, ecrire_texte_atomique=_ecrire_texte_atomique,
+    )
 
 
 def _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox):
-    """Signature des entrées qui déterminent le contenu d'une carte OSM/.map :
-    emprise (sauf mode région où on traite tout le PBF), tags de filtrage, et
-    PBF source. Un changement de --layer (tags) ou de bbox en gardant le même
-    nom de zone réutilisait sinon un .map périmé (R2#30)."""
-    return _hash_config({
-        "bbox": None if skip_bbox else [round(float(c), 6) for c in bbox_wgs84],
-        "tags": sorted(osm_tags) if osm_tags else None,
-        "pbf":  Path(osm_pbf).name if osm_pbf else None,
-    })
+    return _osm_policy_impl.signature_osm(
+        bbox_wgs84,
+        osm_tags,
+        osm_pbf,
+        skip_bbox,
+        hash_configurer=_hash_config,
+    )
+
+
+from _osm_map_pipeline import (
+    DependancesCarteOsm as _DependancesCarteOsm,
+    generer_carte_osm as _generer_carte_osm_impl,
+)
+
+
+def _dependances_carte_osm():
+    return _DependancesCarteOsm(
+        bundle_dir=BUNDLE_DIR,
+        dossier_travail=DOSSIER_TRAVAIL,
+        windows=WINDOWS,
+        osmosis_interessant=_OSMOSIS_INTERESSANT,
+        chemin_part=_chemin_part,
+        formater_duree=_hms,
+        java_opts_extra=_java_opts_extra,
+        nettoyer_osmosis_temp=_nettoyer_osmosis_temp_orphelins,
+        preparer_osmosis=_preparer_osmosis,
+        sidecar_ecrire=_sig_sidecar_ecrire,
+        sidecar_stale=_sig_sidecar_stale,
+        signature_osm=_signature_osm,
+        valider_osm_tags=_valider_osm_tags,
+        verifier_mapwriter=_verifier_mapwriter,
+        generer_geojson=generer_geojson_osm,
+        journaliser_requete=_log_req,
+        executer_osmosis=_run_osmosis_streaming,
+        publier_groupe_atomique=_publier_groupe_atomique,
+    )
 
 
 def generer_carte_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                       osm_tags=None, export_geojson=True, ecraser_tuiles=False,
                       skip_bbox=False, geojson_formats=None, want_map=True):
-    """
-    Génère une carte Mapsforge (.map) via osmosis — format natif Locus Map.
-    Nécessite osmosis + tagmapping-min.xml dans le même dossier que le script.
-
-    geojson_formats : liste des formats à produire pour l'export GeoJSON.
-                      ["gz"] (défaut), ["geojson"], ou ["gz", "geojson"].
-    want_map        : False = ne PAS construire le .map (osmosis/mapwriter), ne
-                      produire que le GeoJSON demandé. Voir R2#26 ci-dessous.
-    """
-    if geojson_formats is None:
-        geojson_formats = ["gz"]
-
-    # R2#26 : le .map n'est pas toujours demandé, et il ne doit pas prendre en
-    # otage un GeoJSON demandé en parallèle. Quand seul le GeoJSON/gz est voulu
-    # (--file-formats gz, sans "map"), on court-circuite osmosis+mapwriter :
-    # generer_geojson_osm lit le PBF (ou .osm) directement via osmium, sans
-    # osmosis ni plugin mapwriter. Avant, le .map était TOUJOURS construit (donc
-    # échec dur si le plugin manquait, gz compris).
-    if not want_map:
-        if not export_geojson:
-            print("  OSM: neither .map nor GeoJSON requested - nothing to do.")
-            return None
-        return generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                                   osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
-                                   formats=geojson_formats)
-
-    # Nettoyage des fichiers d'index osmosis orphelins (< 5 min ignorés pour
-    # ne pas tirer dans le pied d'un osmosis concurrent). Best-effort, ne
-    # bloque jamais la suite.
-    if WINDOWS:
-        _nettoyer_osmosis_temp_orphelins(verbose=True)
-
-    lon_min, lat_min, lon_max, lat_max = bbox_wgs84
-    chemin_map      = dossier_ville / f"{nom_zone}.map"
-    chemin_map_part = _chemin_part(chemin_map)
-
-    # Vérifier la présence des GeoJSON selon les formats DEMANDÉS, pas
-    # selon le premier qu'on trouve. Si on demande "gz geojson" et qu'on
-    # n'a que le .gz, il faut quand même regénérer le .geojson manquant.
-    chemin_geojson_gz  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
-    chemin_geojson_raw = dossier_ville / f"{nom_zone}_osm.geojson"
-    _need_gz   = "gz"      in geojson_formats
-    _need_raw  = "geojson" in geojson_formats
-    geojson_present = ((not _need_gz  or chemin_geojson_gz.exists())
-                       and (not _need_raw or chemin_geojson_raw.exists()))
-
-    # R2#30 : signature des entrées (bbox/tags/PBF). Un .map présent sous le même
-    # nom de zone mais généré avec d'autres tags/emprise était réutilisé tel quel
-    # (sortie fausse en silence). Sidecar absent = migration douce (pas de regen).
-    _sig_osm  = _signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)
-    _sig_perime = chemin_map.exists() and _sig_sidecar_stale(chemin_map, _sig_osm)
-    _regen_geojson = bool(ecraser_tuiles or _sig_perime)
-
-    if chemin_map.exists() and ecraser_tuiles:
-        # Pas d'unlink du .map ici : chemin_map_part.replace(chemin_map) écrase
-        # atomiquement en fin de génération (R2#49). Le supprimer maintenant
-        # perdrait le .map précédent si osmosis échoue (le .part est jeté).
-        print(f"  Carte OSM : overwrite {chemin_map.name}")
-    elif _sig_perime:
-        print(f"  {chemin_map.name} → OSM config changed (bbox/tags/PBF), regenerating")
-    elif chemin_map.exists():   # not ecraser, signature OK ou absente (migration)
-        if not Path(str(chemin_map) + ".sig").exists():
-            _sig_sidecar_ecrire(chemin_map, _sig_osm)   # poser la sig sur un vieux .map
-        if not export_geojson or geojson_present:
-            print(f"  OSM map already present: {chemin_map.name} - skipped")
-            return chemin_map
-        else:
-            # .map ok mais .geojson(.gz) manquant
-            # Utiliser le PBF filtré (déjà extrait par osmosis) si disponible
-            print(f"  OSM map already present: {chemin_map.name} - GeoJSON missing, exporting...")
-            chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
-            pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
-            if pbf_src == chemin_pbf_filtre:
-                print(f"  Existing filtered PBF: {chemin_pbf_filtre.name}")
-            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
-                                osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
-                                formats=geojson_formats)
-            return chemin_map
-
-    if not _verifier_mapwriter():
-        # R2#26 : mapwriter absent → le .map est impossible, mais on ne fait plus
-        # échouer un GeoJSON demandé en parallèle. On dégrade vers l'export
-        # GeoJSON seul (osmium, sans osmosis) plutôt que d'abandonner tout.
-        print("  WARNING: mapwriter plugin missing - .map skipped.")
-        if export_geojson:
-            return generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                                       osm_tags=osm_tags,
-                                       ecraser_tuiles=_regen_geojson,
-                                       formats=geojson_formats)
-        return None
-
-    _osmosis_exe, _java_home = _preparer_osmosis()
-    if not _osmosis_exe:
-        return None
-    _env_osm = os.environ.copy()
-    _env_osm["JAVA_HOME"] = _java_home
-    # JAVA_OPTS : heap max 6g — nécessaire pour le PBF France (~5 Go)
-    # JAVACMD_OPTIONS : variable lue par osmosis.bat pour passer les options JVM
-    _java_extra = _java_opts_extra()
-    _env_osm["JAVA_OPTS"]       = "-Xmx6g" + _java_extra
-    _env_osm["JAVACMD_OPTIONS"] = "-Xmx6g" + _java_extra
-
-    # tagmapping-min.xml : chercher à côté du script puis dans le dossier dalles
-    # En mode frozen, le fichier est bundlé dans sys._MEIPASS (BUNDLE_DIR).
-    _tagmapping = None
-    for cand in [
-        DOSSIER_TRAVAIL / "tagmapping-min.xml",
-        BUNDLE_DIR      / "tagmapping-min.xml",
-        Path(str(osm_pbf)).parent / "tagmapping-min.xml",
-        dossier_ville / "tagmapping-min.xml",
-    ]:
-        if cand.exists():
-            _tagmapping = str(cand)
-            break
-    if not _tagmapping:
-        print("  WARNING: tagmapping-min.xml not found - using osmosis default")
-
-    t0 = time.time()
-    print(f"  osmosis → {chemin_map.name}...", flush=True)
-
-    if osm_tags is None:
-        osm_tags = ["highway=*", "waterway=*", "boundary=administrative",
-                    "natural=water", "natural=coastline",
-                    "waterway=river", "waterway=stream", "waterway=canal"]
-    osm_tags = list(dict.fromkeys(osm_tags))
-    _valider_osm_tags(osm_tags)   # anti-injection avant l'osmosis shell (R2#1)
-    print(f"  Tags : {' '.join(osm_tags)}", flush=True)
-
-    chemin_pbf_filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
-    chemin_pbf_part = _chemin_part(chemin_pbf_filtre)
-    # R2#28-v3 : PBF intermédiaires des 2 branches (ways / POI), fusionnés en P3.
-    chemin_ways_tmp = dossier_ville / f"{nom_zone}_ways.tmp.pbf"
-    chemin_poi_tmp  = dossier_ville / f"{nom_zone}_poi.tmp.pbf"
-
-    # R2#28-v3 : les POI NODES ISOLÉS (peak, source, ruine, village…) étaient
-    # jetés. `--tf accept-ways <tags> --used-node` ne garde que les nœuds
-    # RÉFÉRENCÉS par une way acceptée ; un POI standalone n'est utilisé par aucune
-    # way → supprimé, alors que le tag-mapping a une section <pois> prête. Fix =
-    # 3 passes LINÉAIRES fusionnées par fichiers (le split `--tee`→`--merge` en une
-    # invocation DEADLOCK de façon fiable — vérifié empiriquement ; l'idiome
-    # deadlock-free est la fusion de fichiers) :
-    #   P1  ways matchées + leurs nœuds        → ways.tmp.pbf
-    #   P2  nœuds POI isolés (sans ways/rels)   → poi.tmp.pbf
-    #   P3  merge(P1,P2) → mapfile-writer + PBF filtré (tee → 2 sinks, éprouvé)
-    # Coût : la source est lue 2× (P1, P2) — négligeable sur un extrait régional
-    # (cas courant), quelques minutes sur le PBF national 4 Go (cas rare).
-    _poi_tags = ["place=*", "natural=*", "historic=*", "man_made=*",
-                 "tourism=*", "amenity=*", "leisure=*"]
-    _valider_osm_tags(_poi_tags)   # même garde anti-injection (R2#1)
-
-    # R2#27 : une source .osm est du XML — osmosis exige --read-xml. Les PBF
-    # (filtré réutilisé + temps) restent toujours .pbf → --read-pbf.
-    _osm_reader = ("--read-xml" if str(osm_pbf).lower().endswith(".osm")
-                   else "--read-pbf")
-    _bbox_args = [] if skip_bbox else [
-        "--bounding-box",
-        f"left={lon_min:.4f}", f"right={lon_max:.4f}",
-        f"top={lat_max:.4f}", f"bottom={lat_min:.4f}",
-    ]
-    _mapwriter_args = [
-        "--mapfile-writer",
-        f"file={chemin_map_part}",
-        "zoom-interval-conf=7,0,7,11,8,11,14,12,21",
-        "tag-values=true", "polygon-clipping=true",
-        "way-clipping=true", "label-position=true",
-        "type=hd",   # HDTileBasedDataProcessor : écrit sur disque → pas d'OOM
-    ]
-    if _tagmapping:
-        _mapwriter_args.append(f"tag-conf-file={_tagmapping}")
-
-    # P1 : ways filtrées + nœuds utilisés
-    cmd_p1 = ([_osmosis_exe, _osm_reader, f"file={osm_pbf}"] + _bbox_args
-              + ["--tf", "accept-ways"] + osm_tags
-              + ["--used-node", "--write-pbf", f"file={chemin_ways_tmp}"])
-    # P2 : nœuds POI isolés (retirer ways/relations pour ne pas dupliquer au merge)
-    cmd_p2 = ([_osmosis_exe, _osm_reader, f"file={osm_pbf}"] + _bbox_args
-              + ["--tf", "accept-nodes"] + _poi_tags
-              + ["--tf", "reject-ways", "--tf", "reject-relations",
-                 "--write-pbf", f"file={chemin_poi_tmp}"])
-    # P3 : fusion des 2 branches → .map + PBF filtré (tee → 2 sinks)
-    cmd_p3 = ([_osmosis_exe, "--read-pbf", f"file={chemin_ways_tmp}",
-               "--read-pbf", f"file={chemin_poi_tmp}", "--merge", "--tee", "2"]
-              + _mapwriter_args + ["--write-pbf", f"file={chemin_pbf_part}"])
-
-    _shell = WINDOWS and str(_osmosis_exe).endswith(".bat")
-
-    def _lancer_osmosis(_cmd):
-        if _shell:
-            _cmd_x = " ".join(
-                f'"{a}"' if (" " in str(a) or "=" in str(a)) else str(a)
-                for a in _cmd)
-        else:
-            _cmd_x = _cmd
-        _log_req(_cmd)
-        return _run_osmosis_streaming(_cmd_x, shell=_shell, env=_env_osm)
-
-    rc, stderr_diag = 0, ""
-    try:
-        for _i, _cmd in enumerate((cmd_p1, cmd_p2, cmd_p3), 1):
-            print(f"  osmosis pass {_i}/3...", flush=True)
-            rc, stderr_diag = _lancer_osmosis(_cmd)
-            if rc != 0:
-                break
-    except BaseException:
-        chemin_map_part.unlink(missing_ok=True)
-        chemin_pbf_part.unlink(missing_ok=True)
-        raise
-    finally:
-        # PBF intermédiaires inutiles après le merge (ou après un échec).
-        chemin_ways_tmp.unlink(missing_ok=True)
-        chemin_poi_tmp.unlink(missing_ok=True)
-
-    sorties_valides = (
-        rc == 0
-        and chemin_map_part.exists()
-        and chemin_map_part.stat().st_size > 0
-        and chemin_pbf_part.exists()
-        and chemin_pbf_part.stat().st_size > 0
+    return _generer_carte_osm_impl(
+        bbox_wgs84,
+        dossier_ville,
+        nom_zone,
+        osm_pbf,
+        osm_tags=osm_tags,
+        export_geojson=export_geojson,
+        ecraser_tuiles=ecraser_tuiles,
+        skip_bbox=skip_bbox,
+        geojson_formats=geojson_formats,
+        want_map=want_map,
+        dependances=_dependances_carte_osm(),
     )
-    if sorties_valides:
-        # Le PBF filtré est un cache secondaire ; publier le .map principal en
-        # dernier pour que sa présence atteste que les deux sorties osmosis ont
-        # été produites et validées.
-        chemin_pbf_part.replace(chemin_pbf_filtre)
-        chemin_map_part.replace(chemin_map)
-        _sig_sidecar_ecrire(chemin_map, _sig_osm)   # R2#30 : mémoriser la config
-        taille_b = chemin_map.stat().st_size
-        if taille_b < 1_000_000:
-            print(f"  {chemin_map.name} : {taille_b // 1024} Ko  {_hms(time.time()-t0)}")
-        else:
-            print(f"  {chemin_map.name} : {taille_b / 1e6:.1f} MB  {_hms(time.time()-t0)}")
-        if export_geojson:
-            pbf_src = chemin_pbf_filtre if chemin_pbf_filtre.exists() else osm_pbf
-            generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, pbf_src,
-                                osm_tags=osm_tags,
-                                ecraser_tuiles=_regen_geojson,
-                                formats=geojson_formats)
-        return chemin_map
-    else:
-        chemin_map_part.unlink(missing_ok=True)
-        chemin_pbf_part.unlink(missing_ok=True)
-        print(f"  ERROR osmosis mapfile-writer (code {rc})")
-        if stderr_diag:
-            # stderr_diag contient les 500 dernières lignes (toutes confondues).
-            # On extrait celles qui contiennent un marqueur d'erreur/warning.
-            lignes_err = [l for l in stderr_diag.splitlines()
-                          if any(tok in l for tok in _OSMOSIS_INTERESSANT)]
-            if lignes_err:
-                print("  osmosis detail:")
-                for _l in lignes_err[:20]:
-                    print(f"    {_l}")
-            else:
-                # Pas de marqueur connu → afficher la queue brute
-                print(f"  {stderr_diag.strip()[-600:]}")
-        return None
+
+
+generer_carte_osm.__doc__ = _generer_carte_osm_impl.__doc__
+
 
 def _resoudre_choix_ombrages(args):
     """Résout --shadings/--shading en (choix, instances) : 'all'/'tous' →
@@ -6189,6 +5935,33 @@ def _resoudre_zone_lidar(args, _osm_seul):
     return bbox, nom_zone, cx, cy, _blk
 
 
+from _osm_outputs import (
+    DependancesSortiesOsm as _DependancesSortiesOsm,
+    produire_sorties_osm as _produire_sorties_osm_impl,
+)
+
+
+def _produire_sorties_osm(bbox_wgs84, dossier, nom_zone, osm_pbf, *,
+                          formats, osm_tags=None, ecraser=False,
+                          skip_bbox=False, zoom_min=8, zoom_max=18):
+    return _produire_sorties_osm_impl(
+        bbox_wgs84, dossier, nom_zone, osm_pbf,
+        formats=formats,
+        osm_tags=osm_tags,
+        ecraser=ecraser,
+        skip_bbox=skip_bbox,
+        zoom_min=zoom_min,
+        zoom_max=zoom_max,
+        dependances=_DependancesSortiesOsm(
+            generer_carte=generer_carte_osm,
+            rasteriser=rasteriser_geojson_transparent,
+        ),
+    )
+
+
+_produire_sorties_osm.__doc__ = _produire_sorties_osm_impl.__doc__
+
+
 def main():
     t_debut = time.time()
     parser = _construire_parser_lidar()
@@ -6842,6 +6615,10 @@ def main():
     # ── Carte OSM vectorielle de superposition ───────────────────────────────
     dossier_osm = None   # défini si on arrive jusqu'au generer_carte_osm
     if args.osm:
+        # Une demande OSM n'est réussie que si sa source, sa bbox et tous ses
+        # livrables aboutissent. Les sorties LiDAR d'un run combiné restent
+        # préservées, mais ne doivent pas masquer un échec vectoriel.
+        _osm_livrables_ok = False
         print_etape("Carte OSM vectorielle")
 
         # Table département → URL Geofabrik : voir _GEOFABRIK au niveau module
@@ -7045,41 +6822,21 @@ def main():
                                else DOSSIER_TRAVAIL / "Projets" / nom_zone / "osm_vecteur")
                 dossier_osm.mkdir(parents=True, exist_ok=True)
                 # Liste des formats GeoJSON demandés (parmi "gz" et "geojson")
-                _gj_formats = [f for f in ("gz", "geojson") if f in args.formats_fichier]
-                # transparent-raster derive du GeoJSON : le forcer si demande seul.
-                _want_overlay = getattr(args, "transparent_raster", False)
-                if _want_overlay and not _gj_formats:
-                    _gj_formats = ["gz"]
-                # R2#26 : le .map n'est produit que s'il est (implicitement ou
-                # explicitement) demandé. "map" explicite → oui ; AUCUN format
-                # vectoriel explicite → oui (défaut de convenance de --osm seul) ;
-                # mais --file-formats gz (ou transparent-raster) sans "map" → non.
-                _ff = args.formats_fichier
-                _vect_demande = any(f in _ff for f in
-                                    ("map", "gz", "geojson", "transparent-raster"))
-                _want_map = ("map" in _ff) or (not _vect_demande)
                 # Mode région : traiter tout le PBF régional sans re-clip
                 # (le PBF EST déjà la région — c'est le gain vs boucle départements).
-                generer_carte_osm(bbox_wgs, dossier_osm, nom_zone, pbf,
-                                  osm_tags=(args.couche
-                                            if getattr(args, 'couche', None)
-                                            else getattr(args, 'osm_tags', None)),
-                                  export_geojson=bool(_gj_formats),
-                                  ecraser_tuiles=args.tuiles_ecraser,
-                                  skip_bbox=_region_mode,
-                                  geojson_formats=_gj_formats or ["gz"],
-                                  want_map=_want_map)
-                if _want_overlay:
-                    _gj = (dossier_osm / f"{nom_zone}_osm.geojson.gz")
-                    if not _gj.exists():
-                        _gj = dossier_osm / f"{nom_zone}_osm.geojson"
-                    if _gj.exists():
-                        _zmax = int(getattr(args, "zoom_max", 18))
-                        _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
-                        rasteriser_geojson_transparent(
-                            _gj, dossier_osm / f"{nom_zone}_osm_transparent.sqlitedb",
-                            _zmin, _zmax, ecraser=args.tuiles_ecraser,
-                            bbox_wgs84=bbox_wgs)
+                _resultat_osm = _produire_sorties_osm(
+                    bbox_wgs, dossier_osm, nom_zone, pbf,
+                    formats=args.formats_fichier,
+                    osm_tags=(args.couche
+                              if getattr(args, 'couche', None)
+                              else getattr(args, 'osm_tags', None)),
+                    ecraser=args.tuiles_ecraser,
+                    skip_bbox=_region_mode,
+                    zoom_min=getattr(args, "zoom_min", 8),
+                    zoom_max=getattr(args, "zoom_max", 18),
+                )
+                _osm_livrables_ok = _resultat_osm.complet
+        _livrables_raster_ok = _osm_livrables_ok and _livrables_raster_ok
 
     if etape_cur[0] > 0:
         elap  = int(time.time() - etape_t0[0])
@@ -7102,7 +6859,8 @@ def main():
         statut=("ok" if _livrables_raster_ok else "ko"))
     if not _livrables_raster_ok:
         raise RuntimeError(
-            "raster generation/conversion incomplete - partial outputs kept; "
+            "requested deliverable generation/conversion incomplete - "
+            "partial outputs kept; "
             "rerun to retry failed deliverables")
 
 
@@ -9927,381 +9685,38 @@ def main_wfs():
 # EXPORT GEOJSON DEPUIS PBF OSM (ogr2ogr)
 # ============================================================
 
+from _geojson_osm_export import (
+    DependancesExportOsm as _DependancesExportOsm,
+    generer_geojson_osm as _generer_geojson_osm_impl,
+)
+
+
+def _dependances_export_osm():
+    return _DependancesExportOsm(
+        osm_filtre_cles=_osm_filtre_cles,
+        osm_cle_match=_osm_cle_match,
+        chemin_part=_chemin_part,
+        gunzip_vers_fichier=_gunzip_vers_fichier,
+        publier_groupe_atomique=_publier_groupe_atomique,
+        formater_duree=_hms,
+    )
+
+
 def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                         osm_tags=None, ecraser_tuiles=False, formats=None):
-    """
-    Exporte le PBF OSM filtré par bbox en GeoJSON via PyOsmium.
-    Produit un fichier global ``<nom>_osm.geojson(.gz)`` + un fichier par clé
-    thématique ``<nom>_osm_<cle>.geojson(.gz)``.
-    Chaque feature reçoit ``source='OSM'``.
+    return _generer_geojson_osm_impl(
+        bbox_wgs84,
+        dossier_ville,
+        nom_zone,
+        osm_pbf,
+        osm_tags=osm_tags,
+        ecraser_tuiles=ecraser_tuiles,
+        formats=formats,
+        dependances=_dependances_export_osm(),
+    )
 
-    Paramètre `formats` : liste indiquant les formats à produire :
-      - ["gz"]                 → .geojson.gz uniquement (défaut, compact)
-      - ["geojson"]            → .geojson uniquement (lisible direct)
-      - ["gz", "geojson"]      → les deux
 
-    Étape 7bis du refactor : remplace l'ancien pipeline ogr2ogr+osmconf.ini
-    par PyOsmium, lib Python pure (binding C++ libosmium) sans dépendance
-    GDAL système. Wheels précompilés disponibles pour Python 3.10-3.13 sur
-    Windows/macOS/Linux.
-
-    Avantages :
-      - Maintenu activement (releases régulières)
-      - Wheels précompilés cp312/win_amd64 (~2 MB)
-      - Pas de compilation Cython au runtime (contrairement à pyrosm)
-      - API GeoJSONFactory directement utilisable
-
-    Limites :
-      - Le filtre bbox n'est pas natif côté libosmium : on filtre les nodes
-        à la lecture, et on garde uniquement les ways/areas dont au moins
-        un node est in the bbox (équivalent --spat de ogr2ogr).
-      - Les relations non-multipolygon (route, boundary admin, etc.) ne
-        produisent pas de géométrie GeoJSON directement (limitation libosmium).
-
-    Retourne le Path du fichier fusionné principal (.gz si demandé sinon
-    .geojson), ou None en cas d'échec.
-    """
-    # Formats à produire : par défaut .gz uniquement (compatibilité)
-    if formats is None:
-        formats = ["gz"]
-    formats = [f.lower() for f in formats]
-    ecrire_gz      = "gz"      in formats
-    ecrire_geojson = "geojson" in formats
-    if not (ecrire_gz or ecrire_geojson):
-        # Cas dégradé : aucun format reconnu, on tombe sur .gz
-        ecrire_gz = True
-
-    # Cache check : on ne court-circuite que si TOUS les formats demandés
-    # sont already presents. Si l'utilisateur demande à la fois .gz et .geojson,
-    # et qu'on n'a que le .gz, il faut quand même regénérer le .geojson.
-    chemin_gz_attendu  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
-    chemin_raw_attendu = dossier_ville / f"{nom_zone}_osm.geojson"
-    formats_manquants = []
-    if ecrire_gz and not chemin_gz_attendu.exists():
-        formats_manquants.append("gz")
-    if ecrire_geojson and not chemin_raw_attendu.exists():
-        formats_manquants.append("geojson")
-
-    if not formats_manquants and not ecraser_tuiles:
-        # Tous les formats demandés sont déjà là
-        present = chemin_gz_attendu if chemin_gz_attendu.exists() else chemin_raw_attendu
-        print(f"  OSM GeoJSON already present: {present.name} - skipped")
-        return present
-
-    if ecraser_tuiles:
-        # Ne pas supprimer les sorties existantes avant le traitement : elles
-        # restent utilisables si PyOsmium, gzip ou la fusion échoue.
-        for p in (chemin_gz_attendu, chemin_raw_attendu):
-            if p.exists():
-                print(f"  GeoJSON OSM : overwrite {p.name}")
-
-    try:
-        import osmium as _osm
-    except ImportError:
-        print("  ERROR: osmium missing, run pip install osmium")
-        print("          (official libosmium Python binding, ~2 MB, precompiled wheel)")
-        return None
-
-    lon_min, lat_min, lon_max, lat_max = bbox_wgs84
-    t0 = time.time()
-    chemin_principal = chemin_gz_attendu if ecrire_gz else chemin_raw_attendu
-    print(f"  PyOsmium → {chemin_principal.name}...", flush=True)
-
-    # Clés thématiques + valeurs demandées (grammaire osmosis, ordre = priorité
-    # de couche déterministe, R2#28). Extrait en helper module pour testabilité.
-    _cles, _vals_par_cle = _osm_filtre_cles(osm_tags)
-    _crs = {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
-
-    # GeoJSONFactory produit du GeoJSON-string ; on parse en dict pour
-    # construire les features avec leurs propriétés.
-    fab = _osm.geom.GeoJSONFactory()
-
-    # Helper : (clé, valeur) du 1er filtre satisfait (cf. _osm_cle_match, R2#28).
-    def _cle_obj(tags):
-        return _osm_cle_match(tags, _cles, _vals_par_cle)
-
-    # Helper : test si une géométrie GeoJSON intersecte la bbox demandée.
-    # On fait un test simple bounding-box vs bounding-box (rapide). Suffisant
-    # pour notre usage : le PBF est déjà pré-filtré par osmosis sur la bbox.
-    def _geom_intersect_bbox(geom_dict):
-        if geom_dict is None:
-            return False
-        coords = geom_dict.get("coordinates")
-        if coords is None:
-            return False
-        # Calcul de la bbox de la géométrie en parcourant les coordonnées
-        def _flatten(c):
-            if isinstance(c, (list, tuple)):
-                if c and isinstance(c[0], (int, float)):
-                    yield c
-                else:
-                    for sub in c:
-                        yield from _flatten(sub)
-        try:
-            xs = []; ys = []
-            for pt in _flatten(coords):
-                xs.append(pt[0]); ys.append(pt[1])
-            if not xs:
-                return False
-            g_xmin, g_xmax = min(xs), max(xs)
-            g_ymin, g_ymax = min(ys), max(ys)
-            return not (g_xmax < lon_min or g_xmin > lon_max
-                        or g_ymax < lat_min or g_ymin > lat_max)
-        except Exception:
-            return False
-
-    # Streaming : on ouvre un .gz temporaire par clé thématique et on y écrit
-    # les features au fil de la passe PyOsmium. Pas d'accumulation en RAM —
-    # un département peut produire plusieurs millions de features.
-    _streams       = {}   # cle → file handle gzip ouvert
-    _streams_paths = {}   # cle → (path_part_gz, path_final_gz, path_final_raw)
-    _first_feat    = {}   # cle → bool (1ère feature non encore écrite)
-    _counts_par_cle = {}  # cle → nombre de features écrites
-    nb_total = [0]
-    nb_kept  = [0]
-
-    def _ouvrir_stream_cle(cle):
-        """Ouvre paresseusement le staging .gz pour cette clé (1ère feature)."""
-        if cle in _streams:
-            return _streams[cle]
-        base = dossier_ville / f"{nom_zone}_osm_{cle}.geojson"
-        path_gz = Path(str(base) + ".gz")
-        path_part = _chemin_part(path_gz)
-        path_part.parent.mkdir(parents=True, exist_ok=True)
-        fh = gzip.open(path_part, "wb", compresslevel=6)
-        header = (
-            '{"type":"FeatureCollection","name":'
-            + json.dumps(f"{nom_zone}_osm_{cle}", ensure_ascii=False)
-            + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
-            + ',"features":['
-        ).encode("utf-8")
-        fh.write(header)
-        _streams[cle]       = fh
-        _streams_paths[cle] = (path_part, path_gz, base)
-        _first_feat[cle]    = True
-        _counts_par_cle[cle] = 0
-        return fh
-
-    def _fermer_streams_partiels():
-        """Cleanup en cas d'exception : fermer + supprimer les .part."""
-        for fh in _streams.values():
-            try: fh.close()
-            except Exception: pass
-        for path_part, _, _ in _streams_paths.values():
-            try: path_part.unlink(missing_ok=True)
-            except Exception: pass
-
-    # Itération via FileProcessor moderne (PyOsmium 4.x)
-    # - with_locations() : nécessaire pour reconstruire les linestrings (ways)
-    # - with_areas()     : nécessaire pour reconstruire les multipolygons
-    try:
-        fp = _osm.FileProcessor(str(osm_pbf)).with_locations().with_areas()
-        for o in fp:
-            nb_total[0] += 1
-            tags = dict(o.tags) if o.tags else {}
-            if not tags:
-                continue
-            cle, val = _cle_obj(tags)
-            if cle is None:
-                continue
-
-            # Création de la géométrie selon le type d'objet
-            try:
-                if o.is_node():
-                    geom_str = fab.create_point(o)
-                elif o.is_way() and not o.is_closed():
-                    # Way ouvert → linestring
-                    geom_str = fab.create_linestring(o)
-                elif o.is_area():
-                    # Area (way fermé ou relation multipolygon) → multipolygon
-                    geom_str = fab.create_multipolygon(o)
-                else:
-                    # Relations non-multipolygon : pas de géométrie directe
-                    continue
-            except Exception:
-                # Géométrie invalide (area mal fermée, etc.) — on ignore
-                continue
-
-            try:
-                geom = json.loads(geom_str)
-            except Exception:
-                continue
-
-            if not _geom_intersect_bbox(geom):
-                continue
-
-            # Construction de la feature GeoJSON, écriture incrémentale
-            tags["source"] = "OSM"
-            tags["_cle"]   = cle
-            feat = {"type": "Feature", "geometry": geom, "properties": tags}
-
-            fh = _ouvrir_stream_cle(cle)
-            if not _first_feat[cle]:
-                fh.write(b",")
-            _first_feat[cle] = False
-            fh.write(json.dumps(feat, ensure_ascii=False,
-                                 separators=(",", ":")).encode("utf-8"))
-            _counts_par_cle[cle] += 1
-            nb_kept[0] += 1
-    except BaseException as e_proc:
-        _fermer_streams_partiels()
-        if isinstance(e_proc, KeyboardInterrupt):
-            raise
-        print(f"  ERROR PyOsmium: {type(e_proc).__name__}: {e_proc}")
-        return None
-
-    # Finaliser chaque stream par-clé, mais garder tous les résultats en .part
-    # jusqu'à ce que les sorties thématiques ET globale soient validées.
-    try:
-        for cle, fh in list(_streams.items()):
-            fh.write(b"]}")
-            fh.close()
-    except BaseException as e_close:
-        _fermer_streams_partiels()
-        if not isinstance(e_close, Exception):
-            raise
-        print(f"  ERROR finalizing OSM GeoJSON: "
-              f"{type(e_close).__name__}: {e_close}")
-        return None
-
-    print(f"  PyOsmium: {nb_total[0]} objects scanned, {nb_kept[0]} in the bbox", flush=True)
-
-    if nb_kept[0] == 0:
-        _fermer_streams_partiels()
-        print("  No OSM feature exported")
-        return None
-
-    # Fichier fusionné global : concaténer en streaming les fichiers par-clé
-    base_global = dossier_ville / f"{nom_zone}_osm.geojson"
-    chemin_global_gz  = Path(str(base_global) + ".gz")
-    chemin_global_raw = base_global
-
-    # Les sorties raw sont elles aussi préparées sous des noms .part. Ainsi une
-    # décompression/fusion interrompue ne touche aucun ancien fichier final.
-    _raw_parts = {}
-    chemin_global_gz_part = None
-    chemin_global_raw_part = None
-
-    def _nettoyer_publication_osm():
-        _fermer_streams_partiels()
-        for p in _raw_parts.values():
-            p.unlink(missing_ok=True)
-        if chemin_global_gz_part is not None:
-            chemin_global_gz_part.unlink(missing_ok=True)
-        if chemin_global_raw_part is not None:
-            chemin_global_raw_part.unlink(missing_ok=True)
-
-    # On reconstruit le .gz global à partir des .gz thématiques encore en
-    # staging. Toute erreur de lecture est fatale : réutiliser un ancien final
-    # masquerait une publication partielle.
-    try:
-        import ijson as _ijson_g
-        _has_ijson_g = True
-    except ImportError:
-        _has_ijson_g = False
-
-    def _iter_feats_par_cle():
-        for _, (path_part, _, _) in _streams_paths.items():
-            if _has_ijson_g:
-                with gzip.open(path_part, "rb") as fh:
-                    yield from _ijson_g.items(fh, "features.item")
-                continue
-            # Fallback non-streaming si ijson est absent.
-            with gzip.open(path_part, "rt", encoding="utf-8") as fh:
-                gj = json.load(fh)
-            for feat in gj.get("features", []):
-                yield feat
-
-    try:
-        # Dériver d'abord tous les raw thématiques, toujours vers des .part.
-        if ecrire_geojson:
-            for cle, (path_part, _, base) in _streams_paths.items():
-                raw_part = _chemin_part(base)
-                _raw_parts[cle] = raw_part
-                _gunzip_vers_fichier(path_part, raw_part)
-                if not raw_part.exists() or raw_part.stat().st_size == 0:
-                    raise OSError(f"empty staged GeoJSON: {base.name}")
-
-        chemin_global_gz_part = _chemin_part(chemin_global_gz)
-        with gzip.open(chemin_global_gz_part, "wb", compresslevel=6) as out_g:
-            header_g = (
-                '{"type":"FeatureCollection","name":'
-                + json.dumps(f"{nom_zone}_osm", ensure_ascii=False)
-                + ',"crs":' + json.dumps(_crs, ensure_ascii=False, separators=(",", ":"))
-                + ',"features":['
-            ).encode("utf-8")
-            out_g.write(header_g)
-            first_g = True
-            n_global = 0
-            import decimal as _dec_g
-
-            def _enc_def(o):
-                if isinstance(o, _dec_g.Decimal):
-                    return float(o)
-                raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
-
-            for feat in _iter_feats_par_cle():
-                if not first_g:
-                    out_g.write(b",")
-                first_g = False
-                out_g.write(json.dumps(feat, ensure_ascii=False,
-                                       separators=(",", ":"),
-                                       default=_enc_def).encode("utf-8"))
-                n_global += 1
-            out_g.write(b"]}")
-
-        if n_global != nb_kept[0]:
-            raise OSError(
-                f"incomplete global GeoJSON: {n_global}/{nb_kept[0]} features"
-            )
-        if (not chemin_global_gz_part.exists()
-                or chemin_global_gz_part.stat().st_size == 0):
-            raise OSError("empty staged global GeoJSON gzip")
-
-        if ecrire_geojson:
-            chemin_global_raw_part = _chemin_part(chemin_global_raw)
-            _gunzip_vers_fichier(
-                chemin_global_gz_part, chemin_global_raw_part
-            )
-            if (not chemin_global_raw_part.exists()
-                    or chemin_global_raw_part.stat().st_size == 0):
-                raise OSError("empty staged global GeoJSON")
-
-        # Toutes les transformations sont maintenant validées. Publier les
-        # thématiques, puis le global en dernier comme marqueur de complétude.
-        for cle, (path_part, path_gz, base) in _streams_paths.items():
-            if ecrire_geojson:
-                _raw_parts[cle].replace(base)
-            if ecrire_gz:
-                path_part.replace(path_gz)
-
-        if ecrire_geojson:
-            chemin_global_raw_part.replace(chemin_global_raw)
-        if ecrire_gz:
-            chemin_global_gz_part.replace(chemin_global_gz)
-
-        for cle, (_, path_gz, base) in _streams_paths.items():
-            n_cle = _counts_par_cle.get(cle, 0)
-            if ecrire_gz:
-                print(f"  {path_gz.name} : {n_cle} features")
-            if ecrire_geojson:
-                print(f"  {base.name} : {n_cle} features")
-
-        chemin_principal = (
-            chemin_global_gz if ecrire_gz else chemin_global_raw
-        )
-        taille = chemin_principal.stat().st_size // 1024
-        print(f"  {chemin_principal.name} : {nb_kept[0]} features"
-              f"  ({taille} Ko)  {_hms(int(time.time()-t0))}")
-        return chemin_principal
-    except BaseException as e_pub:
-        if not isinstance(e_pub, Exception):
-            raise
-        print(f"  ERROR publishing OSM GeoJSON: "
-              f"{type(e_pub).__name__}: {e_pub}")
-        return None
-    finally:
-        _nettoyer_publication_osm()
+generer_geojson_osm.__doc__ = _generer_geojson_osm_impl.__doc__
 
 
 # ============================================================

@@ -524,6 +524,7 @@ class MonolithicConversionHistoryTests(HistoryFixture):
             "--file-formats", "rmap",
         ]
 
+
     def test_lidar_shading_conversion_failure_marks_run_ko(self):
         output = self.tmp / "lidar-shadings"
         output.mkdir()
@@ -728,6 +729,55 @@ class MonolithicConversionHistoryTests(HistoryFixture):
         entry = self._entry()
         self.assertEqual(entry["statut"], "ok")
         self.assertEqual(entry["resultat"], str(output.resolve()))
+
+
+class OsmOutputHistoryTests(HistoryFixture):
+    def _argv(self, output, source):
+        return [
+            "lidar2map.py", "--osm", "--source", str(source),
+            "--zone-bbox", "6.0,43.0,6.01,43.01",
+            "--zone-name", "zone", "--output-dir", str(output),
+            "--file-formats", "map",
+        ]
+
+    def _run(self, complete):
+        output = self.tmp / "osm-output"
+        source = self.tmp / "source.pbf"
+        source.write_bytes(b"pbf")
+        self._reset_history(self._argv(output, source))
+        with mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(L, "_appliquer_production_dir"), \
+             mock.patch.object(L, "_configurer_cloud_cache"), \
+             mock.patch.object(L, "_garde_disque"), \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch.object(
+                 L, "_bbox_enveloppe_transform",
+                 return_value=(6.0, 43.0, 6.01, 43.01),
+             ), \
+             mock.patch.object(
+                 L, "_produire_sorties_osm",
+                 return_value=SimpleNamespace(complet=complete),
+             ) as outputs:
+            if complete:
+                L.main()
+            else:
+                with self.assertRaisesRegex(
+                    RuntimeError, "requested deliverable"
+                ):
+                    L.main()
+        return output, outputs, self._entry()
+
+    def test_failed_osm_output_marks_history_ko_and_raises(self):
+        output, outputs, entry = self._run(False)
+        outputs.assert_called_once()
+        self.assertEqual(entry["statut"], "ko")
+        self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
+
+    def test_successful_osm_output_keeps_history_ok(self):
+        output, outputs, entry = self._run(True)
+        outputs.assert_called_once()
+        self.assertEqual(entry["statut"], "ok")
+        self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
 
 
 class PosterioriSplitHistoryTests(HistoryFixture):

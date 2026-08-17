@@ -157,14 +157,21 @@ class AtomicPublicationTests(unittest.TestCase):
                 L._atomic_files_impl, "nettoyer_sqlite_part"
         ) as nettoyer, mock.patch.object(
                 L._atomic_files_impl, "valider_sqlite_part", return_value=marker
-        ) as valider:
+        ) as valider, mock.patch.object(
+                L._atomic_files_impl, "publier_groupe_atomique",
+                return_value=marker,
+        ) as publier:
             self.assertIs(L._chemin_part("x"), marker)
             L._nettoyer_sqlite_part("y")
             self.assertIs(L._valider_sqlite_part("z", {"tiles": 1}), marker)
+            self.assertIs(L._publier_groupe_atomique([("a", "b")]), marker)
 
         chemin.assert_called_once_with("x")
         nettoyer.assert_called_once_with("y")
         valider.assert_called_once_with("z", {"tiles": 1})
+        publier.assert_called_once_with(
+            [("a", "b")], creer_sauvegarde=L._chemin_part,
+        )
 
     def test_atomic_part_path_is_unique_and_does_not_touch_final(self):
         final = self.tmp / "zone.mbtiles"
@@ -431,6 +438,42 @@ class AtomicPublicationTests(unittest.TestCase):
         self.assertFalse((self.tmp / "zone_ways.tmp.pbf").exists())
         self.assertFalse((self.tmp / "zone_poi.tmp.pbf").exists())
 
+    def test_osmosis_map_publication_failure_restores_map_and_filtered_pbf(self):
+        final_map = self.tmp / "zone.map"
+        final_pbf = self.tmp / "zone_filtered.pbf"
+        final_map.write_bytes(b"old-map")
+        final_pbf.write_bytes(b"old-pbf")
+
+        def runner(command, **_kwargs):
+            for path in self._osmosis_output_paths(command):
+                path.write_bytes(
+                    b"new-map" if ".map." in path.name else b"new-pbf"
+                )
+            return 0, ""
+
+        original_replace = Path.replace
+        failed = False
+
+        def fail_map_promotion(path, target):
+            nonlocal failed
+            path = Path(path)
+            target = Path(target)
+            if target == final_map and path != final_map and not failed:
+                failed = True
+                raise OSError("map publication failed")
+            return original_replace(path, target)
+
+        with mock.patch.object(Path, "replace", autospec=True,
+                               side_effect=fail_map_promotion):
+            with self.assertRaisesRegex(OSError, "map publication failed"):
+                self._run_osm_map(runner)
+
+        self.assertEqual(final_map.read_bytes(), b"old-map")
+        self.assertEqual(final_pbf.read_bytes(), b"old-pbf")
+        self._assert_no_part()
+        self.assertFalse((self.tmp / "zone_ways.tmp.pbf").exists())
+        self.assertFalse((self.tmp / "zone_poi.tmp.pbf").exists())
+
     def _write_point_geojson(self, path):
         path.write_text(json.dumps({
             "type": "FeatureCollection",
@@ -645,6 +688,46 @@ class AtomicPublicationTests(unittest.TestCase):
                 payload = json.load(fh)
             self.assertEqual(len(payload["features"]), 1)
         self.assertTrue(seen)
+        self._assert_no_part()
+
+    def test_osm_geojson_mid_publication_failure_restores_complete_old_set(self):
+        source = self.tmp / "source.pbf"
+        source.write_bytes(b"pbf")
+        finals = self._osm_geojson_finals()
+        for index, final in enumerate(finals):
+            final.write_bytes(f"old-{index}".encode())
+        old = {final: final.read_bytes() for final in finals}
+        failed_target = self.tmp / "zone_osm_highway.geojson.gz"
+        real_replace = Path.replace
+        failed = False
+
+        def replace(path, target):
+            nonlocal failed
+            if Path(target) == failed_target and not failed:
+                failed = True
+                raise OSError("publication refused")
+            return real_replace(path, target)
+
+        with mock.patch.dict(
+                sys.modules, {"osmium": self._fake_osmium(False)}), \
+             mock.patch.object(
+                 Path, "replace", autospec=True, side_effect=replace,
+             ), contextlib.redirect_stdout(io.StringIO()):
+            result = L.generer_geojson_osm(
+                (6.0, 43.0, 6.1, 43.1),
+                self.tmp,
+                "zone",
+                source,
+                osm_tags=["highway=*"],
+                ecraser_tuiles=True,
+                formats=["gz", "geojson"],
+            )
+
+        self.assertIsNone(result)
+        self.assertTrue(failed)
+        self.assertEqual(
+            {final: final.read_bytes() for final in finals}, old,
+        )
         self._assert_no_part()
 
     def _fake_fiona_modules(self, fail_after_first=False):
