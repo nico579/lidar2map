@@ -47,6 +47,7 @@ import _split_runner as split_runner  # noqa: E402
 import _split_sliding as split_sliding  # noqa: E402
 import _wfs_pipeline as wfs_pipeline  # noqa: E402
 import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
+import _bdtopo_layers as bdtopo_layers  # noqa: E402
 
 
 class PublicFacadeContractTests(unittest.TestCase):
@@ -1775,6 +1776,65 @@ class WfsPipelineContractTests(unittest.TestCase):
             self.assertNotEqual(first, second)
 
 
+class BdtopoLayerContractTests(unittest.TestCase):
+    def test_facades_keep_signatures_and_reload_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._streamer_geojson_ajout_source)),
+            "(src_geojson, dst_gz, source_name)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._extraire_couche_bdtopo)),
+            "(gpkg_path, layer_name, sortie_gz, bbox_l93=None, "
+            "ecraser=False, formats=None)",
+        )
+        seams = {
+            "_chemin_part": mock.Mock(name="chemin_part"),
+            "_gunzip_vers_fichier": mock.Mock(name="gunzip"),
+            "_gzip_depuis_fichier": mock.Mock(name="gzip"),
+            "_get_transformer": mock.Mock(name="transformer"),
+            "_streamer_geojson_ajout_source": mock.Mock(name="streamer"),
+            "_hms": mock.Mock(name="hms"),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            dependencies = L._dependances_couches_bdtopo()
+
+        self.assertIsInstance(
+            dependencies, bdtopo_layers.DependancesCouchesBdtopo
+        )
+        self.assertIs(dependencies.chemin_part, seams["_chemin_part"])
+        self.assertIs(
+            dependencies.streamer_geojson,
+            seams["_streamer_geojson_ajout_source"],
+        )
+        self.assertIs(dependencies.get_transformer, seams["_get_transformer"])
+
+    def test_facades_delegate_to_extracted_implementations(self):
+        marker = object()
+        with mock.patch.object(
+            L, "_streamer_geojson_ajout_source_impl", return_value=7
+        ) as streamer:
+            self.assertEqual(L._streamer_geojson_ajout_source("a", "b", "c"), 7)
+        self.assertEqual(streamer.call_args.args, ("a", "b", "c"))
+        self.assertIs(streamer.call_args.kwargs["chemin_part"], L._chemin_part)
+
+        with mock.patch.object(
+            L, "_extraire_couche_bdtopo_impl", return_value=marker
+        ) as extraction:
+            result = L._extraire_couche_bdtopo(
+                "source", "layer", "output", (1, 2, 3, 4), True, ["gz"]
+            )
+        self.assertIs(result, marker)
+        self.assertEqual(extraction.call_args.args, ("source", "layer", "output"))
+        self.assertEqual(extraction.call_args.kwargs["bbox_l93"], (1, 2, 3, 4))
+        self.assertTrue(extraction.call_args.kwargs["ecraser"])
+        self.assertIsInstance(
+            extraction.call_args.kwargs["dependances"],
+            bdtopo_layers.DependancesCouchesBdtopo,
+        )
+
+
 class BdtopoBulkContractTests(unittest.TestCase):
     def test_facades_keep_signatures_and_reload_dependencies(self):
         self.assertEqual(
@@ -1783,6 +1843,11 @@ class BdtopoBulkContractTests(unittest.TestCase):
         self.assertEqual(
             str(inspect.signature(L._telecharger_bdtopo_gpkg)),
             "(num_dep, url, nom_ressource, ecraser=False)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._telecharger_bdtopo_bulk)),
+            "(num_dep, couches_resolues, nom_zone, dossier_sortie, "
+            "bbox_l93=None, ecraser=False, formats=None)",
         )
         seams = {
             "BDTOPO_API_URL": "https://api.invalid",
@@ -1828,6 +1893,69 @@ class BdtopoBulkContractTests(unittest.TestCase):
             )
         self.assertEqual(download.call_args.args, ("83", "url", "resource"))
         self.assertTrue(download.call_args.kwargs["ecraser"])
+
+        with mock.patch.object(
+            L, "_telecharger_bdtopo_bulk_impl", return_value=marker
+        ) as bulk:
+            result = L._telecharger_bdtopo_bulk(
+                "83", [("NS:a", "A")], "zone", "output", formats=["gz"]
+            )
+        self.assertIs(result, marker)
+        self.assertEqual(
+            bulk.call_args.args,
+            ("83", [("NS:a", "A")], "zone", "output"),
+        )
+        self.assertIsInstance(
+            bulk.call_args.kwargs["dependances"],
+            bdtopo_bulk.DependancesOrchestrationBdtopo,
+        )
+
+    def test_bulk_keeps_success_order_and_omits_failed_layers(self):
+        extraction = mock.Mock(side_effect=[Path("first.gz"), None, Path("third.gz")])
+        dependencies = bdtopo_bulk.DependancesOrchestrationBdtopo(
+            decouvrir_ressource=mock.Mock(return_value=("url", "resource")),
+            telecharger_gpkg=mock.Mock(return_value=Path("source.gpkg")),
+            extraire_couche=extraction,
+            correspondance_couches={"a": "layer_a"},
+        )
+        couches = [("NS:a", "A"), ("NS:b", "B"), ("NS:c", "C")]
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = bdtopo_bulk.telecharger_bdtopo_bulk(
+                "83",
+                couches,
+                "zone",
+                Path("output"),
+                bbox_l93=(1, 2, 3, 4),
+                ecraser=True,
+                formats=["gz", "geojson"],
+                dependances=dependencies,
+            )
+
+        self.assertEqual(result, [Path("first.gz"), Path("third.gz")])
+        self.assertEqual(
+            [call.args[1] for call in extraction.call_args_list],
+            ["layer_a", "b", "c"],
+        )
+        self.assertTrue(all(call.kwargs["ecraser"] for call in extraction.call_args_list))
+
+    def test_bulk_critical_acquisition_failures_return_none(self):
+        extraction = mock.Mock()
+        for discovery, download in (((None, None), Path("unused")),
+                                    (("url", "name"), None)):
+            dependencies = bdtopo_bulk.DependancesOrchestrationBdtopo(
+                decouvrir_ressource=mock.Mock(return_value=discovery),
+                telecharger_gpkg=mock.Mock(return_value=download),
+                extraire_couche=extraction,
+                correspondance_couches={},
+            )
+            with self.subTest(discovery=discovery), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertIsNone(
+                    bdtopo_bulk.telecharger_bdtopo_bulk(
+                        "83", [], "zone", "output", dependances=dependencies
+                    )
+                )
+        extraction.assert_not_called()
 
     def test_atom_discovery_sorts_dates_then_numeric_versions(self):
         names = (

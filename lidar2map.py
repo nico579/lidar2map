@@ -1245,7 +1245,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.38.0"
+VERSION      = "1.39.0"
 VERSION_DATE = "2026-08"
 
 
@@ -9593,7 +9593,9 @@ _BDTOPO_GPKG_LAYER = {
 
 from _bdtopo_bulk import (
     DependancesBdtopo as _DependancesBdtopo,
+    DependancesOrchestrationBdtopo as _DependancesOrchestrationBdtopo,
     decouvrir_url_bdtopo_gpkg as _decouvrir_url_bdtopo_gpkg_impl,
+    telecharger_bdtopo_bulk as _telecharger_bdtopo_bulk_impl,
     telecharger_bdtopo_gpkg as _telecharger_bdtopo_gpkg_impl,
 )
 
@@ -9634,341 +9636,76 @@ def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
 _telecharger_bdtopo_gpkg.__doc__ = _telecharger_bdtopo_gpkg_impl.__doc__
 
 
+from _bdtopo_layers import (
+    DependancesCouchesBdtopo as _DependancesCouchesBdtopo,
+    extraire_couche_bdtopo as _extraire_couche_bdtopo_impl,
+    streamer_geojson_ajout_source as _streamer_geojson_ajout_source_impl,
+)
+
+
 def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):
-    """
-    Streame src_geojson (FeatureCollection) → dst_gz en ajoutant
-    'source'=source_name à chaque feature.
+    return _streamer_geojson_ajout_source_impl(
+        src_geojson,
+        dst_gz,
+        source_name,
+        chemin_part=_chemin_part,
+    )
 
-    Utilise ijson pour lecture incrémentale : ne charge JAMAIS l'intégralité
-    du GeoJSON en RAM. Critique pour les couches BD TOPO dept-scale qui
-    peuvent dépasser 1 Go en JSON (= 3-4 Go en RAM Python sans streaming).
 
-    Le format de sortie est le format historique du pipeline de fusion :
-    JSON compact (separators=(",", ":")), gzip niveau 6, CRS84.
+_streamer_geojson_ajout_source.__doc__ = (
+    _streamer_geojson_ajout_source_impl.__doc__
+)
 
-    Retourne le nombre de features écrites (0 si fichier source vide).
-    """
-    import decimal as _dec
 
-    def _enc_default(o):
-        # ijson retourne des decimal.Decimal pour les nombres → reconvertir en float
-        if isinstance(o, _dec.Decimal):
-            return float(o)
-        raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
-
-    dst_gz = Path(dst_gz)
-    # Un appelant peut fournir un chemin de transaction déjà terminé par
-    # ``.part`` afin de ne publier le .gz final qu'après d'autres validations.
-    if not str(dst_gz).endswith((".gz", ".part")):
-        dst_gz = Path(str(dst_gz) + ".gz")
-    dst_gz.parent.mkdir(parents=True, exist_ok=True)
-
-    # Écriture ATOMIQUE (.part + replace, helper maison) : le dst_gz final ne
-    # doit JAMAIS exister à l'état partiel — interrompu/disque plein, l'ancien
-    # code laissait un .gz tronqué que _extraire_couche_bdtopo réutilisait au
-    # run suivant comme s'il était complet (revue 2026-07-10).
-    dst_tmp = _chemin_part(dst_gz)
-    try:
-        try:
-            import ijson
-        except ImportError:
-            # Fallback non-streaming (peut faire OOM sur dept-scale — averti)
-            print("  ⚠ ijson missing - full RAM load (OOM risk at dept-scale)")
-            with open(src_geojson, encoding="utf-8") as f:
-                gj = json.load(f)
-            feats = gj.get("features", [])
-            for feat in feats:
-                props = feat.get("properties") or {}
-                props.setdefault("source", source_name)
-                feat["properties"] = props
-            gj["features"] = feats
-            data_bytes = json.dumps(gj, ensure_ascii=False,
-                                     separators=(",", ":"),
-                                     default=_enc_default).encode("utf-8")
-            with gzip.open(dst_tmp, "wb", compresslevel=6) as f:
-                f.write(data_bytes)
-            if not feats:
-                dst_tmp.unlink(missing_ok=True)
-                return 0
-            dst_tmp.replace(dst_gz)
-            return len(feats)
-
-        # ── Streaming feature par feature ────────────────────────────────────
-        n = 0
-        crs_obj = {"type": "name",
-                   "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
-        header = (
-            '{"type":"FeatureCollection","name":'
-            + json.dumps(source_name, ensure_ascii=False)
-            + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
-            + ',"features":['
-        )
-        # Écriture binaire dans gzip pour éviter le double encoding text→bytes
-        with gzip.open(dst_tmp, "wb", compresslevel=6) as out:
-            out.write(header.encode("utf-8"))
-            with open(src_geojson, "rb") as src:
-                for feat in ijson.items(src, "features.item"):
-                    props = feat.get("properties") or {}
-                    props.setdefault("source", source_name)
-                    feat["properties"] = props
-                    if n > 0:
-                        out.write(b",")
-                    out.write(json.dumps(feat, ensure_ascii=False,
-                                          separators=(",", ":"),
-                                          default=_enc_default).encode("utf-8"))
-                    n += 1
-            out.write(b"]}")
-        if n == 0:
-            dst_tmp.unlink(missing_ok=True)
-            return 0
-        dst_tmp.replace(dst_gz)
-        return n
-    except BaseException:
-        dst_tmp.unlink(missing_ok=True)
-        raise
+def _dependances_couches_bdtopo():
+    return _DependancesCouchesBdtopo(
+        chemin_part=_chemin_part,
+        gunzip_vers_fichier=_gunzip_vers_fichier,
+        gzip_depuis_fichier=_gzip_depuis_fichier,
+        get_transformer=_get_transformer,
+        streamer_geojson=_streamer_geojson_ajout_source,
+        formater_duree=_hms,
+    )
 
 
 def _extraire_couche_bdtopo(gpkg_path, layer_name, sortie_gz,
                              bbox_l93=None, ecraser=False, formats=None):
-    """
-    Extrait une couche GPKG → GeoJSON(.gz) via fiona (streaming, reprojection WGS84).
-    bbox_l93 : (xmin, ymin, xmax, ymax) pour clipper, ou None = département entier.
-    formats  : liste parmi ("gz","geojson") — formats à produire (défaut ["gz"]).
-
-    Étape 7 du refactor : remplace ogr2ogr CLI par fiona+pyproj.
-    Streaming feature par feature pour borner la RAM (un département entier
-    peut faire 200-800 MB en JSON, soit 1-3 Go pic RAM avec json.load()).
-    """
-    sortie_gz  = Path(sortie_gz)
-    sortie_raw = Path(str(sortie_gz)[:-3]) if str(sortie_gz).endswith(".gz") \
-                 else Path(str(sortie_gz) + ".geojson")  # fallback inattendu
-
-    if formats is None:
-        formats = ["gz"]
-    formats = [f.lower() for f in formats if f.lower() in ("gz", "geojson")]
-    if not formats:
-        formats = ["gz"]
-    ecrire_gz      = "gz"      in formats
-    ecrire_geojson = "geojson" in formats
-
-    if ecraser:
-        for p in (sortie_gz, sortie_raw):
-            if p.exists():
-                # Publication différée : conserver l'ancien résultat tant que
-                # le nouveau GeoJSON n'est pas intégralement produit et validé.
-                print(f"  {p.name} -> overwrite")
-
-    if not ecraser:
-        manque_gz  = ecrire_gz      and not sortie_gz.exists()
-        manque_raw = ecrire_geojson and not sortie_raw.exists()
-        if not manque_gz and not manque_raw:
-            present = sortie_gz if sortie_gz.exists() else sortie_raw
-            print(f"  {present.name} → already present")
-            return present
-        # Reconstruction locale entre formats — évite de relire le GPKG (lent).
-        if (sortie_gz.exists() or sortie_raw.exists()):
-            try:
-                if manque_raw and sortie_gz.exists():
-                    _gunzip_vers_fichier(sortie_gz, sortie_raw)
-                    print(f"  {sortie_raw.name} -> rebuilt from {sortie_gz.name}")
-                if manque_gz and sortie_raw.exists():
-                    _gzip_depuis_fichier(sortie_raw, sortie_gz)
-                    print(f"  {sortie_gz.name} -> rebuilt from {sortie_raw.name}")
-                return sortie_gz if sortie_gz.exists() else sortie_raw
-            except OSError as e:
-                print(f"  ⚠ Local rebuild failed ({e}) — extraction GPKG")
-
-    try:
-        import fiona
-        from fiona.transform import transform_geom as _xform_geom
-        # fiona >= 1.9 : Feature/Geometry sont des objets fiona.model.*, plus
-        # des dicts. json.dump les rejette ("Object of type Geometry is not
-        # JSON serializable"). to_dict() les reconvertit en dict GeoJSON.
-        # Absent en fiona < 1.9 (où geom est déjà un dict) -> fallback identité.
-        try:
-            from fiona.model import to_dict as _fiona_to_dict
-        except ImportError:
-            def _fiona_to_dict(o): return o
-    except ImportError:
-        print("  ERROR: fiona missing, run pip install fiona")
-        return None
-
-    tmp_geojson = _chemin_part(
-        sortie_gz.parent
-        / sortie_gz.name.replace(".geojson.gz", ".source.geojson")
+    return _extraire_couche_bdtopo_impl(
+        gpkg_path,
+        layer_name,
+        sortie_gz,
+        bbox_l93=bbox_l93,
+        ecraser=ecraser,
+        formats=formats,
+        dependances=_dependances_couches_bdtopo(),
     )
 
-    # Sérialisation JSON robuste : fiona >= 1.9 rend les champs date/datetime du
-    # GPKG comme objets Python (pas des chaînes, contrairement au chemin WFS) ->
-    # json.dump les refuserait. On les passe en ISO ; tout objet fiona.model
-    # residuel repasse par to_dict. Garantit le meme rendu que le fallback WFS.
-    def _json_default(o):
-        iso = getattr(o, "isoformat", None)
-        if callable(iso):
-            return iso()
-        return _fiona_to_dict(o)
 
-    t0 = time.time()
-    try:
-        # Construire le filtre bbox au format fiona si bbox_l93 fourni.
-        # bbox doit être en CRS source (EPSG:2154) — fiona accepte directement.
-        bbox_filter = None
-        if bbox_l93:
-            xmin, ymin, xmax, ymax = bbox_l93
-            bbox_filter = (xmin, ymin, xmax, ymax)
-
-        # Streaming feature par feature → fichier GeoJSON temp.
-        with fiona.open(str(gpkg_path), layer=layer_name) as src:
-            src_crs = src.crs
-            # UN SEUL Transformer pyproj réutilisé pour toute la couche :
-            # fiona.transform_geom en recrée un PAR APPEL (~15 ms) → mesuré
-            # 2026-07-10 sur les 422 240 tronçons du Var : 66 feats/s ≈ 106 min,
-            # PIRE que les 44 min du fallback WFS que ce chemin doit éviter.
-            # Transformer unique : ~2 900 feats/s (×43), département en ~2,5 min.
-            # (La coordonnée Z de BD TOPO est abandonnée au passage : inutile
-            # pour le rendu carto, et fichiers plus petits.)
-            _tr = _get_transformer(str(src_crs), "EPSG:4326")
-
-            def _tx(c):
-                if not c:
-                    return c
-                if isinstance(c[0], (int, float)):           # point [x, y, ...]
-                    _x, _y = _tr.transform(c[0], c[1])
-                    return [_x, _y]
-                if isinstance(c[0][0], (int, float)):        # ligne/anneau : vectorisé
-                    _xs, _ys = _tr.transform([p[0] for p in c], [p[1] for p in c])
-                    return [[_px, _py] for _px, _py in zip(_xs, _ys)]
-                return [_tx(e) for e in c]
-
-            n_total = 0
-            with open(tmp_geojson, "w", encoding="utf-8") as out:
-                out.write('{"type":"FeatureCollection","features":[\n')
-                first = True
-                # Itération : si bbox fournie, fiona filtre nativement.
-                # Sans bbox : tout le département.
-                iterator = src.filter(bbox=bbox_filter) if bbox_filter else src
-                for feat in iterator:
-                    geom = feat["geometry"]
-                    if geom is None:
-                        continue
-                    gd = dict(_fiona_to_dict(geom))   # copie : ne pas muter fiona
-                    if "coordinates" in gd:
-                        gd["coordinates"] = _tx(gd["coordinates"])
-                    else:
-                        # Type exotique (GeometryCollection…) : chemin lent OK,
-                        # inexistant dans les couches BD TOPO courantes.
-                        gd = _fiona_to_dict(_xform_geom(src_crs, "EPSG:4326", geom))
-                    props = dict(feat["properties"]) if feat.get("properties") else {}
-                    if not first:
-                        out.write(",\n")
-                    first = False
-                    json.dump({
-                        "type":       "Feature",
-                        "geometry":   gd,
-                        "properties": props,
-                    }, out, ensure_ascii=False, default=_json_default)
-                    n_total += 1
-                    # Progression : l'extraction était totalement muette — un
-                    # département entier semblait figé (vécu : 45 min sans un
-                    # octet de sortie, indiscernable d'un blocage).
-                    if n_total % 20000 == 0:
-                        print(f"\r  {layer_name}: {n_total} features...",
-                              end="", flush=True)
-                out.write("\n]}\n")
-            if n_total >= 20000:
-                print(flush=True)   # clore la ligne de progression
-    except BaseException as e:
-        print(f"  ERROR fiona extraction {layer_name}: {type(e).__name__}: {e}")
-        tmp_geojson.unlink(missing_ok=True)
-        if not isinstance(e, Exception):
-            raise
-        return None
-
-    if not tmp_geojson.exists() or tmp_geojson.stat().st_size == 0 or n_total == 0:
-        print(f"  ⚠ {layer_name}: no feature")
-        tmp_geojson.unlink(missing_ok=True); return None
-
-    sortie_gz_part = _chemin_part(sortie_gz)
-    sortie_raw_part = _chemin_part(sortie_raw) if ecrire_geojson else None
-    try:
-        # Toujours construire les formats demandés dans des fichiers de
-        # transaction. Aucun ancien final n'est touché avant que toutes les
-        # transformations aient réussi.
-        src_name = sortie_gz.name.replace(".geojson.gz", "")
-        n = _streamer_geojson_ajout_source(
-            tmp_geojson, sortie_gz_part, src_name
-        )
-        if n == 0:
-            print(f"  ⚠ {layer_name}: 0 features after streaming")
-            return None
-        if ecrire_geojson:
-            _gunzip_vers_fichier(sortie_gz_part, sortie_raw_part)
-
-        if (not sortie_gz_part.exists()
-                or sortie_gz_part.stat().st_size == 0):
-            raise OSError("empty staged GeoJSON gzip")
-        if (ecrire_geojson
-                and (not sortie_raw_part.exists()
-                     or sortie_raw_part.stat().st_size == 0)):
-            raise OSError("empty staged GeoJSON")
-
-        # Promotion seulement après validation de tous les formats demandés.
-        if ecrire_geojson:
-            sortie_raw_part.replace(sortie_raw)
-        if ecrire_gz:
-            sortie_gz_part.replace(sortie_gz)
-
-        chemin_principal = None
-        if ecrire_gz:
-            print(f"  {sortie_gz.name} : {n} features  ({sortie_gz.stat().st_size//1024} Ko)  "
-                  f"{_hms(int(time.time()-t0))}", flush=True)
-            chemin_principal = sortie_gz
-        if ecrire_geojson:
-            print(f"  {sortie_raw.name} : {n} features  ({sortie_raw.stat().st_size//1024} Ko)")
-            if chemin_principal is None:
-                chemin_principal = sortie_raw
-        return chemin_principal
-    except BaseException as e:
-        if not isinstance(e, Exception):
-            raise
-        print(f"  ERROR publishing {layer_name}: {type(e).__name__}: {e}")
-        return None
-    finally:
-        tmp_geojson.unlink(missing_ok=True)
-        sortie_gz_part.unlink(missing_ok=True)
-        if sortie_raw_part is not None:
-            sortie_raw_part.unlink(missing_ok=True)
+_extraire_couche_bdtopo.__doc__ = _extraire_couche_bdtopo_impl.__doc__
 
 
 def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
                               dossier_sortie, bbox_l93=None, ecraser=False,
                               formats=None):
-    """
-    Pipeline bulk BD TOPO pour un département entier.
-    formats : liste parmi ("gz","geojson") — propagé à _extraire_couche_bdtopo.
-    Retourne list[Path] des GeoJSON(.gz) créés, ou None si échec critique.
-    """
-    print(f"  Bulk BD TOPO GPKG department {num_dep} "
-          f"(WFS would be too slow at this scale)", flush=True)
-    url, nom = _decouvrir_url_bdtopo_gpkg(num_dep)
-    if not url:
-        return None
-    gpkg_path = _telecharger_bdtopo_gpkg(num_dep, url, nom, ecraser=ecraser)
-    if not gpkg_path:
-        return None
+    dependances = _DependancesOrchestrationBdtopo(
+        decouvrir_ressource=_decouvrir_url_bdtopo_gpkg,
+        telecharger_gpkg=_telecharger_bdtopo_gpkg,
+        extraire_couche=_extraire_couche_bdtopo,
+        correspondance_couches=_BDTOPO_GPKG_LAYER,
+    )
+    return _telecharger_bdtopo_bulk_impl(
+        num_dep,
+        couches_resolues,
+        nom_zone,
+        dossier_sortie,
+        bbox_l93=bbox_l93,
+        ecraser=ecraser,
+        formats=formats,
+        dependances=dependances,
+    )
 
-    sorties = []
-    for typename, desc in couches_resolues:
-        layer_name = typename.split(":")[-1].lower()
-        gpkg_layer = _BDTOPO_GPKG_LAYER.get(layer_name, layer_name)
-        sortie_gz  = Path(dossier_sortie) / f"{nom_zone}_ign_{layer_name}.geojson.gz"
-        print(f"\n  [{desc}]")
-        res = _extraire_couche_bdtopo(gpkg_path, gpkg_layer, sortie_gz,
-                                      bbox_l93=bbox_l93, ecraser=ecraser,
-                                      formats=formats)
-        if res:
-            sorties.append(res)
-    return sorties
+
+_telecharger_bdtopo_bulk.__doc__ = _telecharger_bdtopo_bulk_impl.__doc__
 
 
 def main_wfs():

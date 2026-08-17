@@ -31,6 +31,66 @@ class DependancesBdtopo:
     formater_duree: object
 
 
+@dataclass(frozen=True)
+class DependancesOrchestrationBdtopo:
+    """Coutures de l'orchestrateur bulk, injectées par la façade."""
+
+    decouvrir_ressource: object
+    telecharger_gpkg: object
+    extraire_couche: object
+    correspondance_couches: object
+
+
+def telecharger_bdtopo_bulk(
+    num_dep,
+    couches_resolues,
+    nom_zone,
+    dossier_sortie,
+    bbox_l93=None,
+    ecraser=False,
+    formats=None,
+    *,
+    dependances,
+):
+    """Orchestre l'acquisition GPKG puis l'extraction des couches demandées."""
+    print(
+        f"  Bulk BD TOPO GPKG department {num_dep} "
+        "(WFS would be too slow at this scale)",
+        flush=True,
+    )
+    url, nom = dependances.decouvrir_ressource(num_dep)
+    if not url:
+        return None
+    gpkg_path = dependances.telecharger_gpkg(
+        num_dep, url, nom, ecraser=ecraser
+    )
+    if not gpkg_path:
+        return None
+
+    sorties = []
+    for typename, description in couches_resolues:
+        layer_name = typename.split(":")[-1].lower()
+        gpkg_layer = dependances.correspondance_couches.get(
+            layer_name, layer_name
+        )
+        sortie_gz = (
+            Path(dossier_sortie)
+            / f"{nom_zone}_ign_{layer_name}.geojson.gz"
+        )
+        print(f"\n  [{description}]")
+        resultat = dependances.extraire_couche(
+            gpkg_path,
+            gpkg_layer,
+            sortie_gz,
+            bbox_l93=bbox_l93,
+            ecraser=ecraser,
+            formats=formats,
+        )
+        if resultat:
+            sorties.append(resultat)
+    return sorties
+
+
 def _cle_ressource(nom):
     match = re.search(r"BDTOPO_(\d+)-(\d+)_.*_(\d{4}-\d{2}-\d{2})$", nom)
     if not match:

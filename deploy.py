@@ -92,6 +92,7 @@ MAP = {
     "_disk_guard.py":                "_disk_guard.py",
     "_wfs_pipeline.py":              "_wfs_pipeline.py",
     "_bdtopo_bulk.py":               "_bdtopo_bulk.py",
+    "_bdtopo_layers.py":             "_bdtopo_layers.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_osm_xml.py":           "_geojson_osm_xml.py",
@@ -191,6 +192,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_disk_guard.py"
         or name == "_wfs_pipeline.py"
         or name == "_bdtopo_bulk.py"
+        or name == "_bdtopo_layers.py"
         or (name.startswith("_geojson_") and name.endswith(".py"))
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"

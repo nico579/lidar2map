@@ -1248,7 +1248,7 @@ class BootstrapDependencyTests(unittest.TestCase):
 
 
 class BootstrapFullInstallTests(unittest.TestCase):
-    def _run(self, *, missing=(), returncode=0):
+    def _run(self, *, missing=(), returncode=0, gui=()):
         missing = set(missing)
         imports = []
         commands = []
@@ -1264,7 +1264,7 @@ class BootstrapFullInstallTests(unittest.TestCase):
             return SimpleNamespace(returncode=returncode)
 
         ok = bootstrap_runtime.installer_toutes_dependances(
-            gui_deps_plateforme=lambda: ([], []),
+            gui_deps_plateforme=lambda: (list(gui), []),
             importer=importer,
             lancer=lancer,
             executable="python-test",
@@ -1295,6 +1295,18 @@ class BootstrapFullInstallTests(unittest.TestCase):
         self.assertEqual(commands[0][0], ["python-test", "-m", "pip", "install", "-q", "Pillow"])
         self.assertEqual(len(commands), 1)
         self.assertIn("    ERROR Pillow (critical dependency unavailable)", messages)
+
+    def test_full_install_accepts_a_successful_pip_in_a_fresh_subprocess(self):
+        ok, imports, commands, messages = self._run(
+            missing={"PyQt6.QtWebEngineWidgets"},
+            returncode=0,
+            gui=("PyQt6-WebEngine",),
+        )
+        self.assertTrue(ok)
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][0][-1], "PyQt6-WebEngine")
+        self.assertEqual(imports.count("PyQt6.QtWebEngineWidgets"), 1)
+        self.assertIn("    ✓ PyQt6-WebEngine", messages)
 
     def test_full_install_keeps_an_optional_failure_non_fatal(self):
         ok, _imports, commands, messages = self._run(missing={"osmium"}, returncode=1)

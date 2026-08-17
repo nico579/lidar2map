@@ -755,6 +755,42 @@ class AtomicPublicationTests(unittest.TestCase):
         self.assertTrue(seen)
         self._assert_no_part()
 
+    def test_bdtopo_second_publication_failure_restores_both_formats(self):
+        final_gz = self.tmp / "zone_ign_batiment.geojson.gz"
+        final_raw = self.tmp / "zone_ign_batiment.geojson"
+        final_gz.write_bytes(b"old-gz")
+        final_raw.write_bytes(b"old-raw")
+        real_replace = Path.replace
+        failed = False
+
+        def replace(path, target):
+            nonlocal failed
+            if Path(target) == final_gz and not failed:
+                failed = True
+                raise OSError("second publication refused")
+            return real_replace(path, target)
+
+        with mock.patch.dict(
+                sys.modules, self._fake_fiona_modules(False)), \
+             mock.patch.object(L, "_get_transformer",
+                               return_value=self._fake_transformer()), \
+             mock.patch.object(Path, "replace", autospec=True,
+                               side_effect=replace), \
+             contextlib.redirect_stdout(io.StringIO()):
+            result = L._extraire_couche_bdtopo(
+                self.tmp / "source.gpkg",
+                "batiment",
+                final_gz,
+                ecraser=True,
+                formats=["gz", "geojson"],
+            )
+
+        self.assertIsNone(result)
+        self.assertTrue(failed)
+        self.assertEqual(final_gz.read_bytes(), b"old-gz")
+        self.assertEqual(final_raw.read_bytes(), b"old-raw")
+        self._assert_no_part()
+
     def test_fusion_success_publishes_and_cleans_part(self):
         source = self.tmp / "source.geojson"
         source.write_text(json.dumps({

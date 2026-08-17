@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot préparé : 17 août 2026, **v1.38.0** (phases 11e à 13b :
-maintenance précoce, infrastructure partagée, pipeline WFS et acquisition bulk
-BD TOPO extraits).
+Dernier lot préparé : 17 août 2026, **v1.39.0**. Il regroupe les phases 13c-d
+et corrige la validation immédiate des sous-modules installés par
+`--installer-deps`, qui bloquait à tort le build Linux de v1.38.0.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -42,6 +42,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _disk_guard.py          sonde de capacité et arrêt propre avant un chunk
 ├── _wfs_pipeline.py        pagination WFS et publication GeoJSON atomique
 ├── _bdtopo_bulk.py         découverte, téléchargement et extraction GPKG bulk
+├── _bdtopo_layers.py       conversion GPKG et publication GeoJSON multi-format
 ├── _split_manifest.py      état persistant et suivi des intermédiaires
 ├── _split_deliverables.py  résultats et validation des livrables
 ├── _split_planning.py      grille, sharding, identifiants et signature
@@ -68,7 +69,7 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_shading_specs`, `_geojson_geometry`, `_geojson_osm_xml`, `_geojson_raster`,
 `_geojson_mapsforge`, `_bootstrap_policy`, `_bootstrap_runtime`,
 `_bootstrap_tls`, `_atomic_files`, `_http_helpers`, `_runtime_paths`,
-`_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`).
+`_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`, `_bdtopo_layers`).
 
 ## Volume déjà transféré
 
@@ -127,8 +128,10 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_disk_guard.py` (12g, mesuré) | 9 | 0,04 % |
 | `_wfs_pipeline.py` (13a, mesuré) | 229 | 1,07 % |
 | `_bdtopo_bulk.py` (13b, mesuré) | 202 | 0,95 % |
-| **Total sorti du monolithe (mesuré)** | **8 127** | **38,13 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **13 188** | **61,87 %** |
+| `_bdtopo_layers.py` (13c, mesuré) | 258 | 1,21 % |
+| Orchestration bulk BD TOPO (13d, mesuré) | 5 | 0,02 % |
+| **Total sorti du monolithe (mesuré)** | **8 390** | **39,36 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **12 925** | **60,64 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -253,7 +256,7 @@ rester dans le script principal.
 | 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
 | 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
-| 13. Pipelines vectoriels restants | **En cours** | Pipeline WFS et acquisition bulk BD TOPO extraits (13a-b) | pagination, streaming, cache, archive exacte, interruption et publication atomique |
+| 13. Pipelines vectoriels restants | **En cours** | WFS et pipeline bulk BD TOPO extraits (13a-d) | pagination, streaming, cache, archive exacte, reprojection, sorties partielles et publication groupée |
 
 ## Travail déjà sécurisé
 
@@ -1844,11 +1847,49 @@ Ruff et garde de livraison verts. Mesure nette : `lidar2map.py` 13 390 →
 13 188 lignes (**-202**, soit **0,95 %** du périmètre figé). Total sorti :
 **8 127 lignes, 38,13 %**. Cette sous-phase est intégrée au lot **v1.38.0**.
 
-### Prochaine étape proposée : 13c — conversion des couches BD TOPO
+### Sous-phase 13c : conversion des couches BD TOPO extraite (terminée localement)
 
-Caractériser puis extraire `_extraire_couche_bdtopo` et le streaming GeoJSON
-associé, sans inclure encore l'orchestrateur bulk complet. Ce lot devra verrouiller
-la sélection de couche GPKG, les filtres spatiaux, l'ajout de la propriété source,
-la validation et la publication groupée des formats demandés, ainsi que la
-préservation de tous les anciens finals si une conversion échoue. La fusion
-multi-départements restera une sous-phase séparée.
+Le nouveau module `_bdtopo_layers.py` (338 lignes) porte le streaming GeoJSON
+avec ajout de la propriété `source`, l'extraction Fiona, le filtre spatial natif,
+la reprojection WGS84 avec transformateur réutilisé et la production des formats
+gzip et GeoJSON brut. La dataclass `DependancesCouchesBdtopo` isole les six
+coutures applicatives ; les façades historiques conservent leurs signatures et
+relisent ces coutures à chaque appel.
+
+La publication multi-format a été durcie pendant l'extraction. Les anciens
+fichiers sont maintenant sauvegardés jusqu'à la promotion du dernier format ; si
+la seconde promotion échoue, le premier format est retiré et tous les anciens
+finals sont restaurés. Un nouveau contrat atomique reproduit explicitement cet
+échec. Les interruptions continuent de propager leur exception après nettoyage
+des fichiers de staging.
+
+Deux contrats de façade supplémentaires verrouillent les signatures, la relecture
+dynamique des dépendances et la délégation. Validation ciblée : **102 contrats de
+refonte**, **26 publications atomiques**, suite de robustesse, compilation, Ruff
+et garde de livraison verts. Mesure nette : `lidar2map.py` 13 188 → 12 930 lignes
+(**-258**, soit **1,21 %** du périmètre figé). Total sorti : **8 385 lignes,
+39,34 %**. Cette sous-phase est intégrée au lot **v1.39.0**.
+
+### Sous-phase 13d : orchestration bulk BD TOPO extraite (terminée localement)
+
+`_bdtopo_bulk.py` contient maintenant l'orchestrateur qui relie découverte,
+téléchargement GPKG et conversion des couches. Une dataclass distincte injecte
+ces trois opérations et la table de correspondance des couches. Un échec critique
+de découverte ou d'acquisition retourne toujours `None`, tandis qu'une couche
+individuelle non produite est omise sans perdre les résultats précédents ; leur
+ordre reste celui de la requête.
+
+Deux contrats supplémentaires couvrent l'ordre et les sorties partielles, les
+échecs critiques et la délégation de la façade. Le faible gain net est assumé :
+`lidar2map.py` 12 930 → 12 925 lignes (**-5**, soit **0,02 %**), car les
+dépendances sont désormais explicites. Total sorti : **8 390 lignes, 39,36 %**.
+Cette sous-phase est intégrée au lot **v1.39.0**.
+
+### Prochaine étape proposée : 13e — orchestration du mode vecteur
+
+Avant de déplacer `main_wfs`, ajouter des contrats d'entrée couvrant le choix
+bulk/WFS, le repli WFS des seules couches manquantes, les formats dérivés et la
+finalisation de l'historique en succès comme en échec. L'extraction devra conserver
+le parseur CLI et la résolution de zone dans la façade lors du premier lot ; la
+fusion multi-départements et les générateurs Mapsforge/raster resteront hors de ce
+déplacement initial.

@@ -710,15 +710,13 @@ def installer_toutes_dependances(
         except ImportError:
             resultat = lancer(pip_base + [paquet], capture_output=True)
             if resultat.returncode == 0:
-                try:
-                    importer(module)
-                except ImportError:
-                    resultat = None
-                else:
-                    ecrire(f"    ✓ {paquet}")
-                    continue
-            else:
-                resultat = None
+                # Le paquet vient d'être ajouté dans un sous-processus. Une
+                # réimportation immédiate peut rester aveugle aux nouveaux
+                # sous-modules d'un package parent déjà chargé (notamment
+                # PyQt6-WebEngine). Le prochain processus, puis PyInstaller,
+                # constituent la validation dans un environnement frais.
+                ecrire(f"    ✓ {paquet}")
+                continue
 
             if paquet in critiques:
                 ecrire(f"    ERROR {paquet} (critical dependency unavailable)")
