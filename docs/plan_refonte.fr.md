@@ -1,6 +1,6 @@
 # Plan de refonte de `lidar2map.py`
 
-Lot **v1.41.0** préparé pour déploiement le 17 août 2026. Il regroupe les
+Dernier lot déployé : 17 août 2026, **v1.41.0**. Il regroupe les
 phases 13i-l : export PyOsmium, statut réel des livrables OSM, pipeline
 Mapsforge/Osmosis et politiques de filtrage/cache OSM.
 
@@ -274,7 +274,7 @@ rester dans le script principal.
 | 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
 | 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
-| 13. Pipelines vectoriels restants | **Terminée localement** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
+| 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 
 ## Travail déjà sécurisé
 
@@ -1811,7 +1811,7 @@ La phase 12 est close localement : les derniers helpers avec effets de bord
 (`_appliquer_cache_dir`, `_appliquer_production_dir`) restent volontairement dans
 la façade, leur déplacement isolé n'apportant pas de simplification nette.
 
-### Sous-phase 13a : pipeline WFS extrait (terminée localement)
+### Sous-phase 13a : pipeline WFS extrait (terminée)
 
 Le nouveau module `_wfs_pipeline.py` (297 lignes) prend en charge le nommage des
 sorties, la reconstruction locale gzip/raw, la pré-requête `RESULTTYPE=hits`, la
@@ -1838,7 +1838,7 @@ suite de robustesse, compilation, Ruff et garde de livraison verts. Mesure nette
 figé). Total sorti : **7 925 lignes, 37,18 %**. La version reste **1.37.0** sans
 déploiement.
 
-### Sous-phase 13b : acquisition bulk BD TOPO extraite (terminée localement)
+### Sous-phase 13b : acquisition bulk BD TOPO extraite (terminée)
 
 Le nouveau module `_bdtopo_bulk.py` (279 lignes) porte la découverte Atom avec
 repli `HEAD`, le tri numérique des versions, le téléchargement atomique des
@@ -1865,7 +1865,7 @@ Ruff et garde de livraison verts. Mesure nette : `lidar2map.py` 13 390 →
 13 188 lignes (**-202**, soit **0,95 %** du périmètre figé). Total sorti :
 **8 127 lignes, 38,13 %**. Cette sous-phase est intégrée au lot **v1.38.0**.
 
-### Sous-phase 13c : conversion des couches BD TOPO extraite (terminée localement)
+### Sous-phase 13c : conversion des couches BD TOPO extraite (terminée)
 
 Le nouveau module `_bdtopo_layers.py` (338 lignes) porte le streaming GeoJSON
 avec ajout de la propriété `source`, l'extraction Fiona, le filtre spatial natif,
@@ -1888,7 +1888,7 @@ et garde de livraison verts. Mesure nette : `lidar2map.py` 13 188 → 12 930 lig
 (**-258**, soit **1,21 %** du périmètre figé). Total sorti : **8 385 lignes,
 39,34 %**. Cette sous-phase est intégrée au lot **v1.39.0**.
 
-### Sous-phase 13d : orchestration bulk BD TOPO extraite (terminée localement)
+### Sous-phase 13d : orchestration bulk BD TOPO extraite (terminée)
 
 `_bdtopo_bulk.py` contient maintenant l'orchestrateur qui relie découverte,
 téléchargement GPKG et conversion des couches. Une dataclass distincte injecte
@@ -1903,7 +1903,7 @@ Deux contrats supplémentaires couvrent l'ordre et les sorties partielles, les
 dépendances sont désormais explicites. Total sorti : **8 390 lignes, 39,36 %**.
 Cette sous-phase est intégrée au lot **v1.39.0**.
 
-### Sous-phase 13e : acquisition du mode vecteur extraite (terminée localement)
+### Sous-phase 13e : acquisition du mode vecteur extraite (terminée)
 
 Le nouveau module `_vector_acquisition.py` (95 lignes) choisit entre le bulk
 départemental et le WFS, identifie les seules couches absentes par leur nom de
@@ -1922,7 +1922,7 @@ Mesure nette : `lidar2map.py` 12 925 → 12 904 lignes (**-21**, soit **0,10 %**
 du périmètre figé). Total sorti : **8 411 lignes, 39,46 %**. Cette sous-phase
 est intégrée au lot **v1.40.0**.
 
-### Sous-phase 13f : livrables dérivés vectoriels extraits (terminée localement)
+### Sous-phase 13f : livrables dérivés vectoriels extraits (terminée)
 
 Le nouveau module `_vector_outputs.py` (105 lignes) choisit la source GeoJSON
 unifiée, pilote Mapsforge et l'overlay transparent, et retourne un résultat
@@ -1940,7 +1940,7 @@ du périmètre figé). Le gain volontairement faible reflète les dépendances e
 statut désormais explicites. Total sorti : **8 415 lignes, 39,48 %**. Cette
 sous-phase est intégrée au lot **v1.40.0**.
 
-### Sous-phase 13g : fusion GeoJSON streamée extraite (terminée localement)
+### Sous-phase 13g : fusion GeoJSON streamée extraite (terminée)
 
 Le nouveau module `_geojson_merge.py` (229 lignes) porte la lecture raw/gzip,
 le parcours incrémental `ijson`, le repli JSON, le calcul de bbox et la
@@ -1967,7 +1967,7 @@ du périmètre figé). Total sorti : **8 601 lignes, 40,35 %** ; le script
 principal passe sous le seuil de 60 % avec **59,65 %** restants. Cette
 sous-phase est intégrée au lot **v1.40.0**.
 
-### Sous-phase 13h : orchestration de la CLI de fusion extraite (terminée localement)
+### Sous-phase 13h : orchestration de la CLI de fusion extraite (terminée)
 
 Le nouveau module `_geojson_merge_cli.py` (133 lignes) développe les globs,
 détermine le chemin de sortie historique et orchestre les livrables issus de la
@@ -1994,7 +1994,7 @@ d'orchestration quittent physiquement le monolithe. Total sorti : **8 603
 lignes, 40,36 %** ; reste **59,64 %**. Cette sous-phase est intégrée au lot
 **v1.40.0**.
 
-### Sous-phase 13i : export PyOsmium extrait (terminée localement)
+### Sous-phase 13i : export PyOsmium extrait (terminée)
 
 Le nouveau module `_geojson_osm_export.py` (399 lignes) porte la lecture
 PyOsmium, le filtrage des géométries, les streams thématiques, la construction
@@ -2015,12 +2015,12 @@ traitement, le succès complet et la panne au milieu de la publication.
 
 La livraison est préparée sans publication : `_geojson_osm_export.py` est dans
 `deploy.MAP`; le motif `_geojson_*.py` couvre déjà rebuild et filtres CI. La
-version reste **1.40.0** puisque cette phase commence après le tag.
+Ce lot est intégré à la release **v1.41.0**.
 
 Mesure nette : `lidar2map.py` 12 712 → 12 376 lignes (**-336**, soit **1,58 %**
 du périmètre figé). Total sorti : **8 939 lignes, 41,94 %** ; reste **58,06 %**.
 
-### Sous-phase 13j : statut réel des livrables OSM (terminée localement)
+### Sous-phase 13j : statut réel des livrables OSM (terminée)
 
 `_osm_outputs.py` (94 lignes) centralise le choix historique des sorties : carte
 par défaut, GeoJSON brut/gzip explicite et overlay transparent. Son résultat
@@ -2034,7 +2034,7 @@ exception, ainsi que le succès `ok`. Quatre contrats directs couvrent la
 délégation tardive, l'échec Mapsforge, la source d'overlay absente et la
 tentative de toutes les sorties demandées.
 
-### Sous-phase 13k : pipeline Mapsforge OSM extrait (terminée localement)
+### Sous-phase 13k : pipeline Mapsforge OSM extrait (terminée)
 
 `_osm_map_pipeline.py` (263 lignes) porte maintenant le cache signé, les trois
 passes Osmosis, la sélection du tagmapping, la publication `.map`/PBF filtré et
@@ -2051,7 +2051,7 @@ préservent aussi le mode GeoJSON seul et la dégradation sans plugin mapwriter.
 
 La livraison est préparée sans publication : les deux modules sont dans
 `deploy.MAP`; le motif `_osm_*.py` impose le rebuild et figure dans les filtres
-push et pull request. La version reste **1.40.0**.
+push et pull request. Ce lot est intégré à la release **v1.41.0**.
 
 Validation locale : profil FAST complet, 32 publications atomiques, contrats
 de refonte et d'historique ciblés, compilation, Ruff, 320 liens documentaires
@@ -2060,7 +2060,7 @@ et garde de livraison verts.
 Mesure nette combinée : `lidar2map.py` 12 376 → 12 179 lignes (**-197**, soit
 **0,92 %** du périmètre figé). Total sorti : **9 136 lignes, 42,86 %**.
 
-### Sous-phase 13l : politiques OSM extraites (terminée localement)
+### Sous-phase 13l : politiques OSM extraites (terminée)
 
 `_osm_policy.py` (101 lignes) contient la grammaire anti-injection des filtres,
 leur parsing clé/valeur ordonné, la sélection thématique, le hash de
@@ -2081,6 +2081,7 @@ La phase 13 est close : les catalogues WFS/BD TOPO et les parsers de
 `main_wfs`/`main_fusionner` restent volontairement dans la façade, car leur
 déplacement isolé réduirait peu le couplage. Le module est enregistré dans
 `deploy.MAP` et couvert par le rebuild et les filtres CI `_osm_*.py`.
+La clôture 13i-l est publiée dans **v1.41.0**.
 
 ### Prochaine étape proposée : 14 — runtime Java/Osmosis
 
