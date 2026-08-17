@@ -1245,7 +1245,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.39.0"
+VERSION      = "1.40.0"
 VERSION_DATE = "2026-08"
 
 
@@ -9708,6 +9708,71 @@ def _telecharger_bdtopo_bulk(num_dep, couches_resolues, nom_zone,
 _telecharger_bdtopo_bulk.__doc__ = _telecharger_bdtopo_bulk_impl.__doc__
 
 
+from _vector_acquisition import (
+    DependancesAcquisitionVecteur as _DependancesAcquisitionVecteur,
+    acquerir_couches_vecteur as _acquerir_couches_vecteur_impl,
+)
+
+
+def _dependances_acquisition_vecteur():
+    return _DependancesAcquisitionVecteur(
+        telecharger_bulk=_telecharger_bdtopo_bulk,
+        telecharger_wfs=telecharger_wfs,
+        executor_factory=ThreadPoolExecutor,
+    )
+
+
+def _acquerir_couches_vecteur(couches_resolues, bbox_wgs84, nom_zone, dossier,
+                               *, num_dep=None, ecraser=False, formats=None,
+                               workers=1):
+    return _acquerir_couches_vecteur_impl(
+        couches_resolues,
+        bbox_wgs84,
+        nom_zone,
+        dossier,
+        num_dep=num_dep,
+        ecraser=ecraser,
+        formats=formats,
+        workers=workers,
+        dependances=_dependances_acquisition_vecteur(),
+    )
+
+
+_acquerir_couches_vecteur.__doc__ = _acquerir_couches_vecteur_impl.__doc__
+
+
+from _vector_outputs import (
+    DependancesSortiesVecteur as _DependancesSortiesVecteur,
+    produire_sorties_vecteur as _produire_sorties_vecteur_impl,
+)
+
+
+def _produire_sorties_vecteur(sorties, dossier, nom_zone, bbox_wgs84, *,
+                              formats=None, ecraser=False,
+                              simplification=None, zoom_min=8, zoom_max=18):
+    dependances = _DependancesSortiesVecteur(
+        fusionner_geojson=_fusionner_geojson_compat,
+        epsilon_depuis_surface_km2=_epsilon_depuis_surface_km2,
+        generer_map=generer_map_depuis_geojson_ign,
+        rasteriser=rasteriser_geojson_transparent,
+    )
+    return _produire_sorties_vecteur_impl(
+        sorties,
+        dossier,
+        nom_zone,
+        bbox_wgs84,
+        formats=formats,
+        ecraser=ecraser,
+        simplification=simplification,
+        zoom_min=zoom_min,
+        zoom_max=zoom_max,
+        dependances=dependances,
+    )
+
+
+_produire_sorties_vecteur.__doc__ = _produire_sorties_vecteur_impl.__doc__
+
+
 def main_wfs():
     """Point d'entrée mode --ignvecteur."""
     import argparse
@@ -9804,125 +9869,32 @@ def main_wfs():
     print(f"  Output   : {dossier}")
 
     # ── Téléchargement ────────────────────────────────────────────────────────
-    sorties = []
+    sorties = _acquerir_couches_vecteur(
+        couches_resolues,
+        (lon_min, lat_min, lon_max, lat_max),
+        nom_zone,
+        dossier,
+        num_dep=getattr(args, "zone_departement", None),
+        ecraser=args.telechargement_ecraser,
+        formats=_gj_formats,
+        workers=args.workers,
+    )
 
-    # Pour --zone-departement : basculer sur le bulk GPKG IGN si disponible
-    _num_dep = getattr(args, "zone_departement", None)
-    _bulk_tente = False
-    if _num_dep:
-        _bulk_tente = True
-        sorties_bulk = _telecharger_bdtopo_bulk(
-            num_dep          = _num_dep,
-            couches_resolues = couches_resolues,
-            nom_zone         = nom_zone,
-            dossier_sortie   = dossier,
-            bbox_l93         = None,   # département entier — pas de clip bbox
-            ecraser          = args.telechargement_ecraser,
-            formats          = _gj_formats,
-        )
-        if sorties_bulk is not None:
-            sorties = sorties_bulk
-            # Bulk PARTIEL : certaines couches ne sont pas dans le GPKG (ou
-            # extraction ratée). On les rejoue en WFS pagination au lieu de les
-            # abandonner (R2#31). Nommage BDTOPO_V3 identique bulk/WFS
-            # (`{nom_zone}_ign_{suf}`) → pas de doublon, pas d'écrasement.
-            if len(sorties_bulk) < len(couches_resolues):
-                _couvertes = {Path(p).name for p in sorties_bulk}
-                _ratees = []
-                for _tn, _desc in couches_resolues:
-                    _lk = _tn.split(":")[-1].lower()
-                    if (f"{nom_zone}_ign_{_lk}.geojson.gz"  not in _couvertes and
-                            f"{nom_zone}_ign_{_lk}.geojson" not in _couvertes):
-                        _ratees.append((_tn, _desc))
-                if _ratees:
-                    print(f"  Bulk covered {len(sorties_bulk)}/{len(couches_resolues)} "
-                          f"layers; retrying {len(_ratees)} via WFS pagination...")
-                    for _tn, _desc in _ratees:
-                        print(f"\n  [{_desc}]")
-                        _f = telecharger_wfs(
-                            _tn, lon_min, lat_min, lon_max, lat_max,
-                            nom_zone, dossier,
-                            ecraser_telechargement=args.telechargement_ecraser,
-                            formats=_gj_formats)
-                        if _f:
-                            sorties.append(_f)
-        else:
-            print("  Falling back to WFS pagination...")
+    # Fusion et livrables derives demandes.
+    _resultat_vecteur = _produire_sorties_vecteur(
+        sorties,
+        dossier,
+        nom_zone,
+        (lon_min, lat_min, lon_max, lat_max),
+        formats=getattr(args, "formats_fichier", ["gz"]),
+        ecraser=args.tuiles_ecraser,
+        simplification=getattr(args, "simplification_vecteur", None),
+        zoom_min=getattr(args, "zoom_min", 8),
+        zoom_max=getattr(args, "zoom_max", 18),
+    )
+    _livrables_ok = _resultat_vecteur.complet
 
-    if not _bulk_tente or not sorties:
-        # WFS standard (zone locale ou repli bulk échoué)
-        def _dl(args_tuple):
-            typename, desc = args_tuple
-            print(f"\n  [{desc}]")
-            return telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
-                                   nom_zone, dossier,
-                                   ecraser_telechargement=args.telechargement_ecraser,
-                                   formats=_gj_formats)
-
-        if args.workers > 1 and len(couches_resolues) > 1:
-            with ThreadPoolExecutor(max_workers=min(args.workers,
-                                                    len(couches_resolues))) as ex:
-                for f in ex.map(_dl, couches_resolues):
-                    if f: sorties.append(f)
-        else:
-            for typename, desc in couches_resolues:
-                f = _dl((typename, desc))
-                if f: sorties.append(f)
-
-    # ── Fusion des couches ────────────────────────────────────────────────────
-    _geojson_fusionne = None
-    if len(sorties) > 1:
-        sortie_fusion = dossier / f"{nom_zone}_ign.geojson"
-        # main_wfs connaît déjà la bbox (lon_min/lat_min/...) — pas besoin
-        # du retour bbox du fusionner_geojson, on prend le compat wrapper.
-        _geojson_fusionne = _fusionner_geojson_compat(sorties, sortie_fusion)
-
-    # Source GeoJSON unifiée, partagée par .map et transparent-raster
-    # (fusion si plusieurs couches, sinon l'unique sortie).
-    _src_geojson = ((_geojson_fusionne if len(sorties) > 1 else sorties[0])
-                    if sorties else None)
-
-    # ── Génération Mapsforge .map si demandé ──────────────────────────────────
-    _ff = getattr(args, "formats_fichier", ["gz"])
-    if "map" in _ff and sorties:
-        if _src_geojson is None or not Path(_src_geojson).exists():
-            print("\n  ⚠ Map generation skipped: no feature available.")
-        else:
-            # Epsilon : paramètre explicite ou calcul automatique depuis surface bbox
-            if getattr(args, "simplification_vecteur", None):
-                _eps_m = args.simplification_vecteur
-                print(f"\n  Vector simplification: epsilon={_eps_m:.1f} m (forced)")
-            else:
-                _surf = (lon_max - lon_min) * (lat_max - lat_min) * (111_000 ** 2) / 1e6
-                _eps_m = _epsilon_depuis_surface_km2(_surf) * 111_000
-                print(f"\n  Vector simplification: epsilon={_eps_m:.0f} m (auto, surface≈{_surf:.0f} km²)")
-            _eps_deg = _eps_m / 111_000.0
-            print("  Generating Mapsforge map (.map) from IGN GeoJSON...")
-            generer_map_depuis_geojson_ign(
-                geojson_src   = _src_geojson,
-                dossier_ville = dossier,
-                nom_zone      = nom_zone,
-                bbox_wgs84    = (lon_min, lat_min, lon_max, lat_max),
-                ecraser       = args.tuiles_ecraser,
-                epsilon       = _eps_deg,
-            )
-
-    # ── Overlay raster transparent si demandé (transparent-raster) ────────────
-    # main_wfs a son propre parser et ne résout PAS args.transparent_raster
-    # (contrairement au pipeline principal) : on teste la présence dans _ff,
-    # comme "map" ci-dessus, sinon le bloc serait toujours sauté.
-    if "transparent-raster" in _ff:
-        if _src_geojson and Path(_src_geojson).exists():
-            _zmax = int(getattr(args, "zoom_max", 18))
-            _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
-            rasteriser_geojson_transparent(
-                _src_geojson, dossier / f"{nom_zone}_ign_transparent.sqlitedb",
-                _zmin, _zmax, ecraser=args.tuiles_ecraser,
-                bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
-        else:
-            print("\n  ⚠ transparent-raster skipped: no feature available.")
-
-    # ── Bilan ─────────────────────────────────────────────────────────────────
+    # Bilan
     # Planche d'assemblage : balaie les livrables du dossier (best-effort).
     _planche_depuis_dossier(dossier, args, nom_zone,
                             zone_bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
@@ -9936,8 +9908,9 @@ def main_wfs():
     # l'historique avec le statut RÉEL (ko si partiel) AVANT de lever, sinon
     # l'entrée resterait marquée 'ok' pour un run incomplet (R2#50).
     _wfs_partiel = len(sorties) < len(couches_resolues)
+    _traitement_ko = _wfs_partiel or not _livrables_ok
     _historique_depuis_argv(elapsed, str(dossier),
-                            statut=("ko" if _wfs_partiel else "ok"))
+                            statut=("ko" if _traitement_ko else "ok"))
     # RuntimeError et PAS sys.exit(1) : SystemExit traverserait la boucle
     # multi-départements (qui ne rattrape que Exception, exprès) et tuerait les
     # départements suivants ; l'Exception y est rattrapée → dept marqué KO, on
@@ -9946,6 +9919,8 @@ def main_wfs():
     if _wfs_partiel:
         raise RuntimeError(f"{len(couches_resolues) - len(sorties)} WFS "
                            f"layer(s) failed - rerun to retry them")
+    if not _livrables_ok:
+        raise RuntimeError("Requested vector deliverable generation failed")
 
 
 # ============================================================
@@ -10333,226 +10308,40 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
 # PIPELINE FUSION GEOJSON
 # ============================================================
 
+from _geojson_merge import (
+    DependancesFusionGeojson as _DependancesFusionGeojson,
+    fusionner_geojson as _fusionner_geojson_impl,
+    lire_geojson as _lire_geojson_impl,
+)
+
+
 def _lire_geojson(chemin):
     """Lit un .geojson ou .geojson.gz — retourne le dict."""
-    p = Path(chemin)
-    if str(p).endswith(".gz"):
-        with gzip.open(p, "rt", encoding="utf-8") as f:
-            return json.load(f)
-    return json.loads(p.read_text(encoding="utf-8"))
+    return _lire_geojson_impl(chemin)
+
+
+_lire_geojson.__doc__ = _lire_geojson_impl.__doc__
+
+
+def _dependances_fusion_geojson():
+    return _DependancesFusionGeojson(
+        chemin_part=_chemin_part,
+        stop_event=_stop_event,
+        lire_geojson=_lire_geojson,
+    )
 
 
 def fusionner_geojson(fichiers, sortie, fichiers_ignores=None):
-    """
-    Fusionne plusieurs GeoJSON en un seul FeatureCollection — STREAMING.
-
-    Lecture incrémentale via ijson (fallback json.load si ijson absent),
-    écriture incrémentale dans le .gz au fil de l'eau. La bbox WGS84 est
-    calculée pendant la passe d'écriture (pas de re-lecture nécessaire).
-
-    fichiers         : liste de Path ou str
-    sortie           : Path de sortie
-    fichiers_ignores : si une liste est fournie, les noms des sources SAUTÉES
-                       (absentes ou illisibles) y sont ajoutés — l'appelant peut
-                       ainsi distinguer une fusion COMPLÈTE d'une fusion PARTIELLE
-                       et sortir en erreur au lieu d'annoncer un faux succès (R2#37).
-    Retourne (Path créé, bbox|None) — bbox = (lon_min, lat_min, lon_max, lat_max),
-    ou (None, None) si aucune feature à fusionner.
-    """
-    import decimal as _dec
-    try:
-        import ijson
-        _has_ijson = True
-    except ImportError:
-        _has_ijson = False
-
-    sortie = Path(sortie)
-    # Sortie .gz si l'extension dit .gz, sinon raw (convention historique du
-    # pipeline de fusion, conservée ici).
-    compresser = str(sortie).endswith(".gz")
-    if compresser and not str(sortie).endswith(".geojson.gz"):
-        # Cas .gz pur : rajouter .geojson au-dessus
-        if not str(sortie).endswith(".gz"):
-            sortie = Path(str(sortie) + ".gz")
-
-    # R2#5 : exclure la SORTIE de la liste des sources (idempotence). Sinon, quand
-    # la sortie tombe dans le glob d'entrée (--source data/*.geojson --output-file
-    # data/tout.geojson[.gz]), le 2e run re-fusionne l'ancienne sortie avec les
-    # originaux → entités DUPLIQUÉES, fichier qui gonfle à l'infini. Comparaison sur
-    # chemins RÉSOLUS. Placé DANS le cœur → protège tous les appelants (main_fusionner
-    # / main_wfs / main_decouper). sortie est déjà normalisée (.gz) au-dessus.
-    _sortie_res = sortie.resolve()
-    _n_src0 = len(fichiers)
-    fichiers = [f for f in fichiers if Path(f).resolve() != _sortie_res]
-    if len(fichiers) < _n_src0:
-        print(f"  (sortie exclue des sources, anti auto-fusion : {sortie.name})",
-              flush=True)
-
-    sortie.parent.mkdir(parents=True, exist_ok=True)
-    part = _chemin_part(sortie)
-
-    def _enc_default(o):
-        if isinstance(o, _dec.Decimal):
-            return float(o)
-        raise TypeError(f"Type non-sérialisable : {type(o).__name__}")
-
-    # Header GeoJSON
-    name_out = sortie.name.replace(".geojson.gz", "").replace(".geojson", "")
-    header = (
-        '{"type":"FeatureCollection","name":'
-        + json.dumps(name_out, ensure_ascii=False)
-        + ',"crs":{"type":"name","properties":'
-          '{"name":"urn:ogc:def:crs:OGC:1.3:CRS84"}}'
-        + ',"features":['
-    ).encode("utf-8")
-
-    # Bounds calculés au passage. On évite _coords_flat (récursif Python pour
-    # chaque feature) au profit d'une boucle inline plus rapide.
-    state = {
-        "lon_min": float("inf"),  "lon_max": float("-inf"),
-        "lat_min": float("inf"),  "lat_max": float("-inf"),
-        "valid":   False,
-    }
-    def _track(lon, lat):
-        if lon < state["lon_min"]: state["lon_min"] = lon
-        if lon > state["lon_max"]: state["lon_max"] = lon
-        if lat < state["lat_min"]: state["lat_min"] = lat
-        if lat > state["lat_max"]: state["lat_max"] = lat
-        state["valid"] = True
-
-    def _track_geom(geom):
-        if not geom:
-            return
-        gt = geom.get("type", "")
-        c = geom.get("coordinates", [])
-        if gt == "Point" and c:
-            _track(float(c[0]), float(c[1]))
-        elif gt in ("MultiPoint", "LineString"):
-            for pt in c: _track(float(pt[0]), float(pt[1]))
-        elif gt in ("MultiLineString", "Polygon"):
-            for ring in c:
-                for pt in ring: _track(float(pt[0]), float(pt[1]))
-        elif gt == "MultiPolygon":
-            for poly in c:
-                for ring in poly:
-                    for pt in ring: _track(float(pt[0]), float(pt[1]))
-        elif gt == "GeometryCollection":
-            for sub in geom.get("geometries", []):
-                _track_geom(sub)
-
-    def _iter_features_streame(p):
-        """Yield (source, feat) pour chaque feature de p."""
-        source = p.stem.replace(".geojson", "")
-        if _has_ijson:
-            opener = ((lambda: gzip.open(p, "rb")) if str(p).endswith(".gz")
-                      else (lambda: open(p, "rb")))
-            _n_yield = 0
-            try:
-                with opener() as fh:
-                    for feat in ijson.items(fh, "features.item"):
-                        _n_yield += 1
-                        yield source, feat
-                return
-            # Rattrape AUSSI les erreurs de parsing ijson (IncompleteJSONError,
-            # etc. — pas des ValueError) : sans ça un seul source corrompu faisait
-            # crasher toute la fusion au lieu d'être sauté (R2#37). KeyboardInterrupt
-            # est une BaseException → non capturée, Ctrl+C remonte toujours.
-            except Exception as e:
-                if _n_yield:
-                    # Des features ont déjà été émises → NE PAS relire en RAM
-                    # (relecture depuis le début = doublons). Source tronquée,
-                    # marquée ignorée (fusion partielle visible côté appelant).
-                    print(f"  WARNING: {p.name} truncated after {_n_yield} "
-                          f"features ({e}) - partial source skipped")
-                    if fichiers_ignores is not None:
-                        fichiers_ignores.append(p.name)
-                    return
-                print(f"  WARNING: {p.name} streaming failed ({e}) - RAM fallback")
-        # Fallback non-streaming (seulement si le streaming n'a rien émis)
-        try:
-            data = _lire_geojson(p)
-        except Exception as e:
-            print(f"  WARNING: {p.name} illisible ({e}) - skipped")
-            if fichiers_ignores is not None:
-                fichiers_ignores.append(p.name)
-            return
-        for feat in data.get("features", []):
-            yield source, feat
-
-    n_total = 0
-    n_par_fichier = {}
-    out_fh = None
-    try:
-        if compresser:
-            out_fh = gzip.open(part, "wb", compresslevel=6)
-        else:
-            out_fh = open(part, "wb")
-        out_fh.write(header)
-        first_feat = True
-
-        for f in fichiers:
-            p = Path(f)
-            if not p.exists() and not str(p).endswith(".gz"):
-                p_gz = Path(str(p) + ".gz")
-                if p_gz.exists():
-                    p = p_gz
-            if not p.exists():
-                print(f"  WARNING: {p.name} not found - skipped")
-                if fichiers_ignores is not None:
-                    fichiers_ignores.append(p.name)
-                continue
-
-            n_fichier = 0
-            for source, feat in _iter_features_streame(p):
-                if _stop_event.is_set():
-                    raise KeyboardInterrupt("Fusion interrompue")
-                # Convertir Decimal éventuels (ijson)
-                props = feat.get("properties") or {}
-                if not isinstance(props, dict):
-                    props = {}
-                props.setdefault("source", source)
-                feat["properties"] = props
-                geom = feat.get("geometry")
-                _track_geom(geom)
-
-                if not first_feat:
-                    out_fh.write(b",")
-                first_feat = False
-                out_fh.write(json.dumps(feat, ensure_ascii=False,
-                                         separators=(",", ":"),
-                                         default=_enc_default).encode("utf-8"))
-                n_fichier += 1
-            n_total += n_fichier
-            n_par_fichier[p.name] = n_fichier
-            print(f"  {p.name} : {n_fichier} features")
-
-        out_fh.write(b"]}")
-        out_fh.close()
-        out_fh = None
-    except BaseException:
-        # Fermer + nettoyer le .part en cas d'interruption ou d'erreur.
-        if out_fh is not None:
-            try: out_fh.close()
-            except Exception: pass
-        part.unlink(missing_ok=True)
-        raise
-
-    if n_total == 0:
-        part.unlink(missing_ok=True)
-        print("  No feature to merge")
-        return None, None
-
-    part.replace(sortie)
-    taille = sortie.stat().st_size // 1024
-    print(f"  → {sortie.name} : {n_total} features  ({taille} Ko)")
-
-    bbox = None
-    if state["valid"]:
-        bbox = (state["lon_min"], state["lat_min"],
-                state["lon_max"], state["lat_max"])
-    return sortie, bbox
+    """Fusionne plusieurs GeoJSON en une FeatureCollection streamée."""
+    return _fusionner_geojson_impl(
+        fichiers,
+        sortie,
+        fichiers_ignores=fichiers_ignores,
+        dependances=_dependances_fusion_geojson(),
+    )
 
 
+fusionner_geojson.__doc__ = _fusionner_geojson_impl.__doc__
 def _fusionner_geojson_compat(fichiers, sortie):
     """Compat avec l'ancienne signature : retourne juste le Path (pas la bbox).
 
@@ -10565,6 +10354,40 @@ def _fusionner_geojson_compat(fichiers, sortie):
         return None
     chemin, _bbox = res
     return chemin
+
+
+from _geojson_merge_cli import (
+    DependancesFusionCli as _DependancesFusionCli,
+    determiner_sortie_fusion as _determiner_sortie_fusion,
+    executer_fusion_cli as _executer_fusion_cli_impl,
+    resoudre_sources_fusion as _resoudre_sources_fusion,
+)
+
+
+def _dependances_fusion_cli():
+    return _DependancesFusionCli(
+        fusionner_geojson=fusionner_geojson,
+        epsilon_depuis_surface_km2=_epsilon_depuis_surface_km2,
+        epsilon_defaut=_IGN_SIMPLIFY_EPSILON,
+        generer_map=generer_map_depuis_geojson_ign,
+        rasteriser=rasteriser_geojson_transparent,
+    )
+
+
+def _executer_fusion_cli(fichiers, sortie, *, formats, simplification=None,
+                         zoom_min=8, zoom_max=18):
+    return _executer_fusion_cli_impl(
+        fichiers,
+        sortie,
+        formats=formats,
+        simplification=simplification,
+        zoom_min=zoom_min,
+        zoom_max=zoom_max,
+        dependances=_dependances_fusion_cli(),
+    )
+
+
+_executer_fusion_cli.__doc__ = _executer_fusion_cli_impl.__doc__
 
 
 def main_fusionner():
@@ -10613,33 +10436,18 @@ Examples:
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
 
-    # Résoudre les globs éventuels
-    import glob as _glob
-    fichiers = []
-    for pattern in args.source:
-        matches = _glob.glob(pattern)
-        if matches:
-            fichiers.extend(sorted(matches))
-        else:
-            fichiers.append(pattern)  # sera signalé not found à la fusion
+    fichiers = _resoudre_sources_fusion(args.source)
 
     if not fichiers:
         print("  ERROR: no source file found")
         sys.exit(1)
 
-    # Sortie par défaut
-    if args.sortie:
-        sortie = Path(args.sortie)
-    else:
-        if args.dossier:
-            dossier = Path(args.dossier)
-        else:
-            # Utiliser le dossier du premier fichier source comme base
-            dossier = Path(fichiers[0]).parent
-        # Nom dérivé du premier fichier source
-        base = Path(fichiers[0]).stem.split(".")[0]  # gère .geojson.gz
-        ext_out = ".geojson" if getattr(args, "no_gz", False) else ".geojson.gz"
-        sortie = dossier / f"{base}_fusion{ext_out}"
+    sortie = _determiner_sortie_fusion(
+        fichiers,
+        sortie=args.sortie,
+        dossier=args.dossier,
+        no_gz=args.no_gz,
+    )
 
     print("=" * 52)
     print("  GeoJSON merge")
@@ -10648,52 +10456,31 @@ Examples:
         print(f"  + {f}")
     print(f"  → {sortie}")
 
-    _ignores = []
-    fusion_result = fusionner_geojson(fichiers, sortie, fichiers_ignores=_ignores)
-    _fusion_ok = bool(fusion_result and fusion_result[0] is not None)
-    if _fusion_ok:
-        result, bbox = fusion_result
-        fmts = [f.lower() for f in args.formats_fichier]
-        # Générer le .map Mapsforge si demandé
-        if "map" in fmts:
-            nom_zone = sortie.stem.split(".")[0]
-            dossier_sortie = sortie.parent
-            try:
-                # bbox arrive déjà calculée par fusionner_geojson — pas de relecture.
-                if getattr(args, 'simplification_vecteur', None):
-                    _eps_deg = args.simplification_vecteur / 111_000.0
-                    print(f"  Vector simplification: epsilon={args.simplification_vecteur:.1f} m (forced)")
-                elif bbox:
-                    _surf = (bbox[2]-bbox[0]) * (bbox[3]-bbox[1]) * (111_000**2) / 1e6
-                    _eps_deg = _epsilon_depuis_surface_km2(_surf)
-                    print(f"  Vector simplification: epsilon={_eps_deg*111000:.0f} m (auto, surface≈{_surf:.0f} km²)")
-                else:
-                    _eps_deg = _IGN_SIMPLIFY_EPSILON
-                generer_map_depuis_geojson_ign(result, dossier_sortie, nom_zone,
-                                               bbox_wgs84=bbox, ecraser=True,
-                                               epsilon=_eps_deg)
-            except Exception as _e:
-                print(f"  ERROR generating .map: {_e}")
-        # Overlay raster transparent depuis le GeoJSON fusionné (OSM+IGN → 1 overlay)
-        if "transparent-raster" in fmts:
-            nom_zone = sortie.stem.split(".")[0]
-            _zmax = int(getattr(args, "zoom_max", 18))
-            _zmin = min(max(int(getattr(args, "zoom_min", 8)), 13), _zmax)
-            rasteriser_geojson_transparent(
-                result, sortie.parent / f"{nom_zone}_transparent.sqlitedb",
-                _zmin, _zmax, ecraser=True, bbox_wgs84=bbox)
-        print(f"\n  Done in {_hms(int(time.time()-t_debut))}")
+    resultat = _executer_fusion_cli(
+        fichiers,
+        sortie,
+        formats=args.formats_fichier,
+        simplification=args.simplification_vecteur,
+        zoom_min=getattr(args, "zoom_min", 8),
+        zoom_max=getattr(args, "zoom_max", 18),
+    )
+    if resultat.fusion_ok:
+        if resultat.complet:
+            print(f"\n  Done in {_hms(int(time.time()-t_debut))}")
     else:
         print("  ERROR: merge produced no output (no readable source feature)")
     # Fusion PARTIELLE (sources sautées) = échec visible : le livrable produit
     # reste, mais GUI/scripts/CI doivent le voir (famille succès silencieux, R2#37).
-    if _ignores:
-        print(f"\n  WARNING: {len(_ignores)} source(s) skipped "
-              f"(missing/unreadable): " + ", ".join(_ignores))
-    _echec = (not _fusion_ok) or bool(_ignores)
-    _historique_depuis_argv(int(time.time()-t_debut),
-                            statut=("ko" if _echec else "ok"))
-    if _echec:
+    if resultat.fichiers_ignores:
+        print(f"\n  WARNING: {len(resultat.fichiers_ignores)} source(s) skipped "
+              f"(missing/unreadable): "
+              + ", ".join(resultat.fichiers_ignores))
+    _historique_depuis_argv(
+        int(time.time() - t_debut),
+        dossier_resultat=str(sortie.parent),
+        statut=("ok" if resultat.complet else "ko"),
+    )
+    if not resultat.complet:
         sys.exit(1)
 
 

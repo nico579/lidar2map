@@ -30,6 +30,8 @@ sys.path.insert(0, str(ROOT))
 
 import lidar2map as L  # noqa: E402
 import _geojson_geometry as geojson_geometry  # noqa: E402
+import _geojson_merge as geojson_merge  # noqa: E402
+import _geojson_merge_cli as geojson_merge_cli  # noqa: E402
 import _geojson_mapsforge as geojson_mapsforge  # noqa: E402
 import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
 import _geojson_raster as geojson_raster  # noqa: E402
@@ -48,6 +50,8 @@ import _split_sliding as split_sliding  # noqa: E402
 import _wfs_pipeline as wfs_pipeline  # noqa: E402
 import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
 import _bdtopo_layers as bdtopo_layers  # noqa: E402
+import _vector_acquisition as vector_acquisition  # noqa: E402
+import _vector_outputs as vector_outputs  # noqa: E402
 
 
 class PublicFacadeContractTests(unittest.TestCase):
@@ -1774,6 +1778,313 @@ class WfsPipelineContractTests(unittest.TestCase):
             first = wfs_pipeline._sorties_wfs("NS:a-b", "zone", root)[1]
             second = wfs_pipeline._sorties_wfs("NS:a_b", "zone", root)[1]
             self.assertNotEqual(first, second)
+
+
+class VectorAcquisitionContractTests(unittest.TestCase):
+    @staticmethod
+    def _dependencies(*, bulk_result, wfs_results):
+        bulk = mock.Mock(return_value=bulk_result)
+        wfs = mock.Mock(side_effect=wfs_results)
+
+        class Executor:
+            maximum = None
+
+            def __init__(self, max_workers):
+                type(self).maximum = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def map(function, values):
+                return [function(value) for value in values]
+
+        dependencies = vector_acquisition.DependancesAcquisitionVecteur(
+            telecharger_bulk=bulk,
+            telecharger_wfs=wfs,
+            executor_factory=Executor,
+        )
+        return dependencies, bulk, wfs, Executor
+
+    def test_facade_keeps_signature_and_reads_dependencies_late(self):
+        self.assertEqual(
+            str(inspect.signature(L._acquerir_couches_vecteur)),
+            "(couches_resolues, bbox_wgs84, nom_zone, dossier, *, "
+            "num_dep=None, ecraser=False, formats=None, workers=1)",
+        )
+        seams = {
+            "_telecharger_bdtopo_bulk": mock.Mock(name="bulk"),
+            "telecharger_wfs": mock.Mock(name="wfs"),
+            "ThreadPoolExecutor": mock.Mock(name="executor"),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            dependencies = L._dependances_acquisition_vecteur()
+        self.assertIs(dependencies.telecharger_bulk, seams["_telecharger_bdtopo_bulk"])
+        self.assertIs(dependencies.telecharger_wfs, seams["telecharger_wfs"])
+        self.assertIs(dependencies.executor_factory, seams["ThreadPoolExecutor"])
+
+    def test_complete_bulk_does_not_call_wfs(self):
+        outputs = [Path("zone_ign_a.geojson.gz"), Path("zone_ign_b.geojson")]
+        dependencies, bulk, wfs, _executor = self._dependencies(
+            bulk_result=outputs, wfs_results=[]
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = vector_acquisition.acquerir_couches_vecteur(
+                [("NS:a", "A"), ("NS:b", "B")],
+                (1, 2, 3, 4), "zone", Path("out"),
+                num_dep="83", dependances=dependencies,
+            )
+        self.assertEqual(result, outputs)
+        bulk.assert_called_once()
+        wfs.assert_not_called()
+
+    def test_partial_bulk_retries_only_missing_layers_in_order(self):
+        first = Path("zone_ign_a.geojson.gz")
+        recovered = Path("zone_ign_b.geojson.gz")
+        dependencies, _bulk, wfs, _executor = self._dependencies(
+            bulk_result=[first], wfs_results=[recovered, None]
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = vector_acquisition.acquerir_couches_vecteur(
+                [("NS:a", "A"), ("NS:b", "B"), ("NS:c", "C")],
+                (1, 2, 3, 4), "zone", Path("out"),
+                num_dep="83", ecraser=True, formats=["gz"],
+                dependances=dependencies,
+            )
+        self.assertEqual(result, [first, recovered])
+        self.assertEqual([call.args[0] for call in wfs.call_args_list], ["NS:b", "NS:c"])
+        self.assertTrue(all(call.kwargs["ecraser_telechargement"] for call in wfs.call_args_list))
+
+    def test_empty_bulk_retries_each_layer_only_once(self):
+        dependencies, _bulk, wfs, _executor = self._dependencies(
+            bulk_result=[], wfs_results=[None, None]
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = vector_acquisition.acquerir_couches_vecteur(
+                [("NS:a", "A"), ("NS:b", "B")],
+                (1, 2, 3, 4), "zone", Path("out"),
+                num_dep="83", dependances=dependencies,
+            )
+        self.assertEqual(result, [])
+        self.assertEqual(wfs.call_count, 2)
+
+    def test_bulk_failure_uses_parallel_standard_wfs(self):
+        outputs = [Path("a.gz"), Path("b.gz")]
+        dependencies, _bulk, wfs, executor = self._dependencies(
+            bulk_result=None, wfs_results=outputs
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = vector_acquisition.acquerir_couches_vecteur(
+                [("NS:a", "A"), ("NS:b", "B")],
+                (1, 2, 3, 4), "zone", Path("out"),
+                num_dep="83", workers=8, dependances=dependencies,
+            )
+        self.assertEqual(result, outputs)
+        self.assertEqual(wfs.call_count, 2)
+        self.assertEqual(executor.maximum, 2)
+
+
+class GeojsonMergeContractTests(unittest.TestCase):
+    def test_facade_keeps_signature_and_delegates_to_extracted_module(self):
+        self.assertIs(L._fusionner_geojson_impl, geojson_merge.fusionner_geojson)
+        self.assertEqual(
+            str(inspect.signature(L.fusionner_geojson)),
+            "(fichiers, sortie, fichiers_ignores=None)",
+        )
+        result = object()
+        ignored = []
+        with mock.patch.object(
+                L, "_fusionner_geojson_impl", return_value=result
+        ) as implementation:
+            self.assertIs(
+                L.fusionner_geojson(["source"], "sortie", ignored), result,
+            )
+
+        args, kwargs = implementation.call_args
+        self.assertEqual(args, (["source"], "sortie"))
+        self.assertIs(kwargs["fichiers_ignores"], ignored)
+        self.assertIsInstance(
+            kwargs["dependances"], geojson_merge.DependancesFusionGeojson,
+        )
+
+    def test_dependencies_are_rebuilt_from_late_bound_facade_seams(self):
+        chemin_part = object()
+        stop_event = object()
+        lire_geojson = object()
+        with mock.patch.object(L, "_chemin_part", chemin_part), \
+             mock.patch.object(L, "_stop_event", stop_event), \
+             mock.patch.object(L, "_lire_geojson", lire_geojson):
+            dependencies = L._dependances_fusion_geojson()
+
+        self.assertIs(dependencies.chemin_part, chemin_part)
+        self.assertIs(dependencies.stop_event, stop_event)
+        self.assertIs(dependencies.lire_geojson, lire_geojson)
+
+    def test_reader_facade_delegates_to_extracted_reader(self):
+        marker = object()
+        with mock.patch.object(
+                L, "_lire_geojson_impl", return_value=marker
+        ) as reader:
+            self.assertIs(L._lire_geojson("source.geojson"), marker)
+        reader.assert_called_once_with("source.geojson")
+
+
+class GeojsonMergeCliContractTests(unittest.TestCase):
+    def _dependencies(self, **overrides):
+        values = {
+            "fusionner_geojson": mock.Mock(),
+            "epsilon_depuis_surface_km2": mock.Mock(return_value=0.001),
+            "epsilon_defaut": 0.0001,
+            "generer_map": mock.Mock(return_value=Path("zone.map")),
+            "rasteriser": mock.Mock(return_value=Path("zone.sqlitedb")),
+        }
+        values.update(overrides)
+        return geojson_merge_cli.DependancesFusionCli(**values)
+
+    def test_source_resolution_and_default_output_are_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_b = root / "b.geojson"
+            source_a = root / "a.geojson"
+            source_b.touch()
+            source_a.touch()
+            missing = root / "missing.geojson"
+
+            sources = geojson_merge_cli.resoudre_sources_fusion([
+                str(root / "*.geojson"), str(missing),
+            ])
+
+            self.assertEqual(sources, [str(source_a), str(source_b), str(missing)])
+            self.assertEqual(
+                geojson_merge_cli.determiner_sortie_fusion(sources),
+                root / "a_fusion.geojson.gz",
+            )
+            self.assertEqual(
+                geojson_merge_cli.determiner_sortie_fusion(
+                    sources, dossier=root / "out", no_gz=True,
+                ),
+                root / "out" / "a_fusion.geojson",
+            )
+
+    def test_requested_derivatives_are_all_of_and_all_are_attempted(self):
+        output = Path("fusion.geojson.gz")
+        fusion = mock.Mock(return_value=(output, (6.0, 43.0, 6.1, 43.1)))
+        map_generator = mock.Mock(return_value=None)
+        rasterizer = mock.Mock(return_value=Path("fusion.sqlitedb"))
+        dependencies = self._dependencies(
+            fusionner_geojson=fusion,
+            generer_map=map_generator,
+            rasteriser=rasterizer,
+        )
+
+        result = geojson_merge_cli.executer_fusion_cli(
+            ["source.geojson"],
+            output,
+            formats=["map", "transparent-raster"],
+            dependances=dependencies,
+        )
+
+        self.assertFalse(result.complet)
+        self.assertTrue(result.fusion_ok)
+        self.assertFalse(result.map_ok)
+        self.assertTrue(result.raster_ok)
+        map_generator.assert_called_once()
+        rasterizer.assert_called_once()
+
+    def test_failed_fusion_skips_all_derived_outputs(self):
+        dependencies = self._dependencies(
+            fusionner_geojson=mock.Mock(return_value=(None, None)),
+        )
+
+        result = geojson_merge_cli.executer_fusion_cli(
+            ["source.geojson"],
+            "fusion.geojson.gz",
+            formats=["map", "transparent-raster"],
+            dependances=dependencies,
+        )
+
+        self.assertFalse(result.complet)
+        dependencies.generer_map.assert_not_called()
+        dependencies.rasteriser.assert_not_called()
+
+    def test_facade_keeps_signature_and_reads_dependencies_late(self):
+        self.assertEqual(
+            str(inspect.signature(L._executer_fusion_cli)),
+            "(fichiers, sortie, *, formats, simplification=None, "
+            "zoom_min=8, zoom_max=18)",
+        )
+        fusion = mock.Mock()
+        epsilon = mock.Mock()
+        map_generator = mock.Mock()
+        rasterizer = mock.Mock()
+        with mock.patch.object(L, "fusionner_geojson", fusion), \
+             mock.patch.object(L, "_epsilon_depuis_surface_km2", epsilon), \
+             mock.patch.object(L, "_IGN_SIMPLIFY_EPSILON", 0.002), \
+             mock.patch.object(L, "generer_map_depuis_geojson_ign", map_generator), \
+             mock.patch.object(L, "rasteriser_geojson_transparent", rasterizer):
+            dependencies = L._dependances_fusion_cli()
+
+        self.assertIs(dependencies.fusionner_geojson, fusion)
+        self.assertIs(dependencies.epsilon_depuis_surface_km2, epsilon)
+        self.assertEqual(dependencies.epsilon_defaut, 0.002)
+        self.assertIs(dependencies.generer_map, map_generator)
+        self.assertIs(dependencies.rasteriser, rasterizer)
+
+
+class VectorOutputContractTests(unittest.TestCase):
+    def test_facade_keeps_signature_and_reads_dependencies_late(self):
+        self.assertEqual(
+            str(inspect.signature(L._produire_sorties_vecteur)),
+            "(sorties, dossier, nom_zone, bbox_wgs84, *, formats=None, "
+            "ecraser=False, simplification=None, zoom_min=8, zoom_max=18)",
+        )
+        marker = object()
+        with mock.patch.object(
+            L, "_produire_sorties_vecteur_impl", return_value=marker
+        ) as implementation:
+            result = L._produire_sorties_vecteur(
+                ["source"], "output", "zone", (1, 2, 3, 4), formats=["map"]
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIsInstance(
+            dependencies, vector_outputs.DependancesSortiesVecteur
+        )
+        self.assertIs(dependencies.fusionner_geojson, L._fusionner_geojson_compat)
+        self.assertIs(dependencies.generer_map, L.generer_map_depuis_geojson_ign)
+
+    def test_requested_outputs_are_all_of_and_keep_the_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.geojson.gz"
+            source.write_bytes(b"kept")
+            generated_map = mock.Mock(return_value=root / "zone.map")
+            generated_raster = mock.Mock(return_value=None)
+            dependencies = vector_outputs.DependancesSortiesVecteur(
+                fusionner_geojson=mock.Mock(),
+                epsilon_depuis_surface_km2=mock.Mock(return_value=0.001),
+                generer_map=generated_map,
+                rasteriser=generated_raster,
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = vector_outputs.produire_sorties_vecteur(
+                    [source], root, "zone", (6.0, 43.0, 6.1, 43.1),
+                    formats=["map", "transparent-raster"],
+                    simplification=10.0,
+                    dependances=dependencies,
+                )
+
+            self.assertFalse(result.complet)
+            self.assertEqual(result.source_geojson, source)
+            self.assertEqual(source.read_bytes(), b"kept")
+            self.assertAlmostEqual(generated_map.call_args.kwargs["epsilon"],
+                                   10.0 / 111_000.0)
+            generated_raster.assert_called_once()
 
 
 class BdtopoLayerContractTests(unittest.TestCase):

@@ -98,6 +98,7 @@ class SplitHistoryFinalizationTests(HistoryFixture):
         self.assertEqual(entry["resultat"], str(result_dir))
         self.assertTrue(L._HIST_FINALIZED)
 
+
     def test_split_incomplete_finalizes_history_and_raises(self):
         self._start()
         result_dir = self.tmp / "incomplete"
@@ -142,6 +143,218 @@ class SplitHistoryFinalizationTests(HistoryFixture):
         self.assertEqual(entry["statut"], "ko")
         self.assertEqual(entry["resultat"], str(result_dir))
         self.assertTrue(L._HIST_FINALIZED)
+
+
+class VectorHistoryFinalizationTests(HistoryFixture):
+    def _argv(self, output, *layers):
+        return [
+            "lidar2map.py", "--vector", "--zone-bbox", "6,43,6.1,43.1",
+            "--layer", *layers, "--output-dir", str(output),
+            "--file-formats", "gz",
+        ]
+
+    def _run(self, layers, outputs):
+        output = self.tmp / "vector-output"
+        self._reset_history(self._argv(output, *layers))
+        with mock.patch.object(
+                L, "_resoudre_zone_wgs84",
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
+             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(
+                 L, "_acquerir_couches_vecteur", return_value=outputs
+             ) as acquisition, \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch("builtins.print"):
+            L.main_wfs()
+        return output, acquisition
+
+    def test_vector_success_finalizes_history_with_result_directory(self):
+        output, acquisition = self._run(
+            ["cadastre"], [self.tmp / "zone_ign_parcelle.geojson.gz"]
+        )
+
+        entry = self._entry()
+        self.assertEqual(entry["statut"], "ok")
+        self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
+        self.assertEqual(acquisition.call_count, 1)
+        self.assertEqual(acquisition.call_args.kwargs["formats"], ["gz"])
+
+    def test_vector_partial_result_finalizes_ko_and_raises(self):
+        output = self.tmp / "vector-output"
+        self._reset_history(self._argv(output, "cadastre", "routes"))
+        with mock.patch.object(
+                L, "_resoudre_zone_wgs84",
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
+             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(
+                 L, "_acquerir_couches_vecteur",
+                 return_value=[self.tmp / "zone_ign_parcelle.geojson.gz"],
+             ), \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch("builtins.print"), \
+             self.assertRaisesRegex(RuntimeError, "1 WFS layer"):
+            L.main_wfs()
+
+        entry = self._entry()
+        self.assertEqual(entry["statut"], "ko")
+        self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
+        self.assertTrue(L._HIST_FINALIZED)
+
+    def test_vector_map_failure_finalizes_ko_and_keeps_geojson(self):
+        output = self.tmp / "vector-output"
+        source = self.tmp / "zone_ign_parcelle.geojson.gz"
+        source.write_bytes(b"geojson-kept")
+        argv = self._argv(output, "cadastre")
+        argv[-1] = "map"
+        self._reset_history(argv)
+        with mock.patch.object(
+                L, "_resoudre_zone_wgs84",
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
+             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(
+                 L, "_acquerir_couches_vecteur", return_value=[source]
+             ), \
+             mock.patch.object(
+                 L, "generer_map_depuis_geojson_ign", return_value=None
+             ), \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch("builtins.print"), \
+             self.assertRaisesRegex(RuntimeError, "deliverable generation"):
+            L.main_wfs()
+
+        self.assertEqual(source.read_bytes(), b"geojson-kept")
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_vector_fusion_failure_finalizes_ko(self):
+        output = self.tmp / "vector-output"
+        sources = [self.tmp / "a.geojson.gz", self.tmp / "b.geojson.gz"]
+        self._reset_history(self._argv(output, "cadastre", "routes"))
+        with mock.patch.object(
+                L, "_resoudre_zone_wgs84",
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
+             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(
+                 L, "_acquerir_couches_vecteur", return_value=sources
+             ), \
+             mock.patch.object(L, "_fusionner_geojson_compat", return_value=None), \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch("builtins.print"), \
+             self.assertRaisesRegex(RuntimeError, "deliverable generation"):
+            L.main_wfs()
+
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_vector_transparent_raster_failure_finalizes_ko(self):
+        output = self.tmp / "vector-output"
+        source = self.tmp / "zone_ign_parcelle.geojson.gz"
+        source.write_bytes(b"geojson-kept")
+        argv = self._argv(output, "cadastre")
+        argv[-1] = "transparent-raster"
+        self._reset_history(argv)
+        with mock.patch.object(
+                L, "_resoudre_zone_wgs84",
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
+             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(
+                 L, "_acquerir_couches_vecteur", return_value=[source]
+             ), \
+             mock.patch.object(
+                 L, "rasteriser_geojson_transparent", return_value=None
+             ), \
+             mock.patch.object(L, "_planche_depuis_dossier"), \
+             mock.patch("builtins.print"), \
+             self.assertRaisesRegex(RuntimeError, "deliverable generation"):
+            L.main_wfs()
+
+        self.assertEqual(source.read_bytes(), b"geojson-kept")
+        self.assertEqual(self._entry()["statut"], "ko")
+
+
+class MergeHistoryFinalizationTests(HistoryFixture):
+    def _argv(self, output, *formats):
+        return [
+            "lidar2map.py", "--merge", "--source", "source.geojson",
+            "--output-file", str(output), "--file-formats", *formats,
+        ]
+
+    def _run(self, formats=("gz",), fusion_result=None):
+        output = self.tmp / "fusion.geojson.gz"
+        self._reset_history(self._argv(output, *formats))
+        if fusion_result is None:
+            fusion_result = (output, (6.0, 43.0, 6.1, 43.1))
+        with mock.patch.object(
+                L, "fusionner_geojson", return_value=fusion_result
+        ) as fusion, mock.patch("builtins.print"):
+            L.main_fusionner()
+        return output, fusion
+
+    def test_merge_success_finalizes_history_with_result_directory(self):
+        output, fusion = self._run()
+
+        entry = self._entry()
+        self.assertEqual(entry["statut"], "ok")
+        self.assertEqual(
+            Path(entry["resultat"]).resolve(), output.parent.resolve(),
+        )
+        self.assertEqual(fusion.call_count, 1)
+
+    def test_merge_partial_result_finalizes_ko_and_exits_nonzero(self):
+        output = self.tmp / "fusion.geojson.gz"
+        self._reset_history(self._argv(output, "gz"))
+
+        def partial(_files, _output, fichiers_ignores=None):
+            fichiers_ignores.append("missing.geojson")
+            return output, (6.0, 43.0, 6.1, 43.1)
+
+        with mock.patch.object(L, "fusionner_geojson", side_effect=partial), \
+             mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_merge_map_failure_finalizes_ko_and_exits_nonzero(self):
+        output = self.tmp / "fusion.geojson.gz"
+        self._reset_history(self._argv(output, "map"))
+        with mock.patch.object(
+                L, "fusionner_geojson",
+                return_value=(output, (6.0, 43.0, 6.1, 43.1)),
+        ), mock.patch.object(
+                L, "generer_map_depuis_geojson_ign", return_value=None,
+        ), mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_merge_raster_failure_finalizes_ko_and_exits_nonzero(self):
+        output = self.tmp / "fusion.geojson.gz"
+        self._reset_history(self._argv(output, "transparent-raster"))
+        with mock.patch.object(
+                L, "fusionner_geojson",
+                return_value=(output, (6.0, 43.0, 6.1, 43.1)),
+        ), mock.patch.object(
+                L, "rasteriser_geojson_transparent", return_value=None,
+        ), mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_merge_without_features_finalizes_ko_and_exits_nonzero(self):
+        output = self.tmp / "fusion.geojson.gz"
+        self._reset_history(self._argv(output, "gz"))
+        with mock.patch.object(
+                L, "fusionner_geojson", return_value=(None, None),
+        ), mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
 
 
 class SplitEntryPointHistoryTests(HistoryFixture):

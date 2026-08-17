@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot préparé : 17 août 2026, **v1.39.0**. Il regroupe les phases 13c-d
-et corrige la validation immédiate des sous-modules installés par
-`--installer-deps`, qui bloquait à tort le build Linux de v1.38.0.
+Dernier lot préparé : 17 août 2026, **v1.40.0**. Il regroupe les phases 13e-h :
+acquisition et livrables du mode vecteur, fusion GeoJSON streamée et
+orchestration fiable de la commande `--merge`.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -43,6 +43,10 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _wfs_pipeline.py        pagination WFS et publication GeoJSON atomique
 ├── _bdtopo_bulk.py         découverte, téléchargement et extraction GPKG bulk
 ├── _bdtopo_layers.py       conversion GPKG et publication GeoJSON multi-format
+├── _vector_acquisition.py  sélection bulk/WFS et acquisition des couches
+├── _vector_outputs.py      fusion et livrables dérivés du mode vecteur
+├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
+├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _split_manifest.py      état persistant et suivi des intermédiaires
 ├── _split_deliverables.py  résultats et validation des livrables
 ├── _split_planning.py      grille, sharding, identifiants et signature
@@ -69,7 +73,9 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_shading_specs`, `_geojson_geometry`, `_geojson_osm_xml`, `_geojson_raster`,
 `_geojson_mapsforge`, `_bootstrap_policy`, `_bootstrap_runtime`,
 `_bootstrap_tls`, `_atomic_files`, `_http_helpers`, `_runtime_paths`,
-`_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`, `_bdtopo_layers`).
+`_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`, `_bdtopo_layers`,
+`_vector_acquisition`, `_vector_outputs`, `_geojson_merge`,
+`_geojson_merge_cli`).
 
 ## Volume déjà transféré
 
@@ -130,8 +136,12 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_bdtopo_bulk.py` (13b, mesuré) | 202 | 0,95 % |
 | `_bdtopo_layers.py` (13c, mesuré) | 258 | 1,21 % |
 | Orchestration bulk BD TOPO (13d, mesuré) | 5 | 0,02 % |
-| **Total sorti du monolithe (mesuré)** | **8 390** | **39,36 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **12 925** | **60,64 %** |
+| `_vector_acquisition.py` (13e, mesuré) | 21 | 0,10 % |
+| `_vector_outputs.py` (13f, mesuré) | 4 | 0,02 % |
+| `_geojson_merge.py` (13g, mesuré) | 186 | 0,87 % |
+| `_geojson_merge_cli.py` (13h, mesuré) | 2 | 0,01 % |
+| **Total sorti du monolithe (mesuré)** | **8 603** | **40,36 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **12 712** | **59,64 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -256,7 +266,7 @@ rester dans le script principal.
 | 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
 | 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
-| 13. Pipelines vectoriels restants | **En cours** | WFS et pipeline bulk BD TOPO extraits (13a-d) | pagination, streaming, cache, archive exacte, reprojection, sorties partielles et publication groupée |
+| 13. Pipelines vectoriels restants | **En cours** | WFS, pipeline bulk, acquisition, livrables et fusion extraits (13a-h) | pagination, streaming, repli unique, statuts des formats demandés et publication atomique |
 
 ## Travail déjà sécurisé
 
@@ -1885,11 +1895,100 @@ Deux contrats supplémentaires couvrent l'ordre et les sorties partielles, les
 dépendances sont désormais explicites. Total sorti : **8 390 lignes, 39,36 %**.
 Cette sous-phase est intégrée au lot **v1.39.0**.
 
-### Prochaine étape proposée : 13e — orchestration du mode vecteur
+### Sous-phase 13e : acquisition du mode vecteur extraite (terminée localement)
 
-Avant de déplacer `main_wfs`, ajouter des contrats d'entrée couvrant le choix
-bulk/WFS, le repli WFS des seules couches manquantes, les formats dérivés et la
-finalisation de l'historique en succès comme en échec. L'extraction devra conserver
-le parseur CLI et la résolution de zone dans la façade lors du premier lot ; la
-fusion multi-départements et les générateurs Mapsforge/raster resteront hors de ce
-déplacement initial.
+Le nouveau module `_vector_acquisition.py` (95 lignes) choisit entre le bulk
+départemental et le WFS, identifie les seules couches absentes par leur nom de
+livrable et conserve l'ordre des sorties. La façade injecte tardivement les deux
+producteurs et `ThreadPoolExecutor`, sans déplacer le parseur CLI, la résolution de
+zone ni les formats dérivés.
+
+Cinq contrats couvrent un bulk complet, un résultat partiel, l'échec critique et
+le WFS parallèle. Le cas bulk vide ne retente désormais chaque couche qu'une seule
+fois en WFS ; l'ancien flux effectuait immédiatement un second passage complet.
+Deux tests d'entrée `main_wfs` verrouillent la finalisation de l'historique :
+`ok` avec le dossier résultat si toutes les couches sont présentes, `ko` suivi
+d'une `RuntimeError` si le résultat reste partiel.
+
+Mesure nette : `lidar2map.py` 12 925 → 12 904 lignes (**-21**, soit **0,10 %**
+du périmètre figé). Total sorti : **8 411 lignes, 39,46 %**. Cette sous-phase
+est intégrée au lot **v1.40.0**.
+
+### Sous-phase 13f : livrables dérivés vectoriels extraits (terminée localement)
+
+Le nouveau module `_vector_outputs.py` (105 lignes) choisit la source GeoJSON
+unifiée, pilote Mapsforge et l'overlay transparent, et retourne un résultat
+explicite `source_geojson/complet`. Les quatre coutures de fusion, calcul epsilon,
+génération `.map` et rasterisation sont injectées par la façade.
+
+Trois tests d'entrée rouges puis verts ont corrigé un défaut de statut : un
+échec de fusion, de Mapsforge ou de l'overlay demandé pouvait auparavant finir
+avec un historique `ok` et un code nul. Le run finalise maintenant `ko`, lève une
+`RuntimeError` et conserve les GeoJSON acquis. Deux contrats directs vérifient la
+délégation, l'agrégation all-of des formats et l'epsilon forcé.
+
+Mesure nette : `lidar2map.py` 12 904 → 12 900 lignes (**-4**, soit **0,02 %**
+du périmètre figé). Le gain volontairement faible reflète les dépendances et le
+statut désormais explicites. Total sorti : **8 415 lignes, 39,48 %**. Cette
+sous-phase est intégrée au lot **v1.40.0**.
+
+### Sous-phase 13g : fusion GeoJSON streamée extraite (terminée localement)
+
+Le nouveau module `_geojson_merge.py` (229 lignes) porte la lecture raw/gzip,
+le parcours incrémental `ijson`, le repli JSON, le calcul de bbox et la
+publication atomique. `lidar2map.py` conserve les signatures historiques de
+`_lire_geojson`, `fusionner_geojson` et `_fusionner_geojson_compat`. Les trois
+coutures applicatives (`_chemin_part`, `_stop_event`, `_lire_geojson`) sont
+reconstruites à chaque appel afin de préserver les monkeypatches et les appels
+existants.
+
+Quatre contrats atomiques supplémentaires couvrent l'interruption, l'échec de
+`Path.replace`, le signalement d'une source absente et l'exclusion de la sortie
+des sources. Ils ont révélé puis corrigé une fuite réelle : un refus de
+publication conservait bien l'ancien fichier final, mais laissait son `.part`.
+Le staging est désormais supprimé pour toute `BaseException` de publication.
+Trois contrats de façade verrouillent la signature, la délégation et la
+résolution tardive des dépendances.
+
+La livraison est préparée sans publication : `_geojson_merge.py` est ajouté à
+`deploy.MAP`; le motif `_geojson_*.py` impose déjà le rebuild et couvre les deux
+filtres CI. `main_fusionner` et sa CLI restent dans le monolithe.
+
+Mesure nette : `lidar2map.py` 12 900 → 12 714 lignes (**-186**, soit **0,87 %**
+du périmètre figé). Total sorti : **8 601 lignes, 40,35 %** ; le script
+principal passe sous le seuil de 60 % avec **59,65 %** restants. Cette
+sous-phase est intégrée au lot **v1.40.0**.
+
+### Sous-phase 13h : orchestration de la CLI de fusion extraite (terminée localement)
+
+Le nouveau module `_geojson_merge_cli.py` (133 lignes) développe les globs,
+détermine le chemin de sortie historique et orchestre les livrables issus de la
+fusion. La construction `argparse`, les bannières, l'historique et le code de
+sortie restent dans `main_fusionner`, ce qui limite la surface déplacée.
+
+Les formats demandés suivent désormais un contrat all-of : Mapsforge et
+l'overlay raster sont tous deux tentés, mais un seul échec suffit à produire un
+historique `ko` et un code 1. Cinq tests d'entrée ont révélé puis corrigé deux
+faux succès pour les retours `None` des générateurs `.map` et raster. Le dossier
+de résultat est maintenant enregistré dans l'historique, y compris en cas de
+fusion partielle. Quatre contrats directs couvrent les globs triés, le nom de
+sortie raw/gzip, l'arrêt des dérivés après échec de fusion et la résolution
+tardive des dépendances.
+
+La livraison est préparée sans publication : `_geojson_merge_cli.py` est dans
+`deploy.MAP` et reste couvert par le rebuild et les deux filtres CI
+`_geojson_*.py`.
+
+Mesure nette : `lidar2map.py` 12 714 → 12 712 lignes (**-2**, soit **0,01 %**
+du périmètre figé). Ce faible gain net est volontaire : les façades et le
+résultat typé rendent les statuts explicites, tandis que 133 lignes
+d'orchestration quittent physiquement le monolithe. Total sorti : **8 603
+lignes, 40,36 %** ; reste **59,64 %**. Cette sous-phase est intégrée au lot
+**v1.40.0**.
+
+### Prochaine étape proposée : 13i — point d'entrée `main_fusionner`
+
+Décider, après contrats CLI supplémentaires, si la construction du parser et
+les bannières méritent un déplacement. Le gain net probable est faible ; la
+priorité peut plutôt passer au prochain bloc vectoriel plus volumineux si cette
+extraction complexifie la façade ou la génération de l'historique.

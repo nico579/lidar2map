@@ -818,6 +818,105 @@ class AtomicPublicationTests(unittest.TestCase):
         self.assertTrue(seen)
         self._assert_no_part()
 
+    def test_fusion_publication_failure_keeps_previous_final_and_cleans_part(self):
+        source = self.tmp / "source.geojson"
+        source.write_text(json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [6.0, 43.0]},
+                "properties": {},
+            }],
+        }), encoding="utf-8")
+        final = self.tmp / "fusion.geojson"
+        final.write_text("old", encoding="utf-8")
+        real_replace = Path.replace
+
+        def replace(path, target):
+            if Path(target) == final and Path(path).suffix == ".part":
+                raise OSError("publication refused")
+            return real_replace(path, target)
+
+        with mock.patch.object(Path, "replace", autospec=True,
+                               side_effect=replace), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaisesRegex(OSError, "publication refused"):
+            L.fusionner_geojson([source], final)
+
+        self.assertEqual(final.read_text(encoding="utf-8"), "old")
+        self._assert_no_part()
+
+    def test_fusion_interruption_keeps_previous_final_and_cleans_part(self):
+        source = self.tmp / "source.geojson"
+        source.write_text(json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [6.0, 43.0]},
+                "properties": {},
+            }],
+        }), encoding="utf-8")
+        final = self.tmp / "fusion.geojson"
+        final.write_text("old", encoding="utf-8")
+        L._stop_event.set()
+
+        with contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(KeyboardInterrupt):
+            L.fusionner_geojson([source], final)
+
+        self.assertEqual(final.read_text(encoding="utf-8"), "old")
+        self._assert_no_part()
+
+    def test_fusion_reports_missing_sources_and_publishes_available_features(self):
+        source = self.tmp / "source.geojson"
+        source.write_text(json.dumps({
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "LineString",
+                             "coordinates": [[6.0, 43.0], [7.0, 44.0]]},
+                "properties": {},
+            }],
+        }), encoding="utf-8")
+        missing = self.tmp / "missing.geojson"
+        final = self.tmp / "fusion.geojson.gz"
+        ignored = []
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result, bbox = L.fusionner_geojson(
+                [source, missing], final, fichiers_ignores=ignored,
+            )
+
+        self.assertEqual(result, final)
+        self.assertEqual(bbox, (6.0, 43.0, 7.0, 44.0))
+        self.assertEqual(ignored, [missing.name])
+        with gzip.open(final, "rt", encoding="utf-8") as stream:
+            feature = json.load(stream)["features"][0]
+        self.assertEqual(feature["properties"]["source"], "source")
+        self._assert_no_part()
+
+    def test_fusion_excludes_its_previous_output_from_sources(self):
+        source = self.tmp / "source.geojson"
+        payload = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [6.0, 43.0]},
+                "properties": {},
+            }],
+        }
+        source.write_text(json.dumps(payload), encoding="utf-8")
+        final = self.tmp / "fusion.geojson"
+        final.write_text(json.dumps(payload), encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            result, _bbox = L.fusionner_geojson([source, final], final)
+
+        self.assertEqual(result, final)
+        merged = json.loads(final.read_text(encoding="utf-8"))
+        self.assertEqual(len(merged["features"]), 1)
+        self._assert_no_part()
+
     def test_horn_invalid_part_keeps_previous_final(self):
         source = self.tmp / "source.tif"
         source.write_bytes(b"dem")
