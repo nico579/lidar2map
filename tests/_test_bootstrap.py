@@ -14,6 +14,7 @@ import importlib.util
 import inspect
 import io
 import os
+import runpy
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,11 @@ import lidar2map as L  # noqa: E402
 import _bootstrap_policy as bootstrap_policy  # noqa: E402
 import _bootstrap_runtime as bootstrap_runtime  # noqa: E402
 import _bootstrap_tls as bootstrap_tls  # noqa: E402
+import _smoketest as smoketest  # noqa: E402
+import _logging_helpers as logging_helpers  # noqa: E402
+import _log_activation as log_activation  # noqa: E402
+import _runtime_paths as runtime_paths  # noqa: E402
+import _disk_guard as disk_guard  # noqa: E402
 
 
 class BootstrapModeTests(unittest.TestCase):
@@ -1239,6 +1245,549 @@ class BootstrapDependencyTests(unittest.TestCase):
             L._installer_deps()
         self.assertEqual(run.call_count, 2)
         self.assertEqual(imported, ["WebKit", "Cocoa"])
+
+
+class BootstrapFullInstallTests(unittest.TestCase):
+    def _run(self, *, missing=(), returncode=0):
+        missing = set(missing)
+        imports = []
+        commands = []
+        messages = []
+
+        def importer(module):
+            imports.append(module)
+            if module in missing:
+                raise ImportError(module)
+
+        def lancer(command, **kwargs):
+            commands.append((command, kwargs))
+            return SimpleNamespace(returncode=returncode)
+
+        ok = bootstrap_runtime.installer_toutes_dependances(
+            gui_deps_plateforme=lambda: ([], []),
+            importer=importer,
+            lancer=lancer,
+            executable="python-test",
+            ecrire=messages.append,
+        )
+        return ok, imports, commands, messages
+
+    def test_full_install_uses_the_shared_package_catalog(self):
+        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET["Pillow"], "PIL")
+        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET["pywebview"], "webview")
+        self.assertEqual(
+            bootstrap_runtime.MODULE_PAR_PAQUET["mapbox-vector-tile"],
+            "mapbox_vector_tile",
+        )
+        self.assertEqual(
+            bootstrap_runtime.MODULE_PAR_PAQUET["cloth-simulation-filter"], "CSF"
+        )
+
+    def test_full_install_does_not_call_pip_for_importable_packages(self):
+        ok, _imports, commands, messages = self._run()
+        self.assertTrue(ok)
+        self.assertEqual(commands, [])
+        self.assertIn("  All dependencies installed.", messages)
+
+    def test_full_install_fails_for_a_missing_critical_dependency(self):
+        ok, _imports, commands, messages = self._run(missing={"PIL"}, returncode=1)
+        self.assertFalse(ok)
+        self.assertEqual(commands[0][0], ["python-test", "-m", "pip", "install", "-q", "Pillow"])
+        self.assertEqual(len(commands), 1)
+        self.assertIn("    ERROR Pillow (critical dependency unavailable)", messages)
+
+    def test_full_install_keeps_an_optional_failure_non_fatal(self):
+        ok, _imports, commands, messages = self._run(missing={"osmium"}, returncode=1)
+        self.assertTrue(ok)
+        self.assertEqual(commands[0][0][-1], "osmium")
+        self.assertEqual(len(commands), 1)
+        self.assertIn("    ⚠ osmium (optional - skipped)", messages)
+
+
+class BootstrapUninstallPlanningTests(unittest.TestCase):
+    def test_windows_targets_use_localappdata(self):
+        targets = bootstrap_runtime.chemins_desinstallation(
+            systeme="Windows", home=Path("/home/test"), localappdata=Path("/local")
+        )
+        self.assertEqual(targets[0][0], Path("/local/lidar2map"))
+        self.assertEqual(targets[1][0], Path("/home/test/.lidar2map/venv"))
+
+    def test_macos_and_linux_targets_are_deterministic(self):
+        mac = bootstrap_runtime.chemins_desinstallation(
+            systeme="Darwin", home=Path("/home/test")
+        )
+        linux = bootstrap_runtime.chemins_desinstallation(
+            systeme="Linux", home=Path("/home/test")
+        )
+        self.assertEqual(mac[0][0], Path("/home/test/Library/Application Support/lidar2map"))
+        self.assertEqual(linux[0][0], Path("/home/test/.local/share/lidar2map"))
+
+    def test_planning_does_not_touch_filesystem(self):
+        targets = bootstrap_runtime.chemins_desinstallation(
+            systeme="Other", home=Path("/path/that/need/not/exist")
+        )
+        self.assertEqual(len(targets), 4)
+        self.assertFalse(any(path.exists() for path, _label in targets))
+
+    def test_uninstall_removes_only_planned_temporary_targets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            home = root / "home"
+            outside = root / "outside.txt"
+            outside.write_bytes(b"preserve")
+            targets = bootstrap_runtime.chemins_desinstallation(
+                systeme="Linux", home=home
+            )
+            for index, (path, _label) in enumerate(targets):
+                path.mkdir(parents=True)
+                (path / f"file-{index}.bin").write_bytes(b"data")
+            messages = []
+            ok = bootstrap_runtime.desinstaller_lidar2map(
+                systeme="Linux", home=home, ecrire=messages.append
+            )
+            self.assertTrue(ok)
+            self.assertTrue(outside.is_file())
+            self.assertTrue(all(not path.exists() for path, _label in targets))
+            self.assertEqual(messages.count("    ✓ removed"), 4)
+
+    def test_uninstall_reports_partial_failure_and_continues(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home"
+            targets = bootstrap_runtime.chemins_desinstallation(
+                systeme="Linux", home=home
+            )
+            for path, _label in targets[:2]:
+                path.mkdir(parents=True)
+            failed = targets[0][0]
+            removed = []
+
+            def remover(path):
+                if path == failed:
+                    raise PermissionError("locked")
+                removed.append(path)
+                path.rmdir()
+
+            messages = []
+            ok = bootstrap_runtime.desinstaller_lidar2map(
+                systeme="Linux",
+                home=home,
+                supprimer_arbre=remover,
+                ecrire=messages.append,
+            )
+            self.assertFalse(ok)
+            self.assertTrue(failed.exists())
+            self.assertEqual(removed, [targets[1][0]])
+            self.assertTrue(any("partial (locked)" in line for line in messages))
+
+    def test_historical_uninstall_facade_reads_environment_late(self):
+        with mock.patch.object(L.platform, "system", return_value="Windows"), \
+             mock.patch.object(L.Path, "home", return_value=Path("/home/test")), \
+             mock.patch.dict(L.os.environ, {"LOCALAPPDATA": "/local"}, clear=True), \
+             mock.patch.object(
+                 L._bootstrap_runtime_impl,
+                 "desinstaller_lidar2map",
+                 return_value=True,
+             ) as uninstall:
+            self.assertTrue(L._desinstaller_installation())
+        uninstall.assert_called_once_with(
+            systeme="Windows",
+            home=Path("/home/test"),
+            localappdata="/local",
+        )
+
+    def test_frozen_launcher_uninstalls_before_extraction_or_relaunch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake_executable = root / "lidar2map.exe"
+            (root / "lidar2map_bundle.zip").write_bytes(b"not-opened")
+            localappdata = root / "local"
+            with mock.patch.object(sys, "frozen", True, create=True), \
+                 mock.patch.object(sys, "executable", str(fake_executable)), \
+                 mock.patch.object(sys, "argv", [str(fake_executable), "--desinstaller"]), \
+                 mock.patch("platform.system", return_value="Windows"), \
+                 mock.patch.dict(os.environ, {"LOCALAPPDATA": str(localappdata)}), \
+                 mock.patch.object(
+                     bootstrap_runtime,
+                     "desinstaller_lidar2map",
+                     return_value=True,
+                 ) as uninstall, \
+                 mock.patch("zipfile.ZipFile") as zip_file, \
+                 mock.patch("subprocess.Popen") as popen:
+                with self.assertRaises(SystemExit) as raised:
+                    runpy.run_path(str(ROOT / "lidar2map.py"), run_name="__launcher_test__")
+            self.assertEqual(raised.exception.code, 0)
+            uninstall.assert_called_once()
+            self.assertEqual(uninstall.call_args.kwargs["systeme"], "Windows")
+            self.assertEqual(
+                uninstall.call_args.kwargs["localappdata"], str(localappdata)
+            )
+            zip_file.assert_not_called()
+            popen.assert_not_called()
+
+
+class IntegratedSmoketestTests(unittest.TestCase):
+    def test_source_smoketest_runs_all_modes_and_validates_outputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            script = root / "lidar2map.py"
+            projects = root / "Projets" / "smoke"
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append((command, kwargs))
+                if "--ignlidar" in command:
+                    outputs = ["ign_lidar/smoke_multi_ombrage_z10-13.mbtiles"]
+                elif "--ignraster" in command:
+                    outputs = ["raster/smoke_planign_z12-14.mbtiles"]
+                elif "--ignvecteur" in command:
+                    outputs = ["ign_vecteur/smoke_ign_troncon_de_route.geojson.gz"]
+                elif "--osm" in command:
+                    outputs = ["osm_vecteur/smoke.map",
+                               "osm_vecteur/smoke_osm_highway.geojson.gz"]
+                else:
+                    outputs = ["fusion/smoke_fusion.geojson.gz"]
+                for relative in outputs:
+                    output = projects / relative
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(b"ok")
+                return SimpleNamespace(returncode=0)
+
+            messages = []
+            ok = smoketest.executer_smoketest(
+                frozen=False,
+                executable="python-test",
+                script_path=script,
+                environnement={"KEPT": "yes"},
+                lancer=run,
+                maintenant=lambda: 0.0,
+                ecrire=messages.append,
+            )
+            self.assertTrue(ok)
+            self.assertEqual(len(calls), 5)
+            self.assertEqual(calls[0][0][:2], ["python-test", str(script.resolve())])
+            self.assertTrue(all(call[1]["env"]["LIDAR2MAP_SKIP_HIST"] == "1"
+                                for call in calls))
+            self.assertIn("\n5/5 OK", messages)
+
+    def test_smoketest_missing_outputs_and_fusion_skip_fail_the_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            messages = []
+            ok = smoketest.executer_smoketest(
+                frozen=False,
+                executable="python-test",
+                script_path=Path(temp) / "lidar2map.py",
+                environnement={},
+                lancer=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
+                maintenant=lambda: 0.0,
+                ecrire=messages.append,
+            )
+            self.assertFalse(ok)
+            self.assertTrue(any("(4 failed)" in line for line in messages))
+            self.assertTrue(any("(1 skipped)" in line for line in messages))
+
+    def test_smoketest_refuses_to_use_stale_outputs_after_failed_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            projects = work / "Projets" / "smoke"
+            projects.mkdir(parents=True)
+            launcher = mock.Mock()
+            ok = smoketest.executer_smoketest(
+                frozen=True,
+                executable=str(work / "lidar2map.exe"),
+                script_path=work / "lidar2map.py",
+                environnement={"LIDAR2MAP_WORK_DIR": str(work)},
+                lancer=launcher,
+                supprimer_arbre=lambda *_args, **_kwargs: None,
+                ecrire=lambda _message: None,
+            )
+            self.assertFalse(ok)
+            launcher.assert_not_called()
+
+    def test_smoketest_timeout_is_aggregated_and_other_modes_continue(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calls = []
+
+            def run(*_args, **_kwargs):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise subprocess.TimeoutExpired("smoke", 600)
+                return SimpleNamespace(returncode=2)
+
+            messages = []
+            ok = smoketest.executer_smoketest(
+                frozen=False,
+                executable="python-test",
+                script_path=Path(temp) / "lidar2map.py",
+                environnement={},
+                lancer=run,
+                maintenant=lambda: 0.0,
+                ecrire=messages.append,
+            )
+            self.assertFalse(ok)
+            self.assertEqual(len(calls), 4)
+            self.assertIn("  ✗ TIMEOUT (> 600s)", messages)
+
+    def test_smoketest_facade_keeps_historical_signature(self):
+        self.assertEqual(str(inspect.signature(L._executer_smoketest)), "()")
+        with mock.patch.object(
+            L._smoketest_impl, "executer_smoketest", return_value=True
+        ) as execute:
+            self.assertTrue(L._executer_smoketest())
+        self.assertEqual(execute.call_args.kwargs["script_path"], L.__file__)
+
+
+class LoggingHelpersTests(unittest.TestCase):
+    def test_secret_redaction_covers_both_flags_and_cli_forms(self):
+        command = "run --api-key secret-a --apikey=secret-b --zone-name public"
+        self.assertEqual(
+            logging_helpers.rediger_secrets(command),
+            "run --api-key *** --apikey=*** --zone-name public",
+        )
+        self.assertEqual(logging_helpers.rediger_secrets(""), "")
+
+    def test_duration_boundaries_keep_historical_format(self):
+        self.assertEqual(logging_helpers.formater_duree(59.9), "59s")
+        self.assertEqual(logging_helpers.formater_duree(60), "1m00s")
+        self.assertEqual(logging_helpers.formater_duree(3661), "1h01m01s")
+
+    def test_external_request_formatting(self):
+        self.assertEqual(
+            logging_helpers.formater_requete(["/tools/gdal.exe", "-of", "GTiff"]),
+            "  $ gdal.exe -of GTiff",
+        )
+        self.assertEqual(
+            logging_helpers.formater_requete("https://example.test", "GET"),
+            "  → GET https://example.test",
+        )
+
+    def test_historical_logging_facades_keep_signatures_and_output(self):
+        signature = inspect.signature(L._rediger_secrets)
+        self.assertEqual(tuple(signature.parameters), ("texte",))
+        self.assertIs(signature.parameters["texte"].annotation, str)
+        self.assertIs(signature.return_annotation, str)
+        self.assertEqual(str(inspect.signature(L._hms)), "(seconds)")
+        self.assertEqual(str(inspect.signature(L._log_req)), "(url_or_cmd, label='')")
+        with mock.patch("builtins.print") as printer:
+            L._log_req("url", "GET")
+        printer.assert_called_once_with("  → GET url", flush=True)
+
+
+class LogActivationTests(unittest.TestCase):
+    class FakeLogger:
+        def __init__(self, path):
+            self.path = Path(path)
+            self._log = io.StringIO()
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def _activate(self, *, frozen=False, env=None, verifier=lambda _path: None):
+        fake_sys = SimpleNamespace(
+            frozen=frozen,
+            executable="/bundle/lidar2map.exe",
+            argv=["lidar2map.py", "--api-key", "secret"],
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+            excepthook=None,
+        )
+        registered = []
+        messages = []
+        logger = log_activation.activer_log(
+            sys_module=fake_sys,
+            environnement=env or {},
+            script_path="/source/lidar2map.py",
+            classe_logger=self.FakeLogger,
+            rediger_secrets=logging_helpers.rediger_secrets,
+            enregistrer_atexit=registered.append,
+            verifier_dossier=verifier,
+            ecrire=messages.append,
+        )
+        return logger, fake_sys, registered, messages
+
+    def test_source_activation_installs_streams_header_hook_and_atexit(self):
+        logger, fake_sys, registered, messages = self._activate()
+        self.assertIs(fake_sys.stdout, logger)
+        self.assertIs(fake_sys.stderr, logger)
+        self.assertEqual(logger.path.parent.name, "logs")
+        self.assertEqual(logger.path.parent.parent.name, "source")
+        self.assertIn("Commande : lidar2map.py --api-key ***", logger._log.getvalue())
+        self.assertEqual(len(registered), 1)
+        registered[0]()
+        self.assertTrue(logger.closed)
+        fake_sys.excepthook(ValueError, ValueError("boom"), None)
+        self.assertTrue(any("UNHANDLED EXCEPTION" in line for line in messages))
+
+    def test_frozen_activation_prefers_explicit_work_directory(self):
+        logger, _fake_sys, _registered, _messages = self._activate(
+            frozen=True, env={"LIDAR2MAP_WORK_DIR": "/work"}
+        )
+        self.assertEqual(logger.path.parent.name, "logs")
+        self.assertEqual(logger.path.parent.parent.name, "work")
+
+    def test_inaccessible_directory_keeps_original_streams(self):
+        logger, fake_sys, registered, messages = self._activate(
+            verifier=lambda _path: (_ for _ in ()).throw(PermissionError("denied"))
+        )
+        self.assertIsNone(logger)
+        self.assertIsInstance(fake_sys.stdout, io.StringIO)
+        self.assertEqual(registered, [])
+        self.assertEqual(
+            messages, ["  WARNING: logs/ folder inaccessible, console log only."]
+        )
+
+    def test_activation_facade_keeps_empty_signature_and_dynamic_dependencies(self):
+        self.assertEqual(str(inspect.signature(L._activer_log)), "()")
+        with mock.patch.object(
+            L._log_activation_impl, "activer_log", return_value="logger"
+        ) as activate:
+            self.assertEqual(L._activer_log(), "logger")
+        self.assertIs(activate.call_args.kwargs["classe_logger"], L._TeeLogger)
+        self.assertIs(activate.call_args.kwargs["rediger_secrets"], L._rediger_secrets)
+
+
+class RuntimePathTests(unittest.TestCase):
+    def test_source_paths_are_derived_from_script_and_home(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = root / "application" / "lidar2map.py"
+            home = root / "profile"
+            paths = runtime_paths.calculer_chemins(
+                frozen=False,
+                environnement={"LIDAR2MAP_WORK_DIR": str(root / "ignored")},
+                executable=root / "python" / "python.exe",
+                script_path=script,
+                meipass=root / "ignored-bundle",
+                home=home,
+            )
+
+        work, bundle, lidar_home, cache, production = paths
+        self.assertEqual(work, script.resolve().parent)
+        self.assertEqual(bundle, work)
+        self.assertEqual(lidar_home, home / ".lidar2map")
+        self.assertEqual(cache, work / "cache")
+        self.assertEqual(production, work / "production")
+
+    def test_frozen_paths_prefer_launcher_work_dir_and_meipass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            work = root / "portable"
+            bundle = root / "bundle"
+            paths = runtime_paths.calculer_chemins(
+                frozen=True,
+                environnement={"LIDAR2MAP_WORK_DIR": str(work)},
+                executable=root / "bin" / "lidar2map.exe",
+                script_path=root / "ignored.py",
+                meipass=bundle,
+                home=root / "home",
+            )
+
+        self.assertEqual(paths[0], work)
+        self.assertEqual(paths[1], bundle)
+        self.assertEqual(paths[3], work / "cache")
+        self.assertEqual(paths[4], work / "production")
+
+    def test_frozen_paths_fall_back_to_executable_without_creating_directories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            executable = root / "missing" / "lidar2map.exe"
+            paths = runtime_paths.calculer_chemins(
+                frozen=True,
+                environnement={},
+                executable=executable,
+                script_path=root / "ignored.py",
+                home=root / "missing-home",
+            )
+
+            expected = executable.resolve().parent
+            self.assertEqual(paths[0], expected)
+            self.assertEqual(paths[1], expected)
+            self.assertFalse(expected.exists())
+            self.assertFalse(paths[2].exists())
+
+    def test_platform_indicators_are_exact_and_exclusive(self):
+        self.assertEqual(
+            runtime_paths.indicateurs_plateforme("Windows"), (True, False, False)
+        )
+        self.assertEqual(
+            runtime_paths.indicateurs_plateforme("Linux"), (False, True, False)
+        )
+        self.assertEqual(
+            runtime_paths.indicateurs_plateforme("Darwin"), (False, False, True)
+        )
+        self.assertEqual(
+            runtime_paths.indicateurs_plateforme("FreeBSD"), (False, False, False)
+        )
+
+    def test_main_source_constants_use_the_extracted_policy(self):
+        self.assertEqual(L.DOSSIER_TRAVAIL, ROOT)
+        self.assertEqual(L.BUNDLE_DIR, ROOT)
+        self.assertEqual(L.LIDAR2MAP_HOME, Path.home() / ".lidar2map")
+        self.assertEqual(L.DOSSIER_CACHE, ROOT / "cache")
+        self.assertEqual(L.DOSSIER_PRODUCTION, ROOT / "production")
+        self.assertEqual(
+            (L.WINDOWS, L.LINUX, L.MACOS),
+            runtime_paths.indicateurs_plateforme(L.platform.system()),
+        )
+
+
+class DiskGuardTests(unittest.TestCase):
+    def test_probe_uses_first_existing_parent_and_converts_bytes_to_gib(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "future" / "chunk"
+            usage = SimpleNamespace(free=7 * 1024 ** 3)
+            with mock.patch.object(L.shutil, "disk_usage", return_value=usage) as probe:
+                self.assertEqual(L._espace_libre_go(target), 7.0)
+        probe.assert_called_once_with(root)
+
+    def test_probe_failure_is_non_blocking(self):
+        with mock.patch.object(L.shutil, "disk_usage", side_effect=OSError("probe")):
+            self.assertEqual(L._espace_libre_go(Path.cwd()), float("inf"))
+
+    def test_disabled_guard_does_not_probe_or_exit(self):
+        probe = mock.Mock(side_effect=AssertionError("sonde interdite"))
+        writer = mock.Mock()
+        quitter = mock.Mock()
+        disk_guard.garder_disque(
+            "unused", 0, "001x001", 0, 4,
+            sonde=probe, exit_code=3, ecrire=writer, quitter=quitter,
+        )
+        probe.assert_not_called()
+        writer.assert_not_called()
+        quitter.assert_not_called()
+
+    def test_sufficient_space_continues_silently(self):
+        writer = mock.Mock()
+        quitter = mock.Mock()
+        disk_guard.garder_disque(
+            "target", 5, "001x001", 1, 4,
+            sonde=lambda _path: 5.0,
+            exit_code=3,
+            ecrire=writer,
+            quitter=quitter,
+        )
+        writer.assert_not_called()
+        quitter.assert_not_called()
+
+    def test_historical_guard_facade_reports_progress_and_exits_three(self):
+        self.assertEqual(str(inspect.signature(L._espace_libre_go)), "(chemin) -> float")
+        self.assertEqual(
+            str(inspect.signature(L._garde_disque)),
+            "(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int)",
+        )
+        with mock.patch.object(L, "_espace_libre_go", return_value=2.25) as probe, \
+             mock.patch("builtins.print") as writer, \
+             mock.patch.object(L.sys, "exit", side_effect=SystemExit(3)) as quitter, \
+             self.assertRaises(SystemExit) as raised:
+            L._garde_disque("target", 5.0, "002x003", 4, 9)
+
+        self.assertEqual(raised.exception.code, L.EXIT_DISK_LOW)
+        probe.assert_called_once_with("target")
+        quitter.assert_called_once_with(L.EXIT_DISK_LOW)
+        messages = [call.args[0] for call in writer.call_args_list]
+        self.assertIn("2.2 GB free < 5 GB threshold", messages[0])
+        self.assertIn("chunk 002x003: 4/9 chunks done", messages[1])
 
 
 class BootstrapVenvEngineTests(unittest.TestCase):

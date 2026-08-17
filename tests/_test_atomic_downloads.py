@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -38,6 +39,107 @@ class AtomicDownloadTests(unittest.TestCase):
 
     def _assert_no_part(self):
         self.assertEqual(list(self.tmp.rglob("*.part")), [])
+
+    def test_http_urlopen_applies_default_and_overridden_headers(self):
+        response = object()
+        with mock.patch.object(
+                L.urllib.request, "urlopen", return_value=response
+        ) as ouvrir:
+            self.assertIs(
+                L._urlopen(
+                    "https://example.invalid/data",
+                    headers={"Authorization": "Bearer secret"},
+                    timeout=7,
+                ),
+                response,
+            )
+
+        request = ouvrir.call_args.args[0]
+        self.assertEqual(request.get_header("User-agent"), L._HTTP_UA)
+        self.assertEqual(request.get_header("Authorization"), "Bearer secret")
+        self.assertEqual(ouvrir.call_args.kwargs, {"timeout": 7})
+
+        with mock.patch.object(L.urllib.request, "urlopen") as ouvrir:
+            L._urlopen("https://example.invalid", {"User-Agent": "custom"})
+        self.assertEqual(
+            ouvrir.call_args.args[0].get_header("User-agent"), "custom"
+        )
+
+    def test_download_facade_reloads_urlopen_and_chunk_size(self):
+        marker = object()
+        replacement = mock.Mock(name="urlopen")
+        with mock.patch.object(L, "_urlopen", replacement), mock.patch.object(
+                L._http_helpers_impl,
+                "telecharger_vers_tmp",
+                return_value=marker,
+        ) as implementation:
+            self.assertIs(
+                L._download_to_tmp("https://example.invalid", self.tmp / "x", (2, 9)),
+                marker,
+            )
+
+        self.assertEqual(implementation.call_args.args[:2], (
+            "https://example.invalid", self.tmp / "x"
+        ))
+        self.assertEqual(implementation.call_args.kwargs["timeout"], (2, 9))
+        self.assertIs(implementation.call_args.kwargs["ouvrir_url"], replacement)
+        self.assertEqual(
+            implementation.call_args.kwargs["taille_bloc"], L.HTTP_CHUNK_SIZE
+        )
+
+    def test_stream_download_closes_response_and_rejects_truncation(self):
+        class Response:
+            def __init__(self, body, announced):
+                self.body = body
+                self.position = 0
+                self.headers = {
+                    "content-type": "image/tiff",
+                    "content-length": str(announced),
+                }
+                self.closed = False
+
+            def read(self, size):
+                block = self.body[self.position:self.position + size]
+                self.position += len(block)
+                return block
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.closed = True
+
+        response = Response(b"12345", announced=8)
+        timeouts = []
+
+        def ouvrir(_url, timeout):
+            timeouts.append(timeout)
+            return response
+
+        with mock.patch.object(L, "_urlopen", side_effect=ouvrir):
+            with self.assertRaisesRegex(IOError, "Transfert tronqué"):
+                L._download_to_tmp(
+                    "https://example.invalid", self.tmp / "truncated.part", (3, 12)
+                )
+
+        self.assertEqual(timeouts, [12])
+        self.assertTrue(response.closed)
+        self.assertEqual((self.tmp / "truncated.part").read_bytes(), b"12345")
+
+    def test_stream_download_maps_http_errors(self):
+        def erreur(code):
+            return urllib.error.HTTPError(
+                "https://example.invalid", code, "error", None, None
+            )
+
+        with mock.patch.object(L, "_urlopen", side_effect=erreur(404)):
+            self.assertEqual(
+                L._download_to_tmp("https://example.invalid", self.tmp / "404.part"),
+                0,
+            )
+        with mock.patch.object(L, "_urlopen", side_effect=erreur(503)):
+            with self.assertRaisesRegex(IOError, "HTTP 503"):
+                L._download_to_tmp("https://example.invalid", self.tmp / "503.part")
 
     def test_direct_all_hooks_run_in_part_directory_then_publish(self):
         nom = "tile.tif"

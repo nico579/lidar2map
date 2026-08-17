@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernière mise à jour : 11 août 2026 (phase 11d terminée et intégrée au lot
-**v1.37.0** : TLS précoce extrait, fallback non vérifié supprimé et CA
-utilisateur préservées).
+Dernier lot préparé : 17 août 2026, **v1.38.0** (phases 11e à 13b :
+maintenance précoce, infrastructure partagée, pipeline WFS et acquisition bulk
+BD TOPO extraits).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -32,6 +32,16 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _bootstrap_policy.py    résolution argv/environnement et dépendances GUI pures
 ├── _bootstrap_runtime.py   orchestration, venv, relance du processus et pip
 ├── _bootstrap_tls.py       configuration CA et restauration TLS strictes
+├── _smoketest.py           orchestration du diagnostic intégré sans réseau en tests
+├── _logging_helpers.py     rédaction des secrets et formatage des logs
+├── _tee_logger.py          logger atomique, progressions et préfixes de blocs
+├── _log_activation.py      activation stdout/stderr, atexit et hook d'exception
+├── _atomic_files.py        staging atomique et validation SQLite fermée
+├── _http_helpers.py        ouverture URL et téléchargement streaming contrôlé
+├── _runtime_paths.py       chemins source/frozen et indicateurs de plateforme
+├── _disk_guard.py          sonde de capacité et arrêt propre avant un chunk
+├── _wfs_pipeline.py        pagination WFS et publication GeoJSON atomique
+├── _bdtopo_bulk.py         découverte, téléchargement et extraction GPKG bulk
 ├── _split_manifest.py      état persistant et suivi des intermédiaires
 ├── _split_deliverables.py  résultats et validation des livrables
 ├── _split_planning.py      grille, sharding, identifiants et signature
@@ -57,7 +67,8 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_mbtiles_wmts_helpers`, `_ombrages_pures`, `_ombrages_provider`,
 `_shading_specs`, `_geojson_geometry`, `_geojson_osm_xml`, `_geojson_raster`,
 `_geojson_mapsforge`, `_bootstrap_policy`, `_bootstrap_runtime`,
-`_bootstrap_tls`).
+`_bootstrap_tls`, `_atomic_files`, `_http_helpers`, `_runtime_paths`,
+`_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`).
 
 ## Volume déjà transféré
 
@@ -103,8 +114,21 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_bootstrap_runtime.py` (11b, mesuré) | 499 | 2,34 % |
 | Politique CLI et orchestration bootstrap (11c, mesuré) | 79 | 0,37 % |
 | `_bootstrap_tls.py` (11d, mesuré) | 36 | 0,17 % |
-| **Total sorti du monolithe (mesuré)** | **7 081** | **33,22 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **14 234** | **66,78 %** |
+| Maintenance `--installer-deps` (11e, mesuré) | 45 | 0,21 % |
+| Désinstallation top-level (11f, mesuré) | 39 | 0,18 % |
+| Parité launcher de désinstallation (11f-b, mesuré) | 25 | 0,12 % |
+| `_smoketest.py` (11g, mesuré) | 116 | 0,54 % |
+| `_logging_helpers.py` (12a, mesuré) | 22 | 0,10 % |
+| `_tee_logger.py` (12b, mesuré) | 215 | 1,01 % |
+| `_log_activation.py` (12c, mesuré) | 47 | 0,22 % |
+| `_atomic_files.py` (12d, mesuré) | 41 | 0,19 % |
+| `_http_helpers.py` (12e, mesuré) | 45 | 0,21 % |
+| `_runtime_paths.py` (12f, mesuré) | 11 | 0,05 % |
+| `_disk_guard.py` (12g, mesuré) | 9 | 0,04 % |
+| `_wfs_pipeline.py` (13a, mesuré) | 229 | 1,07 % |
+| `_bdtopo_bulk.py` (13b, mesuré) | 202 | 0,95 % |
+| **Total sorti du monolithe (mesuré)** | **8 127** | **38,13 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **13 188** | **61,87 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -171,7 +195,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-11d est de 14 234 lignes (66,78 %) : il reste donc à sortir **6 774 à 7 839
+post-13a est de 13 390 lignes (62,82 %) : il reste donc à sortir **5 930 à 6 995
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -227,7 +251,9 @@ rester dans le script principal.
 | 8. Points d’entrée | **Terminée** | `main()` (8a-c) et `main_wmts()` (8a+8d) allégées à leur parsing/résolution ; corps de dispatch déjà atteint ; autres points d'entrée audités, extraction non justifiée | tests d’historique monolithique et CLI |
 | 9. Bloc ombrages/COG | **Terminée** | IO raster + kernels numba + algorithmes par type (9b), fetch provider + composites VAT/MSTP (9c), types/presets/parsing (9d) ; `generer_ombrages` volontairement laissée en orchestrateur | `_test_corrections.py`, 83 contrats de façade, profils `fast`/`scientific` |
 | 10. GeoJSON/Mapsforge | **Terminée** | Noyau géométrique, conversion GeoJSON IGN→OSM XML, rasteriseur transparent et runner Mapsforge extraits (10a-d) | matrices OSM XML/overlay/Mapsforge, publications atomiques, contrats de façade, profils `fast`/`scientific` |
-| 11. Bootstrap | **En cours** | Politique GUI/CLI pure, moteur venv/pip, orchestration et TLS strict extraits (11a-d) | 64 contrats bootstrap hors réseau, façades, import isolé et profils complets |
+| 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
+| 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
+| 13. Pipelines vectoriels restants | **En cours** | Pipeline WFS et acquisition bulk BD TOPO extraits (13a-b) | pagination, streaming, cache, archive exacte, interruption et publication atomique |
 
 ## Travail déjà sécurisé
 
@@ -1505,7 +1531,7 @@ du périmètre figé). `_bootstrap_tls.py` compte 108 lignes physiques, mais seu
 baisse nette du monolithe mesure la progression. Total sorti : **7 081 lignes,
 33,22 %**.
 
-### Prochaine étape proposée : 11e — commande de maintenance `--installer-deps`
+### Sous-phase 11e : maintenance `--installer-deps` extraite (terminée localement)
 
 Caractériser puis extraire séparément le bloc top-level `--installer-deps`. Ce
 lot devra supprimer la duplication du catalogue paquet pip → module déjà présent
@@ -1515,3 +1541,314 @@ un lot ultérieur distinct en raison de ses suppressions récursives ; `--smoket
 relève du diagnostic et ne sera pas mélangé au bootstrap. Le futur runtime CPython
 3.12 décrit dans `correctif_bootstrap_python312_multiplateforme.md` demeure un
 chantier distinct.
+
+#### Contrat de prudence pour 11e (à caractériser avant déplacement)
+
+La commande ne lancera jamais un `pip` réel dans les tests : chaque scénario
+injectera le lanceur et les imports. Le catalogue unique devra couvrir les noms
+pip qui ne sont pas des noms de modules (`Pillow`/`PIL`, `pywebview`/`webview`,
+`PyQt6-WebEngine`, PyObjC, `mapbox-vector-tile` et
+`cloth-simulation-filter`). La politique cible est explicite :
+
+- une dépendance critique absente ou dont l'installation échoue termine avec le
+  code 1 ; elle ne peut pas être présentée comme « optional - skipped » ;
+- une dépendance optionnelle échouée est signalée, mais les autres paquets sont
+  traités et la commande termine avec le code 0 ;
+- les dépendances déjà importables ne déclenchent aucun appel pip ;
+- la sélection GUI provient de la politique de plateforme déjà extraite, sans
+  réintroduire de test direct de l'OS dans le point d'entrée ;
+- les tests verrouillent l'ordre des paquets, les codes de sortie et l'absence
+  d'effet réseau ou système.
+
+L'implémentation est maintenant dans `_bootstrap_runtime.py`, derrière la façade
+historique `_installer_toutes_dependances()`. La commande top-level conserve sa
+sortie immédiate, mais délègue le code de sortie au booléen du moteur. Le
+catalogue `MODULE_PAR_PAQUET` est également réutilisé par l'installation normale
+du bootstrap : un nom de module ne peut plus diverger entre les deux chemins.
+
+Validation ciblée : **68 contrats bootstrap** hors réseau, dont quatre dédiés à
+la maintenance complète, et Ruff ciblé verts. Aucun appel pip réel n'a été
+effectué. Mesure nette : `lidar2map.py` 14 234 → 14 189 lignes (**-45**, soit
+**0,21 %** du périmètre figé). Total sorti : **7 126 lignes, 33,43 %**.
+
+Cette sous-phase est locale et sera regroupée avec le prochain lot publié ; la
+version distribuée actuelle reste v1.37.0.
+
+### Sous-phase 11f : commande top-level `--desinstaller` extraite (terminée localement)
+
+Caractériser d'abord les cibles par système, le calcul de taille et l'échec
+partiel de suppression. Cette commande est destructive : aucun déplacement ne
+sera fait avant des tests sur répertoires temporaires et une vérification stricte
+des chemins. `--smoketest` reste un lot de diagnostic séparé.
+
+Premier incrément : `_bootstrap_runtime.py` expose
+`chemins_desinstallation(...)`, une fonction pure qui ne lit ni n'efface le
+disque. Elle verrouille les quatre cibles et les variantes Windows/macOS/Linux
+par trois contrats hors réseau.
+
+Le second incrément ajoute `desinstaller_lidar2map(...)` et une façade historique
+minimale. Les suppressions réelles des tests sont strictement confinées à des
+`TemporaryDirectory`; une sentinelle extérieure prouve que seules les quatre
+cibles planifiées sont touchées. Le moteur continue après une erreur de
+permission, renvoie `False` et la commande sort alors avec le code 1. La mesure
+ne suit pas les liens et un lien cible est détaché sans parcourir sa destination.
+
+Validation : **74 contrats bootstrap**, compilation, Ruff et profil FAST complet
+verts.
+Mesure nette : `lidar2map.py` 14 189 → 14 150 lignes (**-39**, soit **0,18 %**
+du périmètre figé). Total sorti : **7 165 lignes, 33,61 %**.
+
+### Sous-phase 11f-b : parité du launcher (terminée localement)
+
+Le runtime, qui ne dépend que de la bibliothèque standard, est maintenant
+importé avant le bloc launcher. L'interception frozen de `--desinstaller`
+délègue au même moteur que le script et propage le même code d'échec partiel.
+Un contrat exécute le vrai point d'entrée en mode frozen simulé : il vérifie la
+délégation puis prouve que le ZIP du bundle n'est pas ouvert et qu'aucun
+processus n'est relancé.
+
+Validation ciblée : **75 contrats bootstrap**, compilation et Ruff verts.
+Mesure nette : `lidar2map.py` 14 150 → 14 125 lignes (**-25**, soit **0,12 %**
+du périmètre figé). Total sorti : **7 190 lignes, 33,73 %**.
+
+### Sous-phase 11g : diagnostic `--smoketest` extrait (terminée localement)
+
+Le nouveau module `_smoketest.py` (145 lignes) porte la construction des quatre
+pipelines autonomes et de la fusion, la validation des sorties, les délais et le
+bilan agrégé. La façade historique `_executer_smoketest()` conserve une signature
+vide et le point d'entrée traduit son booléen en code de sortie.
+
+Cinq contrats supplémentaires simulent tous les sous-processus : réussite des
+cinq modes et création des sorties, sorties absentes ou vides, fusion ignorée si
+OSM échoue, timeout avec poursuite des autres modes, refus d'utiliser des sorties
+anciennes lorsque leur nettoyage échoue, et signature de façade. Aucun réseau ni
+pipeline réel n'est appelé. Le nettoyage incomplet est désormais un échec
+explicite, ce qui évite qu'un ancien fichier fasse passer le diagnostic à tort.
+
+Le module est enregistré dans `deploy.MAP`, les deux filtres CI et la garde de
+rebuild. L'import statique suffit aux analyses PyInstaller.
+
+Validation : **80 contrats bootstrap/maintenance**, compilation, Ruff et garde
+de livraison verts. Mesure nette : `lidar2map.py` 14 125 → 14 009 lignes
+(**-116**, soit **0,54 %** du périmètre figé). Total sorti : **7 306 lignes,
+34,28 %**.
+
+La phase 11 est fonctionnellement terminée localement. La version reste 1.37.0
+et aucun déploiement de ces lots locaux 11e-g n'a encore été lancé.
+
+### Prochaine étape proposée : phase 12 — infrastructure partagée
+
+Auditer d'abord logger, secrets, HTTP et helpers atomiques restants, puis choisir
+le plus petit cluster pur. La redaction des secrets et les publications
+atomiques devront être caractérisées avant tout déplacement.
+
+### Sous-phase 12a : helpers purs de journalisation extraits (terminée localement)
+
+Le nouveau module `_logging_helpers.py` regroupe la rédaction des options
+`--api-key`/`--apikey`, le formatage des durées et la construction des lignes de
+requête HTTP ou subprocess. Les façades `_rediger_secrets`, `_hms` et `_log_req`
+gardent leurs signatures ; `_log_req` conserve l'effet `print(..., flush=True)`
+dans le monolithe.
+
+Quatre contrats couvrent les deux syntaxes de secret, les seuils 60 secondes et
+une heure, les commandes et URL, ainsi que les signatures de façade. Le module
+est enregistré dans `deploy.MAP`, les deux filtres CI et la garde de rebuild.
+
+Validation ciblée : **84 contrats bootstrap/infrastructure** et Ruff verts.
+Mesure nette : `lidar2map.py` 14 009 → 13 987 lignes (**-22**, soit **0,10 %**
+du périmètre figé). Total sorti : **7 328 lignes, 34,38 %**.
+
+### Sous-phase 12b : logger atomique extrait (terminée localement)
+
+Le nouveau module `_tee_logger.py` (232 lignes) porte la classe `TeeLogger` sans
+réécriture de son algorithme. `lidar2map.py` réexporte la même classe sous le nom
+historique `_TeeLogger`; l'activation top-level, l'enregistrement `atexit` et le
+hook d'exception restent dans la façade pour préserver l'ordre de démarrage.
+
+Les contrats existants de préfixage des blocs et de progression sont complétés
+par la publication uniquement à la fermeture, l'idempotence de `close`, la
+conservation du `.part` et l'avertissement si le renommage échoue, l'identité de
+la classe réexportée et quarante écritures concurrentes sans perte ni mélange.
+
+Le module est enregistré dans `deploy.MAP`, les deux filtres CI et la garde de
+rebuild. Validation ciblée : cinq contrats logger, compilation et Ruff verts.
+Mesure nette : `lidar2map.py` 13 987 → 13 772 lignes (**-215**, soit **1,01 %**
+du périmètre figé). Total sorti : **7 543 lignes, 35,39 %**.
+
+### Sous-phase 12c : activation du log extraite (terminée localement)
+
+Le nouveau module `_log_activation.py` (74 lignes) reçoit explicitement `sys`,
+l'environnement, le chemin du script, la classe logger, la rédaction des secrets
+et `atexit.register`. Il choisit le dossier source ou frozen, vérifie son accès,
+installe stdout/stderr, le hook d'exception et l'en-tête expurgé. L'appel
+automatique `_activer_log()` reste exactement au même endroit dans la façade.
+
+Quatre contrats couvrent la source, la priorité de `LIDAR2MAP_WORK_DIR` en
+frozen, le maintien des streams si le dossier est inaccessible, la fermeture
+`atexit`, le hook d'exception et la relecture dynamique des dépendances.
+
+Validation ciblée : **88 contrats bootstrap/infrastructure**, compilation et
+Ruff verts. Mesure nette : `lidar2map.py` 13 772 → 13 725 lignes (**-47**, soit
+**0,22 %** du périmètre figé). Total sorti : **7 590 lignes, 35,61 %**.
+
+### Sous-phase 12d : primitives de publication atomique extraites (terminée localement)
+
+Le nouveau module `_atomic_files.py` (70 lignes) centralise la création d'un
+staging unique, le nettoyage borné des sidecars SQLite et la validation en lecture
+seule avant publication. `lidar2map.py` conserve les trois façades historiques
+`_chemin_part`, `_nettoyer_sqlite_part` et `_valider_sqlite_part`, afin que les
+pipelines GeoJSON, Mapsforge et MBTiles ainsi que leurs monkeypatches ne changent
+pas de couture.
+
+Quatre contrats directs vérifient la délégation des façades, l'unicité des noms,
+la préservation du fichier final, le nettoyage exact de `.part`, `-wal`, `-shm`
+et `-journal`, les tables et cardinalités attendues, le rejet des sidecars et la
+fermeture effective de la lecture SQLite sous Windows. Les curseurs de validation
+sont désormais fermés explicitement avant la connexion.
+
+Le module est enregistré dans `deploy.MAP`, la garde de rebuild et les deux
+filtres CI. Validation ciblée : **23 tests de publication atomique**, compilation,
+Ruff et garde de livraison verts. Mesure nette : `lidar2map.py` 13 725 → 13 684
+lignes (**-41**, soit **0,19 %** du périmètre figé). Total sorti : **7 631 lignes,
+35,80 %**. La version reste **1.37.0** en l'absence de déploiement.
+
+### Sous-phase 12e : noyau HTTP commun extrait (terminée localement)
+
+Le nouveau module `_http_helpers.py` (64 lignes) contient uniquement l'ouverture
+URL avec User-Agent commun et le téléchargement streaming vers un fichier
+temporaire. Les décisions métier restent dans `lidar2map.py` et les providers :
+aucun retry, cache, parallélisme, validation GeoTIFF ou politique d'absence n'a été
+déplacé.
+
+Les façades `_urlopen` et `_download_to_tmp` gardent leurs signatures. Elles
+injectent à chaque appel `urllib.request`, `_urlopen` et `HTTP_CHUNK_SIZE`, ce qui
+préserve les monkeypatches historiques. Le contrat reste inchangé : 404 retourne
+zéro, les autres statuts HTTP lèvent une erreur, XML/HTML en 200 est rejeté,
+`multipart/related` WCS reste accepté, le timeout tuple utilise sa valeur maximale,
+la réponse est fermée et `Content-Length` protège contre une coupure silencieuse.
+
+Quatre contrats directs portent la suite des téléchargements atomiques à **12
+tests**. La suite de robustesse historique couvre en complément les réponses
+binaires, XML et multipart. Le module est enregistré dans `deploy.MAP`, la garde
+de rebuild et les deux filtres CI.
+
+Validation ciblée : 12 tests de téléchargements, suite de robustesse, compilation,
+Ruff et garde de livraison verts. Mesure nette : `lidar2map.py` 13 684 → 13 639
+lignes (**-45**, soit **0,21 %** du périmètre figé). Total sorti : **7 676 lignes,
+36,01 %**. La version reste **1.37.0** en l'absence de déploiement.
+
+### Sous-phase 12f : chemins et plateforme extraits (terminée localement)
+
+Le nouveau module `_runtime_paths.py` (33 lignes) calcule sans effet de bord les
+cinq racines initiales : dossier de travail, bundle, home partagé, cache et
+production. Il expose également les trois indicateurs Windows, Linux et macOS.
+Le mode source continue d'ignorer `LIDAR2MAP_WORK_DIR`; le mode frozen lui donne
+priorité, puis se replie sur le dossier résolu de l'exécutable. `_MEIPASS` reste
+réservé aux ressources bundlées.
+
+Cinq contrats couvrent les chemins source, le launcher portable, le fallback de
+l'exécutable, l'absence de création de dossiers, les quatre familles de plateforme
+et les constantes réellement publiées par le module principal. Les anciens
+contrats structurels cache/production ont été redirigés vers le module extrait,
+sans supprimer leurs vérifications CLI et GUI.
+
+Les fonctions `_appliquer_cache_dir` et `_appliquer_production_dir` restent dans
+`lidar2map.py` : elles mutent les racines et créent les dossiers, donc ne font pas
+partie de cette politique pure. Le nouveau module est enregistré dans `deploy.MAP`,
+la garde de rebuild et les deux filtres CI.
+
+Validation ciblée : **93 contrats bootstrap/infrastructure**, suite d'interactions,
+compilation, Ruff et garde de livraison verts. Mesure nette : `lidar2map.py`
+13 639 → 13 628 lignes (**-11**, soit **0,05 %** du périmètre figé). Total sorti :
+**7 687 lignes, 36,06 %**. La version reste **1.37.0** sans déploiement.
+
+### Sous-phase 12g : garde-fou d'espace disque extrait (terminée localement)
+
+Le nouveau module `_disk_guard.py` (45 lignes) contient la remontée vers le
+premier parent existant, la conversion des octets en Go et la décision d'arrêt
+avant un morceau. Une erreur de `disk_usage` reste non bloquante et retourne
+l'infini ; un seuil nul ou négatif n'effectue même pas de sonde.
+
+Les façades `_espace_libre_go` et `_garde_disque` gardent leurs signatures et
+leurs docstrings, désormais fournies par le module. Elles injectent tardivement
+`shutil.disk_usage`, la sonde historique, `print`, `sys.exit` et
+`EXIT_DISK_LOW=3`. Le préchargement glissant et sa marge de deux chunks ne sont
+pas déplacés.
+
+Cinq contrats couvrent le parent inexistant, la conversion exacte, l'échec de
+sonde, le seuil désactivé, l'espace suffisant et l'arrêt avec progression. Les
+**56 tests de reprise découpée** confirment que la garde reste placée avant le
+démarrage ou le rejeu d'un morceau.
+
+Validation ciblée : **98 contrats bootstrap/infrastructure**, suite complète de
+reprise, compilation, Ruff et garde de livraison verts. Mesure nette :
+`lidar2map.py` 13 628 → 13 619 lignes (**-9**, soit **0,04 %** du périmètre figé).
+Total sorti : **7 696 lignes, 36,11 %**. La version reste **1.37.0** sans
+déploiement.
+
+La phase 12 est close localement : les derniers helpers avec effets de bord
+(`_appliquer_cache_dir`, `_appliquer_production_dir`) restent volontairement dans
+la façade, leur déplacement isolé n'apportant pas de simplification nette.
+
+### Sous-phase 13a : pipeline WFS extrait (terminée localement)
+
+Le nouveau module `_wfs_pipeline.py` (297 lignes) prend en charge le nommage des
+sorties, la reconstruction locale gzip/raw, la pré-requête `RESULTTYPE=hits`, la
+pagination streamée et la publication GeoJSON. La dataclass `DependancesWfs`
+reçoit les neuf coutures applicatives ; `lidar2map.py` les reconstruit à chaque
+appel et conserve la signature historique de `telecharger_wfs`.
+
+Les invariants existants restent inchangés : `numberMatched` pilote la complétude,
+`STARTINDEX` avance du nombre réellement reçu, une page plafonnée sous `COUNT`
+n'est pas prise pour une fin de flux, une page en panne est retentée trois fois et
+aucun résultat tronqué n'est publié. Les namespaces autres que `BDTOPO_V3`
+conservent leur hash anti-collision tandis que le nom historique BD TOPO reste
+stable.
+
+Trois contrats de façade vérifient la signature, la relecture dynamique des neuf
+dépendances et les noms de fichiers. Deux contrats atomiques supplémentaires
+couvrent l'interruption et l'échec de `Path.replace`. Ce dernier a révélé puis
+corrigé un résidu historique : l'ancien final était préservé mais le `.part`
+restait sur disque lorsque la publication gzip échouait.
+
+Validation ciblée : **97 contrats de refonte**, **25 publications atomiques**,
+suite de robustesse, compilation, Ruff et garde de livraison verts. Mesure nette :
+`lidar2map.py` 13 619 → 13 390 lignes (**-229**, soit **1,07 %** du périmètre
+figé). Total sorti : **7 925 lignes, 37,18 %**. La version reste **1.37.0** sans
+déploiement.
+
+### Sous-phase 13b : acquisition bulk BD TOPO extraite (terminée localement)
+
+Le nouveau module `_bdtopo_bulk.py` (279 lignes) porte la découverte Atom avec
+repli `HEAD`, le tri numérique des versions, le téléchargement atomique des
+archives 7-Zip et l'extraction du GPKG correspondant exactement au département.
+La dataclass figée `DependancesBdtopo` reçoit les coutures réseau, cache, journal,
+arrêt et staging ; les deux façades historiques reconstruisent ces dépendances à
+chaque appel.
+
+Les invariants de cache sont conservés : un fichier voisin n'est jamais choisi,
+un ancien GPKG reste disponible si le réseau ou l'extraction échoue, le membre
+extrait doit dépasser le seuil attendu et posséder une structure SQLite valide.
+Les archives `.part` et le workspace temporaire sont nettoyés sur toutes les
+sorties connues. La connexion de validation SQLite est maintenant fermée
+explicitement, y compris lorsqu'une requête de contrôle lève une exception.
+
+Trois contrats de refonte couvrent les signatures, la relecture dynamique des
+dépendances, la délégation et le choix de la ressource la plus récente, notamment
+le cas `3-10` supérieur à `3-9`. La suite de robustesse existante verrouille le
+membre départemental exact, la préservation du cache voisin et de l'ancien final,
+le nettoyage après panne réseau et le rejet d'un GPKG trop petit.
+
+Validation ciblée : **100 contrats de refonte**, suite de robustesse, compilation,
+Ruff et garde de livraison verts. Mesure nette : `lidar2map.py` 13 390 →
+13 188 lignes (**-202**, soit **0,95 %** du périmètre figé). Total sorti :
+**8 127 lignes, 38,13 %**. Cette sous-phase est intégrée au lot **v1.38.0**.
+
+### Prochaine étape proposée : 13c — conversion des couches BD TOPO
+
+Caractériser puis extraire `_extraire_couche_bdtopo` et le streaming GeoJSON
+associé, sans inclure encore l'orchestrateur bulk complet. Ce lot devra verrouiller
+la sélection de couche GPKG, les filtres spatiaux, l'ajout de la propriété source,
+la validation et la publication groupée des formats demandés, ainsi que la
+préservation de tous les anciens finals si une conversion échoue. La fusion
+multi-départements restera une sous-phase séparée.

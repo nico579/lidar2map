@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -44,6 +45,8 @@ import _split_manifest as split_manifest  # noqa: E402
 import _split_planning as split_planning  # noqa: E402
 import _split_runner as split_runner  # noqa: E402
 import _split_sliding as split_sliding  # noqa: E402
+import _wfs_pipeline as wfs_pipeline  # noqa: E402
+import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
 
 
 class PublicFacadeContractTests(unittest.TestCase):
@@ -1693,6 +1696,181 @@ class ManifestContractTests(unittest.TestCase):
             [("before.tif", "outer"), ("after.tif", "outer")],
         )
         self.assertEqual(inner.calls, [("inside.tif", "inner")])
+
+
+class WfsPipelineContractTests(unittest.TestCase):
+    def test_wfs_facade_keeps_signature_and_reloads_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L.telecharger_wfs)),
+            "(typename, lon_min, lat_min, lon_max, lat_max, nom_zone, "
+            "dossier_sortie, ecraser_telechargement=False, formats=None)",
+        )
+        seams = {
+            "WFS_URL": "https://wfs.example/ows",
+            "_HTTP_UA": "test-agent",
+            "WFS_PAGE": 17,
+            "_chemin_part": mock.Mock(name="chemin_part"),
+            "_stop_event": mock.Mock(name="stop_event"),
+            "_gunzip_vers_fichier": mock.Mock(name="gunzip"),
+            "_gzip_depuis_fichier": mock.Mock(name="gzip"),
+            "_log_req": mock.Mock(name="log_req"),
+            "_hms": mock.Mock(name="hms"),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            dependencies = L._dependances_wfs()
+
+        self.assertEqual(dependencies.wfs_url, seams["WFS_URL"])
+        self.assertEqual(dependencies.http_ua, seams["_HTTP_UA"])
+        self.assertEqual(dependencies.page_size, seams["WFS_PAGE"])
+        self.assertIs(dependencies.chemin_part, seams["_chemin_part"])
+        self.assertIs(dependencies.stop_event, seams["_stop_event"])
+        self.assertIs(
+            dependencies.gunzip_vers_fichier, seams["_gunzip_vers_fichier"]
+        )
+        self.assertIs(
+            dependencies.gzip_depuis_fichier, seams["_gzip_depuis_fichier"]
+        )
+        self.assertIs(dependencies.log_req, seams["_log_req"])
+        self.assertIs(dependencies.formater_duree, seams["_hms"])
+
+    def test_wfs_facade_delegates_all_arguments(self):
+        marker = object()
+        with mock.patch.object(
+            L, "_telecharger_wfs_impl", return_value=marker
+        ) as implementation:
+            result = L.telecharger_wfs(
+                "NS:layer", 1, 2, 3, 4, "zone", "output",
+                ecraser_telechargement=True,
+                formats=["gz", "geojson"],
+            )
+        self.assertIs(result, marker)
+        self.assertEqual(
+            implementation.call_args.args,
+            ("NS:layer", 1, 2, 3, 4, "zone", "output"),
+        )
+        self.assertTrue(
+            implementation.call_args.kwargs["ecraser_telechargement"]
+        )
+        self.assertEqual(
+            implementation.call_args.kwargs["formats"], ["gz", "geojson"]
+        )
+        self.assertIsInstance(
+            implementation.call_args.kwargs["dependances"],
+            wfs_pipeline.DependancesWfs,
+        )
+
+    def test_wfs_output_names_keep_bdtopo_compatibility_and_avoid_collisions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            short, raw, compressed = wfs_pipeline._sorties_wfs(
+                "BDTOPO_V3:cours_d_eau", "zone", root
+            )
+            self.assertEqual(short, "cours_d_eau")
+            self.assertEqual(raw.name, "zone_ign_cours_d_eau.geojson")
+            self.assertEqual(compressed, Path(str(raw) + ".gz"))
+            first = wfs_pipeline._sorties_wfs("NS:a-b", "zone", root)[1]
+            second = wfs_pipeline._sorties_wfs("NS:a_b", "zone", root)[1]
+            self.assertNotEqual(first, second)
+
+
+class BdtopoBulkContractTests(unittest.TestCase):
+    def test_facades_keep_signatures_and_reload_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._decouvrir_url_bdtopo_gpkg)), "(num_dep)"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._telecharger_bdtopo_gpkg)),
+            "(num_dep, url, nom_ressource, ecraser=False)",
+        )
+        seams = {
+            "BDTOPO_API_URL": "https://api.invalid",
+            "BDTOPO_DL_BASE": "https://download.invalid",
+            "_HTTP_UA": "test-agent",
+            "DOSSIER_CACHE": Path("cache-test"),
+            "_log_req": mock.Mock(name="log_req"),
+            "_chemin_part": mock.Mock(name="chemin_part"),
+            "_urlopen": mock.Mock(name="urlopen"),
+            "_stop_event": mock.Mock(name="stop_event"),
+            "_hms": mock.Mock(name="hms"),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            dependencies = L._dependances_bdtopo_bulk()
+
+        self.assertEqual(dependencies.api_url, seams["BDTOPO_API_URL"])
+        self.assertEqual(dependencies.download_base, seams["BDTOPO_DL_BASE"])
+        self.assertEqual(dependencies.cache_root, seams["DOSSIER_CACHE"])
+        self.assertIs(dependencies.ouvrir_url, seams["_urlopen"])
+        self.assertIs(dependencies.chemin_part, seams["_chemin_part"])
+        self.assertIs(dependencies.stop_event, seams["_stop_event"])
+
+    def test_facades_delegate_to_extracted_implementations(self):
+        marker = object()
+        with mock.patch.object(
+            L, "_decouvrir_url_bdtopo_gpkg_impl", return_value=marker
+        ) as discovery:
+            self.assertIs(L._decouvrir_url_bdtopo_gpkg("83"), marker)
+        discovery.assert_called_once()
+        self.assertEqual(discovery.call_args.args, ("83",))
+        self.assertIsInstance(
+            discovery.call_args.kwargs["dependances"],
+            bdtopo_bulk.DependancesBdtopo,
+        )
+
+        with mock.patch.object(
+            L, "_telecharger_bdtopo_gpkg_impl", return_value=marker
+        ) as download:
+            self.assertIs(
+                L._telecharger_bdtopo_gpkg("83", "url", "resource", True), marker
+            )
+        self.assertEqual(download.call_args.args, ("83", "url", "resource"))
+        self.assertTrue(download.call_args.kwargs["ecraser"])
+
+    def test_atom_discovery_sorts_dates_then_numeric_versions(self):
+        names = (
+            "BDTOPO_3-9_TOUSTHEMES_GPKG_LAMB93_D083_2026-06-15",
+            "BDTOPO_3-10_TOUSTHEMES_GPKG_LAMB93_D083_2026-06-15",
+            "BDTOPO_9-9_TOUSTHEMES_GPKG_LAMB93_D083_2025-12-15",
+        )
+        entries = "".join(
+            f"<entry><title>{name}</title><id>{name}</id></entry>" for name in names
+        )
+        xml = (
+            '<feed xmlns="http://www.w3.org/2005/Atom">' + entries + "</feed>"
+        ).encode("utf-8")
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return xml
+
+        dependencies = bdtopo_bulk.DependancesBdtopo(
+            api_url="https://api.invalid",
+            download_base="https://download.invalid",
+            http_ua="agent",
+            cache_root=Path("cache"),
+            log_req=mock.Mock(),
+            chemin_part=mock.Mock(),
+            ouvrir_url=mock.Mock(),
+            stop_event=mock.Mock(),
+            formater_duree=mock.Mock(),
+        )
+        with mock.patch.object(
+            bdtopo_bulk.urllib.request, "urlopen", return_value=Response()
+        ), contextlib.redirect_stdout(io.StringIO()):
+            url, name = bdtopo_bulk.decouvrir_url_bdtopo_gpkg(
+                "83", dependances=dependencies
+            )
+        self.assertEqual(name, names[1])
+        self.assertEqual(url, f"https://download.invalid/{name}/{name}.7z")
 
 
 if __name__ == "__main__":

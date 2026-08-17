@@ -570,6 +570,7 @@ while _MODULE_DIR in sys.path:
 sys.path.insert(0, _MODULE_DIR)
 
 import _bootstrap_tls as _bootstrap_tls_impl
+import _bootstrap_runtime as _bootstrap_runtime_impl
 
 _SSL_CTX_CERTIFI = _bootstrap_tls_impl.initialiser_tls(
     environnement=os.environ,
@@ -663,37 +664,12 @@ if getattr(sys, "frozen", False):
             # Le launcher supprime tout directement (venv, osmosis, jre, bundle
             # extrait) sans re-spawner — évite l'infinite loop.
             if "--desinstaller" in sys.argv:
-                import shutil as _sh_u
-                _home_u         = _Path.home()
-                _lidar2map_home = _home_u / ".lidar2map"
-                _cibles_u = [
-                    (_app_dir,                    "bundle extrait"),
-                    (_lidar2map_home / "venv",    "venv Python"),
-                    (_lidar2map_home / "osmosis", "osmosis"),
-                    (_lidar2map_home / "jre",     "JRE Java"),
-                ]
-                print()
-                print("  ── lidar2map uninstall ──────────────────────────────────")
-                print()
-                _total_u = 0
-                for _c_u, _label_u in _cibles_u:
-                    if _c_u.exists():
-                        _taille_u = sum(
-                            f.stat().st_size for f in _c_u.rglob("*") if f.is_file()
-                        )
-                        _total_u += _taille_u
-                        print(f"  Removing {_label_u} ({_taille_u / 1e6:.0f} MB)")
-                        print(f"    {_c_u}")
-                        _sh_u.rmtree(_c_u, ignore_errors=True)
-                        print(f"    {'✓ removed' if not _c_u.exists() else '⚠ partial'}")
-                    else:
-                        print(f"  {_label_u} : absent ({_c_u})")
-                print()
-                print(f"  {_total_u / 1e6:.0f} MB freed.")
-                print()
-                print("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
-                print("  Remove them manually if needed.")
-                sys.exit(0)
+                _ok_u = _bootstrap_runtime_impl.desinstaller_lidar2map(
+                    systeme=_sys,
+                    home=_Path.home(),
+                    localappdata=os.environ.get("LOCALAPPDATA"),
+                )
+                sys.exit(0 if _ok_u else 1)
 
             def _bundle_sha():
                 h = hashlib.sha256()
@@ -1030,7 +1006,6 @@ import threading
 import json
 import gzip
 import sqlite3
-import xml.etree.ElementTree as _ET
 import math
 import time
 import subprocess
@@ -1041,9 +1016,16 @@ import urllib.error
 import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import _bootstrap_runtime as _bootstrap_runtime_impl
 import _bootstrap_policy as _bootstrap_policy_impl
 from _bootstrap_policy import dependances_gui_plateforme as _dependances_gui_plateforme
+import _smoketest as _smoketest_impl
+import _logging_helpers as _logging_helpers_impl
+import _tee_logger as _tee_logger_impl
+import _log_activation as _log_activation_impl
+import _atomic_files as _atomic_files_impl
+import _http_helpers as _http_helpers_impl
+import _runtime_paths as _runtime_paths_impl
+import _disk_guard as _disk_guard_impl
 
 # Vérification version Python
 # Python 3.9 minimum RÉEL : argparse.BooleanOptionalAction (utilisé par
@@ -1169,115 +1151,31 @@ _bootstrap_environnement()
 # lazy) puis quitte. Utilisé par les scripts setup_build_*.
 # Le flag est préservé dans sys.argv lors du re-exec dans le venv, ce qui
 # garantit que l'install complète se fait bien DANS le venv cible.
+def _installer_toutes_dependances():
+    """Installe les dépendances de maintenance via le runtime testable."""
+    return _bootstrap_runtime_impl.installer_toutes_dependances(
+        gui_deps_plateforme=_gui_deps_plateforme,
+    )
+
+
 if _INSTALL_ALL_DEPS:
-    print("  Full install of all dependencies...")
-    _pip_base = [sys.executable, "-m", "pip", "install", "-q"]
-    _toutes_deps = [
-        # Critiques
-        "Pillow", "pyproj", "numpy", "scipy", "ijson",
-        "rasterio", "fiona", "certifi", "pywebview",
-        # GUI selon plateforme
-        *([p for p in ["PyQt6", "PyQt6-WebEngine", "qtpy"]
-           if __import__("platform").system() in ("Darwin", "Linux")]),
-        # Optionnelles / lazy (non installées par le bootstrap standard)
-        # lazrs = backend décompression LAZ pour laspy (providers LiDAR cz/se/es)
-        # cloth-simulation-filter = socle CSF du mode LAZ (--laz-ground csf)
-        "osmium", "numba", "laspy", "lazrs", "py7zr", "mapbox-vector-tile",
-        "cloth-simulation-filter",
-    ]
-    import subprocess as _sp_id
-    # Table de correspondance explicite pkg pip → nom de module importable.
-    # La dérivation automatique (split("-")[0]) échoue sur plusieurs packages :
-    #   mapbox-vector-tile → "mapbox" (faux), PyQt6-WebEngine → "pyqt6" (faux)
-    _pkg_to_mod = {
-        "Pillow":             "PIL",
-        "pyproj":             "pyproj",
-        "numpy":              "numpy",
-        "scipy":              "scipy",
-        "ijson":              "ijson",
-        "rasterio":           "rasterio",
-        "fiona":              "fiona",
-        "certifi":            "certifi",
-        "pywebview":          "webview",
-        "PyQt6":              "PyQt6",
-        "PyQt6-WebEngine":    "PyQt6.QtWebEngineWidgets",
-        "qtpy":               "qtpy",
-        "osmium":             "osmium",
-        "numba":              "numba",
-        "laspy":              "laspy",
-        "lazrs":              "lazrs",
-        "py7zr":              "py7zr",
-        "mapbox-vector-tile": "mapbox_vector_tile",
-        "cloth-simulation-filter": "CSF",
-    }
-    for _pkg in _toutes_deps:
-        _mod = _pkg_to_mod.get(_pkg, _pkg.replace("-", "_").lower())
-        try:
-            __import__(_mod)
-            print(f"    ✓ {_pkg} (already installed)")
-        except ImportError:
-            r = _sp_id.run(_pip_base + [_pkg], capture_output=True)
-            if r.returncode == 0:
-                print(f"    ✓ {_pkg}")
-            else:
-                print(f"    ⚠ {_pkg} (optional - skipped)")
-    print("  All dependencies installed.")
-    sys.exit(0)
+    sys.exit(0 if _installer_toutes_dependances() else 1)
 
 # ── --desinstaller ────────────────────────────────────────────────────────────
 # Supprime le venv (~/.lidar2map/venv) et le dossier d'extraction du bundle
 # (~/Library/Application Support/lidar2map/ sur macOS, etc.).
 # Ne supprime PAS le script lui-même ni le .app/.exe.
+def _desinstaller_installation():
+    """Désinstalle les données gérées et signale tout retrait partiel."""
+    return _bootstrap_runtime_impl.desinstaller_lidar2map(
+        systeme=platform.system(),
+        home=Path.home(),
+        localappdata=os.environ.get("LOCALAPPDATA"),
+    )
+
+
 if _DESINSTALLER:
-    import shutil as _sh_uninst
-    import platform as _plat_uninst
-    from pathlib import Path as _P_uninst
-
-    _sys_u  = _plat_uninst.system()
-    _home_u = _P_uninst.home()
-
-    _lidar2map_home = _home_u / ".lidar2map"
-
-    # Dossier d'extraction du bundle (même logique que le launcher)
-    if _sys_u == "Windows":
-        _app_data = _P_uninst(os.environ.get("LOCALAPPDATA",
-                              str(_home_u / "AppData" / "Local"))) / "lidar2map"
-    elif _sys_u == "Darwin":
-        _app_data = _home_u / "Library" / "Application Support" / "lidar2map"
-    else:
-        _app_data = _home_u / ".local" / "share" / "lidar2map"
-
-    _cibles = [
-        (_app_data,                      "dossier d'extraction du bundle"),
-        (_lidar2map_home / "venv",       "venv Python"),
-        (_lidar2map_home / "osmosis",    "osmosis"),
-        (_lidar2map_home / "jre",        "JRE Java"),
-    ]
-
-    print()
-    print("  ── lidar2map uninstall ──────────────────────────────────")
-    print()
-
-    _total = 0
-    for _chemin, _label in _cibles:
-        if _chemin.exists():
-            # Calculer la taille avant suppression
-            _taille = sum(f.stat().st_size for f in _chemin.rglob("*") if f.is_file())
-            _total += _taille
-            print(f"  Removing {_label} ({_taille / 1e6:.0f} MB)")
-            print(f"    {_chemin}")
-            _sh_uninst.rmtree(_chemin, ignore_errors=True)
-            # Mêmes états ✓/⚠ que le bloc launcher pour cohérence
-            print(f"    {'✓ removed' if not _chemin.exists() else '⚠ partial'}")
-        else:
-            print(f"  {_label} : absent ({_chemin})")
-    print()
-    print(f"  {_total / 1e6:.0f} MB freed.")
-    print()
-    print("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
-    print("  Remove them manually if needed.")
-    print()
-    sys.exit(0)
+    sys.exit(0 if _desinstaller_installation() else 1)
 
 # ── --smoketest ──────────────────────────────────────────────────────────────
 # Exécute les 5 modes du pipeline sur une petite zone (Garéoult 1 km) et
@@ -1290,434 +1188,44 @@ if _DESINSTALLER:
 #
 # Durée typique : ~1 min sur Windows (caches PBF/dalles présents), ~5 min
 # au premier run (DL Geofabrik 400 MB).
+def _executer_smoketest():
+    """Exécute le diagnostic intégré via son orchestrateur testable."""
+    return _smoketest_impl.executer_smoketest(
+        frozen=getattr(sys, "frozen", False),
+        executable=sys.executable,
+        script_path=__file__,
+        environnement=os.environ,
+    )
+
+
 if _SMOKETEST:
-    import shutil as _smk_sh
-    from pathlib import Path as _smk_Path
-
-    # Calcul de DOSSIER_TRAVAIL en local (la constante globale n'est définie
-    # qu'à la ligne ~1880, après ce bloc).
-    if getattr(sys, "frozen", False):
-        _smk_work = _smk_Path(os.environ.get("LIDAR2MAP_WORK_DIR")
-                              or _smk_Path(sys.executable).resolve().parent)
-        # En frozen, sys.executable EST le binaire → on le ré-invoque
-        _smk_cmd_base = [sys.executable]
-    else:
-        _smk_work = _smk_Path(__file__).resolve().parent
-        _smk_cmd_base = [sys.executable, str(_smk_Path(__file__).resolve())]
-
-    _smk_nom     = "smoke"
-    _smk_projets = _smk_work / "Projets" / _smk_nom
-    _smk_zone    = ["--zone-ville", "Gareoult", "--zone-width", "2",
-                    "--zone-nom",   _smk_nom]
-
-    # (nom, args supplémentaires, outputs attendus relatifs à _smk_projets)
-    _smk_tests = [
-        ("LiDAR",
-         ["--ignlidar", "--telechargement", "--workers", "4",
-          "--ombrages", "multi", "--formats-fichier", "mbtiles",
-          "--zoom-min", "10", "--zoom-max", "13"],
-         ["ign_lidar/smoke_multi_ombrage_z10-13.mbtiles"]),
-        ("WMTS (planign)",
-         ["--ignraster", "--couche", "planign", "--workers", "8",
-          "--formats-fichier", "mbtiles",
-          "--zoom-min", "12", "--zoom-max", "14"],
-         ["raster/smoke_planign_z12-14.mbtiles"]),
-        ("WFS (routes)",
-         ["--ignvecteur", "--couche", "routes", "--formats-fichier", "gz"],
-         ["ign_vecteur/smoke_ign_troncon_de_route.geojson.gz"]),
-        ("OSM (highway)",
-         ["--osm", "--couche", "highway=*",
-          "--formats-fichier", "map", "gz"],
-         ["osm_vecteur/smoke.map",
-          "osm_vecteur/smoke_osm_highway.geojson.gz"]),
-    ]
-
-    def _smk_size(n):
-        return f"{n/1e6:.1f} Mo" if n >= 1e6 else f"{n/1024:.0f} Ko"
-
-    # Empêcher chaque sous-test de polluer l'historique de 5+ entrées.
-    # _historique_debut/_sauver_historique respectent cet env var.
-    _smk_env = os.environ.copy()
-    _smk_env["LIDAR2MAP_SKIP_HIST"] = "1"
-
-    def _smk_run(name, extra, expected, timeout=600):
-        print(f"\n━━━ {name} ━━━", flush=True)
-        t0 = time.time()
-        try:
-            rc = subprocess.run(_smk_cmd_base + _smk_zone + extra,
-                                timeout=timeout, env=_smk_env).returncode
-        except subprocess.TimeoutExpired:
-            print(f"  ✗ TIMEOUT (> {timeout}s)")
-            return False
-        dur = time.time() - t0
-        if rc != 0:
-            print(f"  ✗ exit={rc} en {dur:.0f}s")
-            return False
-        missing, sizes = [], []
-        for f in expected:
-            p = _smk_projets / f
-            if not p.exists():
-                missing.append(f + " (absent)")
-            elif p.stat().st_size == 0:
-                missing.append(f + " (vide)")
-            else:
-                sizes.append(f"{_smk_Path(f).name}={_smk_size(p.stat().st_size)}")
-        if missing:
-            print(f"  ✗ outputs KO en {dur:.0f}s :")
-            for m in missing:
-                print(f"      {m}")
-            return False
-        print(f"  ✓ {dur:.0f}s  ({', '.join(sizes)})")
-        return True
-
-    def _smk_fusion(timeout=120):
-        """Fusion utilise l'output OSM précédent comme input."""
-        src = _smk_projets / "osm_vecteur" / "smoke_osm_highway.geojson.gz"
-        out = _smk_projets / "fusion"      / "smoke_fusion.geojson.gz"
-        print("\n━━━ Merge ━━━", flush=True)
-        if not src.exists():
-            print(f"  ⊘ SKIP: OSM input missing ({src.name})")
-            return None
-        out.parent.mkdir(parents=True, exist_ok=True)
-        t0 = time.time()
-        try:
-            rc = subprocess.run(_smk_cmd_base + ["--fusionner", "--source", str(src),
-                                                 "--sortie", str(out),
-                                                 "--formats-fichier", "gz"],
-                                timeout=timeout, env=_smk_env).returncode
-        except subprocess.TimeoutExpired:
-            print(f"  ✗ TIMEOUT (> {timeout}s)")
-            return False
-        dur = time.time() - t0
-        if rc == 0 and out.exists() and out.stat().st_size > 0:
-            print(f"  ✓ {dur:.0f}s  ({_smk_size(out.stat().st_size)})")
-            return True
-        print(f"  ✗ exit={rc} en {dur:.0f}s")
-        return False
-
-    print("━━━ Smoke test: Gareoult 1 km ━━━")
-    print(f"  Binaire : {' '.join(_smk_cmd_base)}")
-    print(f"  Outputs : {_smk_projets}")
-    # Wipe Projets/smoke pour isoler les tests (caches dalles/tuiles préservés)
-    if _smk_projets.exists():
-        _smk_sh.rmtree(_smk_projets, ignore_errors=True)
-
-    _smk_results = []
-    for _smk_name, _smk_extra, _smk_expected in _smk_tests:
-        _smk_results.append((_smk_name,
-                             _smk_run(_smk_name, _smk_extra, _smk_expected)))
-    _smk_results.append(("Fusion", _smk_fusion()))
-
-    print("\n━━━ RESULTS ━━━")
-    _smk_ok   = sum(1 for _, ok in _smk_results if ok is True)
-    _smk_fail = sum(1 for _, ok in _smk_results if ok is False)
-    _smk_skip = sum(1 for _, ok in _smk_results if ok is None)
-    for _smk_name, ok in _smk_results:
-        sym = "✓" if ok is True else ("⊘" if ok is None else "✗")
-        print(f"  {sym} {_smk_name}")
-    print(f"\n{_smk_ok}/{len(_smk_results)} OK"
-          + (f"  ({_smk_skip} skipped)" if _smk_skip else "")
-          + (f"  ({_smk_fail} failed)"  if _smk_fail else ""))
-    sys.exit(0 if _smk_fail == 0 else 1)
+    sys.exit(0 if _executer_smoketest() else 1)
 
 # ── suite du script ───────────────────────────────────────────────────────────
 
-class _TeeLogger:
-    """
-    Duplique stdout vers un fichier log avec horodatage.
-
-    Gestion des \r : les barres de progression terminent par \r (pas \n).
-    Pour le terminal, \r écrase la ligne courante — comportement normal.
-    Pour le log, on ne conserve que le dernier état de chaque ligne \r
-    (la valeur finale), en ignorant les mises à jour intermédiaires.
-
-    Pendant un découpage à priori, les lignes de détail du terminal/GUI sont
-    aussi préfixées par le chunk et la phase. Les en-têtes et bilans qui portent
-    déjà ``[LLLxCCC]`` ne sont pas doublés.
-    """
-    def __init__(self, log_path):
-        self._terminal = sys.stdout
-        self._log_path = Path(log_path)
-        self._part_path = self._log_path.with_name(
-            f"{self._log_path.name}.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
-        )
-        self._log = open(self._part_path, "w", encoding="utf-8", buffering=1)
-        self._closed = False
-        self._published = False
-        self._buf = ""          # buffer jusqu'au prochain \n
-        self._cr_buf = ""       # dernier contenu de ligne \r (écrase les précédents)
-        # Verrou : write() est appelé par PLUSIEURS threads (pools d'encodage
-        # de tuiles, workers). Sans lui, la machine à états _buf/_cr_buf
-        # s'entrelace entre threads → lignes de log corrompues.
-        self._lock = threading.Lock()
-        self._chunk_actuel = None   # cf. definir_chunk
-        self._terminal_debut_ligne = True
-
-    def definir_chunk(self, cle):
-        """Marque le chunk en cours (découpage à priori) : préfixe chaque
-        ligne de log qui suit, pour qu'un extrait du log soit auto-suffisant
-        sans avoir à remonter chercher le dernier « ── Ombrage XXX ── »."""
-        with self._lock:
-            self._chunk_actuel = cle
-
-    def _log_line(self, line):
-        """Écrit une ligne dans le fichier log avec horodatage."""
-        # Nettoyer les séquences \r résiduelles dans la ligne
-        if "\r" in line:
-            line = line.split("\r")[-1]
-        line = line.strip()
-        if line:
-            ts = time.strftime("%H:%M:%S")
-            _cle = f"[{self._chunk_actuel}] " if self._chunk_actuel else ""
-            self._log.write(f"[{ts}] {_cle}{line}\n")
-
-    def _terminal_avec_chunk(self, msg):
-        """Préfixe chaque ligne logique sans casser les progressions ``\r``.
-
-        ``print`` peut appeler ``write`` une fois pour le texte puis une seconde
-        fois pour le saut de ligne. L'état ``_terminal_debut_ligne`` évite donc
-        d'insérer un préfixe au milieu d'un message fragmenté. Chaque retour
-        chariot redémarre en revanche une ligne de progression complète.
-        """
-        if not msg:
-            return msg
-
-        contexte = self._chunk_actuel
-        debut_ligne = self._terminal_debut_ligne
-        resultat = msg
-        if contexte:
-            contexte = str(contexte)
-            bloc = contexte.split(":", 1)[0]
-            marqueur_bloc = f"[{bloc}]"
-            marqueur_contexte = f"[{contexte}]"
-
-            def _prefixer(match):
-                separateur, contenu = match.groups()
-                # Le premier fragment peut continuer un write précédent ; les
-                # fragments suivant \r/\n commencent toujours une nouvelle ligne.
-                if not separateur and not debut_ligne:
-                    return contenu
-                # En-têtes et messages de bilan ont déjà leur bloc visible.
-                if (marqueur_bloc in contenu
-                        or marqueur_contexte in contenu):
-                    return separateur + contenu
-                indentation = contenu[:len(contenu) - len(contenu.lstrip())]
-                texte = contenu[len(indentation):]
-                return (
-                    f"{separateur}{indentation}"
-                    f"{marqueur_contexte} {texte}"
-                )
-
-            resultat = re.sub(
-                r"(^|[\r\n])([^\r\n]+)",
-                _prefixer,
-                msg,
-            )
-
-        self._terminal_debut_ligne = msg.endswith(("\r", "\n"))
-        return resultat
-
-    def write(self, msg):
-        # ── Terminal ─────────────────────────────────────────────────────────
-        # Toutes les opérations sont défensives parce que cette méthode est
-        # appelée par Python lui-même au shutdown. Si un de ses appels lève
-        # une exception, Windows retourne le code 120 (ERROR_CALL_NOT_IMPLEMENTED)
-        # à la place du code passé à sys.exit().
-        try:
-            # Même verrou que le fichier : un worker ne doit pas couper une
-            # ligne entre son préfixe et son contenu pendant un changement de
-            # contexte effectué par le thread principal.
-            with self._lock:
-                msg_terminal = self._terminal_avec_chunk(msg)
-        except Exception:
-            msg_terminal = msg
-        try:
-            self._terminal.write(msg_terminal)
-        except UnicodeEncodeError:
-            try:
-                self._terminal.write(
-                    msg_terminal.encode(
-                        self._terminal.encoding or "cp1252",
-                        errors="replace",
-                    ).decode(self._terminal.encoding or "cp1252")
-                )
-            except Exception:
-                pass
-        except Exception:
-            pass
-        try:
-            # Flush sur \r ET \n. Sans flush sur \n, les lignes restent
-            # bufferisées dans le pipe quand stdout est redirigé (cas de la
-            # GUI qui lance le script comme subprocess). Conséquence : les
-            # messages n'arrivent au parent qu'au moment du wait() final,
-            # ce qui rend le panneau de log inutile en temps réel.
-            if "\r" in msg or "\n" in msg:
-                self._terminal.flush()
-        except Exception:
-            pass
-
-        # ── Log ──────────────────────────────────────────────────────────────
-        # Même machine à états \r/\n qu'avant, mais opérée par RUNS (find +
-        # slice, vitesse C) au lieu de caractère par caractère : write() est
-        # traversé par TOUTE la sortie, y compris les dizaines de milliers de
-        # repaints des barres de progression.
-        try:
-            with self._lock:
-                pos = 0
-                n = len(msg)
-                while pos < n:
-                    i_r = msg.find("\r", pos)
-                    i_n = msg.find("\n", pos)
-                    if i_r == -1 and i_n == -1:
-                        self._buf += msg[pos:]
-                        break
-                    if i_n == -1 or (i_r != -1 and i_r < i_n):
-                        # \r : écrase le contenu de la ligne courante (barre de
-                        # progression) — dernier état gardé dans _cr_buf
-                        self._cr_buf = self._buf + msg[pos:i_r]
-                        self._buf = ""
-                        pos = i_r + 1
-                    else:
-                        # \n : fin de ligne — logguer le contenu final (si la ligne
-                        # était précédée de \r, prendre le dernier segment \r)
-                        line = (self._buf + msg[pos:i_n]) or self._cr_buf
-                        self._log_line(line)
-                        self._buf = ""
-                        self._cr_buf = ""
-                        pos = i_n + 1
-        except Exception:
-            pass
-
-    def flush(self):
-        # Défensif : flush() est appelé par Python au shutdown, après que
-        # close() a peut-être déjà fermé self._log. Sans try/except, l'erreur
-        # "I/O operation on closed file" remonte → code retour Windows = 120.
-        try:
-            self._terminal.flush()
-        except Exception:
-            pass
-        try:
-            self._log.flush()
-        except Exception:
-            pass
-
-    def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        # Flush des buffers résiduels — défensif : pendant le shutdown
-        # Python, sys.stdout/sys.stderr peuvent être dans un état partiel,
-        # et toute exception ici peut polluer le code retour du process
-        # (Windows retourne 120 si l'atexit handler échoue).
-        try:
-            remaining = self._buf or self._cr_buf
-            if remaining:
-                self._log_line(remaining)
-        except Exception:
-            pass
-        try:
-            self._log.close()
-        except Exception:
-            pass
-        # Le log suit le même contrat que les livrables : tant qu'il est
-        # ouvert il porte le suffixe .part. Après fermeture du handle, sa
-        # publication est un rename atomique. Un kill brutal laisse donc un
-        # .part identifiable au lieu d'un faux log final.
-        try:
-            os.replace(self._part_path, self._log_path)
-            self._published = True
-        except FileNotFoundError:
-            # close() peut être rappelé par atexit après le finally principal.
-            self._published = self._log_path.exists()
-        except Exception as exc:
-            try:
-                self._terminal.write(
-                    f"\n  WARNING: log publication failed "
-                    f"({type(exc).__name__}: {exc}); partial log: "
-                    f"{self._part_path}\n"
-                )
-                self._terminal.flush()
-            except Exception:
-                pass
+_TeeLogger = _tee_logger_impl.TeeLogger
 
 # Flags portant un secret : leur valeur est masquée dans tout ce qu'on écrit
 # (log fichier, historique, log GUI). La clé scan25 (IGN pro) ou us-3dep
 # (OpenTopography) apparaissait sinon en clair dans des fichiers partagés
 # pour débuguer. Défini AVANT _activer_log (appelé au chargement du module).
-_SECRET_FLAGS = ("--api-key", "--apikey")
+_SECRET_FLAGS = _logging_helpers_impl.SECRET_FLAGS
 
 
 def _rediger_secrets(texte: str) -> str:
-    """Masque la valeur des flags secrets dans une chaîne de commande.
-    Couvre les formes `--api-key VALUE` et `--api-key=VALUE` (+ alias)."""
-    if not texte:
-        return texte
-    out = texte
-    for _flag in _SECRET_FLAGS:
-        _f = re.escape(_flag)
-        out = re.sub(rf"({_f}=)\S+", r"\1***", out)
-        out = re.sub(rf"({_f}\s+)\S+", r"\1***", out)
-    return out
+    return _logging_helpers_impl.rediger_secrets(texte)
 
 
 def _activer_log():
     import atexit
-    # En mode frozen, __file__ est dans le bundle temporaire — on veut les
-    # logs à côté de l'exe (dossier utilisateur, persistant).
-    # LIDAR2MAP_WORK_DIR : transmis par le launcher onefile pour pointer sur
-    # le dossier du launcher au lieu de l'inner (%LOCALAPPDATA%\lidar2map).
-    if getattr(sys, "frozen", False):
-        _base = Path(os.environ.get("LIDAR2MAP_WORK_DIR")
-                     or Path(sys.executable).resolve().parent)
-    else:
-        _base = Path(__file__).resolve().parent
-    log_dir = _base / "logs"
-    try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        _probe = log_dir / (
-            f".write_test.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
-        )
-        _probe.touch()
-        _probe.unlink()
-    except OSError:
-        # logs/ inaccessible → log console uniquement, pas de fichier système
-        print("  WARNING: logs/ folder inaccessible, console log only.")
-        return
-    # PID dans le nom : deux process lancés la MÊME seconde ouvraient sinon le
-    # même fichier en "w" → le second tronquait le log du premier.
-    nom = "lidar_" + time.strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}.log"
-    log_path = log_dir / nom
-    tee = _TeeLogger(log_path)
-    sys.stdout = tee
-    sys.stderr = tee   # stderr → même log (tracebacks, warnings)
-    # atexit : fonction nommée robuste plutôt qu'un lambda. Toute exception
-    # ici peut faire que Windows retourne le code 120 (ERROR_CALL_NOT_IMPLEMENTED)
-    # au lieu du code passé à sys.exit() — ça casse à la fois le contrat CLI
-    # et le mécanisme d'erreur modale GUI qui se base sur retcode != 0.
-    def _close_tee_safely():
-        try:
-            if isinstance(sys.stdout, _TeeLogger):
-                sys.stdout.close()
-        except Exception:
-            pass
-    atexit.register(_close_tee_safely)
-    # ── Intercepter les exceptions non gérées → log avant exit ───────────────
-    import traceback as _tb
-    def _excepthook(exc_type, exc_value, exc_tb):
-        # print → tee → terminal + log. NE PAS rappeler sys.__excepthook__ :
-        # il écrirait sur sys.stderr qui EST le même tee → chaque traceback
-        # apparaissait deux fois (terminal et log).
-        print("\nUNHANDLED EXCEPTION:")
-        print("".join(_tb.format_exception(exc_type, exc_value, exc_tb)))
-    sys.excepthook = _excepthook
-    # ── En-tête avec paramètres de lancement ─────────────────────────────────
-    ts  = time.strftime("%Y-%m-%d %H:%M:%S")
-    cmd = _rediger_secrets(" ".join(sys.argv))   # masque --api-key ...
-    tee._log.write("=" * 60 + "\n")
-    tee._log.write(f"  lidar2map.py — démarrage {ts}\n")
-    tee._log.write(f"  Commande : {cmd}\n")
-    tee._log.write("=" * 60 + "\n")
-    print(f"  Log : {log_path} (publication atomique à la fin)")
+    return _log_activation_impl.activer_log(
+        sys_module=sys,
+        environnement=os.environ,
+        script_path=__file__,
+        classe_logger=_TeeLogger,
+        rediger_secrets=_rediger_secrets,
+        enregistrer_atexit=atexit.register,
+    )
 
 _activer_log()
 
@@ -1737,49 +1245,38 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.37.0"
+VERSION      = "1.38.0"
 VERSION_DATE = "2026-08"
 
 
 def _urlopen(url, headers=None, timeout=15):
     """Ouvre une URL avec urllib, retourne la réponse. Gère User-Agent par défaut."""
-    hdrs = {"User-Agent": _HTTP_UA}
-    if headers:
-        hdrs.update(headers)
-    req = urllib.request.Request(url, headers=hdrs)
-    return urllib.request.urlopen(req, timeout=timeout)
+    return _http_helpers_impl.ouvrir_url(
+        url,
+        headers=headers,
+        timeout=timeout,
+        user_agent=_HTTP_UA,
+        request_cls=urllib.request.Request,
+        urlopen=urllib.request.urlopen,
+    )
 
 
 def _hms(seconds):
-    """Formate une durée en secondes → h:mm:ss ou m:ss ou Xs."""
-    s = int(seconds)
-    if s < 60:
-        return f"{s}s"
-    m, s = divmod(s, 60)
-    if m < 60:
-        return f"{m}m{s:02d}s"
-    h, m = divmod(m, 60)
-    return f"{h}h{m:02d}m{s:02d}s"
+    return _logging_helpers_impl.formater_duree(seconds)
 
 
 # Outils GDAL dont les appels subprocess sont affichés dans le terminal
 def _log_req(url_or_cmd, label=""):
     """Log une requête externe (HTTP ou subprocess) — toujours via print/TeeLogger."""
-    if isinstance(url_or_cmd, list):
-        exe      = Path(url_or_cmd[0]).name if url_or_cmd else ""
-        args_str = " ".join(str(a) for a in url_or_cmd[1:]
-                            if not str(a).startswith("--config"))
-        print(f"  $ {exe} {args_str}", flush=True)
-    else:
-        print(f"  → {label + ' ' if label else ''}{url_or_cmd}", flush=True)
+    print(_logging_helpers_impl.formater_requete(url_or_cmd, label), flush=True)
 
 # ============================================================
 # PLATEFORME
 # ============================================================
 
-WINDOWS = platform.system() == "Windows"
-LINUX   = platform.system() == "Linux"
-MACOS   = platform.system() == "Darwin"
+WINDOWS, LINUX, MACOS = _runtime_paths_impl.indicateurs_plateforme(
+    platform.system()
+)
 
 # ── Manifest de fichiers créés (découpage à priori) ───────────────────────────
 # Classe Manifeste : JSON local au projet, universel LiDAR/WMTS.
@@ -1889,39 +1386,29 @@ EXIT_DISK_LOW = 3
 
 
 def _espace_libre_go(chemin) -> float:
-    """Espace libre (Go) sur le volume de `chemin`. Sonde le premier parent
-    existant — au tout premier chunk le dossier cible n'existe pas encore.
-    Retourne inf si la sonde échoue : un échec de sonde ne doit JAMAIS bloquer
-    le run (le garde-fou est défensif, pas un point de défaillance)."""
-    p = Path(chemin)
-    while not p.exists() and p != p.parent:
-        p = p.parent
-    try:
-        return shutil.disk_usage(p).free / (1024 ** 3)
-    except OSError:
-        return float("inf")
+    return _disk_guard_impl.espace_libre_go(
+        chemin, disk_usage=shutil.disk_usage
+    )
+
+
+_espace_libre_go.__doc__ = _disk_guard_impl.espace_libre_go.__doc__
 
 
 def _garde_disque(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int):
-    """Garde-fou disque proactif (--min-free-gb), appelé AVANT de démarrer un
-    chunk (avant debut_morceau / téléchargement). Si l'espace libre passe sous
-    le seuil, arrêt propre via sys.exit(EXIT_DISK_LOW).
+    return _disk_guard_impl.garder_disque(
+        chemin,
+        seuil_go,
+        cle,
+        nb_ok,
+        n_total,
+        sonde=_espace_libre_go,
+        exit_code=EXIT_DISK_LOW,
+        ecrire=print,
+        quitter=sys.exit,
+    )
 
-    Invariant de reprise : le chunk n'ayant pas été démarré (aucun
-    debut_morceau, aucun fichier enregistré), une relance le rejoue
-    proprement. C'est pour ça que le check est ici et pas au milieu du chunk.
 
-    seuil_go <= 0 : désactivé (défaut). Le seuil est fourni par l'opérateur,
-    pas auto-calculé : il doit couvrir le pic d'UN chunk (intermédiaires +
-    pyramide de tuiles, dominé par le PNG SVF), cf. aide CLI."""
-    if seuil_go <= 0:
-        return
-    libre = _espace_libre_go(chemin)
-    if libre < seuil_go:
-        print(f"\n  ⚠ Disk space low: {libre:.1f} GB free < {seuil_go:.0f} GB threshold.")
-        print(f"  Stopping cleanly before chunk {cle}: {nb_ok}/{n_total} chunks done. "
-              f"Free space and relaunch to resume.")
-        sys.exit(EXIT_DISK_LOW)
+_garde_disque.__doc__ = _disk_guard_impl.garder_disque.__doc__
 
 
 class _PrefetchDalles:
@@ -2009,22 +1496,16 @@ class _PrefetchDalles:
 # Projets/, cache/, logs/ etc. soient créés à côté de l'exe (cwd utilisateur).
 # _MEIPASS reste utilisable séparément pour retrouver les ressources bundlées
 # (tagmapping-min.xml).
-if getattr(sys, "frozen", False):
-    # LIDAR2MAP_WORK_DIR transmis par le launcher onefile : pointe vers le
-    # dossier où l'utilisateur a posé l'exe. Sinon, fallback sur le dossier
-    # de l'exe courant (cas exe onedir lancé directement).
-    DOSSIER_TRAVAIL = Path(os.environ.get("LIDAR2MAP_WORK_DIR")
-                           or Path(sys.executable).resolve().parent)
-    BUNDLE_DIR      = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-else:
-    DOSSIER_TRAVAIL = Path(__file__).resolve().parent
-    BUNDLE_DIR      = DOSSIER_TRAVAIL
-
-# ~/.lidar2map/ : dossier de runtime partagé entre tous les dossiers de travail.
-# Contient venv/, jre/, osmosis/. Permet de ne télécharger qu'une fois ces
-# dépendances même si le script est lancé depuis plusieurs emplacements.
-# Pour nettoyer complètement lidar2map :  rm -rf ~/.lidar2map
-LIDAR2MAP_HOME = Path.home() / ".lidar2map"
+DOSSIER_TRAVAIL, BUNDLE_DIR, LIDAR2MAP_HOME, DOSSIER_CACHE, DOSSIER_PRODUCTION = (
+    _runtime_paths_impl.calculer_chemins(
+        frozen=getattr(sys, "frozen", False),
+        environnement=os.environ,
+        executable=sys.executable,
+        script_path=__file__,
+        meipass=getattr(sys, "_MEIPASS", None),
+        home=Path.home(),
+    )
+)
 
 # Racine UNIQUE de tous les caches persistants (dalles LiDAR, tuiles WMTS, PBF
 # OSM, index de découverte, contours de départements, BD TOPO). Déplaçable d'un
@@ -2032,9 +1513,6 @@ LIDAR2MAP_HOME = Path.home() / ".lidar2map"
 # de Go) sur un autre disque que les sorties. Défaut = <dossier de travail>/cache.
 # Modifiée AU DÉBUT de chaque main via _appliquer_cache_dir(args). --tiles-dir
 # reste le réglage FIN des seules dalles LiDAR, prioritaire sur cette racine.
-DOSSIER_CACHE = DOSSIER_TRAVAIL / "cache"
-
-
 def _appliquer_cache_dir(args):
     """Repointe la racine du cache si --cache-dir est passé. À appeler tôt dans
     chaque main, avant tout accès au cache. Idempotent (relance = même valeur)."""
@@ -2051,9 +1529,6 @@ def _appliquer_cache_dir(args):
 # pas par zone). Aujourd'hui seul le .tif du mode LAZ est concerné : calculé
 # du nuage avec tes réglages, il n'a rien à faire au cache (cf. le .tif MNT qui,
 # lui, vient tel quel du WMS et RESTE au cache). Défaut : frère de cache/.
-DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"
-
-
 def _appliquer_production_dir(args):
     """Repointe la racine de production si --production-dir est passé. Miroir de
     _appliquer_cache_dir. À appeler tôt dans main (LiDAR uniquement l'utilise)."""
@@ -2675,14 +2150,7 @@ def _chemin_part(path):
     Le nom unique empêche deux processus visant le même cache partagé de
     supprimer ou d'écraser le staging l'un de l'autre.
     """
-    path = Path(path)
-    token = uuid.uuid4().hex[:12]
-    part = path.parent / (
-        f"{path.name}.{os.getpid()}.{token}.part"
-    )
-    for suf in ("", "-wal", "-shm", "-journal"):
-        Path(str(part) + suf).unlink(missing_ok=True)
-    return part
+    return _atomic_files_impl.chemin_part(path)
 
 
 def _nettoyer_sqlite_part(path):
@@ -2693,12 +2161,7 @@ def _nettoyer_sqlite_part(path):
     nettoyage évite qu'un Ctrl+C ou une erreur laisse un handle/sidecar pris
     pour une sortie autonome par un outil de synchronisation.
     """
-    path = Path(path)
-    for suffixe in ("", "-wal", "-shm", "-journal"):
-        try:
-            Path(str(path) + suffixe).unlink(missing_ok=True)
-        except OSError:
-            pass
+    return _atomic_files_impl.nettoyer_sqlite_part(path)
 
 
 def _valider_sqlite_part(path, tables_attendues):
@@ -2708,37 +2171,7 @@ def _valider_sqlite_part(path, tables_attendues):
     La réouverture explicite en lecture seule prouve aussi que le fichier
     principal se suffit à lui-même après fermeture (aucun WAL requis).
     """
-    path = Path(path)
-    if not path.is_file() or path.stat().st_size <= 0:
-        raise OSError(f"staging SQLite absent ou vide : {path}")
-    for suffixe in ("-wal", "-shm", "-journal"):
-        if Path(str(path) + suffixe).exists():
-            raise OSError(
-                f"sidecar SQLite encore présent avant publication : "
-                f"{path.name}{suffixe}"
-            )
-    con = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
-    try:
-        presentes = {
-            row[0] for row in con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
-        }
-        manquantes = set(tables_attendues) - presentes
-        if manquantes:
-            raise OSError(
-                "table(s) SQLite manquante(s) : "
-                + ", ".join(sorted(manquantes))
-            )
-        for table, attendu in tables_attendues.items():
-            # Les noms viennent exclusivement des littéraux internes ci-dessous.
-            obtenu = con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            if attendu is not None and obtenu != attendu:
-                raise OSError(
-                    f"SQLite {table}: {obtenu} ligne(s), {attendu} attendue(s)"
-                )
-    finally:
-        con.close()
+    return _atomic_files_impl.valider_sqlite_part(path, tables_attendues)
 
 
 def _safe_zip_extractall(zf, target):
@@ -3411,62 +2844,13 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
     la socket BSD renvoie b"" sans erreur, ce qui sans cette garde produirait
     un fichier tronqué accepté silencieusement comme valide.
     """
-    # Pas de _log_req(url) ici : cette fonction est appelée des centaines à
-    # milliers de fois en parallèle (1 par dalle WMS) → le spam URL noie la
-    # console. La progress bar de _telecharger_dalles_zone suffit ; les
-    # erreurs sont loguées par le code de retry des callers.
-    # Timeout lecture : prendre la valeur max si tuple (connect, read).
-    _timeout = max(timeout) if isinstance(timeout, tuple) else timeout
-    try:
-        resp = _urlopen(url, timeout=_timeout)
-    except urllib.error.HTTPError as _e:
-        if _e.code == 404:
-            return 0
-        raise IOError(f"HTTP {_e.code}") from _e
-
-    # `with` ferme la connexion HTTP même sur exception → pas de fuite de FD
-    # (cas observé avec 8 workers parallèles × centaines de dalles).
-    with resp:
-        ct = resp.headers.get("content-type", "").lower()
-        # Réponse d'erreur WMS/WCS (page XML/HTML en 200) : ERREUR de service
-        # (auth, quota, paramètre), PAS une dalle absente — la classer absente
-        # contournait retry et échec global (revue 2026-07-10 ; miroir du fix
-        # WMTS). L'absence, elle, se signale en 404 (géré plus haut).
-        # MAIS un conteneur WCS 2.0 multipart/related annonce type="text/xml"
-        # dans ses paramètres (la partie GML) tout en transportant le GeoTIFF
-        # binaire — ne pas le confondre avec une erreur (sinon Digitaal
-        # Vlaanderen & co. seraient rejetés à tort). Le désencapsulage a lieu
-        # ensuite dans _extraire_tiff_multipart.
-        # NB : si un provider WCS à découverte par grille renvoie une exception
-        # XML pour ses dalles de bord hors couverture (au lieu d'un 404), ses
-        # runs échoueront désormais visiblement — à corriger ALORS côté
-        # provider (classer ce cas précis), pas en ré-avalant tout XML ici.
-        if not ct.startswith("multipart") and ("xml" in ct or "html" in ct):
-            raise IOError(f"server error response ({ct or 'no content-type'})")
-
-        try:
-            content_length = int(resp.headers.get("content-length", 0))
-        except (ValueError, TypeError):
-            content_length = 0
-
-        buf_size = 0
-        with open(chemin_tmp, "wb") as f:
-            while True:
-                chunk = resp.read(HTTP_CHUNK_SIZE)
-                if not chunk:
-                    break
-                f.write(chunk)
-                buf_size += len(chunk)
-
-    # Vérification d'intégrité : si Content-Length était annoncé et ne correspond
-    # pas, la connexion a été coupée silencieusement → le fichier est tronqué.
-    # On lève une IOError pour que l'appelant déclenche le retry automatique.
-    if content_length > 0 and buf_size != content_length:
-        raise IOError(
-            f"Transfert tronqué : reçu {buf_size} octets, "
-            f"attendu {content_length} (Content-Length)"
-        )
-    return buf_size
+    return _http_helpers_impl.telecharger_vers_tmp(
+        url,
+        chemin_tmp,
+        timeout=timeout,
+        ouvrir_url=_urlopen,
+        taille_bloc=HTTP_CHUNK_SIZE,
+    )
 
 
 def _valider_tif_dalle(chemin):
@@ -10007,273 +9391,44 @@ COUCHES_WFS = {
 WFS_PAGE = 1000   # features par requête (limite serveur IGN — WFS_URL défini ligne ~1274)
 
 
+from _wfs_pipeline import (
+    DependancesWfs as _DependancesWfs,
+    telecharger_wfs as _telecharger_wfs_impl,
+)
+
+
+def _dependances_wfs():
+    return _DependancesWfs(
+        wfs_url=WFS_URL,
+        http_ua=_HTTP_UA,
+        page_size=WFS_PAGE,
+        chemin_part=_chemin_part,
+        stop_event=_stop_event,
+        gunzip_vers_fichier=_gunzip_vers_fichier,
+        gzip_depuis_fichier=_gzip_depuis_fichier,
+        log_req=_log_req,
+        formater_duree=_hms,
+    )
+
+
 def telecharger_wfs(typename, lon_min, lat_min, lon_max, lat_max,
                     nom_zone, dossier_sortie, ecraser_telechargement=False,
                     formats=None):
-    """Télécharge des features WFS IGN sur une bbox WGS84 → fichier .geojson.
+    return _telecharger_wfs_impl(
+        typename,
+        lon_min,
+        lat_min,
+        lon_max,
+        lat_max,
+        nom_zone,
+        dossier_sortie,
+        ecraser_telechargement=ecraser_telechargement,
+        formats=formats,
+        dependances=_dependances_wfs(),
+    )
 
-    Pagination automatique (COUNT + STARTINDEX) jusqu'à épuisement.
-    formats : liste parmi ("gz", "geojson") — formats à produire (défaut ["gz"]).
-              Si plusieurs sont demandés, le téléchargement n'a lieu que si au
-              moins un est manquant ; les fichiers manquants sont reconstruits
-              à partir du premier disponible (sans re-télécharger).
-    Retourne le Path du fichier principal créé (gz si présent, sinon geojson),
-    ou None en cas d'erreur.
-    """
 
-    dossier_sortie = Path(dossier_sortie)
-    dossier_sortie.mkdir(parents=True, exist_ok=True)
-
-    if formats is None:
-        formats = ["gz"]
-    formats = [f.lower() for f in formats if f.lower() in ("gz", "geojson")]
-    if not formats:
-        formats = ["gz"]
-    ecrire_gz      = "gz"      in formats
-    ecrire_geojson = "geojson" in formats
-
-    # Nom de sortie : suffixe seul pour BDTOPO_V3 (défaut historique, cache
-    # préservé) ; pour tout AUTRE namespace, préfixer + hash court du typename
-    # COMPLET — deux namespaces peuvent partager le même suffixe, et la seule
-    # normalisation collisionnait encore (ns:a-b vs ns:a_b → même nom).
-    _ns, _sep, _suf = typename.partition(":")
-    if _sep and _ns.strip().upper() != "BDTOPO_V3":
-        import hashlib as _hl
-        _h6 = _hl.md5(typename.encode("utf-8")).hexdigest()[:6]
-        layer_short = (re.sub(r"[^a-z0-9]+", "_", f"{_ns}_{_suf}".lower()).strip("_")
-                       + f"_{_h6}")
-    else:
-        layer_short = (_suf or _ns).lower()
-    sortie    = dossier_sortie / f"{nom_zone}_ign_{layer_short}.geojson"
-    sortie_gz = Path(str(sortie) + ".gz")
-
-    # Écrasement explicite : les sorties existantes restent en place jusqu'à
-    # publication de leurs remplaçantes complètes.
-    if ecraser_telechargement:
-        for p in (sortie_gz, sortie):
-            if p.exists():
-                print(f"  {p.name} -> overwrite")
-
-    # Vérification par format demandé : on ne skip que si TOUS sont présents.
-    # Sinon, si l'un est présent, on reconstruit les manquants à partir de
-    # lui (lecture/écriture locale, pas de re-téléchargement WFS).
-    if not ecraser_telechargement:
-        manque_gz  = ecrire_gz      and not sortie_gz.exists()
-        manque_raw = ecrire_geojson and not sortie.exists()
-        if not manque_gz and not manque_raw:
-            present = sortie_gz if sortie_gz.exists() else sortie
-            print(f"  {present.name} -> already present")
-            return present
-        # Reconstruction locale si une source existe
-        if (sortie_gz.exists() or sortie.exists()):
-            try:
-                if manque_raw and sortie_gz.exists():
-                    _gunzip_vers_fichier(sortie_gz, sortie)
-                    print(f"  {sortie.name} -> rebuilt from {sortie_gz.name}")
-                if manque_gz and sortie.exists():
-                    _gzip_depuis_fichier(sortie, sortie_gz)
-                    print(f"  {sortie_gz.name} -> rebuilt from {sortie.name}")
-                return sortie_gz if sortie_gz.exists() else sortie
-            except OSError as e:
-                print(f"  ⚠ Local rebuild failed ({e}) - WFS re-download")
-
-    print(f"  WFS {typename}...", flush=True)
-    _log_req(f"{WFS_URL}?SERVICE=WFS&TYPENAMES={typename}&...", "WFS IGN")
-
-    startindex    = 0
-    n_features    = 0   # compteur — pas d'accumulation Python
-    n_pages       = 0
-    total_attendu = None
-    t0 = time.time()
-
-    # ── Pré-requête RESULTTYPE=hits : total sans télécharger les données ──────
-    _params_hits = {
-        "SERVICE":      "WFS",
-        "VERSION":      "2.0.0",
-        "REQUEST":      "GetFeature",
-        "TYPENAMES":    typename,
-        "RESULTTYPE":   "hits",
-        "COUNT":        "0",
-        "BBOX":         f"{lon_min},{lat_min},{lon_max},{lat_max},EPSG:4326",
-    }
-    try:
-        _url_hits = WFS_URL + "?" + urllib.parse.urlencode(_params_hits)
-        _req_hits = urllib.request.Request(
-            _url_hits, headers={"User-Agent": _HTTP_UA})
-        with urllib.request.urlopen(_req_hits, timeout=15) as _r:
-            _d = json.loads(_r.read())
-        _nm = _d.get("numberMatched", _d.get("totalFeatures"))
-        if _nm is not None:
-            total_attendu = int(_nm)
-            n_pages = max(1, (total_attendu + WFS_PAGE - 1) // WFS_PAGE)
-            print(f"  WFS {typename.split(':')[-1]} : {total_attendu} features attendues "
-                  f"({n_pages} page{'s' if n_pages > 1 else ''})", flush=True)
-    except Exception:
-        pass  # hits non critique — on continuera sans total connu
-
-    # ── Écriture streamée : on ouvre le .gz et on écrit les features au fil
-    # de la pagination, sans jamais accumuler en RAM. Sur un dept-scale (>1M
-    # features), la version précédente faisait peser plusieurs Go en RAM.
-    sortie_gz_part = _chemin_part(sortie_gz)
-    sortie_gz_part.parent.mkdir(parents=True, exist_ok=True)
-    crs_obj = {"type": "name",
-               "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}}
-    header = (
-        '{"type":"FeatureCollection","name":'
-        + json.dumps(layer_short, ensure_ascii=False)
-        + ',"crs":' + json.dumps(crs_obj, ensure_ascii=False, separators=(",", ":"))
-        + ',"features":['
-    ).encode("utf-8")
-
-    out_fh = None
-    try:
-        out_fh = gzip.open(sortie_gz_part, "wb", compresslevel=6)
-        out_fh.write(header)
-        first_feat = True
-
-        while True:
-            if _stop_event.is_set():
-                if n_features:
-                    print(f"  WFS interrupted - {n_features} features retrieved (partial .gz output)")
-                # Pas de finalisation : on supprime le tmp pour ne pas garder
-                # un .gz tronqué qui aurait l'air valide.
-                raise KeyboardInterrupt(f"WFS {typename} interrompu")
-
-            params = {
-                "SERVICE":      "WFS",
-                "VERSION":      "2.0.0",
-                "REQUEST":      "GetFeature",
-                "TYPENAMES":    typename,
-                "OUTPUTFORMAT": "application/json",
-                "SRSNAME":      "EPSG:4326",
-                "BBOX":         f"{lon_min},{lat_min},{lon_max},{lat_max},EPSG:4326",
-                "COUNT":        str(WFS_PAGE),
-                "STARTINDEX":   str(startindex),
-            }
-            url = WFS_URL + "?" + urllib.parse.urlencode(params)
-            req = urllib.request.Request(
-                url, headers={"User-Agent": _HTTP_UA})
-
-            data = None
-            for tentative in range(3):
-                try:
-                    with urllib.request.urlopen(req, timeout=60) as resp:
-                        data = json.loads(resp.read())
-                    break
-                except (urllib.error.URLError, urllib.error.HTTPError,
-                        json.JSONDecodeError, TimeoutError, OSError) as e:
-                    if tentative < 2:
-                        time.sleep(3)
-                    else:
-                        print(f"\n  ERROR WFS ({typename}): {type(e).__name__}: {e}")
-                        data = None
-
-            if data is None:
-                # Échec d'une page après retries : NE PAS publier un partiel
-                # sous le nom final (l'ancien code finalisait un .gz valide
-                # mais silencieusement incomplet — violait l'invariant
-                # "artefact présent = complet"). tmp supprimé, couche en échec ;
-                # main_wfs continue les autres couches et sortira en code 1.
-                print(f"  ✗ WFS {typename}: page failed after {n_features} "
-                      f"features - output discarded (rerun to retry)")
-                out_fh.close(); out_fh = None
-                sortie_gz_part.unlink(missing_ok=True)
-                return None
-
-            page = data.get("features", [])
-            if not page:
-                break   # page vide = fin de flux (quel que soit le total annoncé)
-
-            # Fallback si hits a échoué : capturer numberMatched à la 1re page
-            if total_attendu is None:
-                _nm = data.get("numberMatched", data.get("totalFeatures"))
-                if _nm is not None:
-                    try:
-                        total_attendu = int(_nm)
-                    except (ValueError, TypeError):
-                        pass
-
-            # Écriture streamée des features de cette page
-            for feat in page:
-                if not first_feat:
-                    out_fh.write(b",")
-                first_feat = False
-                out_fh.write(json.dumps(feat, ensure_ascii=False,
-                                         separators=(",", ":")).encode("utf-8"))
-                n_features += 1
-
-            elapsed = int(time.time() - t0)
-            n_pages += 1
-            if total_attendu:
-                pct = min(n_features * 100 // total_attendu, 99)
-                bar = ("█" * (pct // 5)).ljust(20)
-                print(f"  WFS  [{bar}] {pct:3d}%  "
-                      f"{n_features}/{total_attendu}  "
-                      f"page {n_pages}  {_hms(elapsed)}", flush=True)
-            else:
-                print(f"  WFS  page {n_pages}  {n_features} features  {_hms(elapsed)}",
-                      flush=True)
-
-            # Avancement par len(page), PAS par WFS_PAGE : un serveur qui
-            # plafonne sa page en dessous de COUNT sauterait des features.
-            # Arrêt piloté par numberMatched quand connu ; l'heuristique
-            # "page courte = fin" ne reste que sans numberMatched.
-            startindex += len(page)
-            if total_attendu is not None:
-                if n_features >= total_attendu:
-                    break
-            elif len(page) < WFS_PAGE:
-                break
-            time.sleep(0.2)
-
-        # Complétude : total annoncé mais moins de features reçues = résultat
-        # tronqué → ne pas publier (même invariant que l'échec de page).
-        if total_attendu is not None and n_features < total_attendu:
-            print(f"  ✗ WFS {typename}: {n_features}/{total_attendu} features "
-                  f"- truncated output discarded (rerun to retry)")
-            out_fh.close(); out_fh = None
-            sortie_gz_part.unlink(missing_ok=True)
-            return None
-
-        out_fh.write(b"]}")
-        out_fh.close()
-        out_fh = None
-    except BaseException:
-        # Toute exception (KeyboardInterrupt, OSError, etc.) → cleanup tmp
-        if out_fh is not None:
-            try: out_fh.close()
-            except Exception: pass
-        sortie_gz_part.unlink(missing_ok=True)
-        raise
-
-    # Le gzip sert aussi de staging quand seul le GeoJSON brut est demandé :
-    # dans ce cas il ne doit jamais apparaître sous un nom final intermédiaire.
-    source_gz = sortie_gz_part
-    if ecrire_gz:
-        sortie_gz_part.replace(sortie_gz)
-        source_gz = sortie_gz
-
-    chemin_principal = None
-    if ecrire_gz:
-        taille_ko = sortie_gz.stat().st_size // 1024
-        print(f"  {sortie_gz.name} : {n_features} features  ({taille_ko} Ko)"
-              f"  {_hms(int(time.time()-t0))}")
-        chemin_principal = sortie_gz
-    if ecrire_geojson:
-        # Décompresser en streaming vers le .geojson raw
-        try:
-            _gunzip_vers_fichier(source_gz, sortie)
-        except BaseException:
-            if not ecrire_gz:
-                sortie_gz_part.unlink(missing_ok=True)
-            raise
-        taille_ko = sortie.stat().st_size // 1024
-        print(f"  {sortie.name} : {n_features} features  ({taille_ko} Ko)")
-        if chemin_principal is None:
-            chemin_principal = sortie
-    if not ecrire_gz:
-        sortie_gz_part.unlink(missing_ok=True)
-    return chemin_principal
+telecharger_wfs.__doc__ = _telecharger_wfs_impl.__doc__
 
 
 # ============================================================
@@ -10436,248 +9591,47 @@ _BDTOPO_GPKG_LAYER = {
 }
 
 
-def _decouvrir_url_bdtopo_gpkg(num_dep):
-    """Retourne (url_7z, nom_ressource) pour le dernier GPKG BD TOPO du département.
-    Les fichiers IGN sont packagés en .7z contenant un .gpkg.
-    """
-    dep_padded = str(num_dep).zfill(3)
-    zone = f"D{dep_padded}"
+from _bdtopo_bulk import (
+    DependancesBdtopo as _DependancesBdtopo,
+    decouvrir_url_bdtopo_gpkg as _decouvrir_url_bdtopo_gpkg_impl,
+    telecharger_bdtopo_gpkg as _telecharger_bdtopo_gpkg_impl,
+)
 
-    # 1. Requête API Atom — retourne du XML Atom, pas du JSON
-    try:
-        api_url = (f"{BDTOPO_API_URL}?zone={zone}&format=GPKG"
-                   f"&crs=LAMB93&page=1&limit=5")
-        req = urllib.request.Request(api_url,
-                                     headers={"User-Agent": _HTTP_UA})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            xml_bytes = r.read()
-        # Parser le XML Atom pour extraire les noms de ressources
-        root = _ET.fromstring(xml_bytes)
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
-        # Les entrées Atom ont un <id> ou <title> contenant le nom de ressource
-        noms = []
-        for entry in root.findall(".//atom:entry", ns):
-            title = entry.findtext("atom:title", namespaces=ns) or ""
-            nid   = entry.findtext("atom:id",    namespaces=ns) or ""
-            for candidate in (title, nid):
-                if f"GPKG_LAMB93_{zone}" in candidate:
-                    # Extraire le nom de la ressource depuis l'URL ou le titre
-                    parts = candidate.strip("/").split("/")
-                    for p in parts:
-                        if f"GPKG_LAMB93_{zone}" in p:
-                            noms.append(p.replace(".7z", "").replace(".gpkg", ""))
-                            break
-        if noms:
-            # Trier par (date, version_tuple) pour prendre le plus récent.
-            # Les noms ont la forme :
-            #   BDTOPO_3-5_TOUSTHEMES_GPKG_LAMB93_D083_2024-12-15
-            # Un sort lexicographique simple est trompeur dès que la version
-            # mineure passe à 2 chiffres ('3-10' < '3-5' en lex).
-            _re_meta = re.compile(
-                r"BDTOPO_(\d+)-(\d+)_.*_(\d{4}-\d{2}-\d{2})$")
-            def _key(nom):
-                m = _re_meta.search(nom)
-                if not m:
-                    return (("",), (0, 0))   # noms non-standard en queue
-                maj, mineur, date = m.groups()
-                return (date, (int(maj), int(mineur)))
-            noms.sort(key=_key, reverse=True)
-            nom = noms[0]
-            url = f"{BDTOPO_DL_BASE}/{nom}/{nom}.7z"
-            print(f"  BD TOPO {zone} GPKG : {nom}", flush=True)
-            return url, nom
-    except Exception as e:
-        print(f"  ⚠ API IGN ({type(e).__name__}: {e}) — essai dates connues")
 
-    # 2. Fallback : dates trimestrielles (YYYY-03/06/09/12-15) sur 2 ans
-    import datetime as _dt
-    today = _dt.date.today()
-    candidates = []
-    for delta_q in range(8):
-        y, q = today.year, ((today.month - 1) // 3) - delta_q
-        while q < 0:
-            q += 4; y -= 1
-        candidates.append(f"{y}-{[3, 6, 9, 12][q % 4]:02d}-15")
-
-    # Versions IGN à tester. Tuples (major, minor) — le tri par tuple gère
-    # correctement les versions mineures à plusieurs chiffres (3-10 > 3-9 > 3-5),
-    # contrairement à un tri lex sur la chaîne "3-X". Ajouter une nouvelle
-    # version IGN ici en cas de release.
-    _versions = sorted(
-        [(3, 5), (3, 4), (3, 3)],
-        reverse=True,
+def _dependances_bdtopo_bulk():
+    return _DependancesBdtopo(
+        api_url=BDTOPO_API_URL,
+        download_base=BDTOPO_DL_BASE,
+        http_ua=_HTTP_UA,
+        cache_root=DOSSIER_CACHE,
+        log_req=_log_req,
+        chemin_part=_chemin_part,
+        ouvrir_url=_urlopen,
+        stop_event=_stop_event,
+        formater_duree=_hms,
     )
-    for maj, mineur in _versions:
-        version = f"{maj}-{mineur}"
-        for date_str in candidates:
-            nom = f"BDTOPO_{version}_TOUSTHEMES_GPKG_LAMB93_{zone}_{date_str}"
-            url = f"{BDTOPO_DL_BASE}/{nom}/{nom}.7z"
-            try:
-                req_h = urllib.request.Request(url, method="HEAD",
-                                               headers={"User-Agent": _HTTP_UA})
-                with urllib.request.urlopen(req_h, timeout=10):
-                    print(f"  BD TOPO {zone} : {nom}", flush=True)
-                    return url, nom
-            except Exception:
-                continue
 
-    print(f"  ERROR: BD TOPO GPKG archive not found for {num_dep}")
-    return None, None
+
+def _decouvrir_url_bdtopo_gpkg(num_dep):
+    return _decouvrir_url_bdtopo_gpkg_impl(
+        num_dep, dependances=_dependances_bdtopo_bulk()
+    )
+
+
+_decouvrir_url_bdtopo_gpkg.__doc__ = _decouvrir_url_bdtopo_gpkg_impl.__doc__
 
 
 def _telecharger_bdtopo_gpkg(num_dep, url, nom_ressource, ecraser=False):
-    """Télécharge et extrait le .7z BD TOPO, met le .gpkg en cache. Retourne Path ou None.
-
-    ecraser=True (--download-overwrite) force le re-téléchargement même si un
-    GPKG est déjà en cache (sinon un GPKG périmé/corrompu était réutilisé
-    indéfiniment malgré l'option, R2#31)."""
-    dep_padded = str(num_dep).zfill(3)
-    cache_dir  = DOSSIER_CACHE / "bdtopo"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    gpkg_path = cache_dir / f"{nom_ressource}.gpkg"
-
-    if ecraser and gpkg_path.exists():
-        # Conserver l'ancien cache jusqu'à validation complète du remplaçant.
-        # Le supprimer ici ferait perdre un GPKG sain au moindre échec réseau,
-        # d'extraction ou de validation SQLite.
-        print(f"  GPKG cache: {gpkg_path.name} -> overwrite (re-download)", flush=True)
-    if (not ecraser and gpkg_path.exists()
-            and gpkg_path.stat().st_size > 10_000_000):
-        print(f"  GPKG cache: {gpkg_path.name} "
-              f"({gpkg_path.stat().st_size/1e6:.0f} MB) reused", flush=True)
-        return gpkg_path
-
-    # ── Vérifier que py7zr est disponible pour l'extraction ──────────────────
-    try:
-        import py7zr as _py7zr
-    except ImportError:
-        print("  Installing py7zr for .7z extraction...", flush=True)
-        try:
-            r_pip = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "py7zr", "-q"],
-                capture_output=True, timeout=600)
-        except subprocess.TimeoutExpired:
-            print("  ERROR: py7zr install timeout (>600s) - cannot extract the IGN .7z")
-            return None
-        if r_pip.returncode != 0:
-            print("  ERROR: py7zr not installable - cannot extract the IGN .7z")
-            return None
-        import py7zr as _py7zr
-
-    # ── Téléchargement du .7z ────────────────────────────────────────────────
-    archive_name = f"{nom_ressource}.7z"
-    print(f"  Downloading BD TOPO D{dep_padded} (~200-800 MB)...", flush=True)
-    _log_req(url, "IGN bulk GPKG")
-    # L'archive n'est qu'un artefact de travail : elle reste sous un nom
-    # unique terminé par .part jusqu'à son nettoyage après extraction.
-    archive_part = _chemin_part(cache_dir / archive_name)
-    t0 = time.time()
-    try:
-        try:
-            resp = _urlopen(url, timeout=120)
-        except urllib.error.HTTPError as _e:
-            print(f"  HTTP ERROR {_e.code}: {url}")
-            return None
-        # `with` ferme la connexion HTTP même sur exception (pas de FD leak).
-        with resp:
-            total = int(resp.headers.get("content-length") or 0)
-            done = 0
-            # Throttle d'affichage : on actualise au max toutes les 0.5s pour
-            # éviter de noyer la GUI (Popen/PIPE) avec un print() tous les 1 MB.
-            _last_print = 0.0
-            with open(archive_part, "wb") as f:
-                while True:
-                    if _stop_event.is_set():
-                        archive_part.unlink(missing_ok=True)
-                        return None
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    f.write(chunk); done += len(chunk)
-                    now = time.time()
-                    if now - _last_print < 0.5:
-                        continue
-                    _last_print = now
-                    elapsed = int(now - t0)
-                    if total:
-                        pct = min(done * 100 // total, 99)
-                        bar = ("█" * (pct // 5)).ljust(20)
-                        sys.stdout.write(
-                            f"\r  [{bar}] {pct:3d}%  "
-                            f"{done/1e6:.0f}/{total/1e6:.0f} MB  {_hms(elapsed)}   ")
-                    else:
-                        sys.stdout.write(
-                            f"\r  {done/1e6:.0f} MB  {_hms(elapsed)}   ")
-                    sys.stdout.flush()
-        sys.stdout.write("\r" + " " * 70 + "\r"); sys.stdout.flush()
-        if total and done != total:
-            raise OSError(f"archive incomplete: {done}/{total} bytes")
-        if not archive_part.exists() or archive_part.stat().st_size == 0:
-            raise OSError("empty archive")
-        print(f"  ✓ {archive_name}  ({archive_part.stat().st_size/1e6:.0f} MB)  "
-              f"{_hms(int(time.time()-t0))}", flush=True)
-    except BaseException as e:
-        archive_part.unlink(missing_ok=True)
-        if not isinstance(e, (OSError, urllib.error.URLError)):
-            raise
-        print(f"  ERROR downloading ({type(e).__name__}): {e}")
-        return None
-
-    # ── Extraction du .gpkg depuis le .7z ────────────────────────────────────
-    # Dans un dossier temporaire UNIQUE (pid) puis promotion replace() : le
-    # membre est sélectionné par son CHEMIN EXACT dans l'archive. L'ancien
-    # rglob sur le cache PARTAGÉ était ambigu : .gpkg d'un AUTRE département
-    # renommé à sa place (multi-dép 83,84 → données du mauvais département,
-    # cache détruit), homonyme périmé d'une extraction crashée, ou process
-    # concurrent. Le .gpkg est validé (taille + ouverture SQLite) AVANT
-    # d'entrer au cache.
-    print(f"  Extracting GPKG from {archive_name}...", flush=True)
-    _tmp_dir = cache_dir / (
-        f"_extract_{os.getpid()}_{uuid.uuid4().hex[:12]}.part"
+    return _telecharger_bdtopo_gpkg_impl(
+        num_dep,
+        url,
+        nom_ressource,
+        ecraser=ecraser,
+        dependances=_dependances_bdtopo_bulk(),
     )
-    try:
-        with _py7zr.SevenZipFile(archive_part, mode="r") as z:
-            gpkg_names = [n for n in z.getnames() if n.lower().endswith(".gpkg")]
-            if not gpkg_names:
-                print("  ERROR: no .gpkg in the 7z archive")
-                return None
-            if len(gpkg_names) > 1:
-                print(f"  ({len(gpkg_names)} .gpkg in archive - using {gpkg_names[0]})")
-            _tmp_dir.mkdir(parents=True, exist_ok=True)
-            # N'extraire QUE le membre utilisé (pas toute la liste : pic
-            # disque et surface d'échec inutiles si l'archive en a plusieurs).
-            z.extract(targets=[gpkg_names[0]], path=_tmp_dir)
 
-        extracted = _tmp_dir / gpkg_names[0]
-        if not extracted.exists():
-            print("  ERROR: .gpkg not found after extraction")
-            return None
-        # Validation avant promotion : taille plausible + SQLite lisible.
-        if extracted.stat().st_size < 10_000_000:
-            print(f"  ERROR: extracted GPKG too small "
-                  f"({extracted.stat().st_size} B) - discarded")
-            return None
-        try:
-            _con_v = sqlite3.connect(f"file:{extracted}?mode=ro", uri=True)
-            _con_v.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-            _con_v.close()
-        except Exception as _e_v:
-            print(f"  ERROR: extracted GPKG unreadable ({_e_v}) - discarded")
-            return None
 
-        extracted.replace(gpkg_path)      # promotion atomique vers le cache
-        print(f"  ✓ GPKG extrait : {gpkg_path.name} "
-              f"({gpkg_path.stat().st_size/1e6:.0f} MB)", flush=True)
-        return gpkg_path
-
-    except BaseException as e:
-        if not isinstance(e, Exception):
-            raise
-        print(f"  ERROR .7z extraction ({type(e).__name__}): {e}")
-        return None
-    finally:
-        archive_part.unlink(missing_ok=True)
-        shutil.rmtree(_tmp_dir, ignore_errors=True)
+_telecharger_bdtopo_gpkg.__doc__ = _telecharger_bdtopo_gpkg_impl.__doc__
 
 
 def _streamer_geojson_ajout_source(src_geojson, dst_gz, source_name):

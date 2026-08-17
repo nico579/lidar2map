@@ -8,9 +8,132 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+# Catalogue unique : les noms de paquets pip ne sont pas systématiquement les
+# noms importables. Il est partagé par le bootstrap normal et l'installation
+# explicite ``--installer-deps`` de la façade.
+MODULE_PAR_PAQUET = {
+    "Pillow": "PIL",
+    "pyproj": "pyproj",
+    "numpy": "numpy",
+    "scipy": "scipy",
+    "ijson": "ijson",
+    "rasterio": "rasterio",
+    "fiona": "fiona",
+    "certifi": "certifi",
+    "pywebview": "webview",
+    "osmium": "osmium",
+    "numba": "numba",
+    "laspy": "laspy",
+    "lazrs": "lazrs",
+    "py7zr": "py7zr",
+    "mapbox-vector-tile": "mapbox_vector_tile",
+    "cloth-simulation-filter": "CSF",
+    "PyQt6": "PyQt6",
+    "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
+    "qtpy": "qtpy",
+    "pyobjc-framework-WebKit": "WebKit",
+    "pyobjc-framework-Cocoa": "Cocoa",
+}
+
+
+def chemins_desinstallation(*, systeme, home, localappdata=None):
+    """Retourne les cibles de désinstallation sans accéder au disque."""
+    home = Path(home)
+    lidar2map_home = home / ".lidar2map"
+    if systeme == "Windows":
+        base = Path(localappdata) if localappdata else home / "AppData" / "Local"
+        app_data = base / "lidar2map"
+    elif systeme == "Darwin":
+        app_data = home / "Library" / "Application Support" / "lidar2map"
+    else:
+        app_data = home / ".local" / "share" / "lidar2map"
+    return (
+        (app_data, "dossier d'extraction du bundle"),
+        (lidar2map_home / "venv", "venv Python"),
+        (lidar2map_home / "osmosis", "osmosis"),
+        (lidar2map_home / "jre", "JRE Java"),
+    )
+
+
+def _taille_arbre_sans_suivre_liens(chemin):
+    """Mesure un arbre sans parcourir les liens vers des données externes."""
+    total = 0
+    for racine, dossiers, fichiers in os.walk(chemin, followlinks=False):
+        racine = Path(racine)
+        for nom in dossiers:
+            entree = racine / nom
+            if not entree.is_symlink():
+                continue
+            try:
+                total += entree.lstat().st_size
+            except OSError:
+                pass
+        for nom in fichiers:
+            try:
+                total += (racine / nom).lstat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def desinstaller_lidar2map(
+    *,
+    systeme,
+    home,
+    localappdata=None,
+    supprimer_arbre=shutil.rmtree,
+    ecrire=print,
+):
+    """Supprime les seules cibles planifiées et retourne ``True`` si complet."""
+    cibles = chemins_desinstallation(
+        systeme=systeme,
+        home=home,
+        localappdata=localappdata,
+    )
+    total = 0
+    complet = True
+    ecrire("")
+    ecrire("  ── lidar2map uninstall ──────────────────────────────────")
+    ecrire("")
+    for chemin, label in cibles:
+        if not chemin.exists() and not chemin.is_symlink():
+            ecrire(f"  {label} : absent ({chemin})")
+            continue
+        taille = (
+            chemin.lstat().st_size
+            if chemin.is_symlink()
+            else _taille_arbre_sans_suivre_liens(chemin)
+        )
+        total += taille
+        ecrire(f"  Removing {label} ({taille / 1e6:.0f} MB)")
+        ecrire(f"    {chemin}")
+        try:
+            if chemin.is_symlink():
+                chemin.unlink()
+            else:
+                supprimer_arbre(chemin)
+        except OSError as exc:
+            complet = False
+            ecrire(f"    ⚠ partial ({exc})")
+            continue
+        if chemin.exists() or chemin.is_symlink():
+            complet = False
+            ecrire("    ⚠ partial")
+        else:
+            ecrire("    ✓ removed")
+    ecrire("")
+    ecrire(f"  {total / 1e6:.0f} MB freed.")
+    ecrire("")
+    ecrire("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
+    ecrire("  Remove them manually if needed.")
+    ecrire("")
+    return complet
 
 
 def verifier_venv_linux():
@@ -360,28 +483,6 @@ def installer_deps(*, gui_deps_plateforme):
     # Deps GUI spécifiques à la plateforme (Qt partout, Cocoa/WebKit sur macOS)
     _gui_crit, _gui_opt = gui_deps_plateforme()
 
-    # Une seule table sert à la détection initiale ET aux validations après
-    # installation. Les noms pip ne sont pas toujours importables tels quels
-    # (Pillow/PIL, pywebview/webview, PyObjC WebKit/Cocoa).
-    _module_par_paquet = {
-        "Pillow": "PIL",
-        "pyproj": "pyproj",
-        "numpy": "numpy",
-        "scipy": "scipy",
-        "ijson": "ijson",
-        "rasterio": "rasterio",
-        "fiona": "fiona",
-        "certifi": "certifi",
-        "pywebview": "webview",
-        "osmium": "osmium",
-        "numba": "numba",
-        "PyQt6": "PyQt6",
-        "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
-        "qtpy": "qtpy",
-        "pyobjc-framework-WebKit": "WebKit",
-        "pyobjc-framework-Cocoa": "Cocoa",
-    }
-
     # find_spec ne charge pas le module — beaucoup plus rapide que __import__
     # pour les modules lourds (rasterio, scipy, PIL, PyQt6 prennent 200-500 ms
     # chacun à l'import). Gain typique au démarrage à froid : 2-3 s.
@@ -399,13 +500,13 @@ def installer_deps(*, gui_deps_plateforme):
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
         "fiona", "certifi", "pywebview", "osmium", "numba",
     ]:
-        mod = _module_par_paquet[pkg]
+        mod = MODULE_PAR_PAQUET[pkg]
         if not _module_present(mod):
             deps.append(pkg)
 
     # Ajouter les deps GUI plateforme non encore installées
     for pkg in _gui_crit + _gui_opt:
-        _mod = _module_par_paquet.get(pkg, pkg)
+        _mod = MODULE_PAR_PAQUET.get(pkg, pkg)
         if not _module_present(_mod):
             if pkg not in deps:
                 deps.append(pkg)
@@ -449,7 +550,7 @@ def installer_deps(*, gui_deps_plateforme):
     def _imports_critiques_manquants(paquets):
         rates = []
         for pkg in paquets:
-            mod = _module_par_paquet.get(pkg, pkg)
+            mod = MODULE_PAR_PAQUET.get(pkg, pkg)
             try:
                 __import__(mod)
             except ImportError:
@@ -568,6 +669,66 @@ def installer_deps(*, gui_deps_plateforme):
         print(f"    pip install {' '.join(deps)}")
     print()
     sys.exit(1)
+
+
+def installer_toutes_dependances(
+    *,
+    gui_deps_plateforme,
+    importer=__import__,
+    lancer=None,
+    executable=None,
+    ecrire=print,
+):
+    """Installe les dépendances de maintenance et retourne ``True`` si OK.
+
+    Les paquets optionnels ne bloquent pas la commande. Toute dépendance
+    critique qui ne peut pas être importée ou installée fait en revanche
+    retourner ``False``. Les coutures injectables gardent ce chemin testable
+    sans réseau ni invocation réelle de pip.
+    """
+    if lancer is None:
+        lancer = subprocess.run
+    if executable is None:
+        executable = sys.executable
+
+    gui_critiques, gui_optionnelles = gui_deps_plateforme()
+    critiques = [
+        "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
+        "fiona", "certifi", "pywebview", *gui_critiques,
+    ]
+    optionnelles = [
+        "osmium", "numba", "laspy", "lazrs", "py7zr",
+        "mapbox-vector-tile", "cloth-simulation-filter", *gui_optionnelles,
+    ]
+    pip_base = [executable, "-m", "pip", "install", "-q"]
+
+    ecrire("  Full install of all dependencies...")
+    for paquet in critiques + optionnelles:
+        module = MODULE_PAR_PAQUET[paquet]
+        try:
+            importer(module)
+        except ImportError:
+            resultat = lancer(pip_base + [paquet], capture_output=True)
+            if resultat.returncode == 0:
+                try:
+                    importer(module)
+                except ImportError:
+                    resultat = None
+                else:
+                    ecrire(f"    ✓ {paquet}")
+                    continue
+            else:
+                resultat = None
+
+            if paquet in critiques:
+                ecrire(f"    ERROR {paquet} (critical dependency unavailable)")
+                return False
+            ecrire(f"    ⚠ {paquet} (optional - skipped)")
+        else:
+            ecrire(f"    ✓ {paquet} (already installed)")
+
+    ecrire("  All dependencies installed.")
+    return True
 
 
 def orchestrer_bootstrap(

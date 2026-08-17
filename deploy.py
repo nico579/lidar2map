@@ -82,6 +82,16 @@ MAP = {
     "_bootstrap_policy.py":          "_bootstrap_policy.py",
     "_bootstrap_runtime.py":         "_bootstrap_runtime.py",
     "_bootstrap_tls.py":             "_bootstrap_tls.py",
+    "_smoketest.py":                 "_smoketest.py",
+    "_logging_helpers.py":           "_logging_helpers.py",
+    "_tee_logger.py":                "_tee_logger.py",
+    "_log_activation.py":            "_log_activation.py",
+    "_atomic_files.py":              "_atomic_files.py",
+    "_http_helpers.py":              "_http_helpers.py",
+    "_runtime_paths.py":             "_runtime_paths.py",
+    "_disk_guard.py":                "_disk_guard.py",
+    "_wfs_pipeline.py":              "_wfs_pipeline.py",
+    "_bdtopo_bulk.py":               "_bdtopo_bulk.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_osm_xml.py":           "_geojson_osm_xml.py",
@@ -171,6 +181,16 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_ombrages_provider.py"
         or name == "_shading_specs.py"
         or (name.startswith("_bootstrap_") and name.endswith(".py"))
+        or name == "_smoketest.py"
+        or name == "_logging_helpers.py"
+        or name == "_tee_logger.py"
+        or name == "_log_activation.py"
+        or name == "_atomic_files.py"
+        or name == "_http_helpers.py"
+        or name == "_runtime_paths.py"
+        or name == "_disk_guard.py"
+        or name == "_wfs_pipeline.py"
+        or name == "_bdtopo_bulk.py"
         or (name.startswith("_geojson_") and name.endswith(".py"))
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"

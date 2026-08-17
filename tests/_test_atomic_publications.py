@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import types
@@ -85,6 +86,140 @@ class AtomicPublicationTests(unittest.TestCase):
                  or path.name.endswith("-shm"))
         ]
         self.assertEqual(residues, [])
+
+    @staticmethod
+    def _wfs_response(payload):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        return Response()
+
+    def test_wfs_interruption_keeps_previous_final_and_cleans_staging(self):
+        final = self.tmp / "zone_ign_test.geojson.gz"
+        final.write_bytes(b"previous")
+        L._stop_event.set()
+        hits = self._wfs_response({"numberMatched": 1})
+
+        with mock.patch.object(L, "WFS_URL", "https://wfs.invalid"), \
+             mock.patch.object(L.urllib.request, "urlopen", return_value=hits), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(KeyboardInterrupt):
+            L.telecharger_wfs(
+                "BDTOPO_V3:test", 1, 2, 3, 4, "zone", self.tmp,
+                ecraser_telechargement=True,
+            )
+
+        self.assertEqual(final.read_bytes(), b"previous")
+        self._assert_no_part()
+
+    def test_wfs_publication_failure_keeps_previous_final_and_cleans_staging(self):
+        final = self.tmp / "zone_ign_test.geojson.gz"
+        final.write_bytes(b"previous")
+        responses = [
+            self._wfs_response({"numberMatched": 1}),
+            self._wfs_response({
+                "numberMatched": 1,
+                "features": [{"type": "Feature", "properties": {"id": 1}}],
+            }),
+        ]
+        real_replace = Path.replace
+
+        def replace(path, target):
+            if Path(target) == final and Path(path).suffix == ".part":
+                raise OSError("publication refused")
+            return real_replace(path, target)
+
+        with mock.patch.object(L, "WFS_URL", "https://wfs.invalid"), \
+             mock.patch.object(L.urllib.request, "urlopen", side_effect=responses), \
+             mock.patch.object(Path, "replace", autospec=True, side_effect=replace), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaisesRegex(OSError, "publication refused"):
+            L.telecharger_wfs(
+                "BDTOPO_V3:test", 1, 2, 3, 4, "zone", self.tmp,
+                ecraser_telechargement=True,
+            )
+
+        self.assertEqual(final.read_bytes(), b"previous")
+        self._assert_no_part()
+
+    def test_atomic_file_facades_delegate_to_the_extracted_module(self):
+        marker = object()
+        with mock.patch.object(
+                L._atomic_files_impl, "chemin_part", return_value=marker
+        ) as chemin, mock.patch.object(
+                L._atomic_files_impl, "nettoyer_sqlite_part"
+        ) as nettoyer, mock.patch.object(
+                L._atomic_files_impl, "valider_sqlite_part", return_value=marker
+        ) as valider:
+            self.assertIs(L._chemin_part("x"), marker)
+            L._nettoyer_sqlite_part("y")
+            self.assertIs(L._valider_sqlite_part("z", {"tiles": 1}), marker)
+
+        chemin.assert_called_once_with("x")
+        nettoyer.assert_called_once_with("y")
+        valider.assert_called_once_with("z", {"tiles": 1})
+
+    def test_atomic_part_path_is_unique_and_does_not_touch_final(self):
+        final = self.tmp / "zone.mbtiles"
+        final.write_bytes(b"final")
+
+        first = L._chemin_part(final)
+        second = L._chemin_part(final)
+
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.parent, final.parent)
+        self.assertTrue(first.name.startswith(final.name + "."))
+        self.assertEqual(first.suffix, ".part")
+        self.assertEqual(final.read_bytes(), b"final")
+
+    def test_atomic_cleanup_removes_only_staging_and_its_sidecars(self):
+        final = self.tmp / "zone.mbtiles"
+        final.write_bytes(b"final")
+        staging = self.tmp / "zone.mbtiles.123.token.part"
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(str(staging) + suffix).write_bytes(b"staging")
+
+        L._nettoyer_sqlite_part(staging)
+
+        self.assertEqual(final.read_bytes(), b"final")
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            self.assertFalse(Path(str(staging) + suffix).exists())
+
+    def test_atomic_sqlite_validation_checks_tables_counts_and_sidecars(self):
+        staging = self.tmp / "zone.mbtiles.part"
+        connexion = sqlite3.connect(staging)
+        try:
+            connexion.execute("CREATE TABLE tiles (id INTEGER)")
+            connexion.executemany("INSERT INTO tiles VALUES (?)", [(1,), (2,)])
+            connexion.commit()
+        finally:
+            connexion.close()
+
+        L._valider_sqlite_part(staging, {"tiles": 2})
+        L._valider_sqlite_part(staging, {"tiles": None})
+
+        # La connexion de lecture doit être fermée après une validation.
+        renamed = staging.with_name("renamed.mbtiles.part")
+        staging.replace(renamed)
+        renamed.replace(staging)
+
+        with self.assertRaisesRegex(OSError, "manquante"):
+            L._valider_sqlite_part(staging, {"metadata": None})
+        with self.assertRaisesRegex(OSError, "1 attendue"):
+            L._valider_sqlite_part(staging, {"tiles": 1})
+
+        sidecar = Path(str(staging) + "-wal")
+        sidecar.write_bytes(b"pending")
+        with self.assertRaisesRegex(OSError, "sidecar SQLite"):
+            L._valider_sqlite_part(staging, {"tiles": 2})
+        sidecar.unlink()
 
     def test_wmts_download_failure_keeps_previous_final(self):
         final = self.tmp / "zone.mbtiles"

@@ -1012,6 +1012,7 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
       and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
+_runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
 check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
       '"--laz"' in _src and '"--laz-hmin"' in _src and '"--laz-ground"' in _src
       and '"--laz-csf-threshold"' in _src)
@@ -1455,12 +1456,10 @@ check("--zone-bbox : centre natif calculé (détection dept OSM en mode bbox)",
 # dalles → <cd>/lidar/fr, WMTS → <cd>/ign_raster. --tiles-dir reste le réglage
 # fin des seules dalles LiDAR (prioritaire), CLI-only.
 check("--cache-dir : racine de cache unique et déplaçable",
-      "DOSSIER_CACHE = DOSSIER_TRAVAIL / \"cache\"" in _src
+      'dossier_travail / "cache"' in _runtime_paths_src
+      and "_runtime_paths_impl.calculer_chemins" in _src
       and "def _appliquer_cache_dir(args):" in _src
-      and 'parser.add_argument("--cache-dir", "--dossier-cache"' in _src
-      # une SEULE occurrence du motif en dur = la définition de DOSSIER_CACHE ;
-      # tous les sites d'accès passent désormais par DOSSIER_CACHE.
-      and _src.count('DOSSIER_TRAVAIL / "cache"') == 1)
+      and 'parser.add_argument("--cache-dir", "--dossier-cache"' in _src)
 check("--cache-dir : appliqué au début des 3 mains zone-based",
       _src.count("_appliquer_cache_dir(args)") >= 3)
 # GUI : le champ cache est global (Projet, à côté de « Dossier sortie »), plus
@@ -1660,7 +1659,7 @@ check("cœur : rayon zone converti en DEGRÉS pour un CRS_NATIF géographique "
       "def _crs_natif_geographique" in _src and "is_geographic" in _src
       and "rayon_km / 111.0" in _src)
 check("--production-dir : flag + défaut + émission GUI + relecture argv",
-      'DOSSIER_PRODUCTION = DOSSIER_TRAVAIL / "production"' in _src
+      'dossier_travail / "production"' in _runtime_paths_src
       and '"--production-dir", "--dossier-production"' in _src
       and 'cmd += ["--production-dir"' in _src
       and '"production_dir": _arg("--production-dir"' in _src)

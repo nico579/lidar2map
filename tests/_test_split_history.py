@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import lidar2map as L  # noqa: E402
+import _tee_logger as tee_logger_module  # noqa: E402
 
 
 class NoopPrefetch:
@@ -574,6 +575,59 @@ class PosterioriSplitHistoryTests(HistoryFixture):
 
 
 class TeeLoggerChunkPrefixTests(unittest.TestCase):
+    def test_facade_reexports_the_extracted_logger_class(self):
+        self.assertIs(L._TeeLogger, tee_logger_module.TeeLogger)
+
+    def test_concurrent_complete_lines_are_not_lost_or_interleaved(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "threads.log"
+            logger = L._TeeLogger(final)
+            logger._terminal = io.StringIO()
+            try:
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    list(pool.map(lambda index: logger.write(f"worker-{index}\n"), range(40)))
+            finally:
+                logger.close()
+            persisted = final.read_text(encoding="utf-8")
+            for index in range(40):
+                self.assertEqual(persisted.count(f"worker-{index}\n"), 1)
+
+    def test_logger_publishes_only_on_close_and_close_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "atomic.log"
+            terminal = io.StringIO()
+            logger = L._TeeLogger(final)
+            logger._terminal = terminal
+            part = logger._part_path
+            logger.write("progress 10%\rprogress 100%\nlast line")
+            self.assertFalse(final.exists())
+            self.assertTrue(part.exists())
+            logger.close()
+            logger.close()
+            self.assertTrue(final.exists())
+            self.assertFalse(part.exists())
+            persisted = final.read_text(encoding="utf-8")
+            self.assertIn("progress 100%", persisted)
+            self.assertNotIn("progress 10%", persisted)
+            self.assertIn("last line", persisted)
+
+    def test_logger_keeps_part_and_warns_when_publication_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            final = Path(tmp) / "failed.log"
+            terminal = io.StringIO()
+            logger = L._TeeLogger(final)
+            logger._terminal = terminal
+            logger.write("preserved\n")
+            part = logger._part_path
+            with mock.patch("os.replace", side_effect=OSError("locked")):
+                logger.close()
+            self.assertFalse(final.exists())
+            self.assertTrue(part.exists())
+            self.assertIn("log publication failed", terminal.getvalue())
+            self.assertFalse(logger._published)
+
     def test_terminal_prefixes_chunk_details_and_progress_without_duplication(self):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = Path(tmp) / "chunk.log"
