@@ -1245,7 +1245,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.41.0"
+VERSION      = "1.42.0"
 VERSION_DATE = "2026-08"
 
 
@@ -4593,6 +4593,9 @@ def generer_sqlitedb_depuis_mbtiles(mbtiles_path, ecraser=False):
     )
 
 
+import _osm_runtime as _osmosis_runtime_impl
+
+
 # ── Bootstrap osmosis / JRE / mapwriter (téléchargement, découverte) ──────
 # Regroupé ici (10 août 2026, sous-phase 9a) : ces fonctions vivaient
 # égarées au début de la section ombrages/COG, sans rapport avec les
@@ -4607,242 +4610,56 @@ def _promouvoir_dossier(tmp_dir, dest_dir):
     Si la seconde opération échoue, l'ancien est remis à sa place. Ainsi une
     erreur de rename ne détruit jamais l'installation encore utilisable.
     """
-    dest_dir = Path(dest_dir)
-    tmp_dir = Path(tmp_dir)
-    ancien_part = None
-    if dest_dir.exists():
-        ancien_part = dest_dir.parent / (
-            f"{dest_dir.name}.previous.{os.getpid()}."
-            f"{uuid.uuid4().hex[:12]}.part"
-        )
-        dest_dir.replace(ancien_part)
-    try:
-        tmp_dir.replace(dest_dir)
-    except BaseException:
-        if (ancien_part is not None and ancien_part.exists()
-                and not dest_dir.exists()):
-            ancien_part.replace(dest_dir)
-        raise
-    if ancien_part is not None:
-        shutil.rmtree(ancien_part, ignore_errors=True)
+    return _osmosis_runtime_impl.promouvoir_dossier(
+        tmp_dir,
+        dest_dir,
+        getpid=os.getpid,
+        uuid4=uuid.uuid4,
+        rmtree=shutil.rmtree,
+    )
 
 
 def _bin_outil(racine, pattern):
     """Retourne le 1er binaire `pattern` sous `racine` situé dans un dossier
     `bin/` (osmosis/java sont extraits dans un sous-dossier versionné variable),
     ou None si absent — sert de validateur d'install complète."""
-    for candidate in sorted(Path(racine).rglob(pattern)):
-        if candidate.is_file() and "bin" in candidate.parts:
-            return candidate
-    return None
+    return _osmosis_runtime_impl.bin_outil(racine, pattern)
 
 
 def _telecharger_osmosis_local():
-    """
-    Télécharge osmosis dans ./osmosis/ depuis GitHub releases.
-    osmosis est un JAR Java autonome — nécessite Java installé.
-    """
-    import zipfile
-
-    OSMOSIS_DIR = LIDAR2MAP_HOME / "osmosis"
-    pattern = "osmosis.bat" if WINDOWS else "osmosis"
-    _deja = _bin_outil(OSMOSIS_DIR, pattern) if OSMOSIS_DIR.exists() else None
-    if _deja is not None:
-        return str(_deja)
-
-    # URL stable osmosis 0.49.2
-    URL = "https://github.com/openstreetmap/osmosis/releases/download/0.49.2/osmosis-0.49.2.zip"
-    # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin,
-    # on valide la présence du binaire, PUIS on promeut atomiquement. Un Ctrl+C
-    # ou un disque plein pendant l'extraction laisse un dossier `.part` inerte au
-    # lieu d'un OSMOSIS_DIR à moitié peuplé que le check ci-dessus prendrait à
-    # tort pour une install valide (échec Java cryptique au lieu d'un re-dl).
-    tmp_dir = LIDAR2MAP_HOME / (
-        f"osmosis.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    """Télécharge et installe Osmosis localement de façon transactionnelle."""
+    return _osmosis_runtime_impl.telecharger_osmosis_local(
+        lidar2map_home=LIDAR2MAP_HOME,
+        windows=WINDOWS,
+        chemin_part=_chemin_part,
+        safe_zip_extractall=_safe_zip_extractall,
+        promouvoir=_promouvoir_dossier,
+        trouver_binaire=_bin_outil,
+        urlretrieve=urllib.request.urlretrieve,
+        remplacer=os.replace,
+        rmtree=shutil.rmtree,
+        getpid=os.getpid,
+        uuid4=uuid.uuid4,
     )
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = tmp_dir / "osmosis.zip"
-    zip_part = _chemin_part(zip_path)
-
-    print(f"  URL  : {URL}")
-    print("  Downloading osmosis (~35 MB)...", flush=True)
-    try:
-        def _prog(n, bs, total):
-            if total > 0:
-                print("  " + str(min(n*bs*100//total, 100)).rjust(3) + "%",
-                      end="\r", flush=True)
-        urllib.request.urlretrieve(URL, zip_part, reporthook=_prog)
-        os.replace(zip_part, zip_path)
-        print("  100%")
-        print("  Extraction osmosis...", flush=True)
-        with zipfile.ZipFile(zip_path, "r") as z:
-            _safe_zip_extractall(z, tmp_dir)
-        zip_path.unlink(missing_ok=True)
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
-            zipfile.BadZipFile, ValueError) as e:
-        print(f"  ERROR downloading osmosis: {type(e).__name__}: {e}")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-
-    # Le ZIP extrait dans un sous-dossier versionné (ex: osmosis-0.49.2/) :
-    # on cherche le binaire par rglob plutôt qu'un chemin fixe.
-    if _bin_outil(tmp_dir, pattern) is None:
-        print("  ERROR: osmosis not found after extraction.")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-    _promouvoir_dossier(tmp_dir, OSMOSIS_DIR)
-
-    candidate = _bin_outil(OSMOSIS_DIR, pattern)
-    if candidate is not None:
-        if not WINDOWS:
-            import stat as _stat
-            candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
-        print(f"  osmosis installed: {candidate}")
-        return str(candidate)
-    print("  ERROR: osmosis not found after extraction.")
-    return None
 
 
 def _telecharger_jre_local():
-    """
-    Télécharge le JRE Temurin (Eclipse Adoptium) dans ./jre/ — portable,
-    sans installation système, sans droits admin.
-    Fonctionne sur Windows (zip), Linux et macOS (tar.gz), x64 et arm64.
-    """
-    import tarfile, zipfile
-
-    JRE_DIR = LIDAR2MAP_HOME / "jre"
-    # Install transactionnelle (R2#48) : on extrait dans un dossier temp voisin
-    # puis on promeut atomiquement (même logique que _telecharger_osmosis_local).
-    tmp_dir = LIDAR2MAP_HOME / (
-        f"jre.{os.getpid()}.{uuid.uuid4().hex[:12]}.part"
+    """Télécharge et installe un JRE Temurin local de façon transactionnelle."""
+    return _osmosis_runtime_impl.telecharger_jre_local(
+        lidar2map_home=LIDAR2MAP_HOME,
+        windows=WINDOWS,
+        platform_system=platform.system,
+        platform_machine=platform.machine,
+        chemin_part=_chemin_part,
+        safe_zip_extractall=_safe_zip_extractall,
+        promouvoir=_promouvoir_dossier,
+        request=urllib.request.Request,
+        urlopen=urllib.request.urlopen,
+        remplacer=os.replace,
+        rmtree=shutil.rmtree,
+        getpid=os.getpid,
+        uuid4=uuid.uuid4,
     )
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    # Détection OS
-    sys_os = platform.system().lower()
-    if sys_os == "windows":
-        os_str, ext, java_bin = "windows", "zip",    "bin/java.exe"
-    elif sys_os == "darwin":
-        os_str, ext, java_bin = "mac",     "tar.gz", "bin/java"
-    else:
-        os_str, ext, java_bin = "linux",   "tar.gz", "bin/java"
-
-    # Détection architecture
-    machine = platform.machine().lower()
-    arch_str = "aarch64" if machine in ("arm64", "aarch64") else "x64"
-
-    # URL stable Adoptium API — JRE 21 LTS
-    URL = (f"https://api.adoptium.net/v3/binary/latest/21/ga"
-           f"/{os_str}/{arch_str}/jre/hotspot/normal/eclipse")
-
-    archive = tmp_dir / f"jre.{ext}"
-    archive_part = _chemin_part(archive)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"  URL  : {URL}")
-    print(f"  Downloading JRE Temurin 21 ({os_str}/{arch_str}, ~50 MB)...",
-          flush=True)
-    try:
-        # L'API Adoptium fait une redirection 302 vers GitHub.
-        # GitHub exige un User-Agent — urlretrieve seul renvoie 403.
-        # On résout d'abord l'URL finale, puis on télécharge avec headers.
-        _headers = {"User-Agent": "lidar2map/1.0 (JRE bootstrap)",
-                    "Accept":     "application/octet-stream"}
-
-        # Résolution de la redirection
-        _req = urllib.request.Request(URL, headers=_headers)
-        with urllib.request.urlopen(_req, timeout=30) as _resp:
-            _final_url = _resp.url  # URL finale après redirection(s)
-
-        # Téléchargement avec progression
-        _req2 = urllib.request.Request(_final_url, headers=_headers)
-        with urllib.request.urlopen(_req2, timeout=120) as _resp2:
-            total = int(_resp2.headers.get("Content-Length", 0))
-            downloaded = 0
-            chunk = 65536
-            with open(archive_part, "wb") as _fout:
-                while True:
-                    buf = _resp2.read(chunk)
-                    if not buf:
-                        break
-                    _fout.write(buf)
-                    downloaded += len(buf)
-                    if total > 0:
-                        pct = min(downloaded * 100 // total, 100)
-                        print(f"  {pct:3d}%", end="\r", flush=True)
-        os.replace(archive_part, archive)
-        print("  100%")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERROR downloading JRE: {type(e).__name__}: {e}")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-
-    print("  Extraction JRE...", flush=True)
-    try:
-        if ext == "zip":
-            with zipfile.ZipFile(archive, "r") as z:
-                _safe_zip_extractall(z, tmp_dir)
-        else:
-            with tarfile.open(archive, "r:gz") as t:
-                # Python 3.12+ : filter='data' requis pour bloquer les exploits
-                # (chemins absolus, traversée ../, liens symboliques sortants).
-                # Python 3.11- : pas de support du paramètre → validation MANUELLE
-                # équivalente avant extractall (le fallback nu laissait passer
-                # chemins absolus / ../ / liens sortants sur les vieux Python).
-                # Les symlinks INTERNES sont conservés (les JRE mac/linux en ont).
-                try:
-                    t.extractall(tmp_dir, filter='data')
-                except TypeError:
-                    _dest = Path(tmp_dir).resolve()
-                    for _m in t.getmembers():
-                        _nm = _m.name
-                        if _nm.startswith(("/", "\\")) or ".." in Path(_nm).parts \
-                                or (len(_nm) > 1 and _nm[1] == ":"):
-                            raise ValueError(f"Archive JRE suspecte : {_nm!r}")
-                        if _m.isdev():
-                            # device/FIFO : jamais légitime dans un JRE
-                            raise ValueError(f"Fichier spécial dans le JRE : {_nm!r}")
-                        if _m.issym() or _m.islnk():
-                            _lnk = _m.linkname
-                            if _lnk.startswith(("/", "\\")) \
-                                    or (len(_lnk) > 1 and _lnk[1] == ":"):
-                                raise ValueError(f"Lien absolu dans le JRE : {_nm!r}")
-                            # symlink : cible relative au dossier du membre ;
-                            # hardlink : cible relative à la racine de l'archive.
-                            _base = (_dest / Path(_nm).parent) if _m.issym() else _dest
-                            _tgt = (_base / _lnk).resolve()
-                            if _tgt != _dest and _dest not in _tgt.parents:
-                                raise ValueError(f"Lien sortant dans le JRE : {_nm!r}")
-                    t.extractall(tmp_dir)
-        archive.unlink(missing_ok=True)
-    except (zipfile.BadZipFile, tarfile.TarError, ValueError, OSError) as e:
-        print(f"  ERROR extracting JRE: {type(e).__name__}: {e}")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-
-    # Le JRE est extrait dans un sous-dossier au nom variable (ex: jdk-21+35-jre) :
-    # valider la présence du binaire java DANS le temp AVANT de promouvoir, pour
-    # ne jamais publier une extraction incomplète (R2#48).
-    if next((c for c in sorted(tmp_dir.rglob(java_bin)) if c.exists()), None) is None:
-        print("  ERROR: java binary not found after extraction.")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return None
-    _promouvoir_dossier(tmp_dir, JRE_DIR)
-
-    for candidate in sorted(JRE_DIR.rglob(java_bin)):
-        if candidate.exists():
-            if not WINDOWS:
-                import stat as _stat
-                candidate.chmod(candidate.stat().st_mode | _stat.S_IEXEC)
-            print(f"  JRE installed: {candidate}")
-            return str(candidate)
-
-    print("  ERROR: java binary not found after extraction.")
-    return None
 
 
 def _trouver_java():
@@ -4853,25 +4670,13 @@ def _trouver_java():
     Mode frozen : cherche d'abord dans BUNDLE_DIR/jre/ (JRE embarqué).
     """
 
-    java_bin = "java.exe" if WINDOWS else "java"
-
-    # 1) Mode frozen : JRE bundlé dans l'exe
-    if getattr(sys, "frozen", False):
-        for candidate in sorted((BUNDLE_DIR / "jre").rglob(java_bin)):
-            if candidate.exists():
-                return str(candidate)
-
-    # 2) Installation locale persistante (~/.lidar2map/jre/)
-    for candidate in sorted((LIDAR2MAP_HOME / "jre").rglob(java_bin)):
-        if candidate.exists():
-            return str(candidate)
-
-    # 3) Missing: téléchargement automatique
-    java = _telecharger_jre_local()
-    if not java:
-        print("  ERROR: cannot obtain a JRE.")
-        print("  Installez Java manuellement : https://adoptium.net/")
-    return java
+    return _osmosis_runtime_impl.trouver_java(
+        frozen=getattr(sys, "frozen", False),
+        bundle_dir=BUNDLE_DIR,
+        lidar2map_home=LIDAR2MAP_HOME,
+        windows=WINDOWS,
+        telecharger_jre_local=_telecharger_jre_local,
+    )
 
 
 def _trouver_osmosis():
@@ -4881,116 +4686,47 @@ def _trouver_osmosis():
 
     Mode frozen : cherche d'abord dans BUNDLE_DIR/osmosis/ (osmosis embarqué,
     avec le plugin mapwriter pré-installé dans son lib/)."""
-    # 1) Mode frozen : osmosis bundlé dans l'exe
-    if getattr(sys, "frozen", False):
-        pattern = "osmosis.bat" if WINDOWS else "osmosis"
-        for candidate in sorted((BUNDLE_DIR / "osmosis").rglob(pattern)):
-            if candidate.is_file() and "bin" in candidate.parts:
-                return str(candidate)
-
-    # 2) Installation locale persistante (~/.lidar2map/osmosis/)
-    local_bat = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis.bat"
-    local_sh  = LIDAR2MAP_HOME / "osmosis" / "bin" / "osmosis"
-    if WINDOWS and local_bat.exists():
-        return str(local_bat)
-    if not WINDOWS and local_sh.exists():
-        return str(local_sh)
-
-    # 3) Missing: téléchargement automatique
-    return _telecharger_osmosis_local()
+    return _osmosis_runtime_impl.trouver_osmosis(
+        frozen=getattr(sys, "frozen", False),
+        bundle_dir=BUNDLE_DIR,
+        lidar2map_home=LIDAR2MAP_HOME,
+        windows=WINDOWS,
+        telecharger_osmosis_local=_telecharger_osmosis_local,
+    )
 
 
-_MAPWRITER_VERSION = "0.25.0"
-_MAPWRITER_JAR     = f"mapsforge-map-writer-{_MAPWRITER_VERSION}-jar-with-dependencies.jar"
-_MAPWRITER_URL     = (
-    f"https://repo1.maven.org/maven2/org/mapsforge/mapsforge-map-writer"
-    f"/{_MAPWRITER_VERSION}/{_MAPWRITER_JAR}"
-)
+_MAPWRITER_VERSION = _osmosis_runtime_impl.MAPWRITER_VERSION
+_MAPWRITER_JAR = _osmosis_runtime_impl.MAPWRITER_JAR
+_MAPWRITER_URL = _osmosis_runtime_impl.MAPWRITER_URL
 
 
 def _verifier_mapwriter():
-    """
-    Vérifie que le plugin mapsforge-map-writer est installé dans le dossier
-    plugins d'osmosis. Télécharge automatiquement si absent.
-
-    Dossier plugins (toutes plateformes) :
-      Windows  : %USERPROFILE%\\.openstreetmap\\osmosis\\plugins\\
-      Linux    : ~/.openstreetmap/osmosis/plugins/
-      macOS    : ~/.openstreetmap/osmosis/plugins/
-
-    Mode frozen : le plugin est embarqué dans osmosis/lib/ (osmosis.bat
-    bundlé inclut le jar dans son CLASSPATH) — rien à vérifier ici.
-    """
-    # Mode frozen : plugin déjà sur le classpath d'osmosis, court-circuit.
-    if getattr(sys, "frozen", False):
-        return True
-
-    plugins_dir = Path.home() / ".openstreetmap" / "osmosis" / "plugins"
-    jar_path    = plugins_dir / _MAPWRITER_JAR
-
-    if jar_path.exists():
-        return True
-
-    print(f"  URL  : {_MAPWRITER_URL}")
-    print(f"  mapwriter plugin missing - downloading ({_MAPWRITER_JAR})...",
-          flush=True)
-    # Download vers un .part voisin puis rename atomique (R2#48) : un Ctrl+C ou
-    # une coupure réseau laissait un JAR tronqué à jar_path que le check
-    # `jar_path.exists()` prenait pour valide, et osmosis échouait ensuite sur
-    # un plugin corrompu au lieu de le re-télécharger.
-    tmp_jar = _chemin_part(jar_path)
-    try:
-        plugins_dir.mkdir(parents=True, exist_ok=True)
-
-        def _prog(n, bs, total):
-            if total > 0:
-                print("  " + str(min(n * bs * 100 // total, 100)).rjust(3) + "%",
-                      end="\r", flush=True)
-
-        urllib.request.urlretrieve(_MAPWRITER_URL, tmp_jar, reporthook=_prog)
-        print("  100%")
-        os.replace(tmp_jar, jar_path)
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-        print(f"  ERROR downloading mapwriter: {type(e).__name__}: {e}")
-        print(f"  Download manually:\n    {_MAPWRITER_URL}")
-        print(f"  and copy it into:\n    {plugins_dir}")
-        try:
-            tmp_jar.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
-
-    print(f"  Plugin installed: {jar_path}")
-    return True
+    """Vérifie ou installe atomiquement le plugin mapsforge-map-writer."""
+    return _osmosis_runtime_impl.verifier_mapwriter(
+        frozen=getattr(sys, "frozen", False),
+        home_dir=Path.home(),
+        chemin_part=_chemin_part,
+        jar_name=_MAPWRITER_JAR,
+        url=_MAPWRITER_URL,
+        urlretrieve=urllib.request.urlretrieve,
+        remplacer=os.replace,
+    )
 
 
-# ── --telecharger-outils ──────────────────────────────────────────────────────
-# Placé ici car nécessite _trouver_java() et _trouver_osmosis() définis
-# ci-dessus. Le flag est détecté tôt (avant bootstrap) pour passer dans
-# le re-exec venv, mais exécuté ici pour que les fonctions soient disponibles.
+def _telecharger_outils():
+    """Orchestre la préparation locale de Java, Osmosis et mapwriter."""
+    return _osmosis_runtime_impl.telecharger_outils(
+        trouver_java=_trouver_java,
+        trouver_osmosis=_trouver_osmosis,
+        verifier_mapwriter=_verifier_mapwriter,
+        jar_name=_MAPWRITER_JAR,
+    )
+
+
+# Le flag est détecté avant bootstrap pour traverser le re-exec venv, puis
+# exécuté ici une fois toutes les façades outils disponibles.
 if _TELECHARGER_OUTILS:
-    print()
-    print("  ── Downloading tools (osmosis + JRE + mapwriter) ──────")
-    print()
-    _java = _trouver_java()
-    if _java:
-        print(f"  ✓ JRE already present: {_java}")
-    else:
-        print("  ⚠ JRE: download failed")
-    _osmo = _trouver_osmosis()
-    if _osmo:
-        print(f"  ✓ osmosis already present: {_osmo}")
-    else:
-        print("  ⚠ osmosis: download failed")
-    # Plugin mapsforge-map-writer : indispensable pour générer les .map OSM.
-    # Sans lui, osmosis échoue avec "Task type mapfile-writer doesn't exist".
-    # Le spec PyInstaller le récupère depuis ~/.openstreetmap/osmosis/plugins/
-    # pour le bundler dans osmosis/lib/ du .app/.exe.
-    if _verifier_mapwriter():
-        print(f"  ✓ mapwriter present: ~/.openstreetmap/osmosis/plugins/{_MAPWRITER_JAR}")
-    else:
-        print("  ⚠ mapwriter: download failed - .map generation will fail")
-    print()
+    _telecharger_outils()
     sys.exit(0)
 
 
@@ -5002,11 +4738,10 @@ def _java_opts_extra():
     Sinon le plugin mapwriter serait chargé deux fois (CLASSPATH bundlé +
     plugins dir utilisateur) → OsmosisRuntimeException "Task type already exists".
     """
-    if not getattr(sys, "frozen", False):
-        return ""
-    fake_home = str(BUNDLE_DIR).replace("\\", "/")
-    # Quoter pour gérer les espaces dans le chemin (cmd + osmosis.bat).
-    return f' "-Duser.home={fake_home}"'
+    return _osmosis_runtime_impl.java_opts_extra(
+        frozen=getattr(sys, "frozen", False),
+        bundle_dir=BUNDLE_DIR,
+    )
 
 
 def _preparer_osmosis(dossier_hint=None):
@@ -5015,18 +4750,12 @@ def _preparer_osmosis(dossier_hint=None):
     Retourne (None, None) en cas d'échec.
     dossier_hint : Path optionnel pour la recherche de tagmapping-min.xml (non utilisé ici).
     """
-    if not _verifier_mapwriter():
-        print("  ERROR: mapwriter plugin missing - .map map impossible.")
-        return None, None
-    _java_exe = _trouver_java()
-    if not _java_exe:
-        return None, None
-    _osmosis_exe = _trouver_osmosis()
-    if not _osmosis_exe:
-        print("  ERROR: osmosis not found")
-        return None, None
-    _java_home = str(Path(_java_exe).parent.parent)
-    return _osmosis_exe, _java_home
+    return _osmosis_runtime_impl.preparer_osmosis(
+        dossier_hint,
+        verifier_mapwriter=_verifier_mapwriter,
+        trouver_java=_trouver_java,
+        trouver_osmosis=_trouver_osmosis,
+    )
 
 
 # Tokens d'intérêt : seules les lignes qui contiennent un de ces marqueurs
@@ -5035,10 +4764,7 @@ def _preparer_osmosis(dossier_hint=None):
 # Les lignes silencieuses sont quand même conservées dans stderr_diag pour
 # le diagnostic en cas de returncode != 0.
 # Couvre Java util.logging FR/EN, exceptions, et causes chaînées.
-_OSMOSIS_INTERESSANT = (
-    "ERROR", "SEVERE", "FATAL", "Exception", "Caused by",
-    "WARNING", "AVERTISSEMENT", "WARN ",
-)
+_OSMOSIS_INTERESSANT = _osmosis_runtime_impl.OSMOSIS_INTERESSANT
 
 
 def _run_osmosis_streaming(cmd_or_str, shell, env):
@@ -5058,55 +4784,13 @@ def _run_osmosis_streaming(cmd_or_str, shell, env):
 
     Returns: (returncode, stderr_diagnostic_string)
     """
-    import threading as _th
-
-    proc = subprocess.Popen(
+    return _osmosis_runtime_impl.run_osmosis_streaming(
         cmd_or_str,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        shell=shell, env=env,
+        shell,
+        env,
+        subprocess_module=subprocess,
+        marqueurs=_OSMOSIS_INTERESSANT,
     )
-
-    # Buffer borné des dernières lignes stderr (collections.deque pour O(1) ops)
-    from collections import deque
-    stderr_tail = deque(maxlen=500)
-    affichees = [0]   # nb de lignes vraiment affichées (pour ajouter \n initial)
-    lock = _th.Lock()
-
-    def _reader(stream, is_stderr):
-        try:
-            for raw in iter(stream.readline, b""):
-                try:
-                    line = raw.decode("utf-8", errors="replace").rstrip()
-                except Exception:
-                    continue
-                if not line:
-                    continue
-                if is_stderr:
-                    stderr_tail.append(line)
-                # Whitelist : afficher seulement si la ligne contient un marqueur
-                # d'erreur ou d'avertissement explicite. Tout le reste est silent.
-                if not any(tok in line for tok in _OSMOSIS_INTERESSANT):
-                    continue
-                with lock:
-                    if affichees[0] == 0:
-                        print()  # newline avant la 1ère ligne intéressante
-                    affichees[0] += 1
-                    print(f"  {line}", flush=True)
-        finally:
-            try:
-                stream.close()
-            except Exception:
-                pass
-
-    th_out = _th.Thread(target=_reader, args=(proc.stdout, False), daemon=True)
-    th_err = _th.Thread(target=_reader, args=(proc.stderr, True),  daemon=True)
-    th_out.start(); th_err.start()
-
-    proc.wait()
-    th_out.join(timeout=5)
-    th_err.join(timeout=5)
-
-    return proc.returncode, "\n".join(stderr_tail)
 
 
 def _nettoyer_osmosis_temp_orphelins(verbose=False, min_age_s=300):
@@ -5126,29 +4810,10 @@ def _nettoyer_osmosis_temp_orphelins(verbose=False, min_age_s=300):
 
     Retourne (nb_supprimes, octets_liberes).
     """
-    import tempfile as _tf
-    tmp = Path(_tf.gettempdir())
-    if not tmp.exists():
-        return 0, 0
-
-    cutoff = time.time() - min_age_s
-    nb, bytes_freed = 0, 0
-    for pattern in ("idxNodes*.tmp", "idxWays*.tmp"):
-        for f in tmp.glob(pattern):
-            try:
-                st = f.stat()
-                if st.st_mtime > cutoff:
-                    continue   # trop récent, peut-être en cours d'utilisation
-                size = st.st_size
-                f.unlink()
-                nb += 1
-                bytes_freed += size
-            except (OSError, PermissionError):
-                pass   # verrouillé ou disparu — best-effort
-    if nb and verbose:
-        print(f"  ✓ Cleaned {nb} orphan osmosis temp file(s) "
-              f"({bytes_freed/1e6:.0f} MB)")
-    return nb, bytes_freed
+    return _osmosis_runtime_impl.nettoyer_osmosis_temp_orphelins(
+        verbose=verbose,
+        min_age_s=min_age_s,
+    )
 
 
 # Grammaire d'un filtre osmosis `accept-ways` : `clé` ou `clé=valeur[,valeur…]`.

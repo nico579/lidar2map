@@ -48,6 +48,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _osm_outputs.py         sélection et statut all-of des livrables OSM
 ├── _osm_map_pipeline.py    génération Mapsforge en trois passes Osmosis
 ├── _osm_policy.py          filtres, validation et signatures OSM
+├── _osm_runtime.py         découverte, installation et exécution Java/Osmosis
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -80,7 +81,7 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`, `_bdtopo_layers`,
 `_vector_acquisition`, `_vector_outputs`, `_geojson_merge`,
 `_geojson_merge_cli`, `_geojson_osm_export`, `_osm_outputs`,
-`_osm_map_pipeline`, `_osm_policy`).
+`_osm_map_pipeline`, `_osm_policy`, `_osm_runtime`).
 
 ## Volume déjà transféré
 
@@ -148,8 +149,12 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | `_geojson_osm_export.py` (13i, mesuré) | 336 | 1,58 % |
 | Statuts OSM et pipeline Mapsforge (13j-k, mesuré) | 197 | 0,92 % |
 | `_osm_policy.py` (13l, mesuré) | 52 | 0,24 % |
-| **Total sorti du monolithe (mesuré)** | **9 188** | **43,11 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **12 127** | **56,89 %** |
+| `_osm_runtime.py` (14a, mesuré) | 68 | 0,32 % |
+| Découverte et cache Java/Osmosis (14b, mesuré) | 25 | 0,12 % |
+| Installations transactionnelles (14c, mesuré) | 183 | 0,86 % |
+| Mapwriter et commande outils (14d, mesuré) | 59 | 0,28 % |
+| **Total sorti du monolithe (mesuré)** | **9 523** | **44,68 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **11 792** | **55,32 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -216,7 +221,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-13l est de 12 127 lignes (56,89 %) : il reste donc à sortir **4 667 à 5 732
+post-14d est de 11 792 lignes (55,32 %) : il reste donc à sortir **4 332 à 5 397
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -236,9 +241,10 @@ petits après audit et caractérisation.
 | 11e–g. Maintenance précoce | `--installer-deps`, puis désinstallation et diagnostic dans des lots séparés | 300–500 lignes | codes de sortie, catalogue de paquets, cibles de suppression, ordre top-level |
 | 12. Infrastructure partagée | plateforme, configuration, logger, secrets, HTTP et helpers atomiques encore centraux | 1 000–1 400 lignes | imports précoces, TLS, redaction des secrets, publications atomiques |
 | 13. Pipelines vectoriels restants | OSM, WFS, BD TOPO, fusion et générateurs GeoJSON encore dans la façade | 1 500–1 900 lignes | caches/signatures, streaming, géométries et sorties partielles |
-| 14. Orchestration terrain restante | `generer_ombrages`, téléchargement de dalles, zones, planches et sources autonomes | 1 600–2 100 lignes | équivalence scientifique, historique, reprise, nettoyage et logs par bloc |
-| 15. CLI et points d'entrée | builders argparse, résolution des modes, `main*` et dispatch applicatif | 1 400–1 800 lignes | surface CLI, valeurs par défaut, codes d'erreur et façades monkeypatchables |
-| 16. GUI | déplacement de `lancer_gui` et de son état vers le paquet `gui` | 1 100–1 350 lignes | commandes générées, persistance, VM, masquages pays et smoke sans affichage |
+| 14. Runtime Java/Osmosis | exécution, découverte et installations transactionnelles Java/Osmosis/mapwriter | 350–500 lignes | caches, archives sûres, codes de retour, streaming et atomicité |
+| 15. Orchestration terrain restante | `generer_ombrages`, téléchargement de dalles, zones, planches et sources autonomes | 1 600–2 100 lignes | équivalence scientifique, historique, reprise, nettoyage et logs par bloc |
+| 16. CLI et points d'entrée | builders argparse, résolution des modes, `main*` et dispatch applicatif | 1 400–1 800 lignes | surface CLI, valeurs par défaut, codes d'erreur et façades monkeypatchables |
+| 17. GUI | déplacement de `lancer_gui` et de son état vers le paquet `gui` | 1 100–1 350 lignes | commandes générées, persistance, VM, masquages pays et smoke sans affichage |
 
 La somme indicative dépasse volontairement le besoin minimal : la refonte doit
 s'arrêter dès que `lidar2map.py` entre durablement dans la zone 30–35 % avec une
@@ -275,6 +281,7 @@ rester dans le script principal.
 | 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
+| 14. Runtime Java/Osmosis | **Terminée localement** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
 
 ## Travail déjà sécurisé
 
@@ -2083,10 +2090,102 @@ déplacement isolé réduirait peu le couplage. Le module est enregistré dans
 `deploy.MAP` et couvert par le rebuild et les filtres CI `_osm_*.py`.
 La clôture 13i-l est publiée dans **v1.41.0**.
 
-### Prochaine étape proposée : 14 — runtime Java/Osmosis
+### Sous-phase 14a : runtime Osmosis sans réseau (terminée localement)
 
-Caractériser puis extraire, par lots séparés, la découverte et l'installation
-locale de Java/Osmosis, le contrôle du plugin mapwriter et l'exécution
-streamée. Ces fonctions combinent réseau, archives, promotion de dossiers,
-subprocess et nettoyage d'orphelins : aucun déplacement ne commencera avant
-des contrats hors réseau sur les caches, les codes de retour et l'atomicité.
+`_osm_runtime.py` (149 lignes) porte les options JVM du bundle, la préparation
+ordonnée de mapwriter/Java/Osmosis, l'exécution streamée et le nettoyage des
+index temporaires orphelins. Il ne télécharge aucun outil et ne produit aucun
+effet à l'import. Les quatre façades historiques conservent leurs signatures ;
+la préparation relit `_verifier_mapwriter`, `_trouver_java` et
+`_trouver_osmosis` à chaque appel, tandis que le runner reçoit le module
+`subprocess` de la façade.
+
+Six contrats hors réseau verrouillent l'ordre et le court-circuit des
+prérequis, l'isolation de `user.home` en mode frozen, la whitelist des messages
+affichés, le diagnostic limité aux 500 dernières lignes stderr et la
+conservation des fichiers récents ou étrangers pendant le nettoyage.
+
+Validation locale : 135 contrats de refonte, 8 scénarios Mapsforge, 32
+publications atomiques, garde de livraison, compilation, Ruff, profil FAST,
+profil scientifique et 320 liens documentaires verts.
+
+Le module est enregistré dans `deploy.MAP`. Son nom est couvert par le motif
+existant `_osm_*.py`, qui impose un rebuild et figure dans les deux filtres CI.
+Cette sous-phase reste locale : `VERSION` demeure celle de la release v1.41.0.
+
+Mesure nette : `lidar2map.py` 12 127 → 12 059 lignes (**-68**, soit **0,32 %**
+du périmètre figé). Total sorti : **9 256 lignes, 43,42 %** ; reste **56,58 %**.
+
+### Sous-phase 14b : découverte et cache des outils (terminée localement)
+
+`_osm_runtime.py` contient maintenant `_bin_outil`, `_trouver_java` et
+`_trouver_osmosis` sous forme d'implémentations explicites. Les façades
+historiques gardent leurs signatures et injectent à chaque appel l'état frozen,
+les racines bundle/cache, la plateforme et le téléchargeur courant.
+
+Cinq contrats supplémentaires portent la classe runtime à **11 tests**. Ils
+verrouillent le tri déterministe des candidats, l'obligation d'un dossier
+`bin/` pour Osmosis, les noms Unix/Windows, la priorité bundle frozen puis cache
+persistant et l'appel du téléchargement uniquement en dernier recours. Un échec
+du téléchargement Java conserve aussi son diagnostic historique.
+
+Mesure nette : `lidar2map.py` 12 059 → 12 034 lignes (**-25**, soit **0,12 %**
+du périmètre figé). Total sorti : **9 281 lignes, 43,54 %** ; reste **56,46 %**.
+
+### Sous-phase 14c : installations transactionnelles (terminée localement)
+
+`_osm_runtime.py` (487 lignes) porte maintenant `_promouvoir_dossier`,
+`_telecharger_osmosis_local` et `_telecharger_jre_local`. Les façades historiques
+gardent leurs signatures et injectent les chemins, primitives atomiques,
+fonctions réseau, plateforme et générateurs de noms temporaires à chaque appel.
+
+Sept contrats supplémentaires portent la classe runtime à **18 tests**. Ils
+créent uniquement des ZIP/TAR locaux et couvrent une installation Osmosis et
+JRE valide, les archives corrompues, un `KeyboardInterrupt`, une traversée
+`../`, le nettoyage des stagings et la restauration de l'ancien dossier lorsque
+la seconde opération de renommage échoue.
+
+Le bit exécutable Unix est désormais posé sur le binaire validé dans le staging,
+avant la promotion. Toute interruption ou erreur de promotion nettoie le
+staging et propage l'exception ; l'ancien cache reste donc disponible. Les
+erreurs réseau ou d'archive prévues conservent le retour historique `None`.
+
+Validation locale : 147 contrats de refonte, 12 téléchargements atomiques,
+8 scénarios Mapsforge, compilation, Ruff, garde de livraison, profils FAST et
+scientifique, et 320 liens documentaires verts.
+
+Mesure nette : `lidar2map.py` 12 034 → 11 851 lignes (**-183**, soit **0,86 %**
+du périmètre figé). Total sorti : **9 464 lignes, 44,40 %** ; reste **55,60 %**.
+
+### Sous-phase 14d : mapwriter et commande outils (terminée localement)
+
+Le téléchargement atomique du JAR mapwriter et l'orchestration
+`--telecharger-outils` sont maintenant dans `_osm_runtime.py` (585 lignes).
+La façade conserve les constantes historiques, `_verifier_mapwriter()` et le
+nouveau point d'orchestration `_telecharger_outils()`. Le bloc top-level ne fait
+plus qu'appeler cette façade puis conserver son `SystemExit(0)` historique.
+
+Cinq contrats supplémentaires portent la classe runtime à **23 tests**. Ils
+verrouillent le court-circuit frozen, le cache sans réseau, le passage par un
+`.part`, le nettoyage sur erreur de publication ou `KeyboardInterrupt`, la
+préservation d'un fichier concurrent et l'ordre Java → Osmosis → mapwriter même
+si une étape échoue. Toutes les coutures sont relues à chaque appel.
+
+Validation locale : 152 contrats de refonte, 12 téléchargements atomiques,
+8 scénarios Mapsforge, compilation, Ruff, garde de livraison, profils FAST et
+scientifique, et 320 liens documentaires verts.
+
+Mesure nette : `lidar2map.py` 11 851 → 11 792 lignes (**-59**, soit **0,28 %**
+du périmètre figé). Total sorti : **9 523 lignes, 44,68 %** ; reste **55,32 %**.
+
+La phase 14 est structurellement close : le bloc Java/Osmosis restant dans
+`lidar2map.py` est une façade de compatibilité et le point d'appel précoce. Le
+module est déjà dans `deploy.MAP` et couvert par le rebuild et les deux filtres
+CI `_osm_*.py`. La version reste **1.41.0** tant que le lot n'est pas déployé.
+
+### Prochaine étape proposée : 15 — orchestration terrain restante
+
+Inventorier puis caractériser les frontières autour de `generer_ombrages`, des
+téléchargements de dalles, des zones, des planches et des sources autonomes.
+Le premier lot devra rester sans changement scientifique et ne déplacer qu'un
+orchestrateur dont les dépendances et les effets disque sont déjà injectables.

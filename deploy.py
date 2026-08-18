@@ -98,6 +98,7 @@ MAP = {
     "_osm_outputs.py":               "_osm_outputs.py",
     "_osm_map_pipeline.py":          "_osm_map_pipeline.py",
     "_osm_policy.py":                "_osm_policy.py",
+    "_osm_runtime.py":               "_osm_runtime.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_merge.py":             "_geojson_merge.py",

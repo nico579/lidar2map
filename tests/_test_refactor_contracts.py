@@ -14,9 +14,11 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -38,6 +40,7 @@ import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
 import _geojson_raster as geojson_raster  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
+import _osm_runtime as osm_runtime  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -2551,6 +2554,696 @@ class BdtopoBulkContractTests(unittest.TestCase):
             )
         self.assertEqual(name, names[1])
         self.assertEqual(url, f"https://download.invalid/{name}/{name}.7z")
+
+
+class OsmosisRuntimeContractTests(unittest.TestCase):
+    def test_historical_facades_keep_their_signatures(self):
+        self.assertEqual(
+            str(inspect.signature(L._promouvoir_dossier)),
+            "(tmp_dir, dest_dir)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._telecharger_osmosis_local)), "()"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._telecharger_jre_local)), "()"
+        )
+        self.assertEqual(str(inspect.signature(L._verifier_mapwriter)), "()")
+        self.assertEqual(str(inspect.signature(L._telecharger_outils)), "()")
+        self.assertEqual(
+            str(inspect.signature(L._bin_outil)), "(racine, pattern)"
+        )
+        self.assertEqual(str(inspect.signature(L._trouver_java)), "()")
+        self.assertEqual(str(inspect.signature(L._trouver_osmosis)), "()")
+        self.assertEqual(str(inspect.signature(L._java_opts_extra)), "()")
+        self.assertEqual(
+            str(inspect.signature(L._preparer_osmosis)),
+            "(dossier_hint=None)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._run_osmosis_streaming)),
+            "(cmd_or_str, shell, env)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._nettoyer_osmosis_temp_orphelins)),
+            "(verbose=False, min_age_s=300)",
+        )
+
+    def test_prepare_facade_resolves_all_seams_at_call_time(self):
+        seams = {
+            "_verifier_mapwriter": mock.Mock(return_value=True),
+            "_trouver_java": mock.Mock(return_value=str(Path("java") / "bin" / "java")),
+            "_trouver_osmosis": mock.Mock(return_value="osmosis"),
+        }
+        with mock.patch.multiple(L, **seams):
+            result = L._preparer_osmosis(Path("hint"))
+        self.assertEqual(result, ("osmosis", str(Path("java"))))
+        for seam in seams.values():
+            seam.assert_called_once_with()
+
+    def test_prepare_short_circuits_failures_in_order(self):
+        cases = (
+            (False, "java", "osmosis", (1, 0, 0)),
+            (True, None, "osmosis", (1, 1, 0)),
+            (True, "java/bin/java", None, (1, 1, 1)),
+        )
+        for mapwriter_ok, java, osmosis, expected_calls in cases:
+            verify = mock.Mock(return_value=mapwriter_ok)
+            find_java = mock.Mock(return_value=java)
+            find_osmosis = mock.Mock(return_value=osmosis)
+            with self.subTest(calls=expected_calls), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    osm_runtime.preparer_osmosis(
+                        verifier_mapwriter=verify,
+                        trouver_java=find_java,
+                        trouver_osmosis=find_osmosis,
+                    ),
+                    (None, None),
+                )
+            self.assertEqual(
+                (verify.call_count, find_java.call_count, find_osmosis.call_count),
+                expected_calls,
+            )
+
+    def test_java_options_only_isolate_frozen_bundle(self):
+        bundle = Path("folder with spaces")
+        self.assertEqual(
+            osm_runtime.java_opts_extra(frozen=False, bundle_dir=bundle), ""
+        )
+        self.assertEqual(
+            osm_runtime.java_opts_extra(frozen=True, bundle_dir=bundle),
+            ' "-Duser.home=folder with spaces"',
+        )
+
+    def test_streaming_filters_live_output_and_keeps_bounded_stderr_tail(self):
+        stderr_lines = [f"info-{index}" for index in range(505)] + ["SEVERE boom"]
+
+        class Process:
+            returncode = 7
+            stdout = io.BytesIO(b"ordinary stdout\nWARNING visible\n")
+            stderr = io.BytesIO(("\n".join(stderr_lines) + "\n").encode())
+
+            def wait(self):
+                return self.returncode
+
+        fake_subprocess = SimpleNamespace(
+            PIPE=object(), Popen=mock.Mock(return_value=Process())
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code, diagnostic = osm_runtime.run_osmosis_streaming(
+                ["osmosis"], False, {"A": "B"},
+                subprocess_module=fake_subprocess,
+            )
+        self.assertEqual(code, 7)
+        self.assertIn("WARNING visible", output.getvalue())
+        self.assertIn("SEVERE boom", output.getvalue())
+        self.assertNotIn("ordinary stdout", output.getvalue())
+        tail = diagnostic.splitlines()
+        self.assertEqual(len(tail), 500)
+        self.assertEqual(tail[-1], "SEVERE boom")
+        self.assertNotIn("info-0", tail)
+        fake_subprocess.Popen.assert_called_once_with(
+            ["osmosis"], stdout=fake_subprocess.PIPE,
+            stderr=fake_subprocess.PIPE, shell=False, env={"A": "B"},
+        )
+
+    def test_orphan_cleanup_ignores_recent_and_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / "idxNodes-old.tmp"
+            recent = root / "idxWays-recent.tmp"
+            unrelated = root / "other.tmp"
+            old.write_bytes(b"1234")
+            recent.write_bytes(b"12")
+            unrelated.write_bytes(b"1")
+            os.utime(old, (100, 100))
+            os.utime(recent, (950, 950))
+
+            self.assertEqual(
+                osm_runtime.nettoyer_osmosis_temp_orphelins(
+                    min_age_s=300, temp_dir=root, maintenant=1000
+                ),
+                (1, 4),
+            )
+            self.assertFalse(old.exists())
+            self.assertTrue(recent.exists())
+            self.assertTrue(unrelated.exists())
+
+    def test_binary_discovery_requires_bin_and_is_sorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "osmosis"
+            second = root / "z" / "bin" / "osmosis"
+            first = root / "a" / "bin" / "osmosis"
+            for path in (outside, second, first):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            self.assertEqual(osm_runtime.bin_outil(root, "osmosis"), first)
+
+    def test_java_discovery_prefers_bundle_then_cache_then_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "bundle"
+            home = root / "home"
+            bundle_java = bundle / "jre" / "z" / "bin" / "java"
+            cache_java = home / "jre" / "a" / "bin" / "java"
+            for path in (bundle_java, cache_java):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            download = mock.Mock(return_value="downloaded-java")
+
+            self.assertEqual(
+                osm_runtime.trouver_java(
+                    frozen=True, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_jre_local=download,
+                ),
+                str(bundle_java),
+            )
+            bundle_java.unlink()
+            self.assertEqual(
+                osm_runtime.trouver_java(
+                    frozen=True, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_jre_local=download,
+                ),
+                str(cache_java),
+            )
+            cache_java.unlink()
+            self.assertEqual(
+                osm_runtime.trouver_java(
+                    frozen=False, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_jre_local=download,
+                ),
+                "downloaded-java",
+            )
+            download.assert_called_once_with()
+
+    def test_java_discovery_uses_windows_name_and_reports_download_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            java = root / "home" / "jre" / "bin" / "java.exe"
+            java.parent.mkdir(parents=True)
+            java.touch()
+            self.assertEqual(
+                osm_runtime.trouver_java(
+                    frozen=False, bundle_dir=root / "bundle",
+                    lidar2map_home=root / "home", windows=True,
+                    telecharger_jre_local=mock.Mock(side_effect=AssertionError),
+                ),
+                str(java),
+            )
+            java.unlink()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = osm_runtime.trouver_java(
+                    frozen=False, bundle_dir=root / "bundle",
+                    lidar2map_home=root / "home", windows=True,
+                    telecharger_jre_local=mock.Mock(return_value=None),
+                )
+            self.assertIsNone(result)
+            self.assertIn("cannot obtain a JRE", output.getvalue())
+
+    def test_osmosis_discovery_prefers_valid_bundle_then_fixed_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "bundle"
+            home = root / "home"
+            invalid = bundle / "osmosis" / "osmosis"
+            bundled = bundle / "osmosis" / "version" / "bin" / "osmosis"
+            cached = home / "osmosis" / "bin" / "osmosis"
+            for path in (invalid, bundled, cached):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            download = mock.Mock(return_value="downloaded-osmosis")
+            self.assertEqual(
+                osm_runtime.trouver_osmosis(
+                    frozen=True, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_osmosis_local=download,
+                ),
+                str(bundled),
+            )
+            bundled.unlink()
+            self.assertEqual(
+                osm_runtime.trouver_osmosis(
+                    frozen=True, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_osmosis_local=download,
+                ),
+                str(cached),
+            )
+            cached.unlink()
+            self.assertEqual(
+                osm_runtime.trouver_osmosis(
+                    frozen=False, bundle_dir=bundle, lidar2map_home=home,
+                    windows=False, telecharger_osmosis_local=download,
+                ),
+                "downloaded-osmosis",
+            )
+            download.assert_called_once_with()
+
+    def test_discovery_facades_inject_current_paths_platform_and_downloaders(self):
+        sentinel = object()
+        with mock.patch.object(
+            L._osmosis_runtime_impl, "trouver_java", return_value=sentinel
+        ) as find_java, mock.patch.object(
+            L._osmosis_runtime_impl, "trouver_osmosis", return_value=sentinel
+        ) as find_osmosis, mock.patch.object(
+            L.sys, "frozen", True, create=True
+        ), mock.patch.multiple(
+            L,
+            BUNDLE_DIR=Path("current-bundle"),
+            LIDAR2MAP_HOME=Path("current-home"),
+            WINDOWS=True,
+        ):
+            self.assertIs(L._trouver_java(), sentinel)
+            self.assertIs(L._trouver_osmosis(), sentinel)
+
+        self.assertEqual(find_java.call_args.kwargs["bundle_dir"], Path("current-bundle"))
+        self.assertEqual(find_java.call_args.kwargs["lidar2map_home"], Path("current-home"))
+        self.assertTrue(find_java.call_args.kwargs["windows"])
+        self.assertIs(
+            find_java.call_args.kwargs["telecharger_jre_local"],
+            L._telecharger_jre_local,
+        )
+        self.assertIs(
+            find_osmosis.call_args.kwargs["telecharger_osmosis_local"],
+            L._telecharger_osmosis_local,
+        )
+
+    def test_directory_promotion_restores_previous_on_second_rename_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "installed"
+            staging = root / "staging"
+            destination.mkdir()
+            staging.mkdir()
+            (destination / "old.txt").write_text("old", encoding="utf-8")
+            (staging / "new.txt").write_text("new", encoding="utf-8")
+            original_replace = Path.replace
+
+            def replace(path, target):
+                if path == staging:
+                    raise OSError("promotion failed")
+                return original_replace(path, target)
+
+            with mock.patch.object(Path, "replace", autospec=True, side_effect=replace):
+                with self.assertRaisesRegex(OSError, "promotion failed"):
+                    osm_runtime.promouvoir_dossier(staging, destination)
+            self.assertEqual(
+                (destination / "old.txt").read_text(encoding="utf-8"), "old"
+            )
+            self.assertTrue(staging.exists())
+            self.assertFalse(list(root.glob("installed.previous.*.part")))
+
+    @staticmethod
+    def _zip_bytes(root, members):
+        archive = root / "fixture.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            for name, data in members.items():
+                output.writestr(name, data)
+        return archive.read_bytes()
+
+    @staticmethod
+    def _part_path(path):
+        path = Path(path)
+        return path.with_name(path.name + ".part")
+
+    def test_osmosis_install_validates_then_replaces_incomplete_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            old = home / "osmosis"
+            old.mkdir()
+            (old / "incomplete.txt").write_text("old", encoding="utf-8")
+            payload = self._zip_bytes(
+                home, {"osmosis-0.49.2/bin/osmosis": "#!/bin/sh"}
+            )
+
+            def retrieve(_url, destination, reporthook):
+                Path(destination).write_bytes(payload)
+                reporthook(1, len(payload), len(payload))
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = osm_runtime.telecharger_osmosis_local(
+                    lidar2map_home=home,
+                    windows=False,
+                    chemin_part=self._part_path,
+                    safe_zip_extractall=L._safe_zip_extractall,
+                    promouvoir=osm_runtime.promouvoir_dossier,
+                    trouver_binaire=osm_runtime.bin_outil,
+                    urlretrieve=retrieve,
+                )
+            installed = old / "osmosis-0.49.2" / "bin" / "osmosis"
+            self.assertEqual(result, str(installed))
+            self.assertTrue(installed.is_file())
+            self.assertFalse((old / "incomplete.txt").exists())
+            self.assertFalse(list(home.glob("osmosis.*.part")))
+
+    def test_osmosis_bad_archive_and_interrupt_preserve_cache_and_clean_staging(self):
+        for failure in ("bad-zip", "interrupt"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                old = home / "osmosis"
+                old.mkdir()
+                marker = old / "old.txt"
+                marker.write_text("old", encoding="utf-8")
+
+                def retrieve(_url, destination, reporthook=None):
+                    del reporthook
+                    if failure == "interrupt":
+                        raise KeyboardInterrupt
+                    Path(destination).write_bytes(b"not a zip")
+
+                kwargs = dict(
+                    lidar2map_home=home,
+                    windows=False,
+                    chemin_part=self._part_path,
+                    safe_zip_extractall=L._safe_zip_extractall,
+                    promouvoir=osm_runtime.promouvoir_dossier,
+                    trouver_binaire=osm_runtime.bin_outil,
+                    urlretrieve=retrieve,
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if failure == "interrupt":
+                        with self.assertRaises(KeyboardInterrupt):
+                            osm_runtime.telecharger_osmosis_local(**kwargs)
+                    else:
+                        self.assertIsNone(
+                            osm_runtime.telecharger_osmosis_local(**kwargs)
+                        )
+                self.assertTrue(marker.exists())
+                self.assertFalse(list(home.glob("osmosis.*.part")))
+
+    def test_jre_zip_install_validates_then_promotes(self):
+        class Response:
+            def __init__(self, url, payload=b""):
+                self.url = url
+                self.headers = {"Content-Length": str(len(payload))}
+                self._stream = io.BytesIO(payload)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, size=-1):
+                return self._stream.read(size)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            old = home / "jre"
+            old.mkdir()
+            (old / "incomplete.txt").write_text("old", encoding="utf-8")
+            payload = self._zip_bytes(
+                home, {"jdk-21-jre/bin/java.exe": "binary"}
+            )
+            responses = iter(
+                (Response("https://final.invalid/jre"), Response("unused", payload))
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = osm_runtime.telecharger_jre_local(
+                    lidar2map_home=home,
+                    windows=True,
+                    platform_system=lambda: "Windows",
+                    platform_machine=lambda: "AMD64",
+                    chemin_part=self._part_path,
+                    safe_zip_extractall=L._safe_zip_extractall,
+                    promouvoir=osm_runtime.promouvoir_dossier,
+                    request=lambda url, headers: (url, headers),
+                    urlopen=lambda _request, timeout: next(responses),
+                )
+            installed = old / "jdk-21-jre" / "bin" / "java.exe"
+            self.assertEqual(result, str(installed))
+            self.assertTrue(installed.is_file())
+            self.assertFalse((old / "incomplete.txt").exists())
+            self.assertFalse(list(home.glob("jre.*.part")))
+
+    def test_jre_bad_archive_and_interrupt_preserve_cache_and_clean_staging(self):
+        class Response:
+            def __init__(self, url, payload=b"", failure=None):
+                self.url = url
+                self.headers = {"Content-Length": str(len(payload))}
+                self._stream = io.BytesIO(payload)
+                self._failure = failure
+
+            def __enter__(self):
+                if self._failure is not None:
+                    raise self._failure
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, size=-1):
+                return self._stream.read(size)
+
+        for failure in ("bad-zip", "interrupt"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                old = home / "jre"
+                old.mkdir()
+                marker = old / "old.txt"
+                marker.write_text("old", encoding="utf-8")
+                second = (
+                    Response("unused", failure=KeyboardInterrupt())
+                    if failure == "interrupt"
+                    else Response("unused", b"not a zip")
+                )
+                responses = iter((Response("https://final.invalid/jre"), second))
+                kwargs = dict(
+                    lidar2map_home=home,
+                    windows=True,
+                    platform_system=lambda: "Windows",
+                    platform_machine=lambda: "AMD64",
+                    chemin_part=self._part_path,
+                    safe_zip_extractall=L._safe_zip_extractall,
+                    promouvoir=osm_runtime.promouvoir_dossier,
+                    request=lambda url, headers: (url, headers),
+                    urlopen=lambda _request, timeout: next(responses),
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if failure == "interrupt":
+                        with self.assertRaises(KeyboardInterrupt):
+                            osm_runtime.telecharger_jre_local(**kwargs)
+                    else:
+                        self.assertIsNone(osm_runtime.telecharger_jre_local(**kwargs))
+                self.assertTrue(marker.exists())
+                self.assertFalse(list(home.glob("jre.*.part")))
+
+    def test_jre_tar_rejects_path_traversal_without_publishing(self):
+        class Response:
+            def __init__(self, url, payload=b""):
+                self.url = url
+                self.headers = {"Content-Length": str(len(payload))}
+                self._stream = io.BytesIO(payload)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, size=-1):
+                return self._stream.read(size)
+
+        malicious = io.BytesIO()
+        with tarfile.open(fileobj=malicious, mode="w:gz") as archive:
+            member = tarfile.TarInfo("../escape")
+            member.size = 1
+            archive.addfile(member, io.BytesIO(b"x"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            responses = iter(
+                (
+                    Response("https://final.invalid/jre"),
+                    Response("unused", malicious.getvalue()),
+                )
+            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = osm_runtime.telecharger_jre_local(
+                    lidar2map_home=home,
+                    windows=False,
+                    platform_system=lambda: "Linux",
+                    platform_machine=lambda: "x86_64",
+                    chemin_part=self._part_path,
+                    safe_zip_extractall=L._safe_zip_extractall,
+                    promouvoir=osm_runtime.promouvoir_dossier,
+                    request=lambda url, headers: (url, headers),
+                    urlopen=lambda _request, timeout: next(responses),
+                )
+            self.assertIsNone(result)
+            self.assertFalse((home.parent / "escape").exists())
+            self.assertFalse((home / "jre").exists())
+            self.assertFalse(list(home.glob("jre.*.part")))
+
+    def test_install_facades_inject_current_network_and_atomic_seams(self):
+        marker = object()
+        with mock.patch.object(
+            L._osmosis_runtime_impl,
+            "telecharger_osmosis_local",
+            return_value=marker,
+        ) as install_osmosis, mock.patch.object(
+            L._osmosis_runtime_impl,
+            "telecharger_jre_local",
+            return_value=marker,
+        ) as install_jre:
+            self.assertIs(L._telecharger_osmosis_local(), marker)
+            self.assertIs(L._telecharger_jre_local(), marker)
+        self.assertIs(
+            install_osmosis.call_args.kwargs["safe_zip_extractall"],
+            L._safe_zip_extractall,
+        )
+        self.assertIs(
+            install_osmosis.call_args.kwargs["promouvoir"], L._promouvoir_dossier
+        )
+        self.assertIs(
+            install_osmosis.call_args.kwargs["urlretrieve"],
+            L.urllib.request.urlretrieve,
+        )
+        self.assertIs(
+            install_jre.call_args.kwargs["urlopen"], L.urllib.request.urlopen
+        )
+        self.assertIs(
+            install_jre.call_args.kwargs["platform_system"], L.platform.system
+        )
+
+    def test_mapwriter_frozen_and_cached_paths_never_download(self):
+        forbidden = mock.Mock(side_effect=AssertionError("network forbidden"))
+        self.assertTrue(
+            osm_runtime.verifier_mapwriter(
+                frozen=True,
+                home_dir=Path("unused"),
+                chemin_part=self._part_path,
+                urlretrieve=forbidden,
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            jar = (
+                home / ".openstreetmap" / "osmosis" / "plugins"
+                / osm_runtime.MAPWRITER_JAR
+            )
+            jar.parent.mkdir(parents=True)
+            jar.write_bytes(b"jar")
+            self.assertTrue(
+                osm_runtime.verifier_mapwriter(
+                    frozen=False,
+                    home_dir=home,
+                    chemin_part=self._part_path,
+                    urlretrieve=forbidden,
+                )
+            )
+        forbidden.assert_not_called()
+
+    def test_mapwriter_download_publishes_part_then_final(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            seen = {}
+
+            def retrieve(url, destination, reporthook):
+                seen["url"] = url
+                seen["destination"] = Path(destination)
+                Path(destination).write_bytes(b"complete jar")
+                reporthook(1, 12, 12)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertTrue(
+                    osm_runtime.verifier_mapwriter(
+                        frozen=False,
+                        home_dir=home,
+                        chemin_part=self._part_path,
+                        urlretrieve=retrieve,
+                    )
+                )
+            jar = (
+                home / ".openstreetmap" / "osmosis" / "plugins"
+                / osm_runtime.MAPWRITER_JAR
+            )
+            self.assertEqual(seen["url"], osm_runtime.MAPWRITER_URL)
+            self.assertNotEqual(seen["destination"], jar)
+            self.assertEqual(jar.read_bytes(), b"complete jar")
+            self.assertFalse(seen["destination"].exists())
+
+    def test_mapwriter_failure_and_interrupt_clean_part_without_touching_final(self):
+        for failure in ("replace", "interrupt"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                plugins = home / ".openstreetmap" / "osmosis" / "plugins"
+                jar = plugins / osm_runtime.MAPWRITER_JAR
+
+                def retrieve(_url, destination, reporthook):
+                    del reporthook
+                    Path(destination).write_bytes(b"staging")
+                    if failure == "interrupt":
+                        raise KeyboardInterrupt
+
+                def replace(_source, _destination):
+                    jar.write_bytes(b"concurrent old")
+                    raise OSError("replace failed")
+
+                kwargs = dict(
+                    frozen=False,
+                    home_dir=home,
+                    chemin_part=self._part_path,
+                    urlretrieve=retrieve,
+                    remplacer=replace,
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if failure == "interrupt":
+                        with self.assertRaises(KeyboardInterrupt):
+                            osm_runtime.verifier_mapwriter(**kwargs)
+                    else:
+                        self.assertFalse(osm_runtime.verifier_mapwriter(**kwargs))
+                if failure == "replace":
+                    self.assertEqual(jar.read_bytes(), b"concurrent old")
+                else:
+                    self.assertFalse(jar.exists())
+                self.assertFalse(list(plugins.glob("*.part")))
+
+    def test_tool_orchestrator_attempts_every_tool_and_reports_each_status(self):
+        events = []
+
+        def step(name, result):
+            def call():
+                events.append(name)
+                return result
+            return call
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertIsNone(
+                osm_runtime.telecharger_outils(
+                    trouver_java=step("java", None),
+                    trouver_osmosis=step("osmosis", "osmosis"),
+                    verifier_mapwriter=step("mapwriter", False),
+                )
+            )
+        self.assertEqual(events, ["java", "osmosis", "mapwriter"])
+        rendered = output.getvalue()
+        self.assertIn("JRE: download failed", rendered)
+        self.assertIn("osmosis already present", rendered)
+        self.assertIn("mapwriter: download failed", rendered)
+
+    def test_mapwriter_and_tool_facades_resolve_current_seams(self):
+        marker = object()
+        with mock.patch.object(
+            L._osmosis_runtime_impl, "verifier_mapwriter", return_value=marker
+        ) as verify, mock.patch.object(
+            L._osmosis_runtime_impl, "telecharger_outils", return_value=marker
+        ) as download_tools:
+            self.assertIs(L._verifier_mapwriter(), marker)
+            self.assertIs(L._telecharger_outils(), marker)
+        self.assertIs(verify.call_args.kwargs["chemin_part"], L._chemin_part)
+        self.assertIs(
+            verify.call_args.kwargs["urlretrieve"], L.urllib.request.urlretrieve
+        )
+        self.assertIs(
+            download_tools.call_args.kwargs["trouver_java"], L._trouver_java
+        )
+        self.assertIs(
+            download_tools.call_args.kwargs["verifier_mapwriter"],
+            L._verifier_mapwriter,
+        )
 
 
 if __name__ == "__main__":
