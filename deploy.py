@@ -99,6 +99,7 @@ MAP = {
     "_osm_map_pipeline.py":          "_osm_map_pipeline.py",
     "_osm_policy.py":                "_osm_policy.py",
     "_osm_runtime.py":               "_osm_runtime.py",
+    "_terrain_sources.py":           "_terrain_sources.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_merge.py":             "_geojson_merge.py",
@@ -205,6 +206,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_vector_acquisition.py"
         or name == "_vector_outputs.py"
         or (name.startswith("_osm_") and name.endswith(".py"))
+        or (name.startswith("_terrain_") and name.endswith(".py"))
         or (name.startswith("_geojson_") and name.endswith(".py"))
         or name == "lidar2map_icon.png"
         or name == "tagmapping-min.xml"

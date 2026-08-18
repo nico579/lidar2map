@@ -1245,7 +1245,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.42.0"
+VERSION      = "1.43.0"
 VERSION_DATE = "2026-08"
 
 
@@ -5330,82 +5330,28 @@ Examples:
     return parser
 
 
+from _terrain_sources import (
+    DependancesSourcesTerrain as _DependancesSourcesTerrain,
+    traiter_source_autonome as _traiter_source_autonome_impl,
+    traiter_source_wmts as _traiter_source_wmts_impl,
+)
+
+
+def _dependances_sources_terrain():
+    return _DependancesSourcesTerrain(
+        generer_rmap=generer_rmap_depuis_mbtiles,
+        generer_sqlitedb=generer_sqlitedb_depuis_mbtiles,
+        historique=_historique_depuis_argv,
+        hist_t_debut=_HIST_T_DEBUT,
+    )
+
+
 def _traiter_source_autonome(args):
-    """Gère --source : conversion autonome selon l'extension et le CRS.
-
-    - .mbtiles : conversion RMAP/SQLiteDB directe, sortie immédiate (sys.exit).
-    - .pbf/.osm : source OSM, laissée dans args.source pour la section --osm
-      plus loin dans main() (aucune sortie ici).
-    - .tif/.tiff : détection CRS (déjà en EPSG:3857 → tuilage direct, sinon
-      warp requis) ; nécessite une zone pour la bbox, résolue par l'appelant
-      (aucune sortie ici non plus)."""
-    # ── --source : mode autonome selon l'extension + CRS ────────────────────────
-    # .mbtiles → RMAP (requiert --rmap, exit immédiat)
-    # .pbf     → OSM  (requiert --osm, injecté dans args.source pour usage ultérieur)
-    # .tif     → MBTiles/RMAP (CRS auto-détecté : 3857=tuilage direct, autre=warp)
-    #            nécessite une zone pour la bbox → pas d'exit immédiat
-    if args.source:
-        src_path = Path(args.source)
-        if not src_path.exists():
-            ext_src = Path(args.source).suffix.lower()
-            if ext_src in (".tif", ".tiff"):
-                # TIF cache absent (warped removed) → ignorer, on recalcule depuis les dalles
-                print(f"  WARNING: source TIF not found : {Path(args.source).name}")
-                print("  Recompute from tiles...")
-                args.source = None
-            else:
-                print(f"  ERROR: source file not found: {args.source}")
-                sys.exit(1)
-        ext = Path(args.source).suffix.lower() if args.source else ""
-
-        if ext == ".mbtiles":
-            # Conversion directe MBTiles → RMAP/SQLiteDB (exit immédiat, pas de zone requise)
-            if not args.rmap and not args.sqlitedb:
-                print("  ERROR: choose --file-formats rmap and/or sqlitedb for MBTiles conversion.")
-                print(f"  Ex: --source {src_path.name} --file-formats rmap")
-                sys.exit(1)
-            # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
-            # R2#6/#50 : vérifier le retour (None = échec), FINALISER l'historique
-            # (sinon il reste « en cours » indéfiniment → GUI figée) et sortir en
-            # code non nul si échec (avant : exit 0 inconditionnel = succès menteur,
-            # aucun livrable possible malgré « ok »).
-            _conv_ok = True
-            if args.rmap:
-                _conv_ok = (generer_rmap_depuis_mbtiles(src_path, ecraser=True) is not None) and _conv_ok
-            if args.sqlitedb:
-                _conv_ok = (generer_sqlitedb_depuis_mbtiles(src_path, ecraser=True) is not None) and _conv_ok
-            _historique_depuis_argv(int(time.time() - (_HIST_T_DEBUT or time.time())),
-                                    statut=("ok" if _conv_ok else "ko"))
-            sys.exit(0 if _conv_ok else 1)
-
-        elif ext in (".pbf", ".osm"):
-            # Source OSM : traitée plus loin dans la section --osm
-            if not args.osm:
-                print("  ERROR: --osm required with a .pbf source.")
-                print(f"  E.g.: --source {src_path.name} --zone-city gareoult --osm")
-                sys.exit(1)
-            # args.source est déjà défini, sera lu dans la section OSM
-
-        elif ext in (".tif", ".tiff"):
-            # Source TIF : détection CRS via rasterio
-            try:
-                import rasterio as _rio_src
-                with _rio_src.open(str(src_path)) as _ds_src:
-                    _epsg = _ds_src.crs.to_epsg() if _ds_src.crs else None
-                if _epsg == 3857:
-                    # Déjà en Mercator → tuilage direct, warp inutile
-                    args._source_already_warped = True
-                    print("  Source TIF EPSG:3857 detected -> direct tiling (no warp)")
-                else:
-                    args._source_already_warped = False
-                    print(f"  Source TIF EPSG:{_epsg} -> Mercator warp required")
-            except Exception as _e_crs:
-                print(f"  WARNING CRS not detected ({_e_crs}) — warp applied by default")
-                args._source_already_warped = False
-        else:
-            print(f"  ERROR: unrecognised extension for --source: {ext}")
-            print("  Accepted extensions: .tif .tiff .mbtiles .pbf .osm")
-            sys.exit(1)
+    """Façade compatible vers le traitement autonome LiDAR/OSM."""
+    return _traiter_source_autonome_impl(
+        args,
+        dependances=_dependances_sources_terrain(),
+    )
 
 
 def _resoudre_zone_lidar(args, _osm_seul):
@@ -8451,35 +8397,11 @@ Examples:
 
 
 def _traiter_source_wmts(args):
-    """Gère --source pour le workflow raster WMTS (--raster) : conversion
-    autonome d'un .mbtiles existant vers RMAP/SQLiteDB, sortie immédiate
-    (sys.exit). Jumeau simplifié de `_traiter_source_autonome` (pas de TIF ni
-    de PBF côté WMTS) : ne rien faire si `args.source` est vide."""
-    # ── --source : conversion autonome MBTiles → RMAP (exit immédiat) ────────
-    if args.source:
-        p = Path(args.source)
-        if not p.exists():
-            print(f"  ERROR: file not found: {args.source}")
-            sys.exit(1)
-        if p.suffix.lower() != ".mbtiles":
-            print(f"  ERROR: --source expects a .mbtiles (got: {p.suffix})")
-            sys.exit(1)
-        if not args.rmap and not args.sqlitedb:
-            print("  ERROR: choose --file-formats rmap and/or sqlitedb.")
-            print(f"  Ex: --source {p.name} --file-formats rmap")
-            print(f"  Ex: --source {p.name} --file-formats sqlitedb")
-            sys.exit(1)
-        # Livrables finaux régénérés d'office (cf. _convertir_un_mbtiles).
-        # R2#6/#50 (jumeau du site LiDAR) : vérifier le retour (None = échec),
-        # finaliser l'historique et sortir en code non nul si échec.
-        _conv_ok = True
-        if args.rmap:
-            _conv_ok = (generer_rmap_depuis_mbtiles(p, ecraser=True) is not None) and _conv_ok
-        if args.sqlitedb:
-            _conv_ok = (generer_sqlitedb_depuis_mbtiles(p, ecraser=True) is not None) and _conv_ok
-        _historique_depuis_argv(int(time.time() - (_HIST_T_DEBUT or time.time())),
-                                statut=("ok" if _conv_ok else "ko"))
-        sys.exit(0 if _conv_ok else 1)
+    """Façade compatible vers la conversion autonome raster WMTS."""
+    return _traiter_source_wmts_impl(
+        args,
+        dependances=_dependances_sources_terrain(),
+    )
 
 
 def _resoudre_couche_wmts(args):

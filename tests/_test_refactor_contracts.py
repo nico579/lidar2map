@@ -41,6 +41,7 @@ import _geojson_raster as geojson_raster  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _osm_runtime as osm_runtime  # noqa: E402
+import _terrain_sources as terrain_sources  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -591,6 +592,32 @@ class SourceAutonomeContractTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
+
+    def test_facades_keep_signatures_and_reload_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._traiter_source_autonome)), "(args)"
+        )
+        self.assertEqual(str(inspect.signature(L._traiter_source_wmts)), "(args)")
+        seams = {
+            "generer_rmap_depuis_mbtiles": mock.Mock(),
+            "generer_sqlitedb_depuis_mbtiles": mock.Mock(),
+            "_historique_depuis_argv": mock.Mock(),
+            "_HIST_T_DEBUT": 123.0,
+        }
+        with mock.patch.multiple(L, **seams):
+            dependencies = L._dependances_sources_terrain()
+        self.assertIsInstance(
+            dependencies, terrain_sources.DependancesSourcesTerrain
+        )
+        self.assertIs(
+            dependencies.generer_rmap, seams["generer_rmap_depuis_mbtiles"]
+        )
+        self.assertIs(
+            dependencies.generer_sqlitedb,
+            seams["generer_sqlitedb_depuis_mbtiles"],
+        )
+        self.assertIs(dependencies.historique, seams["_historique_depuis_argv"])
+        self.assertEqual(dependencies.hist_t_debut, 123.0)
 
     def test_no_source_is_a_no_op(self):
         args = SimpleNamespace(source=None)

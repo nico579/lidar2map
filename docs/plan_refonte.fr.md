@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot déployé : 17 août 2026, **v1.41.0**. Il regroupe les
-phases 13i-l : export PyOsmium, statut réel des livrables OSM, pipeline
-Mapsforge/Osmosis et politiques de filtrage/cache OSM.
+Dernier lot déployé : 18 août 2026, **v1.43.0**. Il regroupe la phase 15a :
+sources autonomes LiDAR/OSM et WMTS, avec façades compatibles et dépendances
+reconstruites à chaque appel.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -49,6 +49,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _osm_map_pipeline.py    génération Mapsforge en trois passes Osmosis
 ├── _osm_policy.py          filtres, validation et signatures OSM
 ├── _osm_runtime.py         découverte, installation et exécution Java/Osmosis
+├── _terrain_sources.py     sources autonomes LiDAR/OSM et raster WMTS
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -82,6 +83,7 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_vector_acquisition`, `_vector_outputs`, `_geojson_merge`,
 `_geojson_merge_cli`, `_geojson_osm_export`, `_osm_outputs`,
 `_osm_map_pipeline`, `_osm_policy`, `_osm_runtime`).
+Le domaine terrain commence avec `_terrain_sources`.
 
 ## Volume déjà transféré
 
@@ -153,8 +155,9 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Découverte et cache Java/Osmosis (14b, mesuré) | 25 | 0,12 % |
 | Installations transactionnelles (14c, mesuré) | 183 | 0,86 % |
 | Mapwriter et commande outils (14d, mesuré) | 59 | 0,28 % |
-| **Total sorti du monolithe (mesuré)** | **9 523** | **44,68 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **11 792** | **55,32 %** |
+| `_terrain_sources.py` (15a, mesuré) | 78 | 0,37 % |
+| **Total sorti du monolithe (mesuré)** | **9 601** | **45,04 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **11 714** | **54,96 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -221,7 +224,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-14d est de 11 792 lignes (55,32 %) : il reste donc à sortir **4 332 à 5 397
+post-15a est de 11 714 lignes (54,96 %) : il reste donc à sortir **4 254 à 5 319
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -281,7 +284,8 @@ rester dans le script principal.
 | 11. Bootstrap et maintenance précoce | **Terminée localement** | Politique GUI/CLI, moteur venv/pip, TLS, maintenance, désinstallation et smoketest extraits (11a-g) | 80 contrats hors réseau, façades, launcher et profil FAST complet |
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
-| 14. Runtime Java/Osmosis | **Terminée localement** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
+| 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
+| 15. Orchestration terrain restante | **En cours** | Sources autonomes LiDAR/OSM et WMTS extraites (15a) | contrats de sortie, conversions, historique et CRS |
 
 ## Travail déjà sécurisé
 
@@ -2090,7 +2094,7 @@ déplacement isolé réduirait peu le couplage. Le module est enregistré dans
 `deploy.MAP` et couvert par le rebuild et les filtres CI `_osm_*.py`.
 La clôture 13i-l est publiée dans **v1.41.0**.
 
-### Sous-phase 14a : runtime Osmosis sans réseau (terminée localement)
+### Sous-phase 14a : runtime Osmosis sans réseau (terminée)
 
 `_osm_runtime.py` (149 lignes) porte les options JVM du bundle, la préparation
 ordonnée de mapwriter/Java/Osmosis, l'exécution streamée et le nettoyage des
@@ -2111,12 +2115,12 @@ profil scientifique et 320 liens documentaires verts.
 
 Le module est enregistré dans `deploy.MAP`. Son nom est couvert par le motif
 existant `_osm_*.py`, qui impose un rebuild et figure dans les deux filtres CI.
-Cette sous-phase reste locale : `VERSION` demeure celle de la release v1.41.0.
+La phase 14 complète est publiée dans la release **v1.42.0**.
 
 Mesure nette : `lidar2map.py` 12 127 → 12 059 lignes (**-68**, soit **0,32 %**
 du périmètre figé). Total sorti : **9 256 lignes, 43,42 %** ; reste **56,58 %**.
 
-### Sous-phase 14b : découverte et cache des outils (terminée localement)
+### Sous-phase 14b : découverte et cache des outils (terminée)
 
 `_osm_runtime.py` contient maintenant `_bin_outil`, `_trouver_java` et
 `_trouver_osmosis` sous forme d'implémentations explicites. Les façades
@@ -2132,7 +2136,7 @@ du téléchargement Java conserve aussi son diagnostic historique.
 Mesure nette : `lidar2map.py` 12 059 → 12 034 lignes (**-25**, soit **0,12 %**
 du périmètre figé). Total sorti : **9 281 lignes, 43,54 %** ; reste **56,46 %**.
 
-### Sous-phase 14c : installations transactionnelles (terminée localement)
+### Sous-phase 14c : installations transactionnelles (terminée)
 
 `_osm_runtime.py` (487 lignes) porte maintenant `_promouvoir_dossier`,
 `_telecharger_osmosis_local` et `_telecharger_jre_local`. Les façades historiques
@@ -2157,7 +2161,7 @@ scientifique, et 320 liens documentaires verts.
 Mesure nette : `lidar2map.py` 12 034 → 11 851 lignes (**-183**, soit **0,86 %**
 du périmètre figé). Total sorti : **9 464 lignes, 44,40 %** ; reste **55,60 %**.
 
-### Sous-phase 14d : mapwriter et commande outils (terminée localement)
+### Sous-phase 14d : mapwriter et commande outils (terminée)
 
 Le téléchargement atomique du JAR mapwriter et l'orchestration
 `--telecharger-outils` sont maintenant dans `_osm_runtime.py` (585 lignes).
@@ -2189,3 +2193,29 @@ Inventorier puis caractériser les frontières autour de `generer_ombrages`, des
 téléchargements de dalles, des zones, des planches et des sources autonomes.
 Le premier lot devra rester sans changement scientifique et ne déplacer qu'un
 orchestrateur dont les dépendances et les effets disque sont déjà injectables.
+
+### Sous-phase 15a : sources autonomes extraites (terminée)
+
+`_terrain_sources.py` (111 lignes) centralise les deux traitements `--source`
+autonomes des workflows LiDAR/OSM et raster WMTS. Une dépendance immuable
+regroupe les convertisseurs RMAP/SQLiteDB, la finalisation d'historique et son
+instant de départ ; la façade la reconstruit à chaque appel.
+
+Les **24 contrats existants et de façade** restent verts : absence de source,
+fichier manquant, extension refusée, exigences de formats, succès et échec de
+conversion, statut `ok`/`ko`, passage PBF avec `--osm`, et détection CRS TIF
+3857 ou natif. Le comportement historique du TIF absent — message de recalcul
+puis code 1 — reste volontairement inchangé pendant cette extraction.
+
+Le module est ajouté à `deploy.MAP`; le motif `_terrain_*.py` impose un rebuild
+et figure dans les filtres push et pull request. Cette sous-phase est publiée
+dans la release **v1.43.0**. Mesure nette : `lidar2map.py`
+11 792 → 11 714 lignes (**-78**, soit **0,37 %** du périmètre figé). Total
+sorti : **9 601 lignes, 45,04 %** ; reste **54,96 %**.
+
+### Prochaine étape proposée : 15b — résolution des zones terrain
+
+Caractériser puis extraire les règles de zone partagées : présence d'une zone,
+noms automatiques GPS/bbox, validation des coordonnées et transformation vers
+le CRS natif. Le lot ne déplacera pas encore le téléchargement des dalles ni
+les runners split, afin de séparer parsing géographique et effets disque.
