@@ -19,7 +19,7 @@ import tempfile
 import threading
 import unittest
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -45,6 +45,7 @@ import _terrain_sources as terrain_sources  # noqa: E402
 import _terrain_zones as terrain_zones  # noqa: E402
 import _terrain_geocoding as terrain_geocoding  # noqa: E402
 import _terrain_resolution as terrain_resolution  # noqa: E402
+import _terrain_download as terrain_download  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -3505,6 +3506,396 @@ class OsmosisRuntimeContractTests(unittest.TestCase):
         self.assertIs(
             download_tools.call_args.kwargs["verifier_mapwriter"],
             L._verifier_mapwriter,
+        )
+
+
+class TerrainDownloadContractTests(unittest.TestCase):
+    def _args(self, **changes):
+        values = dict(
+            telechargement_forcer=False,
+            telechargement_ecraser=False,
+            telechargement_compresser=False,
+            workers=3,
+            laz_parallel=1,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def _dependencies(self, provider, events, *, result="ok"):
+        def path_for(root, name):
+            return Path(root) / name
+
+        def downloader(*args):
+            name, _url, root = args[:3]
+            events.append(("download", name, args[3:]))
+            if result == "ok":
+                path_for(root, name).write_bytes(b"x" * 32)
+            return result
+
+        def write_manifest(path, bbox, names):
+            events.append(("manifest", Path(path), bbox, tuple(names)))
+
+        def register(paths):
+            events.append(("register", tuple(Path(p) for p in paths)))
+
+        return terrain_download.DependancesTelechargementTerrain(
+            provider=provider,
+            nom_dalle_sur=lambda name: "/" not in name and "\\" not in name,
+            chemin_dalle=path_for,
+            seuil_dalle_valide=10,
+            telecharger_cog_fenetre=downloader,
+            telecharger_copc_fenetre=downloader,
+            telecharger_dalle_directe=downloader,
+            dl_workers_effectif=terrain_download.dl_workers_effectif,
+            hms=lambda _seconds: "0s",
+            laz_prof_resume=lambda wall, workers, parallel: events.append(
+                ("profile", workers, parallel, wall >= 0)
+            ),
+            ecrire_dalles_zone=write_manifest,
+            creer_fichiers=register,
+            thread_pool_executor=ThreadPoolExecutor,
+            as_completed=as_completed,
+            time=__import__("time"),
+        )
+
+    def test_worker_policy_never_exceeds_provider_cap(self):
+        self.assertEqual(terrain_download.dl_workers_effectif(8, 3, 6), 3)
+        self.assertEqual(terrain_download.dl_workers_effectif(2, 3, 3), 3)
+        self.assertEqual(terrain_download.dl_workers_effectif(2, None, 5), 5)
+
+    def test_each_provider_mode_routes_and_persists_the_same_tile(self):
+        modes = (
+            ("direct", False, False),
+            ("cog", True, False),
+            ("copc", False, True),
+        )
+        for name, cog, copc in modes:
+            with self.subTest(mode=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                tiles = root / "tiles"
+                project = root / "project"
+                tiles.mkdir()
+                project.mkdir()
+                events = []
+                provider = SimpleNamespace(
+                    COG_WINDOWED=cog,
+                    COPC_WINDOWED=copc,
+                    DOWNLOAD_WORKERS_MAX=2,
+                )
+                dependencies = self._dependencies(provider, events)
+                terrain_download.telecharger_dalles_zone(
+                    {"tile.tif": "https://invalid/tile"},
+                    (1, 2, 3, 4),
+                    tiles,
+                    project,
+                    self._args(workers=8, laz_parallel=4),
+                    quiet=True,
+                    dependances=dependencies,
+                )
+                download = next(event for event in events if event[0] == "download")
+                if name == "direct":
+                    self.assertEqual(download[2], (False, False))
+                else:
+                    self.assertEqual(download[2], ((1, 2, 3, 4), False))
+                manifest = next(event for event in events if event[0] == "manifest")
+                self.assertEqual(manifest[3], ("tile.tif",))
+                registered = next(event for event in events if event[0] == "register")
+                self.assertEqual(registered[1], (tiles / "tile.tif",))
+                profile = next(event for event in events if event[0] == "profile")
+                self.assertEqual(profile[1:3], (2, 4))
+
+    def test_error_stops_before_manifest_and_registration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tiles = root / "tiles"
+            project = root / "project"
+            tiles.mkdir()
+            project.mkdir()
+            events = []
+            dependencies = self._dependencies(
+                SimpleNamespace(COG_WINDOWED=False, COPC_WINDOWED=False),
+                events,
+                result="erreur",
+            )
+            with self.assertRaises(RuntimeError):
+                terrain_download.telecharger_dalles_zone(
+                    {"tile.tif": "https://invalid/tile"},
+                    (0, 0, 1, 1),
+                    tiles,
+                    project,
+                    self._args(),
+                    quiet=True,
+                    dependances=dependencies,
+                )
+            self.assertFalse(any(event[0] == "manifest" for event in events))
+            self.assertFalse(any(event[0] == "register" for event in events))
+
+    def test_cached_tile_and_cloud_are_registered_without_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tiles = root / "tiles"
+            project = root / "project"
+            tiles.mkdir()
+            project.mkdir()
+            tile = tiles / "tile.tif"
+            cloud = tiles / "tile.laz"
+            tile.write_bytes(b"x" * 32)
+            cloud.write_bytes(b"cloud")
+            events = []
+            provider = SimpleNamespace(
+                COG_WINDOWED=False,
+                COPC_WINDOWED=False,
+                cloud_path=lambda _tile: cloud,
+            )
+            dependencies = self._dependencies(provider, events)
+            terrain_download.telecharger_dalles_zone(
+                {"tile.tif": "https://invalid/tile"},
+                (0, 0, 1, 1),
+                tiles,
+                project,
+                self._args(),
+                quiet=True,
+                dependances=dependencies,
+            )
+            self.assertFalse(any(event[0] == "download" for event in events))
+            registered = next(event for event in events if event[0] == "register")
+            self.assertEqual(set(registered[1]), {tile, cloud})
+
+    def test_each_overwrite_flag_forces_cached_direct_download(self):
+        for flag in ("telechargement_forcer", "telechargement_ecraser"):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                tile = root / "tile.tif"
+                tile.write_bytes(b"cached" * 8)
+                events = []
+                dependencies = self._dependencies(
+                    SimpleNamespace(COG_WINDOWED=False, COPC_WINDOWED=False),
+                    events,
+                )
+                terrain_download.telecharger_dalles_zone(
+                    {"tile.tif": "https://invalid/tile"},
+                    (0, 0, 1, 1),
+                    root,
+                    root,
+                    self._args(
+                        **{flag: True}, telechargement_compresser=True
+                    ),
+                    quiet=True,
+                    dependances=dependencies,
+                )
+                download = next(
+                    event for event in events if event[0] == "download"
+                )
+                self.assertEqual(download[2], (True, True))
+
+    def test_absent_tile_is_non_fatal_but_not_persisted(self):
+        events = []
+        dependencies = self._dependencies(
+            SimpleNamespace(COG_WINDOWED=False, COPC_WINDOWED=False),
+            events,
+            result="absent",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            terrain_download.telecharger_dalles_zone(
+                {"tile.tif": "https://invalid/tile"},
+                (0, 0, 1, 1),
+                root,
+                root,
+                self._args(),
+                quiet=True,
+                dependances=dependencies,
+            )
+        self.assertFalse(any(event[0] == "manifest" for event in events))
+        registered = next(event for event in events if event[0] == "register")
+        self.assertEqual(registered[1], ())
+
+    def test_unsafe_remote_name_is_dropped_before_path_resolution(self):
+        events = []
+        dependencies = self._dependencies(
+            SimpleNamespace(COG_WINDOWED=False, COPC_WINDOWED=False), events
+        )
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(
+            io.StringIO()
+        ) as output:
+            root = Path(tmp)
+            terrain_download.telecharger_dalles_zone(
+                {"../escape.tif": "https://invalid/escape"},
+                (0, 0, 1, 1),
+                root,
+                root,
+                self._args(),
+                quiet=True,
+                dependances=dependencies,
+            )
+        self.assertIn("unsafe name", output.getvalue())
+        self.assertFalse(any(event[0] == "download" for event in events))
+
+    def test_inventory_header_checks_bbox_provider_and_accepts_legacy(self):
+        bbox = (1.2, 2.2, 3.8, 4.8)
+        header = terrain_download.dalles_zone_entete(bbox, "provider-a")
+        self.assertEqual(
+            header,
+            "# bbox:1,2,4,5\n# provider:provider-a",
+        )
+        self.assertTrue(
+            terrain_download.dalles_zone_hdr_ok(
+                header.splitlines(), bbox, "provider-a"
+            )
+        )
+        self.assertFalse(
+            terrain_download.dalles_zone_hdr_ok(
+                header.splitlines(), bbox, "provider-b"
+            )
+        )
+        self.assertTrue(
+            terrain_download.dalles_zone_hdr_ok(
+                ["# bbox:1,2,4,5", "tile.tif"], bbox, "provider-b"
+            )
+        )
+        self.assertFalse(
+            terrain_download.dalles_zone_hdr_ok(
+                ["# bbox:0,0,0,0"], bbox, "provider-a"
+            )
+        )
+
+    def test_inventory_listing_uses_matching_manifest_then_expected_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tiles = root / "tiles"
+            project = root / "project"
+            tiles.mkdir()
+            project.mkdir()
+            (tiles / "manifest.tif").write_bytes(b"m" * 20)
+            (tiles / "expected.tif").write_bytes(b"e" * 20)
+            inventory = project / "dalles_zone.txt"
+            inventory.write_text(
+                "# bbox:0,0,1,1\n# provider:p\nmanifest.tif\n",
+                encoding="utf-8",
+            )
+
+            def list_with(valid_header):
+                return terrain_download.lister_dalles_zone(
+                    ["expected.tif"],
+                    tiles,
+                    project,
+                    (0, 0, 1, 1),
+                    hdr_ok=lambda _lines, _bbox: valid_header,
+                    chemin_dalle=lambda folder, name: Path(folder) / name,
+                    seuil_dalle_valide=10,
+                )
+
+            self.assertEqual(list_with(True), [tiles / "manifest.tif"])
+            self.assertEqual(list_with(False), [tiles / "expected.tif"])
+
+    def test_inventory_listing_skips_invalid_paths_and_small_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "valid.tif"
+            small = root / "small.tif"
+            valid.write_bytes(b"v" * 20)
+            small.write_bytes(b"x")
+
+            def resolve(_folder, name):
+                if name == "unsafe.tif":
+                    raise ValueError("unsafe")
+                if name == "io.tif":
+                    raise OSError("io")
+                return root / name
+
+            result = terrain_download.lister_dalles_zone(
+                ["unsafe.tif", "io.tif", "small.tif", "valid.tif"],
+                root,
+                root / "missing-project",
+                (0, 0, 1, 1),
+                hdr_ok=mock.Mock(),
+                chemin_dalle=resolve,
+                seuil_dalle_valide=10,
+            )
+            self.assertEqual(result, [valid])
+
+    def test_inventory_writer_sorts_deduplicates_and_registers(self):
+        writes = []
+        registered = []
+        terrain_download.ecrire_dalles_zone(
+            "inventory.txt",
+            (0, 1, 2, 3),
+            ["b.tif", "a.tif", "b.tif"],
+            provider_code="p",
+            ecrire_texte_atomique=lambda path, content: writes.append(
+                (path, content)
+            ),
+            creer_fichier=registered.append,
+        )
+        self.assertEqual(
+            writes,
+            [
+                (
+                    "inventory.txt",
+                    "# bbox:0,1,2,3\n# provider:p\na.tif\nb.tif",
+                )
+            ],
+        )
+        self.assertEqual(registered, [Path("inventory.txt")])
+
+    def test_inventory_facades_keep_signatures_and_late_dependencies(self):
+        provider = SimpleNamespace(CODE="late-provider")
+        atomic = mock.Mock()
+        register = mock.Mock()
+        path_resolver = mock.Mock()
+        sentinel = object()
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "_ecrire_texte_atomique", atomic
+        ), mock.patch.object(L, "_creer_fichier", register), mock.patch.object(
+            L, "chemin_dalle", path_resolver
+        ), mock.patch.object(
+            L, "_lister_dalles_zone_impl", return_value=sentinel
+        ) as listing, mock.patch.object(
+            L, "_ecrire_dalles_zone_impl"
+        ) as writing:
+            result = L._lister_dalles_zone([], Path("tiles"), Path("project"), (0, 0, 1, 1))
+            L._ecrire_dalles_zone("zone.txt", (0, 0, 1, 1), ["a.tif"])
+        self.assertIs(result, sentinel)
+        self.assertIs(listing.call_args.kwargs["hdr_ok"], L._dalles_zone_hdr_ok)
+        self.assertIs(listing.call_args.kwargs["chemin_dalle"], path_resolver)
+        self.assertEqual(writing.call_args.kwargs["provider_code"], "late-provider")
+        self.assertIs(writing.call_args.kwargs["ecrire_texte_atomique"], atomic)
+        self.assertIs(writing.call_args.kwargs["creer_fichier"], register)
+        self.assertEqual(
+            str(inspect.signature(L._lister_dalles_zone)),
+            "(noms_attendus, dossier_dalles, dossier_ville, bbox)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._ecrire_dalles_zone)),
+            "(path, bbox, noms)",
+        )
+        self.assertEqual(str(inspect.signature(L._dalles_zone_entete)), "(bbox)")
+        self.assertEqual(
+            str(inspect.signature(L._dalles_zone_hdr_ok)), "(lignes, bbox)"
+        )
+
+    def test_historical_facade_rebuilds_current_dependencies(self):
+        marker = object()
+        direct = mock.Mock()
+        provider = SimpleNamespace()
+        args = self._args()
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "telecharger_dalle_directe", direct
+        ), mock.patch.object(
+            L, "_telecharger_dalles_zone_impl", return_value=marker
+        ) as implementation:
+            result = L._telecharger_dalles_zone(
+                {}, (0, 0, 1, 1), Path("tiles"), Path("project"), args, quiet=True
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.provider, provider)
+        self.assertIs(dependencies.telecharger_dalle_directe, direct)
+        self.assertIs(dependencies.dl_workers_effectif, L._dl_workers_effectif)
+        self.assertIs(dependencies.chemin_dalle, L.chemin_dalle)
+        self.assertEqual(
+            str(inspect.signature(L._telecharger_dalles_zone)),
+            "(dalles_dict, bbox, dossier_dalles, dossier_ville, args, quiet=False)",
         )
 
 

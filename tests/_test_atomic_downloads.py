@@ -267,6 +267,93 @@ class AtomicDownloadTests(unittest.TestCase):
         self.assertEqual(final.read_bytes(), b"FROM_CACHE")
         self._assert_no_part()
 
+    def test_stage_directory_is_removed_on_keyboard_interrupt(self):
+        final = self.tmp / "tile.tif"
+        final.write_bytes(b"OLD")
+        with self.assertRaises(KeyboardInterrupt):
+            with L._stage_dalle_part(final) as staged:
+                self.assertEqual(staged.name, final.name)
+                self.assertTrue(staged.parent.name.endswith(".part"))
+                staged.write_bytes(b"NEW")
+                staged.with_suffix(".aux.xml").write_text("sidecar")
+                raise KeyboardInterrupt
+        self.assertEqual(final.read_bytes(), b"OLD")
+        self._assert_no_part()
+
+    def test_direct_valid_cache_skips_every_staging_and_network_effect(self):
+        final = self.tmp / "tile.tif"
+        final.write_bytes(self._old_bytes())
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(
+            L, "_stage_dalle_part", side_effect=AssertionError("staging")
+        ), mock.patch.object(
+            L, "_download_to_tmp", side_effect=AssertionError("network")
+        ), mock.patch.object(L, "_creer_fichier") as register:
+            result = L.telecharger_dalle_directe(
+                "tile.tif", "https://example.invalid/tile", self.tmp
+            )
+        self.assertEqual(result, "skip")
+        register.assert_not_called()
+
+    def test_direct_transient_failure_retries_then_publishes(self):
+        final = self.tmp / "tile.tif"
+        attempts = []
+
+        def download(_url, path, timeout=60):
+            attempts.append(Path(path))
+            if len(attempts) == 1:
+                raise OSError("temporary")
+            Path(path).write_bytes(b"VALID")
+            return L.SEUIL_DALLE_VALIDE + 1
+
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L, "_post_fetch_si_besoin"), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "_creer_fichier"), \
+             mock.patch.object(L.time, "sleep") as sleep, \
+             mock.patch.object(L, "MAX_TENTATIVES", 3):
+            result = L.telecharger_dalle_directe(
+                "tile.tif", "https://example.invalid/tile", self.tmp
+            )
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(attempts), 2)
+        sleep.assert_called_once_with(L.DELAI_RETRY)
+        self.assertEqual(final.read_bytes(), b"VALID")
+        self._assert_no_part()
+
+    def test_direct_cloud_cache_is_linked_for_hook_without_republication(self):
+        final = self.tmp / "tile.tif"
+        cloud = final.with_suffix(".laz")
+        cloud.write_bytes(b"CLOUD")
+        seen = []
+
+        def pre_download(path):
+            staged_cloud = Path(path).with_suffix(".laz")
+            seen.append(staged_cloud.read_bytes())
+            Path(path).write_bytes(b"FROM_CLOUD")
+            return True
+
+        L.PROVIDER = SimpleNamespace(
+            subdir_from_name=lambda _nom: "",
+            cloud_path=lambda path: Path(path).with_suffix(".laz"),
+            pre_download=pre_download,
+        )
+        with mock.patch.object(
+                L, "_download_to_tmp",
+                side_effect=AssertionError("network called despite cloud")), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "_creer_fichier"), \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_dalle_directe(
+                "tile.tif", "https://example.invalid/tile", self.tmp
+            )
+        self.assertEqual(result, "ok")
+        self.assertEqual(seen, [b"CLOUD"])
+        self.assertEqual(cloud.read_bytes(), b"CLOUD")
+        self.assertEqual(final.read_bytes(), b"FROM_CLOUD")
+        self._assert_no_part()
+
     def test_direct_404_exact_remains_error_grid_remains_absent(self):
         class Provider:
             def __init__(self, exact):

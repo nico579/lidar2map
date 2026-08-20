@@ -1244,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.44.0"
+VERSION      = "1.45.0"
 VERSION_DATE = "2026-08"
 
 
@@ -6072,72 +6072,50 @@ def _calculer_sous_zones_priori(x1, y1, x2, y2, n_morceaux, cote_km, unite_m=Tru
         n_rows=n_rows,
     )
 
+from _terrain_download import (
+    DependancesTelechargementTerrain as _DependancesTelechargementTerrain,
+    dalles_zone_entete as _dalles_zone_entete_impl,
+    dalles_zone_hdr_ok as _dalles_zone_hdr_ok_impl,
+    dl_workers_effectif as _dl_workers_effectif_impl,
+    ecrire_dalles_zone as _ecrire_dalles_zone_impl,
+    lister_dalles_zone as _lister_dalles_zone_impl,
+    telecharger_dalles_zone as _telecharger_dalles_zone_impl,
+)
+
+
 def _lister_dalles_zone(noms_attendus, dossier_dalles, dossier_ville, bbox):
-    """Retourne la liste des Path des dalles valides présentes sur disque
-    pour cette zone. Source de vérité : dalles_zone.txt si bbox match,
-    sinon le set `noms_attendus` (issu de PROVIDER.discover_dalles).
-
-    noms_attendus : iterable de noms de dalles attendus pour la zone
-                    (typiquement les keys du dict retourné par discover_dalles).
-    """
-    # Déterminer les noms de la zone : dalles_zone.txt si l'en-tête correspond
-    # (bbox + provider), sinon le set noms_attendus (discover_dalles).
-    noms_zone = set()
-    dalles_zone_txt = dossier_ville / "dalles_zone.txt"
-    if dalles_zone_txt.exists():
-        _lignes = dalles_zone_txt.read_text(encoding="utf-8").splitlines()
-        if _dalles_zone_hdr_ok(_lignes, bbox):
-            noms_zone = {n.strip() for n in _lignes if n.strip() and not n.startswith("#")}
-    if not noms_zone:
-        noms_zone = set(noms_attendus)
-
-    # Résoudre CHAQUE nom directement (chemin_dalle gère le sous-dossier par
-    # colonne X) au lieu de rglober TOUT le cache PARTAGÉ. Sur un cache
-    # départemental (dizaines de milliers de .tif) × des centaines de chunks,
-    # l'ancien scan était en O(chunks × fichiers) ; désormais O(noms de la zone).
-    dalles_ombrages = []
-    for nom in noms_zone:
-        # chemin_dalle lève ValueError sur un nom piégé (dalles_zone.txt altéré) :
-        # on saute au lieu de crasher (R2#3, défense en profondeur).
-        try:
-            p = chemin_dalle(dossier_dalles, nom)
-            if p.exists() and p.stat().st_size > SEUIL_DALLE_VALIDE:
-                dalles_ombrages.append(p)
-        except (OSError, ValueError):
-            continue
-    return sorted(dalles_ombrages)
+    """Retourne les dalles valides présentes sur disque pour cette zone."""
+    return _lister_dalles_zone_impl(
+        noms_attendus,
+        dossier_dalles,
+        dossier_ville,
+        bbox,
+        hdr_ok=_dalles_zone_hdr_ok,
+        chemin_dalle=chemin_dalle,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+    )
 
 
 def _dalles_zone_entete(bbox):
-    """En-tête (2 lignes) de dalles_zone.txt : bbox + provider. La ligne
-    provider évite qu'un run MNT et un run LAZ pointés sur le MÊME dossier de
-    sortie (--output-dir forcé) se volent la liste de dalles — par défaut, le
-    tag de variante dans le nom de zone sépare déjà les projets."""
-    return (f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}\n"
-            f"# provider:{PROVIDER.CODE}")
+    """Construit l'en-tête bbox/provider historique de dalles_zone.txt."""
+    return _dalles_zone_entete_impl(bbox, PROVIDER.CODE)
 
 
 def _ecrire_dalles_zone(path, bbox, noms):
     """Publie atomiquement la liste complète des dalles d'une zone."""
-    contenu = (
-        _dalles_zone_entete(bbox)
-        + "\n"
-        + "\n".join(sorted(set(noms)))
+    return _ecrire_dalles_zone_impl(
+        path,
+        bbox,
+        noms,
+        provider_code=PROVIDER.CODE,
+        ecrire_texte_atomique=_ecrire_texte_atomique,
+        creer_fichier=_creer_fichier,
     )
-    _ecrire_texte_atomique(path, contenu)
-    _creer_fichier(Path(path))
 
 
 def _dalles_zone_hdr_ok(lignes, bbox):
-    """Valide l'en-tête de dalles_zone.txt : bbox (ligne 0) et, si présente,
-    la ligne provider (les anciens fichiers sans elle restent acceptés)."""
-    if not lignes or lignes[0].strip() != \
-            f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}":
-        return False
-    for _l in lignes[1:3]:
-        if _l.startswith("# provider:"):
-            return _l.strip() == f"# provider:{PROVIDER.CODE}"
-    return True
+    """Valide l'en-tête bbox/provider, y compris son format historique."""
+    return _dalles_zone_hdr_ok_impl(lignes, bbox, PROVIDER.CODE)
 
 
 def _dl_workers_effectif(workers, dl_cap, lp):
@@ -6148,167 +6126,42 @@ def _dl_workers_effectif(workers, dl_cap, lp):
     avorté). Sans plafond, lp monte librement. La conversion tourne DANS la tâche
     de download (pool partagé) : sur un provider plafonné elle reste donc bornée
     au plafond tant que les pools ne sont pas découplés (travail futur)."""
-    if isinstance(dl_cap, int) and dl_cap > 0:
-        return min(dl_cap, max(min(workers, dl_cap), lp))
-    return max(workers, lp)
+    return _dl_workers_effectif_impl(workers, dl_cap, lp)
 
 
-def _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args,
-                              quiet=False):
-    """Télécharge en parallèle les dalles d'un dict {nom: url} (issu de
-    PROVIDER.discover_dalles). Pure orchestration : la découverte et le
-    fallback grille sont entièrement délégués au provider.
+def _dependances_telechargement_terrain():
+    return _DependancesTelechargementTerrain(
+        provider=PROVIDER,
+        nom_dalle_sur=_nom_dalle_sur,
+        chemin_dalle=chemin_dalle,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+        telecharger_cog_fenetre=telecharger_cog_fenetre,
+        telecharger_copc_fenetre=telecharger_copc_fenetre,
+        telecharger_dalle_directe=telecharger_dalle_directe,
+        dl_workers_effectif=_dl_workers_effectif,
+        hms=_hms,
+        laz_prof_resume=_laz_prof_resume,
+        ecrire_dalles_zone=_ecrire_dalles_zone,
+        creer_fichiers=_creer_fichiers,
+        thread_pool_executor=ThreadPoolExecutor,
+        as_completed=as_completed,
+        time=time,
+    )
 
-    dalles_dict : {nom_dalle: url_telechargement_complet}
-    bbox        : (x_min, y_min, x_max, y_max) en CRS natif (informatif, pour
-                  le header de dalles_zone.txt)
-    quiet       : coupe la barre \\r répétée (appelé depuis le thread de fond
-                  _PrefetchDalles pendant que le thread principal imprime son
-                  propre déroulé (ombrage) — sans coordination entre les deux
-                  flux, la barre \\r du préchargement se faisait écraser en
-                  plein milieu par une ligne complète du thread principal,
-                  produisant une ligne de log fusionnée illisible).
-    """
-    ok = skip = absent = erreur = 0
-    a_telecharger = []
 
-    # Sécurité : `dalles_dict` vient de PROVIDER.discover_dalles (index DISTANT).
-    # On écarte tout nom qui n'est pas un basename sûr AVANT de construire un
-    # chemin local, sinon une entrée piégée (`../…`) écrirait hors cache (R2#3).
-    _dict_sur = {n: u for n, u in dalles_dict.items() if _nom_dalle_sur(n)}
-    if len(_dict_sur) < len(dalles_dict):
-        _n_drop = len(dalles_dict) - len(_dict_sur)
-        print(f"  WARNING: {_n_drop} tile(s) with unsafe name(s) skipped "
-              f"(path traversal guard)")
-    dalles_dict = _dict_sur
-
-    # Overwrite = VRAI re-download de la source (choix Nico : --download-overwrite
-    # doit re-tirer, LAZ inclus). Les deux flags convergent (--download-force et
-    # --download-overwrite forcent le re-download) : on re-liste la dalle même si
-    # elle est en cache. La suppression du .tif ET le bypass du hook pre_download
-    # (qui reconstruit depuis le LAZ caché) sont gérés en aval par
-    # telecharger_dalle_directe(ecraser=True) ; sinon un overwrite ne re-tirait
-    # jamais le nuage (vécu : Cache 6 / Downloaded 3 sous --download-overwrite).
-    _force_dl = bool(args.telechargement_forcer or args.telechargement_ecraser)
-    for nom, url in dalles_dict.items():
-        cd = chemin_dalle(dossier_dalles, nom)
-        if _force_dl or not cd.exists() or cd.stat().st_size < SEUIL_DALLE_VALIDE:
-            a_telecharger.append((nom, url))
-        else:
-            skip += 1
-
-    nb_total = len(a_telecharger)
-    largeur  = 30
-    done = 0
-    t0_dl = time.time()
-
-    def _afficher_barre(done, nb_total, t0_dl):
-        if quiet:
-            return
-        pct  = int(done * 100 / max(nb_total, 1))
-        bars = int(done * largeur / max(nb_total, 1))
-        elap = int(time.time() - t0_dl)
-        barre = "█" * bars + "░" * (largeur - bars)
-        print(f"\r  LiDAR tiles [{barre}] {pct:3d}%  {done}/{nb_total}  {_hms(elap)}",
-              end="", flush=True)
-
-    # Providers servant de grandes mosaïques COG (ca-nrcan…) : lecture fenêtrée
-    # /vsicurl/ sur la bbox zone au lieu de rapatrier le COG entier.
-    _cog_windowed = getattr(PROVIDER, "COG_WINDOWED", False)
-    # Plafond de download PROPRE AU PROVIDER : les nuages LAZ (fr/ch mode LAZ)
-    # pèsent ~200 Mo ; à --workers 8, IGN/swisstopo throttlent et coupent la
-    # connexion en silence (transfert tronqué, retry qui repart de zéro → tuile
-    # en erreur → run avorté). DOWNLOAD_WORKERS_MAX borne la SEULE phase de
-    # download ; le tuilage/ombrage garde args.workers. Défaut providers = pas
-    # de plafond (attr absent → args.workers).
-    # R1#6 — --laz-parallel ne doit jamais ouvrir plus de connexions que le
-    # plafond du provider (avant, max(cap, laz_parallel) laissait --laz-parallel 6
-    # ouvrir 6 connexions sur un plafond de 3 → transfert tronqué → run avorté).
-    _dl_cap = getattr(PROVIDER, "DOWNLOAD_WORKERS_MAX", None)
-    _lp     = getattr(args, "laz_parallel", 1)
-    _dl_workers = _dl_workers_effectif(args.workers, _dl_cap, _lp)
-    if a_telecharger:
-        if _dl_workers < args.workers:
-            print(f"  Note: capping downloads to {_dl_workers} parallel "
-                  f"(large point-cloud tiles, avoids server throttling)")
-        if _lp > _dl_workers:
-            print(f"  Note: --laz-parallel {_lp} limited to {_dl_workers} here "
-                  f"(provider download cap; conversion shares the download pool)")
-        with ThreadPoolExecutor(max_workers=_dl_workers) as ex:
-            if _cog_windowed:
-                futures = {ex.submit(telecharger_cog_fenetre, nom, url, dossier_dalles,
-                                     bbox, _force_dl): (nom,)
-                           for nom, url in a_telecharger}
-            elif getattr(PROVIDER, "COPC_WINDOWED", False):
-                # Nuages COPC (ca-nrcan…) : fenêtrage /vsicurl sur la bbox au lieu
-                # de rapatrier le COPC entier, puis conversion DFM/CSF.
-                futures = {ex.submit(telecharger_copc_fenetre, nom, url, dossier_dalles,
-                                     bbox, _force_dl): (nom,)
-                           for nom, url in a_telecharger}
-            else:
-                futures = {ex.submit(telecharger_dalle_directe, nom, url, dossier_dalles,
-                                     _force_dl,
-                                     args.telechargement_compresser): (nom,)
-                           for nom, url in a_telecharger}
-            for fut in as_completed(futures):
-                nom = futures[fut][0]
-                res = fut.result()
-                done += 1
-                if res == "ok":   ok += 1
-                elif res == "skip": skip += 1
-                elif res == "absent": absent += 1
-                else: erreur += 1
-                _afficher_barre(done, nb_total, t0_dl)
-
-    if nb_total > 0:
-        if not quiet:
-            print()  # fin barre
-            print(f"  Downloaded: {ok}  Cache: {skip}  Missing: {absent}  Errors: {erreur}")
-        _laz_prof_resume(time.time() - t0_dl, _dl_workers, _lp)   # R1#6 profiling
-
-    # Invariant (miroir WMTS, revue 2026-07-10) : ne JAMAIS continuer sur une
-    # couverture trouée. Sans ce garde, les ombrages/exports étaient générés
-    # depuis les seules dalles disponibles, le chunk était marqué fait, et
-    # dalles_zone.txt (source de vérité des runs tiles-only, cf. ~l.9443)
-    # listait un sous-ensemble — les trous devenaient permanents. Les dalles
-    # réussies sont en cache : le re-run ne retélécharge que les échecs.
-    if erreur > 0:
-        raise RuntimeError(f"{erreur} tile download error(s) - pipeline "
-                           f"stopped before shading/tiling (rerun to retry "
-                           f"the failed tiles; successful ones are cached)")
-
-    # Persister dalles_zone.txt — utile pour --dalles-purger-hors-zone et la
-    # reprise (cf. _lister_dalles_zone qui lit ce fichier).
-    noms_persistance = [nom for nom in dalles_dict.keys()
-                        if chemin_dalle(dossier_dalles, nom).exists()
-                        and chemin_dalle(dossier_dalles, nom).stat().st_size > SEUIL_DALLE_VALIDE]
-    if noms_persistance:
-        dalles_zone_txt = dossier_ville / "dalles_zone.txt"
-        _ecrire_dalles_zone(
-            dalles_zone_txt, bbox, noms_persistance
-        )
-
-    # Enregistrer toutes les dalles utilisées par ce chunk dans le manifest
-    # pour permettre --nettoyage de les supprimer en fin de chunk. Le
-    # téléchargement parallèle ne propage pas _manifest_ctx (threading.local)
-    # → registration explicite depuis le main thread, en LOT : l'unitaire
-    # réécrivait tout le JSON + fsync PAR dalle (O(n²) sur un chunk de
-    # milliers de dalles, dizaines de secondes perdues par chunk).
-    _cds = [chemin_dalle(dossier_dalles, _nom) for _nom in noms_persistance]
-    _reg = [c for c in _cds if c.exists()]
-    # Mode LAZ : le nuage .laz gardé en cache par post_fetch est l'intermédiaire
-    # le plus LOURD (~200 Mo/dalle) et ne vit PAS avec le .tif produit (production)
-    # → sans déclaration explicite --nettoyage ne le voit jamais et un balayage
-    # départemental sature le disque (le .tif, léger, était seul purgé). On l'ajoute
-    # au manifeste ; --cleanup-keep-tiles l'épargne (cf. cleanup du chunk, qui garde
-    # aussi le dossier cache des nuages). No-op pour un provider sans mode LAZ.
-    _cloud_path = getattr(PROVIDER, "cloud_path", None)
-    if _cloud_path is not None:
-        for c in _cds:
-            _lz = _cloud_path(c)
-            if _lz is not None and _lz.exists():
-                _reg.append(_lz)
-    _creer_fichiers(_reg)
+def _telecharger_dalles_zone(
+    dalles_dict, bbox, dossier_dalles, dossier_ville, args, quiet=False
+):
+    """Façade historique vers l'orchestrateur terrain extrait."""
+    return _telecharger_dalles_zone_impl(
+        dalles_dict,
+        bbox,
+        dossier_dalles,
+        dossier_ville,
+        args,
+        quiet=quiet,
+        dependances=_dependances_telechargement_terrain(),
+    )
 
 
 from _split_deliverables import (

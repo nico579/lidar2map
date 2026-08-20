@@ -103,6 +103,7 @@ MAP = {
     "_terrain_zones.py":              "_terrain_zones.py",
     "_terrain_geocoding.py":          "_terrain_geocoding.py",
     "_terrain_resolution.py":         "_terrain_resolution.py",
+    "_terrain_download.py":           "_terrain_download.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_merge.py":             "_geojson_merge.py",

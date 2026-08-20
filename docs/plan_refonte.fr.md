@@ -53,6 +53,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_zones.py       primitives pures de résolution des zones terrain
 ├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
 ├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
+├── _terrain_download.py    pool, routage, preuve et inventaire des dalles terrain
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -164,8 +165,10 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Overpass et régions extraits (15c-2, mesuré) | 104 | 0,49 % |
 | Transformations CRS provider-aware (15d, mesuré) | 16 | 0,08 % |
 | Résolveur de zone LiDAR (15e, mesuré) | 162 | 0,76 % |
-| **Total sorti du monolithe (mesuré)** | **10 024** | **47,03 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **11 291** | **52,97 %** |
+| Orchestration téléchargement terrain (15f, mesuré) | 118 | 0,55 % |
+| Preuve et inventaire `dalles_zone` (15g, mesuré) | 29 | 0,14 % |
+| **Total sorti du monolithe (mesuré)** | **10 171** | **47,72 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **11 144** | **52,28 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -232,7 +235,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-15e est de 11 291 lignes (52,97 %) : il reste donc à sortir **3 831 à 4 896
+post-15g est de 11 144 lignes (52,28 %) : il reste donc à sortir **3 684 à 4 749
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -293,7 +296,7 @@ rester dans le script principal.
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 | 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
-| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS et résolveur de zone extraits (15a-e) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné et 24 branches de résolution |
+| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS, résolveur de zone, ordonnanceur et inventaire terrain extraits (15a-g) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné, 24 branches de résolution, routage direct/COG/COPC et preuve de zone |
 
 ## Travail déjà sécurisé
 
@@ -2309,11 +2312,82 @@ du périmètre figé). Total sorti : **10 024 lignes, 47,03 %** ; reste **11 291
 lignes, 52,97 %**. Il faut encore réduire le point d'entrée de **33,93 %** de sa
 taille actuelle pour atteindre la borne haute de la cible (7 460 lignes).
 
-### Prochaine étape proposée : 15f — orchestration du téléchargement terrain
+### Sous-phase 15f : orchestration du téléchargement terrain extraite (terminée)
 
-Inventorier d'abord les coutures entre découverte provider, choix du cache,
-téléchargement MNT/LAZ, conversion du nuage et manifeste de zone. Le premier lot
-ne déplacera qu'une frontière dont les retours, erreurs, nettoyage et logs sont
-déjà caractérisés ; les runners split glissants et la production d'ombrages
-resteront séparés. Cette phase doit commencer par des contrats hors réseau sur
-les chemins MNT, LAZ, COG/COPC fenêtrés et hors couverture.
+Le nouveau module `_terrain_download.py` sélectionne le moteur direct, COG ou
+COPC, calcule le pool de téléchargement sous le plafond du provider, agrège les
+statuts et interdit la poursuite sur une erreur. Après succès, il publie la
+preuve `dalles_zone.txt` et enregistre en lot les GeoTIFF ainsi que les nuages
+LAZ associés dans le manifeste du chunk.
+
+La dataclass immuable `DependancesTelechargementTerrain` reçoit 15 coutures à
+chaque appel. Les moteurs réseau et fenêtrés restent dans `lidar2map.py` : leurs
+validations atomiques et leurs monkeypatches historiques ne changent pas. La
+façade `_telecharger_dalles_zone(...)` conserve exactement sa signature et
+réinjecte aussi la politique `_dl_workers_effectif` au lieu de la figer dans le
+module extrait.
+
+Huit nouveaux contrats hors réseau couvrent les trois routages, les deux flags
+d'overwrite, le cache, la preuve, le nuage LAZ, l'absence de couverture, l'arrêt
+avant publication sur erreur, la garde de traversée de chemin et les coutures
+tardives. La suite de robustesse existante confirme en plus que toute erreur de
+dalle arrête le pipeline et protège l'ancien manifeste.
+
+`_terrain_download.py` est enregistré dans `deploy.MAP` ; le motif
+`_terrain_*.py` couvre déjà rebuild et CI. Ce lot est intégré au rebuild
+**1.45.0** avec la sous-phase 15g.
+
+Mesure nette : `lidar2map.py` 11 291 → 11 173 lignes (**-118**, soit **0,55 %**
+du périmètre figé). Total sorti : **10 142 lignes, 47,58 %** ; reste **11 173
+lignes, 52,42 %**.
+
+### Sous-phase 15g : preuve et inventaire `dalles_zone` extraits (terminée)
+
+Les quatre helpers de preuve sont maintenant regroupés dans
+`_terrain_download.py` : construction et validation de l'en-tête bbox/provider,
+publication atomique de la liste normalisée et résolution des seules dalles de
+la zone présentes dans le cache. Le parcours reste proportionnel aux noms de la
+zone et ne réintroduit pas de scan global du cache partagé.
+
+Les façades historiques conservent leurs quatre signatures et relisent à chaque
+appel le provider, le résolveur sécurisé de chemin, le seuil de validité ainsi
+que les primitives de publication et de manifeste. Les anciens inventaires sans
+ligne provider restent acceptés ; un provider ou une bbox différents imposent
+le repli sur la découverte courante. Les chemins invalides et erreurs locales
+sont ignorés dalle par dalle comme avant.
+
+Cinq nouveaux contrats hors réseau portent la suite de refonte à **183 tests**.
+Ils couvrent l'en-tête exact, la compatibilité historique, le changement de
+provider, le repli sur les noms attendus, les chemins invalides, le seuil de
+taille, le tri/dédoublonnage, la publication atomique et les coutures tardives.
+Les suites de publications atomiques, robustesse, interactions et livraison
+restent vertes, ainsi que compilation et Ruff.
+
+Aucun nouveau fichier de livraison n'est nécessaire : `_terrain_download.py`
+était déjà enregistré dans `deploy.MAP` et couvert par les motifs rebuild/CI.
+Le lot est livré par le rebuild **1.45.0**.
+
+Mesure nette : `lidar2map.py` 11 173 → 11 144 lignes (**-29**, soit **0,14 %**
+du périmètre figé). Total sorti : **10 171 lignes, 47,72 %** ; reste **11 144
+lignes, 52,28 %**. Le module `_terrain_download.py` contient désormais 281
+lignes physiques ; la faible baisse nette est le coût volontaire des quatre
+façades de compatibilité et de leurs injections explicites.
+
+### Sous-phase 15h : staging atomique et téléchargement direct (contrats en cours)
+
+Caractériser d'abord `_stage_dalle_part`, la réutilisation du nuage LAZ et le
+moteur `telecharger_dalle_directe` : conservation d'une ancienne dalle valide,
+nettoyage des `.part` et sidecars sur toute exception, retries, validation TIFF,
+compression et hooks provider. Le déplacement ne commencera qu'après ces
+contrats, sans mélanger dans le même lot les moteurs COG/COPC ni la production
+d'ombrages.
+
+Quatre contrats supplémentaires sont déjà verts dans
+`_test_atomic_downloads.py` : nettoyage complet du staging sur
+`KeyboardInterrupt`, court-circuit sans aucun effet pour une dalle valide en
+cache, retry d'une erreur transitoire suivi d'une publication réussie, et mise à
+disposition du nuage LAZ par hardlink au hook `pre_download` sans republier ni
+altérer le cache existant. La suite atomique contient désormais **16 tests**.
+Ce palier ne déplace encore aucun moteur : le code reste stable pendant que les
+branches JSON d'erreur, validation/compression et publication d'un nouveau nuage
+LAZ sont complétées.
