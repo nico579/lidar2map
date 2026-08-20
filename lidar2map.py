@@ -1009,7 +1009,6 @@ import sqlite3
 import math
 import time
 import subprocess
-import unicodedata
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -1245,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.43.0"
+VERSION      = "1.44.0"
 VERSION_DATE = "2026-08"
 
 
@@ -2018,18 +2017,24 @@ _GEOFABRIK_BASE_URL      = "https://download.geofabrik.de/europe/france"
 _GEOFABRIK_BASE_URL_ROOT = "https://download.geofabrik.de/europe"
 
 
+from _terrain_zones import (
+    regions_disponibles as _regions_disponibles_impl,
+    departements_de_region as _departements_de_region_impl,
+)
+
+
 def _regions_disponibles():
     """Liste triée des slugs de régions Geofabrik (dédupliqués depuis _GEOFABRIK).
 
     L'unité = la région Geofabrik (anciennes régions pré-2016), pas la région
     administrative actuelle : chaque slug correspond à exactement un PBF, ce qui
     évite toute fusion. Ex: 'provence-alpes-cote-d-azur'."""
-    return sorted(set(_GEOFABRIK.values()))
+    return _regions_disponibles_impl(_GEOFABRIK)
 
 
 def _departements_de_region(slug):
     """Departments (codes INSEE) appartenant à la région Geofabrik `slug`."""
-    return sorted(d for d, s in _GEOFABRIK.items() if s == slug)
+    return _departements_de_region_impl(_GEOFABRIK, slug)
 
 # ── Rendu archéologique ───────────────────────────────────────────────────────
 ELEVATION_SOLEIL = 25   # degrés — 25° révèle micro-reliefs ; 45° usage général
@@ -2278,141 +2283,37 @@ if WINDOWS and hasattr(_signal, "SIGBREAK"):
 
 # ============================================================
 # UTILITAIRES
+
+from _terrain_zones import (
+    normaliser_nom as _normaliser_nom_impl,
+    nom_zone_gps_auto as _nom_zone_gps_auto_impl,
+    nom_zone_bbox_auto as _nom_zone_bbox_auto_impl,
+    zone_cli_presente as _zone_cli_presente_impl,
+    wgs84_to_lamb93_approx as _wgs84_to_lamb93_approx_impl,
+    lamb93_to_wgs84_approx as _lamb93_to_wgs84_approx_impl,
+    bbox_enveloppe_transform as _bbox_enveloppe_transform_impl,
+    exiger_pyproj_hors_france as _exiger_pyproj_hors_france_impl,
+    wgs84_vers_natif as _wgs84_vers_natif_impl,
+    natif_vers_wgs84 as _natif_vers_wgs84_impl,
+)
 # ============================================================
 
-def normaliser_nom(texte):
-    """'garéoult' -> 'gareoult'"""
-    texte = unicodedata.normalize("NFD", texte)
-    texte = "".join(c for c in texte if unicodedata.category(c) != "Mn")
-    texte = re.sub(r"[^a-zA-Z0-9_-]", "_", texte.lower())
-    texte = re.sub(r"_+", "_", texte).strip("_")
-    return texte
-
-
-def _nom_zone_gps_auto(lat, lon):
-    """Nom stable et lisible pour une zone GPS sans --zone-name explicite."""
-    return normaliser_nom(f"gps_{lat:.5f}_{lon:.5f}")
-
-
-def _nom_zone_bbox_auto(lon_min, lat_min, lon_max, lat_max):
-    """Nom stable pour une bbox WGS84 sans imposer un paramètre redondant."""
-    return normaliser_nom(
-        f"bbox_{lon_min:.5f}_{lat_min:.5f}_{lon_max:.5f}_{lat_max:.5f}"
+def _exiger_pyproj_hors_france(cible):
+    return _exiger_pyproj_hors_france_impl(
+        getattr(PROVIDER, "CRS_NATIF", "EPSG:2154"), cible,
     )
 
 
-def _zone_cli_presente(args):
-    """True lorsqu'exactement une zone du groupe argparse a été fournie."""
-    return any((
-        getattr(args, "zone_ville", None),
-        getattr(args, "zone_gps", None),
-        getattr(args, "zone_bbox", None),
-        getattr(args, "zone_departement", None),
-        getattr(args, "zone_region", None),
-    ))
-
-
-def wgs84_to_lamb93_approx(lon, lat):
-    e    = 0.0818191908426
-    n    = 0.7256077650
-    F    = 11754255.426
-    rho0 = 6055612.050   # a*F*t(φ0)^n  φ0=46.5° — identique à la conversion inverse
-    lam0 = math.radians(3.0)
-    lam  = math.radians(lon)
-    phi  = math.radians(lat)
-    e_sin = e * math.sin(phi)
-    t = math.tan(math.pi/4 - phi/2) / ((1 - e_sin)/(1 + e_sin))**(e/2)
-    rho   = F * t**n  # F inclut déjà a (= a × F_adim)
-    theta = n * (lam - lam0)
-    x = 700000 + rho * math.sin(theta)
-    y = 6600000 + rho0 - rho * math.cos(theta)
-    return x, y
-
-
-def lamb93_to_wgs84_approx(x, y):
-    """Conversion Lambert 93 → WGS84 approx. (±50 m) — sans dépendance externe.
-    Constantes IGN officielles : n, F*a, rho0 calculées depuis GRS80 + φ0=46.5°.
-    """
-    n    = 0.7256077650
-    F    = 11754255.426  # a * F (F dimensionless × demi-grand axe GRS80)
-    rho0 = 6055612.050   # a * F * t(φ0)^n  avec φ0=46.5°
-    e    = 0.0818191908426
-    lam0 = math.radians(3.0)
-    xs, ys = 700000.0, 6600000.0
-    dx = x - xs
-    dy = rho0 - (y - ys)
-    rho   = math.sqrt(dx*dx + dy*dy)
-    theta = math.atan2(dx, dy)
-    lam   = theta / n + lam0
-    t = (rho / F) ** (1.0 / n)
-    phi = math.pi / 2 - 2 * math.atan(t)
-    for _ in range(5):
-        e_sin = e * math.sin(phi)
-        phi = math.pi/2 - 2*math.atan(t * ((1-e_sin)/(1+e_sin))**(e/2))
-    return math.degrees(lam), math.degrees(phi)
-
-
-def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2, densify=21):
-    """Enveloppe (min/max) d'une bbox reprojetée, bords DENSIFIÉS.
-
-    Un rectangle ne reste PAS axis-aligné après reprojection : la convergence
-    des méridiens vaut ~2° à 6°E en Lambert 93, soit ~4 km de biais sur un
-    département de 110 km, et min/max sur 2 coins opposés rogne des bords
-    entiers (dalles manquantes en bordure). Mais les 4 coins ne suffisent pas
-    non plus : un bord reprojeté est COURBE (méridiens/parallèles), donc
-    l'extremum réel (max easting, max northing…) peut tomber AU MILIEU d'un
-    bord, pas à un coin (R2#46). On échantillonne donc `densify` points le long
-    de chaque bord (coins inclus), comme rasterio.warp.transform_bounds
-    (densify_pts). Appelé une fois par zone (pas en boucle tuile) : coût
-    négligeable. Même règle que l'étendue du warp de generer_mbtiles_lidar."""
-    n = max(1, int(densify))
-    xs, ys = [], []
-    for i in range(n + 1):
-        t = i / n
-        xt = x1 + (x2 - x1) * t
-        yt = y1 + (y2 - y1) * t
-        for px, py in ((xt, y1), (xt, y2),   # bords bas / haut : x varie
-                       (x1, yt), (x2, yt)):  # bords gauche / droit : y varie
-            qx, qy = transform_fn(px, py)
-            xs.append(qx); ys.append(qy)
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def _exiger_pyproj_hors_france(cible):
-    """La reprojection pure-Python de repli n'implémente QUE le Lambert 93
-    (formules France, wgs84_to_lamb93_approx / lamb93_to_wgs84_approx). Le CRS
-    cible vient du PROVIDER (paramétrage), il n'est pas écrit dans la conversion :
-    pour tout autre CRS, pyproj est indispensable. Sans lui on LÈVE, au lieu de
-    rendre silencieusement des coordonnées françaises fausses (ex. un provider
-    suisse EPSG:2056 qui recevrait du Lambert 93). En pratique pyproj est bundlé,
-    donc ce chemin ne se déclenche qu'en environnement minimal cassé."""
-    crs = getattr(PROVIDER, "CRS_NATIF", "EPSG:2154") or "EPSG:2154"
-    if crs != "EPSG:2154":
-        raise RuntimeError(
-            f"pyproj required to reproject {cible} {crs}; the pure-Python "
-            f"fallback only covers France (EPSG:2154).")
-
-
 def _wgs84_vers_natif(lon, lat):
-    """(lon,lat) WGS84 → (x,y) dans le CRS natif du provider. pyproj si dispo ;
-    sinon repli France borné par _exiger_pyproj_hors_france. Remplace les blocs
-    try _get_transformer / except ImportError: wgs84_to_lamb93_approx dupliqués
-    (le fallback y codait la France en dur — cf. paramétrage vs code)."""
-    try:
-        return _get_transformer("EPSG:4326", PROVIDER.CRS_NATIF).transform(lon, lat)
-    except ImportError:
-        _exiger_pyproj_hors_france("to")
-        return wgs84_to_lamb93_approx(lon, lat)
+    return _wgs84_vers_natif_impl(
+        lon, lat, crs_natif=PROVIDER.CRS_NATIF, get_transformer=_get_transformer,
+    )
 
 
 def _natif_vers_wgs84(x, y):
-    """(x,y) CRS natif du provider → (lon,lat) WGS84. Miroir de _wgs84_vers_natif.
-    Remplace l'ancien helper au nom trompeur (le CRS vient du provider)."""
-    try:
-        return _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326").transform(x, y)
-    except ImportError:
-        _exiger_pyproj_hors_france("from")
-        return lamb93_to_wgs84_approx(x, y)
+    return _natif_vers_wgs84_impl(
+        x, y, crs_natif=PROVIDER.CRS_NATIF, get_transformer=_get_transformer,
+    )
 
 
 
@@ -2420,80 +2321,46 @@ def _natif_vers_wgs84(x, y):
 # GÉOCODAGE
 # ============================================================
 
+def normaliser_nom(texte):
+    return _normaliser_nom_impl(texte)
+
+
+def _nom_zone_gps_auto(lat, lon):
+    return _nom_zone_gps_auto_impl(lat, lon)
+
+
+def _nom_zone_bbox_auto(lon_min, lat_min, lon_max, lat_max):
+    return _nom_zone_bbox_auto_impl(lon_min, lat_min, lon_max, lat_max)
+
+
+def _zone_cli_presente(args):
+    return _zone_cli_presente_impl(args)
+
+
+def wgs84_to_lamb93_approx(lon, lat):
+    return _wgs84_to_lamb93_approx_impl(lon, lat)
+
+
+def lamb93_to_wgs84_approx(x, y):
+    return _lamb93_to_wgs84_approx_impl(x, y)
+
+
+def _bbox_enveloppe_transform(transform_fn, x1, y1, x2, y2, densify=21):
+    return _bbox_enveloppe_transform_impl(transform_fn, x1, y1, x2, y2, densify)
+
+
+from _terrain_geocoding import geocoder_ville_wgs84 as _geocoder_ville_wgs84_impl
+
+
 def geocoder_ville_wgs84(nom_ville):
-    """Géocode une ville et retourne (lat, lon) en WGS84. Retourne (None, None) si échec.
-
-    Filtre le résultat sur le champ ``addresstype`` Nominatim pour rejeter les
-    correspondances "fuzzy" non-administratives (POI, commerces, hameaux
-    incertains). Sans ça, Nominatim renvoie n'importe quoi pour une chaîne
-    non-existante : "yyyy" → un POI au milieu des Deux-Sèvres, "xxxxx" → un
-    nom de cheval dans un haras, etc.
-
-    En mode non-interactif, lève une erreur claire si le résultat n'est pas un lieu
-    administratif/habité reconnu. En mode interactif, demande confirmation.
-    """
-    # Le code pays vient du provider actif. Nominatim filtre par ISO code
-    # (countrycodes=fr/nl/etc.) — évite "Amsterdam" → "Île d'Amsterdam (TAAF, FR)"
-    # quand on travaille avec un provider NL.
-    _cc = (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower()
-    url = (
-        "https://nominatim.openstreetmap.org/search"
-        f"?q={urllib.parse.quote(nom_ville)}"
-        f"&countrycodes={_cc}"
-        "&format=json&limit=1&addressdetails=1"
+    """Façade historique vers le géocodeur Nominatim extrait."""
+    return _geocoder_ville_wgs84_impl(
+        nom_ville,
+        country=getattr(PROVIDER, "COUNTRY", "fr"),
+        http_ua=_HTTP_UA,
+        log_req=_log_req,
+        urlopen=urllib.request.urlopen,
     )
-    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-    _log_req(url, "Nominatim")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
-            OSError, TimeoutError) as e:
-        print(f"  ERROR geocoding ({type(e).__name__}): {e}")
-        return None, None
-    if not data:
-        print(f"  ERROR: town not found: {nom_ville}")
-        return None, None
-
-    # Validation du type de lieu retourné
-    # Lieux acceptés sans question : entités administratives ou habitées clairement
-    # nommées. "locality" et "isolated_dwelling" sont OSM-spécifiques et marquent
-    # respectivement un hameau non-officiel et une habitation isolée — acceptés
-    # mais avec un avertissement.
-    TYPES_OK    = {"city", "town", "village", "municipality", "administrative",
-                   "suburb", "quarter", "neighbourhood"}
-    TYPES_DOUTE = {"hamlet", "locality", "isolated_dwelling", "farm"}
-
-    addrtype = (data[0].get("addresstype") or "").lower()
-    display  = data[0].get("display_name", "(?)")
-    cat      = (data[0].get("class") or "").lower()
-
-    # Rejet immédiat si pas un lieu (boutique, restaurant, route, etc.)
-    if cat not in ("place", "boundary", "landuse"):
-        msg = (f"  ERROR: lieu '{nom_ville}' non reconnu comme ville/village.\n"
-               f"  Nominatim a renvoyé : {display} (type={cat}/{addrtype}).\n"
-               f"  Précisez le nom de la commune.")
-        print(msg)
-        return None, None
-
-    lat = float(data[0]["lat"])
-    lon = float(data[0]["lon"])
-
-    # Type non-administratif → demander confirmation (ou rejeter en mode non-interactif)
-    if addrtype not in TYPES_OK:
-        if addrtype in TYPES_DOUTE:
-            # Lieu-dit ou hameau : signaler mais accepter
-            print(f"  ⚠ '{nom_ville}' resolved to {display} (type={addrtype}).")
-            print("  Check that this is the expected place.")
-        else:
-            # Type complètement inattendu (industrial, retail, etc.) : rejeter
-            print(f"  ERROR: lieu '{nom_ville}' ambiguous - Nominatim returned "
-                  f"{display} (type={addrtype}).")
-            print("  Specify the full name (municipality, not POI).")
-            return None, None
-
-    print(f"  {nom_ville} -> lat={lat:.5f}, lon={lon:.5f}")
-    return lat, lon
 
 
 def geocoder_ville_natif(nom_ville):
@@ -2507,171 +2374,43 @@ def geocoder_ville_natif(nom_ville):
     return x, y
 
 
+from _terrain_geocoding import geocoder_departement as _geocoder_departement_impl
+
+
 def geocoder_departement(num_dep):
-    """
-    Retourne (nom, bx1, by1, bx2, by2) en Lambert 93 via Overpass API OSM.
-    Requête par ref:INSEE + admin_level=6 (département français) → bounds exact.
-    Résultat mis en cache dans dep_bbox_cache.json à côté du script.
-    Si Overpass indisponible et cache existant → utilise le cache.
-    """
-    # ── Cache local ──────────────────────────────────────────────────────────
-    _cache_path = DOSSIER_CACHE / "dep_bbox_cache.json"
-    _cache = {}
-    if _cache_path.exists():
-        try:
-            _cache = json.loads(_cache_path.read_text(encoding="utf-8"))
-        except Exception:
-            _cache = {}
-
-    # Si en cache, retourner directement
-    if num_dep in _cache:
-        c = _cache[num_dep]
-        print(f"  Department {num_dep}: {c['nom']} (local cache)", flush=True)
-        print(f"  BBox WGS84 : {c['lon_min']:.4f},{c['lat_min']:.4f} → "
-              f"{c['lon_max']:.4f},{c['lat_max']:.4f}")
-        # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : la
-        # conversion à 2 coins rognait jusqu'à ~4 km en bordure de bbox,
-        # bien au-delà de la marge de 500 m.
-        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-            _wgs84_vers_natif,
-            c['lon_min'], c['lat_min'], c['lon_max'], c['lat_max'])
-        MARGE = 500
-        bx1 -= MARGE; by1 -= MARGE; bx2 += MARGE; by2 += MARGE
-        surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
-        print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Estimated area: ~{surface_km2:.0f} km²")
-        return c['nom'], bx1, by1, bx2, by2
-
-    # Overpass : relation administrative de niveau département, identifiée par ref:INSEE
-    query = (
-        f'[out:json];'
-        f'relation["boundary"="administrative"]["admin_level"="6"]["ref:INSEE"="{num_dep}"];'
-        f'out bb;'
+    """Façade historique vers le géocodeur département Overpass extrait."""
+    return _geocoder_departement_impl(
+        num_dep,
+        cache_dir=DOSSIER_CACHE,
+        bbox_transform=_bbox_enveloppe_transform,
+        wgs84_vers_natif=_wgs84_vers_natif,
+        ecrire_json_atomique=_ecrire_json_atomique,
+        http_ua=_HTTP_UA,
+        log_req=_log_req,
+        urlopen=urllib.request.urlopen,
+        sleep=time.sleep,
     )
-    url = "https://overpass-api.de/api/interpreter?data=" + urllib.parse.quote(query)
-    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
 
-    nom = None
-    lat_min = lat_max = lon_min = lon_max = None
 
-    for _tentative_ovp in range(3):
-        try:
-            _log_req(req.full_url if hasattr(req, "full_url") else str(req.get_full_url()), "Overpass")
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                data = json.loads(resp.read())
-            elements = data.get("elements", [])
-            if elements:
-                el = elements[0]
-                bounds = el.get("bounds", {})
-                lat_min = bounds.get("minlat")
-                lat_max = bounds.get("maxlat")
-                lon_min = bounds.get("minlon")
-                lon_max = bounds.get("maxlon")
-                nom = el.get("tags", {}).get("name", f"dep{num_dep}")
-            break
-        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError,
-                OSError, TimeoutError) as e:
-            if _tentative_ovp < 2:
-                print(f"  Overpass unavailable ({type(e).__name__}: {e}) - retry {_tentative_ovp+1}/3...",
-                      flush=True)
-                time.sleep(5)
-            else:
-                print(f"  ERROR Overpass: {type(e).__name__}: {e}")
-
-    if lat_min is None:
-        print(f"  ERROR: cannot geocode the department {num_dep}.")
-        print("  Overpass API unavailable. Use --zone-bbox W,S,E,N (WGS84 degrees).")
-        print("  Example Var 83 : --zone-bbox 5.66,42.98,6.79,43.61")
-        return None, None, None, None, None
-
-    # ── Sauvegarde dans le cache ──────────────────────────────────────────────
-    _cache[num_dep] = {
-        "nom": nom, "lat_min": lat_min, "lat_max": lat_max,
-        "lon_min": lon_min, "lon_max": lon_max
-    }
-    try:
-        _ecrire_json_atomique(_cache_path, _cache, indent=2)
-    except Exception:
-        pass  # cache non critique
-
-    print(f"  Department {num_dep}: {nom}")
-    print(f"  BBox WGS84 : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
-
-    # Enveloppe des 4 coins (cf. _bbox_enveloppe_transform) : min/max sur
-    # 2 coins opposés rognait jusqu'à ~4 km en bordure de bbox.
-    bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-        _wgs84_vers_natif, lon_min, lat_min, lon_max, lat_max)
-
-    # Marge de 500 m pour ne pas couper les dalles en bordure
-    MARGE = 500
-    bx1 -= MARGE; by1 -= MARGE
-    bx2 += MARGE; by2 += MARGE
-
-    surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
-    print(f"  BBox Lambert 93 : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-    print(f"  Estimated area: ~{surface_km2:.0f} km²")
-    return nom, bx1, by1, bx2, by2
+from _terrain_geocoding import geocoder_region as _geocoder_region_impl
 
 
 def geocoder_region(slug):
-    """Retourne (nom, bx1, by1, bx2, by2) dans le CRS natif du provider =
-    bbox englobante (union) des départements de la région Geofabrik `slug`.
+    """Façade historique vers l'agrégateur régional extrait."""
+    return _geocoder_region_impl(
+        slug,
+        departements_de_region=_departements_de_region,
+        regions_disponibles=_regions_disponibles,
+        geocoder_departement=geocoder_departement,
+        crs_natif=PROVIDER.CRS_NATIF,
+    )
 
-    Réutilise geocoder_departement (donc le cache dep_bbox_cache.json et la même
-    conversion CRS). Retourne (None, …) si le slug est inconnu ou si le géocodage
-    d'un département échoue."""
-    slug = slug.strip().lower()
-    deps = _departements_de_region(slug)
-    if not deps:
-        print(f"  ERROR: region '{slug}' unknown.")
-        print(f"  Available regions: {', '.join(_regions_disponibles())}")
-        return None, None, None, None, None
-    print(f"  Region {slug}, {len(deps)} departments: {', '.join(deps)}", flush=True)
-    bx1 = by1 = float("inf")
-    bx2 = by2 = float("-inf")
-    for d in deps:
-        nom_d, dx1, dy1, dx2, dy2 = geocoder_departement(d)
-        if nom_d is None:
-            print(f"  ERROR: geocoding of department {d} failed - incomplete region.")
-            return None, None, None, None, None
-        bx1, by1 = min(bx1, dx1), min(by1, dy1)
-        bx2, by2 = max(bx2, dx2), max(by2, dy2)
-    nom = slug.replace("-", " ").title()
-    surface_km2 = (bx2 - bx1) / 1000 * (by2 - by1) / 1000
-    print(f"  Region bbox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-    print(f"  Surface (bbox englobante) : ~{surface_km2:.0f} km²")
-    return nom, bx1, by1, bx2, by2
+from _terrain_zones import parser_departements as _parser_departements_impl
+
 
 def _parser_departements(valeur: str) -> list:
-    """
-    Parse --zone-departement : valeur simple ou liste/plage.
-
-    Formats acceptés (combinables) :
-      83            → ['83']
-      30,35,75      → ['30', '35', '75']
-      1-10          → ['01', '02', ..., '10']
-      1-3,75,83     → ['01', '02', '03', '75', '83']
-
-    Les codes non entiers (DOM/TOM : 2A, 2B, 971, 972…) sont passés tels quels.
-    """
-    import re
-    codes = []
-    for token in valeur.upper().split(","):
-        token = token.strip()
-        if not token:
-            continue
-        m_range = re.match(r'^([0-9]+)-([0-9]+)$', token)
-        if m_range:
-            a, b = int(m_range.group(1)), int(m_range.group(2))
-            for n in range(a, b + 1):
-                # Zéro-padding cohérent avec geo.api.gouv.fr (01…09)
-                codes.append(str(n).zfill(2) if n < 10 else str(n))
-        elif re.match(r'^[0-9]+$', token):
-            # Numérique simple : zéro-padding si chiffre seul
-            codes.append(token.zfill(2) if len(token) == 1 else token)
-        else:
-            codes.append(token)   # 2A, 2B, 971, 972, etc.
-    return codes
+    """Façade historique vers le parseur de codes INSEE extrait."""
+    return _parser_departements_impl(valeur)
 
 
 from _split_planning import (
@@ -5354,196 +5093,34 @@ def _traiter_source_autonome(args):
     )
 
 
+from _terrain_resolution import (
+    DependancesResolutionTerrain as _DependancesResolutionTerrain,
+    resoudre_zone_lidar as _resoudre_zone_lidar_impl,
+)
+
+
 def _resoudre_zone_lidar(args, _osm_seul):
-    """Résout la zone géographique du run LiDAR/OSM (--lidar/--osm) depuis les
-    5 options --zone-* (region/departement/bbox/gps/city), applique le suffixe
-    de variante provider, calcule la grille (modes ville/gps), puis le sharding
-    --block. Retourne (bbox, nom_zone, cx, cy, blk) : bbox en CRS natif du
-    provider actif (sentinel (0,0,0,0) en mode OSM-seul région, cf. commentaire
-    ci-dessous ; le PBF régional est alors traité entier), cx/cy le centre en
-    CRS natif (0.0, 0.0 si non pertinent : bbox/département/région), blk le
-    résultat de `_parse_block` (None hors --block) redonné à l'appelant qui en
-    a aussi besoin plus loin (marge fixe entre blocs, cf. `_traiter_bbox_lidar`).
-
-    Extrait de main() en 8c : appelé une seule fois, avant --laz-parallel (qui
-    ne lit ni bbox ni nom_zone -- l'ordre relatif des deux n'a pas d'effet,
-    réordonné sans risque pour permettre cette extraction contiguë)."""
-    _source_tif_sans_zone = (
-        args.source and Path(args.source).suffix.lower() in (".tif", ".tiff") and
-        not args.zone_departement and not args.zone_bbox and
-        not args.zone_ville and not args.zone_gps and
-        not getattr(args, "zone_region", None))
-    if _source_tif_sans_zone:
-        print("  ERROR: --source TIF requires a zone: --zone-city/--zone-width, --zone-bbox, --zone-department or --zone-region")
-        sys.exit(1)
-
-    cx = cy = 0.0
-    if getattr(args, "zone_region", None):
-        slug = args.zone_region.strip().lower()
-        # Nom automatique : le slug région ex "provence_alpes_cote_d_azur"
-        nom_auto = normaliser_nom(slug)
-        nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
-        if _osm_seul:
-            # OSM-seul : le PBF Geofabrik EST déjà la région — on le traite en
-            # entier (skip_bbox). Inutile de géocoder ses 6 départements pour une
-            # bbox de découpe dont on ne se sert pas → zéro appel Overpass.
-            # La section OSM utilisera une bbox "monde". ATTENTION : ce sentinel
-            # (0,0,0,0) arrive quand même jusqu'au bloc de maintenance
-            # dalles_zone.txt plus bas ; ce bloc est donc court-circuité en
-            # _osm_seul (sinon l'en-tête stocké ne matcherait jamais et le
-            # manifeste serait supprimé). cf. revue code mort 2026-07-22, #21.
-            if slug not in _regions_disponibles():
-                print(f"  ERROR: region '{slug}' unknown.")
-                print(f"  Available regions: {', '.join(_regions_disponibles())}")
-                sys.exit(1)
-            bbox = (0.0, 0.0, 0.0, 0.0)
-            print(f"  Folder : {nom_zone}")
-        else:
-            # raster / vecteur / lidar : bbox = union des bbox des départements.
-            nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
-            if nom_reg is None:
-                sys.exit(1)
-            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-            print(f"  Folder : {nom_zone}")
-
-    elif args.zone_departement:
-        num_dep = args.zone_departement.strip().upper()
-        nom_dep, bx1, by1, bx2, by2 = geocoder_departement(num_dep)
-        if nom_dep is None:
-            sys.exit(1)
-        if _osm_seul:
-            bbox = (bx1, by1, bx2, by2)
-        else:
-            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-        # Nom automatique : ex "var_83"
-        nom_auto = normaliser_nom(nom_dep) + "_" + num_dep.lower()
-        nom_zone  = normaliser_nom(args.zone_nom) if args.zone_nom else nom_auto
-        print(f"  Folder : {nom_zone}")
-
-    elif args.zone_bbox:
-        # --zone-bbox est en WGS84 (W,S,E,N en degrés), comme TOUS les autres
-        # modes de zone et les onglets raster/vecteur. Le Lambert 93 en entrée
-        # était franco-centré : hors de France le CRS natif n'est pas le 2154
-        # (2056 en Suisse, etc.), donc l'entrée universelle est le WGS84. La
-        # conversion vers le CRS natif du provider se fait ICI, comme le mode
-        # Département (geocoder_departement → calculer_grille_bbox en natif).
-        try:
-            parts = [float(v.strip()) for v in args.zone_bbox.split(",")]
-            lon1, lat1, lon2, lat2 = parts
-        except (ValueError, IndexError):
-            print("  Invalid BBox format. Example (WGS84 W,S,E,N): "
-                  "--zone-bbox 5.9,43.1,6.6,43.8")
-            sys.exit(1)
-        if not all(math.isfinite(v) for v in (lon1, lat1, lon2, lat2)):
-            print("  ERROR: non-finite bbox coordinate.")
-            sys.exit(1)
-        if lon1 > lon2: lon1, lon2 = lon2, lon1
-        if lat1 > lat2: lat1, lat2 = lat2, lat1
-        if lon1 == lon2 or lat1 == lat2:
-            print("  ERROR: degenerate bbox (zero width or height).")
-            sys.exit(1)
-        if not (-180 <= lon1 <= 180 and -180 <= lon2 <= 180
-                and -90 <= lat1 <= 90 and -90 <= lat2 <= 90):
-            print("  ERROR: BBox is WGS84 degrees (W,S,E,N): "
-                  "lon in [-180,180], lat in [-90,90].")
-            sys.exit(1)
-        # Enveloppe des 4 coins : un rectangle ne reste pas axis-aligné après
-        # reprojection (cf. _bbox_enveloppe_transform, mode Département).
-        bx1, by1, bx2, by2 = _bbox_enveloppe_transform(
-            _wgs84_vers_natif, lon1, lat1, lon2, lat2)
-        # Centre en CRS natif : sert à la détection de département OSM (restée à
-        # 0,0 en mode bbox, ce qui la faisait échouer). cx/cy sont natifs partout.
-        cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2
-        if _osm_seul:
-            bbox = (bx1, by1, bx2, by2)
-        else:
-            bbox = calculer_grille_bbox(bx1, by1, bx2, by2)
-        surface_km2 = (bx2-bx1)/1000 * (by2-by1)/1000
-        print(f"  BBox WGS84 : {lon1:.4f},{lat1:.4f} → {lon2:.4f},{lat2:.4f}")
-        print(f"  BBox {PROVIDER.CRS_NATIF} : {bx1:.0f},{by1:.0f} → {bx2:.0f},{by2:.0f}")
-        print(f"  Area: ~{surface_km2:.0f} km²")
-        nom_zone = (normaliser_nom(args.zone_nom) if args.zone_nom
-                    else _nom_zone_bbox_auto(lon1, lat1, lon2, lat2))
-        if not nom_zone:
-            sys.exit(1)
-
-    elif args.zone_gps:
-        try:
-            parts = [p.strip() for p in args.zone_gps.replace(";", ",").split(",")]
-            lat, lon = float(parts[0]), float(parts[1])
-        except (ValueError, IndexError):
-            print("  Invalid GPS format. Example: 43.3156,6.0423")
-            sys.exit(1)
-        if not (math.isfinite(lat) and math.isfinite(lon)
-                and -90 <= lat <= 90 and -180 <= lon <= 180):
-            print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
-            sys.exit(1)
-        nom_zone = (normaliser_nom(args.zone_nom) if args.zone_nom
-                    else _nom_zone_gps_auto(lat, lon))
-        if not nom_zone:
-            sys.exit(1)
-        # BUGFIX : la conversion GPS->CRS natif doit se faire dans TOUS les cas,
-        # pas uniquement quand --telechargement est absent. Sans cela, cx=cy=0.0
-        # (init ligne 5056) et la grille calculée par calculer_grille() est
-        # centrée sur l'origine Lambert 93 (au large du Maroc), produisant
-        # une bbox Mercator vide et un MBTiles à 0 tuiles.
-        print(f"  GPS -> lat={lat:.5f}, lon={lon:.5f}")
-        cx, cy = _wgs84_vers_natif(lon, lat)
-        print(f"  {PROVIDER.CRS_NATIF} -> X={cx:.0f}, Y={cy:.0f}")
-
-    elif args.zone_ville:
-        nom_zone = normaliser_nom(args.zone_nom or args.zone_ville)
-        print(f"  Geocoding '{args.zone_ville}'...")
-        cx, cy = geocoder_ville_natif(args.zone_ville)
-        if cx is None:
-            sys.exit(1)
-
-    else:
-        print("  ERROR: a zone option is required "
-              "(--zone-city / --zone-gps / --zone-bbox / --zone-department / --zone-region)")
-        sys.exit(1)
-
-    # Variante de provider (mode LAZ…) : suffixer le nom de zone → le PROJET
-    # entier (dossier, ombrages, MBTiles, dalles_zone.txt, manifeste) est
-    # DISTINCT du run MNT de la même zone. Sans ça, un LRM MNT existant serait
-    # silencieusement réutilisé après avoir coché LAZ ou changé un réglage
-    # (les noms d'ombrage n'encodent pas le provider — revue DFM 2026-07-16).
-    _vtag_fn = getattr(PROVIDER, "variant_tag", None)
-    if _vtag_fn:
-        _vtag = normaliser_nom(_vtag_fn())
-        if _vtag and not nom_zone.endswith(_vtag):
-            nom_zone = f"{nom_zone}_{_vtag}"
-            print(f"  Variant mode ({_vtag}): project name -> {nom_zone}")
-
-    # Largeur + grille (modes ville / gps — pas bbox, dept, région, france).
-    # Largeur (côté du carré) par défaut 20 km si --zone-width absent (aucun
-    # prompt). calculer_grille prend une demi-étendue (rayon) → largeur/2.
-    if not args.zone_bbox and not args.zone_departement and not getattr(args, "zone_region", None):
-        largeur = args.zone_width or 20.0
-        bbox = calculer_grille(cx, cy, largeur / 2.0)
-
-    # --block i/M : sharding géographique INTER-machines (distinct du découpage
-    # interne --split-*). On restreint la bbox du run au i-ème des M blocs (le
-    # chemin n_morceaux de _calculer_sous_zones_priori divise le rectangle
-    # proportionnellement → CRS-agnostique), et on suffixe le nom de zone en
-    # _b{i} pour que les M sorties (une par machine) ne se collisionnent pas.
-    # Composable avec --split-width, qui re-découpe CE bloc sur la machine. Locus
-    # réassemble les mbtiles des blocs (jointives, géoréférencées).
-    try:
-        _blk = _parse_block(getattr(args, "block", ""))
-    except ValueError as _e_blk:
-        print(f"  ERROR: {_e_blk}"); sys.exit(1)
-    if _blk and not _osm_seul:
-        _bi, _bM = _blk
-        _blocs, _ = _calculer_sous_zones_priori(
-            bbox[0], bbox[1], bbox[2], bbox[3], _bM, 0.0, unite_m=True)
-        _z = _blocs[_bi - 1]                       # (i_lat, i_lon, xw, ys, xe, yn)
-        bbox = (_z[2], _z[3], _z[4], _z[5])
-        nom_zone = f"{nom_zone}_b{_bi}"
-        print(f"  Block {_bi}/{_bM} ({len(_blocs)} blocs): this run = bbox "
-              f"{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f} → project {nom_zone}")
-
-    return bbox, nom_zone, cx, cy, _blk
+    """Façade historique vers le résolveur de zone terrain extrait."""
+    return _resoudre_zone_lidar_impl(
+        args,
+        _osm_seul,
+        dependances=_DependancesResolutionTerrain(
+            provider=PROVIDER,
+            normaliser_nom=normaliser_nom,
+            regions_disponibles=_regions_disponibles,
+            geocoder_region=geocoder_region,
+            geocoder_departement=geocoder_departement,
+            calculer_grille_bbox=calculer_grille_bbox,
+            bbox_enveloppe_transform=_bbox_enveloppe_transform,
+            wgs84_vers_natif=_wgs84_vers_natif,
+            nom_zone_bbox_auto=_nom_zone_bbox_auto,
+            nom_zone_gps_auto=_nom_zone_gps_auto,
+            geocoder_ville_natif=geocoder_ville_natif,
+            calculer_grille=calculer_grille,
+            parse_block=_parse_block,
+            calculer_sous_zones_priori=_calculer_sous_zones_priori,
+        ),
+    )
 
 
 from _osm_outputs import (

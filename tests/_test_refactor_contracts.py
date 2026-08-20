@@ -42,6 +42,9 @@ import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _osm_runtime as osm_runtime  # noqa: E402
 import _terrain_sources as terrain_sources  # noqa: E402
+import _terrain_zones as terrain_zones  # noqa: E402
+import _terrain_geocoding as terrain_geocoding  # noqa: E402
+import _terrain_resolution as terrain_resolution  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -580,6 +583,70 @@ class WmtsDownloadFacadeContractTests(unittest.TestCase):
         self.assertEqual(deps.http_ua, L._HTTP_UA)
 
 
+class TerrainZonesContractTests(unittest.TestCase):
+    def test_zone_names_and_presence_are_delegated_to_pure_module(self):
+        args = SimpleNamespace(zone_ville=None, zone_gps="43.3,6.0",
+                               zone_bbox=None, zone_departement=None,
+                               zone_region=None)
+        self.assertEqual(L._nom_zone_gps_auto(43.3, 6.0),
+                         terrain_zones.nom_zone_gps_auto(43.3, 6.0))
+        self.assertEqual(L._nom_zone_bbox_auto(6, 43, 6.1, 43.1),
+                         terrain_zones.nom_zone_bbox_auto(6, 43, 6.1, 43.1))
+        self.assertTrue(L._zone_cli_presente(args))
+
+    def test_approximate_projection_round_trips_in_france(self):
+        x, y = terrain_zones.wgs84_to_lamb93_approx(6.0423, 43.3156)
+        lon, lat = terrain_zones.lamb93_to_wgs84_approx(x, y)
+        self.assertAlmostEqual(lon, 6.0423, places=4)
+        self.assertAlmostEqual(lat, 43.3156, places=4)
+
+    def test_bbox_envelope_densifies_all_edges(self):
+        result = terrain_zones.bbox_enveloppe_transform(
+            lambda x, y: (x + y * y, y), 0, 0, 10, 1, densify=21,
+        )
+        self.assertEqual(result, (0, 0, 11, 1))
+
+    def test_geofabrik_region_helpers_are_sorted_and_deduplicated(self):
+        catalog = {"83": "paca", "06": "paca", "75": "idf"}
+        self.assertEqual(terrain_zones.regions_disponibles(catalog), ["idf", "paca"])
+        self.assertEqual(
+            terrain_zones.departements_de_region(catalog, "paca"), ["06", "83"],
+        )
+        self.assertEqual(L._regions_disponibles(), sorted(set(L._GEOFABRIK.values())))
+
+    def test_department_parser_keeps_ranges_corsica_and_overseas_codes(self):
+        valeur = "1-3, 2a,2B,971, 83,,9"
+        attendu = ["01", "02", "03", "2A", "2B", "971", "83", "09"]
+        self.assertEqual(terrain_zones.parser_departements(valeur), attendu)
+        self.assertEqual(L._parser_departements(valeur), attendu)
+        self.assertEqual(terrain_zones.parser_departements("3-1"), [])
+
+    def test_provider_crs_facades_read_provider_and_transformer_late(self):
+        transformeur = mock.Mock()
+        transformeur.transform.return_value = (7.4, 47.0)
+        get_transformer = mock.Mock(return_value=transformeur)
+        provider = SimpleNamespace(CRS_NATIF="EPSG:2056")
+        with mock.patch.object(L, "PROVIDER", provider), \
+             mock.patch.object(L, "_get_transformer", get_transformer):
+            self.assertEqual(L._natif_vers_wgs84(2600000, 1200000), (7.4, 47.0))
+        get_transformer.assert_called_once_with("EPSG:2056", "EPSG:4326")
+        transformeur.transform.assert_called_once_with(2600000, 1200000)
+
+    def test_france_fallback_works_but_foreign_fallback_fails_closed(self):
+        def indisponible(*_args):
+            raise ImportError("pyproj absent")
+
+        x, y = terrain_zones.wgs84_vers_natif(
+            6.0423, 43.3156, crs_natif="EPSG:2154", get_transformer=indisponible,
+        )
+        self.assertGreater(x, 0)
+        self.assertGreater(y, 0)
+        with self.assertRaisesRegex(RuntimeError, "EPSG:2056"):
+            terrain_zones.wgs84_vers_natif(
+                7.4, 47.0, crs_natif="EPSG:2056", get_transformer=indisponible,
+            )
+
+
 class SourceAutonomeContractTests(unittest.TestCase):
     """Caractérise `_traiter_source_autonome`, extraite de `main()` en 8b.
 
@@ -852,6 +919,156 @@ class SourceEtCoucheWmtsContractTests(unittest.TestCase):
         self.assertEqual((zmin, zmax), (10, 15))
 
 
+class GeocodageZoneContractTests(unittest.TestCase):
+    @staticmethod
+    def _reponse_json(payload):
+        return contextlib.nullcontext(
+            SimpleNamespace(read=lambda: json.dumps(payload).encode("utf-8"))
+        )
+
+    def test_nominatim_facade_keeps_signature_and_reads_seams_late(self):
+        self.assertTrue(callable(terrain_geocoding.geocoder_ville_wgs84))
+        provider = SimpleNamespace(COUNTRY="ch")
+        ouvrir = mock.Mock(name="urlopen")
+        journaliser = mock.Mock(name="log_req")
+        attendu = object()
+        with mock.patch.object(L, "PROVIDER", provider), \
+             mock.patch.object(L.urllib.request, "urlopen", ouvrir), \
+             mock.patch.object(L, "_log_req", journaliser), \
+             mock.patch.object(L, "_geocoder_ville_wgs84_impl",
+                               return_value=attendu) as implementation:
+            resultat = L.geocoder_ville_wgs84("Lausanne")
+        self.assertIs(resultat, attendu)
+        self.assertEqual(str(inspect.signature(L.geocoder_ville_wgs84)), "(nom_ville)")
+        kwargs = implementation.call_args.kwargs
+        self.assertEqual(kwargs["country"], "ch")
+        self.assertIs(kwargs["urlopen"], ouvrir)
+        self.assertIs(kwargs["log_req"], journaliser)
+
+    def test_nominatim_accepts_an_administrative_place_and_scopes_country(self):
+        payload = [{
+            "lat": "43.32934", "lon": "6.04574", "class": "place",
+            "addresstype": "village", "display_name": "Garéoult, France",
+        }]
+        provider = SimpleNamespace(COUNTRY="fr")
+        with mock.patch.object(L, "PROVIDER", provider), \
+             mock.patch.object(L.urllib.request, "urlopen",
+                               return_value=self._reponse_json(payload)) as ouvrir, \
+             mock.patch.object(L, "_log_req"):
+            lat, lon = L.geocoder_ville_wgs84("Garéoult")
+        self.assertAlmostEqual(lat, 43.32934)
+        self.assertAlmostEqual(lon, 6.04574)
+        self.assertIn("countrycodes=fr", ouvrir.call_args.args[0].full_url)
+
+    def test_nominatim_rejects_a_poi_and_network_failure_is_non_fatal(self):
+        poi = [{
+            "lat": "43", "lon": "6", "class": "shop",
+            "addresstype": "supermarket", "display_name": "Un commerce",
+        }]
+        with mock.patch.object(L.urllib.request, "urlopen",
+                               return_value=self._reponse_json(poi)), \
+             mock.patch.object(L, "_log_req"):
+            self.assertEqual(L.geocoder_ville_wgs84("ambigu"), (None, None))
+        with mock.patch.object(L.urllib.request, "urlopen",
+                               side_effect=L.urllib.error.URLError("offline")), \
+             mock.patch.object(L, "_log_req"):
+            self.assertEqual(L.geocoder_ville_wgs84("offline"), (None, None))
+
+    def test_department_cache_avoids_network_and_keeps_margin(self):
+        with tempfile.TemporaryDirectory() as td:
+            cache = Path(td)
+            (cache / "dep_bbox_cache.json").write_text(json.dumps({
+                "83": {"nom": "Var", "lon_min": 5.6, "lat_min": 43.0,
+                       "lon_max": 6.8, "lat_max": 43.6},
+            }), encoding="utf-8")
+            with mock.patch.object(L, "DOSSIER_CACHE", cache), \
+                 mock.patch.object(L, "_bbox_enveloppe_transform",
+                                   return_value=(1000, 2000, 3000, 4000)), \
+                 mock.patch.object(L.urllib.request, "urlopen") as ouvrir:
+                resultat = L.geocoder_departement("83")
+        ouvrir.assert_not_called()
+        self.assertEqual(resultat, ("Var", 500, 1500, 3500, 4500))
+
+    def test_department_facade_keeps_signature_and_reads_seams_late(self):
+        attendu = object()
+        with mock.patch.object(L, "_geocoder_departement_impl",
+                               return_value=attendu) as implementation:
+            resultat = L.geocoder_departement("83")
+        self.assertIs(resultat, attendu)
+        self.assertEqual(str(inspect.signature(L.geocoder_departement)), "(num_dep)")
+        kwargs = implementation.call_args.kwargs
+        self.assertIs(kwargs["cache_dir"], L.DOSSIER_CACHE)
+        self.assertIs(kwargs["bbox_transform"], L._bbox_enveloppe_transform)
+        self.assertIs(kwargs["wgs84_vers_natif"], L._wgs84_vers_natif)
+        self.assertIs(kwargs["ecrire_json_atomique"], L._ecrire_json_atomique)
+        self.assertIs(kwargs["urlopen"], L.urllib.request.urlopen)
+
+    def test_department_overpass_retries_three_times_then_fails(self):
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(L, "DOSSIER_CACHE", Path(td)), \
+             mock.patch.object(L.urllib.request, "urlopen",
+                               side_effect=L.urllib.error.URLError("offline")) as ouvrir, \
+             mock.patch.object(L.time, "sleep") as dormir, \
+             mock.patch.object(L, "_log_req"):
+            resultat = L.geocoder_departement("999")
+        self.assertEqual(resultat, (None, None, None, None, None))
+        self.assertEqual(ouvrir.call_count, 3)
+        self.assertEqual(dormir.call_count, 2)
+
+    def test_department_overpass_success_publishes_cache_atomically(self):
+        payload = {"elements": [{
+            "bounds": {"minlat": 43.0, "maxlat": 43.6,
+                       "minlon": 5.6, "maxlon": 6.8},
+            "tags": {"name": "Var"},
+        }]}
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.object(L, "DOSSIER_CACHE", Path(td)), \
+             mock.patch.object(L.urllib.request, "urlopen",
+                               return_value=self._reponse_json(payload)), \
+             mock.patch.object(L, "_bbox_enveloppe_transform",
+                               return_value=(1000, 2000, 3000, 4000)), \
+             mock.patch.object(L, "_ecrire_json_atomique") as publier, \
+             mock.patch.object(L, "_log_req"):
+            resultat = L.geocoder_departement("83")
+        self.assertEqual(resultat, ("Var", 500, 1500, 3500, 4500))
+        chemin, cache = publier.call_args.args[:2]
+        self.assertEqual(chemin.name, "dep_bbox_cache.json")
+        self.assertEqual(cache["83"]["nom"], "Var")
+
+    def test_region_aggregates_department_bounds_and_aborts_on_failure(self):
+        with mock.patch.object(L, "_departements_de_region",
+                               return_value=["04", "83"]), \
+             mock.patch.object(L, "geocoder_departement", side_effect=[
+                 ("Alpes", 10, 20, 30, 40), ("Var", 5, 25, 35, 50),
+             ]):
+            self.assertEqual(
+                L.geocoder_region("paca"), ("Paca", 5, 20, 35, 50),
+            )
+        with mock.patch.object(L, "_departements_de_region",
+                               return_value=["04", "83"]), \
+             mock.patch.object(L, "geocoder_departement", side_effect=[
+                 ("Alpes", 10, 20, 30, 40), (None, None, None, None, None),
+             ]):
+            self.assertEqual(
+                L.geocoder_region("paca"), (None, None, None, None, None),
+            )
+
+    def test_region_facade_keeps_signature_and_unknown_slug_is_non_fatal(self):
+        with mock.patch.object(L, "_geocoder_region_impl",
+                               return_value=object()) as implementation:
+            L.geocoder_region("paca")
+        self.assertEqual(str(inspect.signature(L.geocoder_region)), "(slug)")
+        kwargs = implementation.call_args.kwargs
+        self.assertIs(kwargs["departements_de_region"], L._departements_de_region)
+        self.assertIs(kwargs["regions_disponibles"], L._regions_disponibles)
+        self.assertIs(kwargs["geocoder_departement"], L.geocoder_departement)
+        with mock.patch.object(L, "_departements_de_region", return_value=[]), \
+             mock.patch.object(L, "_regions_disponibles", return_value=["paca"]):
+            self.assertEqual(
+                L.geocoder_region("atlantide"), (None, None, None, None, None),
+            )
+
+
 class ResolutionZoneContractTests(unittest.TestCase):
     """Caractérise `_resoudre_zone_lidar`, extraite de `main()` en 8c.
 
@@ -873,6 +1090,24 @@ class ResolutionZoneContractTests(unittest.TestCase):
         )
         base.update(kw)
         return SimpleNamespace(**base)
+
+    def test_facade_keeps_signature_and_rebuilds_all_dependencies(self):
+        self.assertTrue(callable(terrain_resolution.resoudre_zone_lidar))
+        attendu = object()
+        args = self._args(zone_gps="43.3,6.0")
+        with mock.patch.object(L, "_resoudre_zone_lidar_impl",
+                               return_value=attendu) as implementation:
+            resultat = L._resoudre_zone_lidar(args, False)
+        self.assertIs(resultat, attendu)
+        self.assertEqual(
+            str(inspect.signature(L._resoudre_zone_lidar)), "(args, _osm_seul)",
+        )
+        deps = implementation.call_args.kwargs["dependances"]
+        self.assertIs(deps.provider, L.PROVIDER)
+        self.assertIs(deps.geocoder_region, L.geocoder_region)
+        self.assertIs(deps.geocoder_departement, L.geocoder_departement)
+        self.assertIs(deps.wgs84_vers_natif, L._wgs84_vers_natif)
+        self.assertIs(deps.parse_block, L._parse_block)
 
     def test_no_zone_option_exits_with_error(self):
         with self.assertRaises(SystemExit) as ctx:

@@ -50,6 +50,9 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _osm_policy.py          filtres, validation et signatures OSM
 ├── _osm_runtime.py         découverte, installation et exécution Java/Osmosis
 ├── _terrain_sources.py     sources autonomes LiDAR/OSM et raster WMTS
+├── _terrain_zones.py       primitives pures de résolution des zones terrain
+├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
+├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -156,8 +159,13 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Installations transactionnelles (14c, mesuré) | 183 | 0,86 % |
 | Mapwriter et commande outils (14d, mesuré) | 59 | 0,28 % |
 | `_terrain_sources.py` (15a, mesuré) | 78 | 0,37 % |
-| **Total sorti du monolithe (mesuré)** | **9 601** | **45,04 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **11 714** | **54,96 %** |
+| `_terrain_zones.py` (15b, mesuré) | 79 | 0,37 % |
+| Nominatim extrait (15c-1, mesuré) | 62 | 0,29 % |
+| Overpass et régions extraits (15c-2, mesuré) | 104 | 0,49 % |
+| Transformations CRS provider-aware (15d, mesuré) | 16 | 0,08 % |
+| Résolveur de zone LiDAR (15e, mesuré) | 162 | 0,76 % |
+| **Total sorti du monolithe (mesuré)** | **10 024** | **47,03 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **11 291** | **52,97 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -224,7 +232,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-15a est de 11 714 lignes (54,96 %) : il reste donc à sortir **4 254 à 5 319
+post-15e est de 11 291 lignes (52,97 %) : il reste donc à sortir **3 831 à 4 896
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -285,7 +293,7 @@ rester dans le script principal.
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 | 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
-| 15. Orchestration terrain restante | **En cours** | Sources autonomes LiDAR/OSM et WMTS extraites (15a) | contrats de sortie, conversions, historique et CRS |
+| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS et résolveur de zone extraits (15a-e) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné et 24 branches de résolution |
 
 ## Travail déjà sécurisé
 
@@ -2213,9 +2221,99 @@ dans la release **v1.43.0**. Mesure nette : `lidar2map.py`
 11 792 → 11 714 lignes (**-78**, soit **0,37 %** du périmètre figé). Total
 sorti : **9 601 lignes, 45,04 %** ; reste **54,96 %**.
 
-### Prochaine étape proposée : 15b — résolution des zones terrain
+### Sous-phase 15b : primitives de zone extraites (terminée localement)
 
-Caractériser puis extraire les règles de zone partagées : présence d'une zone,
-noms automatiques GPS/bbox, validation des coordonnées et transformation vers
-le CRS natif. Le lot ne déplacera pas encore le téléchargement des dalles ni
-les runners split, afin de séparer parsing géographique et effets disque.
+`_terrain_zones.py` isole les noms automatiques GPS/bbox, présence d'une zone, repli
+Lambert 93 et enveloppe reprojetée. Les façades historiques restent dans
+`lidar2map.py` et délèguent à ces primitives ; aucun téléchargement, géocodage
+ou changement de contrat CLI n'est introduit. Le parseur des codes INSEE prend
+également en charge listes, plages, Corse et outre-mer dans le module pur.
+
+Les règles de catalogue régional (`regions_disponibles` et
+`departements_de_region`) sont également déléguées au module pur, avec le
+catalogue `_GEOFABRIK` injecté par la façade. Le déplacement des 101 entrées du
+catalogue est différé : elles sont encore consommées directement par le choix
+des URL PBF et leur déplacement n'apporterait pas, seul, de découplage métier.
+
+Validation locale : **158 contrats de refonte**, profil scientifique ciblé,
+compilation et Ruff verts. Mesure nette : `lidar2map.py` 11 714 → 11 635 lignes
+(**-79**, soit **0,37 %** du périmètre figé). Total sorti : **9 680 lignes,
+45,41 %** ; reste **54,59 %**.
+
+### Sous-phase 15c-1 : Nominatim extrait (terminée localement)
+
+`_terrain_geocoding.py` porte désormais le géocodage Nominatim et son filtrage
+des réponses non habitées. La façade conserve la signature historique et injecte
+à chaque appel le pays du provider, le User-Agent, le journal réseau et
+`urlopen`, ce qui préserve les coutures de test et les providers dynamiques.
+
+Six contrats hors réseau préparent désormais cette extraction : filtrage pays
+et type administratif Nominatim, rejet des POI, erreur réseau non fatale,
+lecture du cache département sans réseau, trois tentatives Overpass, publication
+atomique du cache après succès, marge de 500 mètres et union des départements
+d'une région. Overpass, le cache département et l'agrégation régionale restent
+encore dans la façade à ce stade.
+
+Validation locale : 7 contrats de géocodage ciblés, compilation, Ruff et garde
+de livraison verts. Mesure nette : `lidar2map.py` 11 635 → 11 573 lignes
+(**-62**, soit **0,29 %**). Total sorti : **9 742 lignes, 45,70 %**.
+
+### Sous-phase 15c-2 : département et région extraits (terminée localement)
+
+`_terrain_geocoding.py` contient maintenant Overpass, la lecture et publication
+du cache département, la marge de 500 mètres et l'union régionale. Les façades
+reconstruisent à chaque appel les dépendances de cache, reprojection, réseau,
+temporisation et géocodeur département ; les monkeypatches historiques restent
+donc observables.
+
+Validation locale : **167 contrats de refonte**, interactions complètes,
+compilation, Ruff et garde de livraison verts. Mesure nette : `lidar2map.py`
+11 573 → 11 469 lignes (**-104**, soit **0,49 %**). Total sorti : **9 846
+lignes, 46,19 %** ; reste **53,81 %**.
+
+### Sous-phase 15d : transformations CRS provider-aware (terminée localement)
+
+Les trois façades `_exiger_pyproj_hors_france`, `_wgs84_vers_natif` et
+`_natif_vers_wgs84` délèguent désormais à `_terrain_zones.py`. Le CRS du
+provider et le cache de transformers sont injectés à chaque appel. Le repli
+pur Python reste limité à EPSG:2154 ; tout autre CRS sans pyproj échoue
+explicitement au lieu de produire des coordonnées françaises incorrectes.
+
+Validation locale : **169 contrats de refonte**, interactions complètes et
+Ruff verts. Mesure nette : `lidar2map.py` 11 469 → 11 453 lignes (**-16**, soit
+**0,08 %**). Total sorti : **9 862 lignes, 46,27 %**.
+
+### Sous-phase 15e : résolveur de zone LiDAR extrait (terminée localement)
+
+Le nouveau module `_terrain_resolution.py` porte l'implémentation active des
+cinq modes de zone : région, département, bbox WGS84, GPS et ville. Il conserve
+aussi la sélection `--block i/M`, le suffixe stable du nom de zone et le calcul
+de grille à partir d'une largeur exprimée comme un côté.
+
+La façade historique `_resoudre_zone_lidar(args, _osm_seul)` reconstruit à
+chaque appel une dataclass immuable de 14 dépendances. Les géocodeurs, les
+transformations provider-aware, la planification split et les générateurs de
+noms restent donc remplaçables par les tests et les intégrations existantes.
+L'ancien corps de 176 lignes a été supprimé après comparaison ; il ne subsiste
+aucun second chemin de résolution.
+
+Validation locale : les **24 branches du résolveur**, les **170 contrats de
+refonte**, les interactions complètes, la compilation, Ruff et la garde de
+livraison sont verts. Le profil FAST complet (12 suites isolées) est également
+vert. `_terrain_resolution.py` est enregistré dans `deploy.MAP` et couvert par
+les motifs de rebuild et de CI déjà applicables à `_terrain_*.py`. La release
+préparée pour ce palier porte la version **1.44.0**.
+
+Mesure nette : `lidar2map.py` 11 453 → 11 291 lignes (**-162**, soit **0,76 %**
+du périmètre figé). Total sorti : **10 024 lignes, 47,03 %** ; reste **11 291
+lignes, 52,97 %**. Il faut encore réduire le point d'entrée de **33,93 %** de sa
+taille actuelle pour atteindre la borne haute de la cible (7 460 lignes).
+
+### Prochaine étape proposée : 15f — orchestration du téléchargement terrain
+
+Inventorier d'abord les coutures entre découverte provider, choix du cache,
+téléchargement MNT/LAZ, conversion du nuage et manifeste de zone. Le premier lot
+ne déplacera qu'une frontière dont les retours, erreurs, nettoyage et logs sont
+déjà caractérisés ; les runners split glissants et la production d'ombrages
+resteront séparés. Cette phase doit commencer par des contrats hors réseau sur
+les chemins MNT, LAZ, COG/COPC fenêtrés et hors couverture.

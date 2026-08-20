@@ -1013,6 +1013,9 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
+_terrain_resolution_src = (_ROOT / "_terrain_resolution.py").read_text(
+    encoding="utf-8"
+)
 check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
       '"--laz"' in _src and '"--laz-hmin"' in _src and '"--laz-ground"' in _src
       and '"--laz-csf-threshold"' in _src)
@@ -1028,7 +1031,8 @@ check("CLI : flags largeur présents, noms 'radius/rayon' supprimés (pas d'alia
       and "--zone-radius" not in _src and "--zone-rayon" not in _src
       and "--split-radius" not in _src and "--rayon-decoupe" not in _src)
 check("cœur : la largeur zone est un CÔTÉ → calculer_grille reçoit largeur/2",
-      "args.zone_width or 20.0" in _src and "largeur / 2.0" in _src)
+      "d.calculer_grille(cx, cy, (args.zone_width or 20.0) / 2.0)"
+      in _terrain_resolution_src)
 # Parse fonctionnel _cfg_depuis_argv : nouvelles clés, anciennes absentes.
 _argv_bak = _sys.argv
 try:
@@ -1052,8 +1056,8 @@ check("découpe : côté 5 km → 2×2 morceaux de 5000 m (côté)",
 check("CLI : --block déclaré (i/M) et câblé dans le main (sélection + suffixe _b)",
       '"--block"' in _src and '"--bloc"' in _src
       and "def _parse_block(" in _src
-      and "_parse_block(getattr(args" in _src
-      and 'nom_zone = f"{nom_zone}_b{_bi}"' in _src)
+      and 'd.parse_block(getattr(args, "block", ""))' in _terrain_resolution_src
+      and 'nom_zone = f"{nom_zone}_b{index}"' in _terrain_resolution_src)
 def _rej(fn, val):
     try:
         fn(val); return False
@@ -1409,7 +1413,7 @@ check("zone : Department/Région désactivés hors de France",
       and '"mode.fronly"' in _appjs
       and "_majModesDisponibles();" in _appjs)
 check("les régions restent une notion française (aucune donnée étrangère)",
-      "return sorted(set(_GEOFABRIK.values()))" in _src)
+      "return _regions_disponibles_impl(_GEOFABRIK)" in _src)
 # Garde-fou OSM : le téléchargement auto est franco-centré (Lambert 93 +
 # geo.api.gouv.fr + table INSEE + URL .../europe/france). Hors de France on
 # refuse, au lieu de tirer 4 Go de PBF français pour un overlay vide. --source
@@ -1425,8 +1429,8 @@ check("OSM auto-download refusé hors de France (--source épargné)",
 # en degrés) et hors de France. Conversion WGS84→CRS natif au parse, comme le mode
 # Département. Vérifié à l'exécution : fr-ign→EPSG:2154, ch→EPSG:2056.
 check("--zone-bbox lu en WGS84 puis converti au CRS natif du provider",
-      'lon1, lat1, lon2, lat2 = parts' in _src          # parse en degrés WGS84
-      and "_wgs84_vers_natif, lon1, lat1, lon2, lat2" in _src   # → CRS natif
+      "lon1, lat1, lon2, lat2 =" in _terrain_resolution_src
+      and "d.wgs84_vers_natif, lon1, lat1, lon2, lat2" in _terrain_resolution_src
       and '"Lambert 93 bbox in metres' not in _src)
 # Config vs code : le CRS cible vient du PROVIDER, jamais écrit en dur. Un seul
 # helper _wgs84_vers_natif / _natif_vers_wgs84 ; le repli pur-Python (formules
@@ -1436,7 +1440,7 @@ check("conversion WGS84<->natif centralisée + repli France borné",
       "def _wgs84_vers_natif(" in _src
       and "def _natif_vers_wgs84(" in _src
       and "def _exiger_pyproj_hors_france(" in _src
-      and 'if crs != "EPSG:2154":' in _src)   # le garde France = CONTRAT du repli
+      and "_exiger_pyproj_hors_france_impl(" in _src)
 check("les sites de zone routés sur les helpers (plus de try/except dupliqués)",
       # geocoder_ville, gps, dept, region, bbox : tous via _wgs84_vers_natif ;
       # l'ancien nom trompeur _lamb93_to_wgs84_safe a disparu. On compte les
@@ -1449,7 +1453,8 @@ check("--zone-bbox : metavar/help WGS84 sur tous les modes (plus de X1,Y1)",
       and 'bbox_metavar="X1,Y1,X2,Y2"' not in _src
       and "WGS84 bbox in degrees" in _src)
 check("--zone-bbox : centre natif calculé (détection dept OSM en mode bbox)",
-      "cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2" in _src)
+      "cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2"
+      in _terrain_resolution_src)
 # --cache-dir : racine UNIQUE de tous les caches, déplaçable d'un geste (12 sites
 # repointés depuis DOSSIER_CACHE au lieu de DOSSIER_TRAVAIL/"cache" en dur). Posé
 # tôt dans chaque main via _appliquer_cache_dir. Vérifié à l'exécution :
