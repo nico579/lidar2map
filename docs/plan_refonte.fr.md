@@ -1,8 +1,10 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot déployé : 20 août 2026, **v1.45.0**. Il regroupe les phases 15a à
-15g : sources, résolution et orchestration terrain, avec façades compatibles et
-dépendances reconstruites à chaque appel.
+Dernier lot déployé : 24 août 2026, **v1.46.0**. Il regroupe les phases 15h à
+15s-b : téléchargements et caches terrain, transactions par morceau, tuilage et
+orchestration complète des ombrages, avec façades compatibles et dépendances
+reconstruites à chaque appel. Les quatre bundles Windows, Linux, macOS Intel et
+macOS Apple Silicon ont été reconstruits par `release.yml`.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -56,7 +58,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_chunks.py      découverte et téléchargement par morceau glissant
 ├── _terrain_download.py    pool, routage, preuve et inventaire des dalles terrain
 ├── _terrain_prefetch.py    préchargement terrain profondeur un et best-effort
-├── _terrain_shading.py     planification pure des instances d'ombrage
+├── _terrain_shading.py     planification et orchestration des ombrages
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -2821,7 +2823,7 @@ Mesure nette : `lidar2map.py` 10 537 → 10 481 lignes (**-56**, soit **0,26 %**
 du périmètre figé). `_terrain_shading.py` contient 95 lignes. Total sorti :
 **10 834 lignes, 50,83 %** ; reste **10 481 lignes, 49,17 %**.
 
-### Sous-phase 15s-b : orchestrateur d'ombrage extrait (terminée localement)
+### Sous-phase 15s-b : orchestrateur d'ombrage extrait (terminée et déployée)
 
 Le corps restant de `generer_ombrages` est déplacé mécaniquement dans
 `_terrain_shading.py`. `lidar2map.py` ne conserve qu'une façade de signature
@@ -2847,6 +2849,10 @@ n'est pas installé dans le venv local et n'a pas été compté comme validation
 Mesure nette : `lidar2map.py` 10 481 → 9 871 lignes (**-610**, soit **2,86 %**
 du périmètre figé). `_terrain_shading.py` contient désormais 831 lignes. Total
 sorti : **11 444 lignes, 53,69 %** ; reste **9 871 lignes, 46,31 %**.
+
+Déploiement : bump `VERSION` 1.45.0 → **1.46.0**, commit `e2621bc`, tag
+`v1.46.0` poussé par `deploy.py --new-tag`, puis rebuild des quatre cibles du
+workflow `release.yml` (Windows, Linux, macOS Intel et Apple Silicon).
 
 ### Prochaine étape proposée : 15t — planches et emprises de restitution
 

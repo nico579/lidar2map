@@ -3677,27 +3677,25 @@ class ShadingOrchestratorExtractionContractTests(unittest.TestCase):
         implementation = mock.Mock(return_value=result)
         instances = [("lrm", {"sigma": 5})]
         bbox = (1, 2, 3, 4)
-        with (
-            mock.patch.object(
-                L, "_dependances_generer_ombrages", return_value=dependencies
-            ),
-            mock.patch.object(L, "_generer_ombrages_impl", implementation),
+        with mock.patch.object(
+            L, "_dependances_generer_ombrages", return_value=dependencies
         ):
-            actual = L.generer_ombrages(
-                "source",
-                "folder",
-                choix=["multi"],
-                elevation_soleil=35,
-                nom_zone="zone",
-                ecraser_ombrages=True,
-                ecraser_tuiles=True,
-                use_sweep=True,
-                svf_gamma=1.4,
-                svf_conv="rvt",
-                svf_dist=40,
-                bbox_natif=bbox,
-                instances=instances,
-            )
+            with mock.patch.object(L, "_generer_ombrages_impl", implementation):
+                actual = L.generer_ombrages(
+                    "source",
+                    "folder",
+                    choix=["multi"],
+                    elevation_soleil=35,
+                    nom_zone="zone",
+                    ecraser_ombrages=True,
+                    ecraser_tuiles=True,
+                    use_sweep=True,
+                    svf_gamma=1.4,
+                    svf_conv="rvt",
+                    svf_dist=40,
+                    bbox_natif=bbox,
+                    instances=instances,
+                )
         self.assertIs(actual, result)
         implementation.assert_called_once_with(
             "source",
