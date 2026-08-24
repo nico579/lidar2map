@@ -831,7 +831,8 @@ check("us EXPOSE sign_url (SAS Planetary Computer exigée par le blob Azure)",
 check("ca-nrcan N'EXPOSE PAS sign_url (COPC public → identité dans le cœur)",
       getattr(_ca, "sign_url", None) is None)
 check("cœur telecharger_copc_fenetre : appelle le hook sign_url (défaut identité)",
-      "sign_url" in _APP.read_text(encoding="utf-8"))
+      "sign_url" in (_ROOT / "_terrain_download.py").read_text(
+          encoding="utf-8"))
 check("us parent us-3dep présent → jumeau LAZ-capable (case Mode LAZ affichée)",
       _usr.CODE == "us-3dep")
 
@@ -1016,6 +1017,10 @@ _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
 _terrain_resolution_src = (_ROOT / "_terrain_resolution.py").read_text(
     encoding="utf-8"
 )
+_terrain_chunks_src = (_ROOT / "_terrain_chunks.py").read_text(encoding="utf-8")
+_terrain_download_src = (_ROOT / "_terrain_download.py").read_text(
+    encoding="utf-8"
+)
 check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
       '"--laz"' in _src and '"--laz-hmin"' in _src and '"--laz-ground"' in _src
       and '"--laz-csf-threshold"' in _src)
@@ -1096,7 +1101,7 @@ check("laz-parallel : sur la ligne Socle (dans la row laz-params), hors Téléch
 # deux flags overwrite convergent (_force_dl) dans le download de zone. Sans ça,
 # un overwrite reconstruisait du cache sans jamais re-tirer le nuage.
 check("overwrite → pre_download sauté si ecraser (bypass cache LAZ)",
-      "tentative == 1 and not ecraser" in _src)
+      "tentative == 1 and not ecraser" in _terrain_download_src)
 check("overwrite → les 2 flags convergent (_force_dl) dans le download de zone",
       "_force_dl" in _src
       and "args.telechargement_forcer or args.telechargement_ecraser" in _src)
@@ -1225,7 +1230,7 @@ check("wiring R1#5/#9 : lookahead calculé avant le cleanup du morceau glissant"
       and "def _noms_dalles_morceau_suivant(" in _sliding_src
       and "noms_dalles_a_garder=_noms_dalles_morceau_suivant(cle)" in _sliding_src
       and "noms_dalles_a_garder=None" in _src   # _traiter_bbox_lidar_ombrage
-      and "noms_garder=noms_dalles_a_garder" in _src)
+      and "noms_garder=noms_dalles_a_garder" in _terrain_chunks_src)
 
 # Mode LAZ : le nuage .laz vit dans un cache SÉPARÉ du .tif produit. Sans
 # --cleanup-keep-tiles il doit être purgé (le disque saturait sinon : bug 2026-07-27) ;
@@ -1632,9 +1637,10 @@ _common = (_ROOT / "providers" / "common.py").read_text(encoding="utf-8")
 # des .tif vit dans _dossier_dalles_actif.
 check("dalles : MNT→cache, LAZ/DFM→production (routage par nature)",
       "def _dossier_dalles_actif" in _src
-      and 'PROVIDER.CODE.endswith("-laz")' in _src
-      and "DOSSIER_PRODUCTION / LIDAR_SUBDIR" in _src
-      and "DOSSIER_CACHE / LIDAR_SUBDIR" in _src)
+      and "def dossier_dalles_actif" in _terrain_download_src
+      and 'provider.CODE.endswith("-laz")' in _terrain_download_src
+      and "Path(dossier_production) / lidar_subdir" in _terrain_download_src
+      and "Path(dossier_cache) / lidar_subdir" in _terrain_download_src)
 # Le nuage .laz reste au cache même quand le .tif descend en production.
 check("nuage .laz : reste au cache indépendamment du .tif produit",
       "def set_cloud_cache_dir" in _common
@@ -1647,15 +1653,17 @@ check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles OU provider "
       "fenêtré (le nuage suit le .tif en projet)",
       "def _configurer_cloud_cache" in _src
       and "_configurer_cloud_cache(args)" in _src
-      and "None if (args.dossier_dalles or _windowed)" in _src)
+      and "def configurer_cloud_cache" in _terrain_download_src
+      and "if args.dossier_dalles or windowed" in _terrain_download_src)
 # #1 (revue 2026-07-22) : un provider FENÊTRÉ (COPC/COG) range son .tif EN PROJET
 # (dossier_ville), pas dans le cache/production partagés — sinon deux zones du
 # même asset réutilisent la fenêtre l'une de l'autre (relief faux silencieux).
 check("#1 cache fenêtré : COPC/COG → dossier_ville (projet), pas cache/production "
       "partagés (isolation par zone)",
       "def _dossier_dalles_actif(args, dossier_ville=None)" in _src
-      and "COG_WINDOWED" in _src and "COPC_WINDOWED" in _src
-      and "return Path(dossier_ville)" in _src)
+      and "COG_WINDOWED" in _terrain_download_src
+      and "COPC_WINDOWED" in _terrain_download_src
+      and "return Path(dossier_ville)" in _terrain_download_src)
 # calculer_grille : rayon converti dans l'UNITÉ du CRS_NATIF (mètres si projeté,
 # DEGRÉS si géographique). Sans ça, ca-nrcan/us-3dep/ca-quebec (CRS 4617/4269)
 # calculaient une bbox hors domaine → transform WGS84 = inf → découverte cassée.

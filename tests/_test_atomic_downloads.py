@@ -354,6 +354,93 @@ class AtomicDownloadTests(unittest.TestCase):
         self.assertEqual(final.read_bytes(), b"FROM_CLOUD")
         self._assert_no_part()
 
+    def test_direct_small_server_error_retries_but_plain_payload_is_absent(self):
+        calls = []
+
+        def download(url, path, timeout=60):
+            calls.append(url)
+            if url.endswith("json"):
+                Path(path).write_bytes(b'{"error":"temporary"}')
+            else:
+                Path(path).write_bytes(b"outside coverage")
+            return 20
+
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L.time, "sleep"), \
+             mock.patch.object(L, "MAX_TENTATIVES", 2):
+            server_error = L.telecharger_dalle_directe(
+                "error.tif", "https://example.invalid/json", self.tmp
+            )
+            absent = L.telecharger_dalle_directe(
+                "absent.tif", "https://example.invalid/plain", self.tmp
+            )
+        self.assertEqual(server_error, "erreur")
+        self.assertEqual(absent, "absent")
+        self.assertEqual(calls.count("https://example.invalid/json"), 2)
+        self.assertEqual(calls.count("https://example.invalid/plain"), 1)
+        self._assert_no_part()
+
+    def test_direct_invalid_compressed_stage_keeps_previous_final(self):
+        final = self.tmp / "tile.tif"
+        old = self._old_bytes()
+        final.write_bytes(old)
+
+        def download(_url, path, timeout=60):
+            Path(path).write_bytes(b"RAW")
+            return L.SEUIL_DALLE_VALIDE + 1
+
+        def compress(path):
+            Path(path).write_bytes(b"BROKEN")
+
+        validations = iter((True, False))
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L, "_post_fetch_si_besoin"), \
+             mock.patch.object(L, "_comprimer_dalle_deflate", side_effect=compress), \
+             mock.patch.object(
+                 L, "_valider_tif_dalle", side_effect=lambda _path: next(validations)
+             ), mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_dalle_directe(
+                "tile.tif",
+                "https://example.invalid/tile",
+                self.tmp,
+                ecraser=True,
+                compresser=True,
+            )
+        self.assertEqual(result, "erreur")
+        self.assertEqual(final.read_bytes(), old)
+        self._assert_no_part()
+
+    def test_direct_new_cloud_is_published_only_after_tif_validation(self):
+        final = self.tmp / "tile.tif"
+        cloud = final.with_suffix(".laz")
+
+        def download(_url, path, timeout=60):
+            Path(path).write_bytes(b"RAW")
+            return L.SEUIL_DALLE_VALIDE + 1
+
+        def post_fetch(path):
+            Path(path).write_bytes(b"VALID_TIF")
+            Path(path).with_suffix(".laz").write_bytes(b"NEW_CLOUD")
+
+        L.PROVIDER = SimpleNamespace(
+            subdir_from_name=lambda _nom: "",
+            cloud_path=lambda path: Path(path).with_suffix(".laz"),
+        )
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L, "_post_fetch_si_besoin", side_effect=post_fetch), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "_creer_fichier"), \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_dalle_directe(
+                "tile.tif", "https://example.invalid/tile", self.tmp
+            )
+        self.assertEqual(result, "ok")
+        self.assertEqual(final.read_bytes(), b"VALID_TIF")
+        self.assertEqual(cloud.read_bytes(), b"NEW_CLOUD")
+        self._assert_no_part()
+
     def test_direct_404_exact_remains_error_grid_remains_absent(self):
         class Provider:
             def __init__(self, exact):
@@ -419,6 +506,121 @@ class AtomicDownloadTests(unittest.TestCase):
         self.assertEqual(len(paths), 1)
         self._assert_no_part()
 
+    def test_copc_success_signs_transforms_validates_then_publishes(self):
+        from providers import common
+
+        nom = "copc.tif"
+        final = self.tmp / nom
+        events = []
+
+        class Provider:
+            SEUIL_DALLE_VALIDE = 7
+
+            @staticmethod
+            def subdir_from_name(_nom):
+                return ""
+
+            @staticmethod
+            def sign_url(url):
+                events.append(("sign", url))
+                return url + "?signed=1"
+
+            @staticmethod
+            def set_crs(epsg):
+                events.append(("crs", epsg))
+
+        def transform(_fn, *coords):
+            events.append(("transform", coords))
+            return (10.0, 20.0, 30.0, 40.0)
+
+        def copc(url, bbox, path):
+            events.append(("copc", url, bbox))
+            Path(path).write_bytes(b"LASF")
+            return 60_000, 26917
+
+        def post_fetch(path):
+            events.append(("post_fetch", Path(path).name))
+            Path(path).write_bytes(self._old_bytes())
+
+        def validate(path):
+            events.append(("validate", Path(path).name))
+            return True
+
+        def publish_cloud(final_path, stage_path):
+            events.append(("cloud", Path(final_path).name, Path(stage_path).name))
+
+        def register(path):
+            events.append(("register", Path(path).name))
+
+        L.PROVIDER = Provider()
+        with mock.patch.object(
+                common, "copc_window_to_las", side_effect=copc), \
+             mock.patch.object(
+                 L, "_bbox_enveloppe_transform", side_effect=transform), \
+             mock.patch.object(
+                 L, "_post_fetch_si_besoin", side_effect=post_fetch), \
+             mock.patch.object(L, "_valider_tif_dalle", side_effect=validate), \
+             mock.patch.object(
+                 L, "_publier_nuage_stage", side_effect=publish_cloud), \
+             mock.patch.object(L, "_creer_fichier", side_effect=register):
+            result = L.telecharger_copc_fenetre(
+                nom, "https://example.invalid/copc", self.tmp,
+                (1, 2, 3, 4))
+
+        self.assertEqual(result, "ok")
+        self.assertTrue(final.is_file())
+        self.assertLess(events.index(("crs", 26917)),
+                        events.index(("post_fetch", nom)))
+        self.assertLess(events.index(("validate", nom)),
+                        events.index(("cloud", nom, nom)))
+        self.assertLess(events.index(("cloud", nom, nom)),
+                        events.index(("register", nom)))
+        self.assertIn(
+            ("copc", "https://example.invalid/copc?signed=1",
+             (10.0, 20.0, 30.0, 40.0)),
+            events,
+        )
+        self._assert_no_part()
+
+    def test_copc_quasi_empty_window_is_absent_without_conversion(self):
+        from providers import common
+
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(
+                common, "copc_window_to_las", return_value=(49_999, 26917)), \
+             mock.patch.object(
+                 L, "_bbox_enveloppe_transform",
+                 side_effect=lambda _fn, *coords: coords), \
+             mock.patch.object(L, "_copc_post_fetch_crs") as convert, \
+             mock.patch.object(L, "_valider_tif_dalle") as validate:
+            result = L.telecharger_copc_fenetre(
+                "empty.tif", "https://example.invalid/copc", self.tmp,
+                (1, 2, 3, 4))
+
+        self.assertEqual(result, "absent")
+        convert.assert_not_called()
+        validate.assert_not_called()
+        self.assertFalse((self.tmp / "empty.tif").exists())
+        self._assert_no_part()
+
+    def test_copc_keyboard_interrupt_propagates_and_cleans_stage(self):
+        from providers import common
+
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(
+                common, "copc_window_to_las",
+                side_effect=KeyboardInterrupt), \
+             mock.patch.object(
+                 L, "_bbox_enveloppe_transform",
+                 side_effect=lambda _fn, *coords: coords):
+            with self.assertRaises(KeyboardInterrupt):
+                L.telecharger_copc_fenetre(
+                    "stop.tif", "https://example.invalid/copc", self.tmp,
+                    (1, 2, 3, 4))
+
+        self.assertFalse((self.tmp / "stop.tif").exists())
+        self._assert_no_part()
+
     def test_cog_post_download_failure_keeps_previous_final(self):
         nom = "window.tif"
         final = self.tmp / nom
@@ -451,6 +653,222 @@ class AtomicDownloadTests(unittest.TestCase):
         self.assertEqual(result, "erreur")
         self.assertEqual(final.read_bytes(), old)
         self._assert_no_part()
+
+    def test_cog_success_applies_gdal_hook_validates_and_publishes(self):
+        nom = "window.tif"
+        final = self.tmp / nom
+        old = self._old_bytes()
+        final.write_bytes(old)
+        fake_rasterio, fake_windows = self._fake_rasterio(final, old)
+        events = []
+        open_fake = fake_rasterio.open
+
+        def open_record(path, mode=None, **kwargs):
+            events.append(("open", str(path), mode))
+            return open_fake(path, mode, **kwargs)
+
+        def validate(path):
+            events.append(("validate", Path(path).name))
+            return True
+
+        def post_download(path):
+            events.append(("post", Path(path).name))
+
+        fake_rasterio.open = open_record
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154",
+            subdir_from_name=lambda _nom: "",
+            gdal_env_options=lambda: {"GDAL_HTTP_HEADERS": "X-Test: yes"},
+            post_download=post_download,
+        )
+        with mock.patch.dict(
+                sys.modules,
+                {"rasterio": fake_rasterio,
+                 "rasterio.windows": fake_windows}), \
+             mock.patch.object(L, "_valider_tif_dalle", side_effect=validate), \
+             mock.patch.object(L, "_creer_fichier") as register, \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_cog_fenetre(
+                nom, "https://example.invalid/cog.tif", self.tmp,
+                (1, 1, 3, 3), ecraser=True)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(final.read_bytes(), b"NEW_COG")
+        self.assertEqual(
+            [event[0] for event in events if event[0] in {"validate", "post"}],
+            ["validate", "post", "validate"],
+        )
+        self.assertIn(("open", "/vsicurl/https://example.invalid/cog.tif", None),
+                      events)
+        register.assert_called_once_with(final)
+        self._assert_no_part()
+
+    def test_cog_non_intersection_is_absent_and_keeps_previous_final(self):
+        nom = "outside.tif"
+        final = self.tmp / nom
+        old = self._old_bytes()
+        final.write_bytes(old)
+        fake_rasterio, fake_windows = self._fake_rasterio(final, old)
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154", subdir_from_name=lambda _nom: ""
+        )
+        with mock.patch.dict(
+                sys.modules,
+                {"rasterio": fake_rasterio,
+                 "rasterio.windows": fake_windows}), \
+             mock.patch.object(L, "_valider_tif_dalle") as validate, \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_cog_fenetre(
+                nom, "https://example.invalid/cog.tif", self.tmp,
+                (20, 20, 30, 30), ecraser=True)
+
+        self.assertEqual(result, "absent")
+        self.assertEqual(final.read_bytes(), old)
+        validate.assert_not_called()
+        self._assert_no_part()
+
+    def test_cog_transient_open_failure_retries_then_publishes(self):
+        nom = "retry.tif"
+        final = self.tmp / nom
+        old = self._old_bytes()
+        final.write_bytes(old)
+        fake_rasterio, fake_windows = self._fake_rasterio(final, old)
+        open_fake = fake_rasterio.open
+        attempts = []
+
+        def open_retry(path, mode=None, **kwargs):
+            if mode != "w":
+                attempts.append(str(path))
+                if len(attempts) == 1:
+                    raise OSError("temporary range failure")
+            return open_fake(path, mode, **kwargs)
+
+        fake_rasterio.open = open_retry
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154", subdir_from_name=lambda _nom: ""
+        )
+        with mock.patch.dict(
+                sys.modules,
+                {"rasterio": fake_rasterio,
+                 "rasterio.windows": fake_windows}), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "MAX_TENTATIVES", 2), \
+             mock.patch.object(L, "DELAI_RETRY", 0), \
+             mock.patch.object(L.time, "sleep") as sleep:
+            result = L.telecharger_cog_fenetre(
+                nom, "https://example.invalid/cog.tif", self.tmp,
+                (1, 1, 3, 3), ecraser=True)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(attempts), 2)
+        sleep.assert_called_once_with(0)
+        self.assertEqual(final.read_bytes(), b"NEW_COG")
+        self._assert_no_part()
+
+    def test_cog_keyboard_interrupt_propagates_and_cleans_stage(self):
+        nom = "stop-cog.tif"
+        final = self.tmp / nom
+        old = self._old_bytes()
+        final.write_bytes(old)
+        fake_rasterio, fake_windows = self._fake_rasterio(final, old)
+        fake_rasterio.open = mock.Mock(side_effect=KeyboardInterrupt)
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154", subdir_from_name=lambda _nom: ""
+        )
+        with mock.patch.dict(
+                sys.modules,
+                {"rasterio": fake_rasterio,
+                 "rasterio.windows": fake_windows}), \
+             mock.patch.object(L, "MAX_TENTATIVES", 2):
+            with self.assertRaises(KeyboardInterrupt):
+                L.telecharger_cog_fenetre(
+                    nom, "https://example.invalid/cog.tif", self.tmp,
+                    (1, 1, 3, 3), ecraser=True)
+
+        self.assertEqual(final.read_bytes(), old)
+        self._assert_no_part()
+
+    def test_cog_large_window_is_written_in_bounded_row_blocks(self):
+        nom = "large-window.tif"
+        final = self.tmp / nom
+        old = self._old_bytes()
+        final.write_bytes(old)
+        fake_rasterio, fake_windows = self._fake_rasterio(final, old)
+        Window = fake_windows.Window
+        fake_windows.from_bounds = lambda *_args, **_kwargs: Window(
+            0, 0, 2, 2050
+        )
+        open_fake = fake_rasterio.open
+        writes = []
+
+        def open_record(path, mode=None, **kwargs):
+            dataset = open_fake(path, mode, **kwargs)
+            if mode == "w":
+                write = dataset.write
+
+                def write_record(data, window=None):
+                    writes.append(window)
+                    return write(data, window=window)
+
+                dataset.write = write_record
+            return dataset
+
+        fake_rasterio.open = open_record
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154", subdir_from_name=lambda _nom: ""
+        )
+        with mock.patch.dict(
+                sys.modules,
+                {"rasterio": fake_rasterio,
+                 "rasterio.windows": fake_windows}), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "_MAX_COG_WINDOW_PX", 1), \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_cog_fenetre(
+                nom, "https://example.invalid/cog.tif", self.tmp,
+                (1, 1, 3, 3), ecraser=True)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(
+            [(window.row_off, window.height) for window in writes],
+            [(0, 1024), (1024, 1024), (2048, 2)],
+        )
+        self.assertEqual(final.read_bytes(), b"NEW_COG")
+        self._assert_no_part()
+
+    def test_cog_cache_reprojects_requested_bbox_to_fragment_crs(self):
+        fake_rasterio = types.ModuleType("rasterio")
+
+        class Source:
+            bounds = SimpleNamespace(left=100, bottom=200, right=300, top=400)
+            crs = SimpleNamespace(to_epsg=lambda: 3857)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        fake_rasterio.open = lambda _path: Source()
+        transformer = SimpleNamespace(transform=mock.Mock())
+        L.PROVIDER = SimpleNamespace(CRS_NATIF="EPSG:2154")
+        with mock.patch.dict(sys.modules, {"rasterio": fake_rasterio}), \
+             mock.patch.object(
+                 L, "_get_transformer", return_value=transformer
+             ) as get_transformer, \
+             mock.patch.object(
+                 L, "_bbox_enveloppe_transform",
+                 return_value=(101, 201, 299, 399),
+             ) as transform_bbox:
+            result = L._cog_cache_couvre(
+                "fragment.tif", (1, 2, 3, 4)
+            )
+
+        self.assertTrue(result)
+        get_transformer.assert_called_once_with("EPSG:2154", "EPSG:3857")
+        transform_bbox.assert_called_once_with(
+            transformer.transform, 1, 2, 3, 4
+        )
 
     def _fake_rasterio(self, final, old):
         fake = types.ModuleType("rasterio")

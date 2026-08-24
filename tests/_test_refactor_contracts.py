@@ -20,6 +20,7 @@ import threading
 import unittest
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -45,7 +46,10 @@ import _terrain_sources as terrain_sources  # noqa: E402
 import _terrain_zones as terrain_zones  # noqa: E402
 import _terrain_geocoding as terrain_geocoding  # noqa: E402
 import _terrain_resolution as terrain_resolution  # noqa: E402
+import _terrain_chunks as terrain_chunks  # noqa: E402
 import _terrain_download as terrain_download  # noqa: E402
+import _terrain_prefetch as terrain_prefetch  # noqa: E402
+import _terrain_shading as terrain_shading  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -3509,6 +3513,1722 @@ class OsmosisRuntimeContractTests(unittest.TestCase):
         )
 
 
+class ShadingInstancePlanningContractTests(unittest.TestCase):
+    @staticmethod
+    def _resolve(choices=(), instances=(), messages=None, **changes):
+        values = dict(
+            elevation_soleil=25.0,
+            svf_gamma=2.0,
+            svf_conv="rvt",
+            svf_dist=20.0,
+            resolution_m=0.5,
+            elevation_defaut=25.0,
+            shading_types={
+                "315",
+                "045",
+                "135",
+                "225",
+                "multi",
+                "slope",
+                "svf",
+                "opos",
+                "oneg",
+                "lrm",
+                "rrim",
+                "vat",
+                "e4mstp",
+            },
+            imprimer=(messages.append if messages is not None else lambda _msg: None),
+        )
+        values.update(changes)
+        return terrain_shading.resoudre_instances_ombrages(
+            list(choices), list(instances), **values
+        )
+
+    def test_canonical_instances_keep_defaults_and_historical_suffixes(self):
+        result = self._resolve(
+            choices=(
+                "315",
+                "multi",
+                "slope",
+                "svf",
+                "opos",
+                "oneg",
+                "lrm",
+                "rrim",
+                "vat",
+                "e4mstp",
+            )
+        )
+        self.assertEqual(
+            [item[2] for item in result],
+            [
+                "315_ombrage",
+                "multi_ombrage",
+                "slope_ombrage",
+                "svf_rvt_20m_g2p0_ombrage",
+                "opos_20m_g2p0_ombrage",
+                "oneg_20m_g2p0_ombrage",
+                "lrm_ombrage",
+                "rrim_ombrage",
+                "vat_ombrage",
+                "e4mstp_ombrage",
+            ],
+        )
+        by_type = {typ: params for typ, params, _suffix in result}
+        self.assertEqual(by_type["315"], {"elevation": 25.0})
+        self.assertEqual(
+            by_type["svf"], {"conv": "rvt", "dist": 20.0, "gamma": 2.0}
+        )
+        self.assertEqual(by_type["lrm"], {"sigma": 7.5})
+        self.assertEqual(by_type["e4mstp"], {"dist": 20.0, "gamma": 0.8})
+
+    def test_explicit_parameters_are_encoded_without_mutating_inputs(self):
+        instances = [
+            ("315", {"elevation": 35}),
+            ("lrm", {"sigma": 5}),
+            ("vat", {"dist": 30.4, "gamma": 1.25}),
+            ("e4mstp", {"dist": 50, "gamma": 0.75}),
+            (
+                "svf",
+                {"dist": 20, "gamma": 1.24, "conv": "flux", "sweep": True},
+            ),
+        ]
+        snapshot = [(typ, dict(params)) for typ, params in instances]
+        result = self._resolve(instances=instances)
+        self.assertEqual(instances, snapshot)
+        self.assertEqual(
+            [item[2] for item in result],
+            [
+                "315_e35_ombrage",
+                "lrm_s5m_ombrage",
+                "vat_30m_g1p2_ombrage",
+                "e4mstp_50m_g0p8_ombrage",
+                "svf_flux_20m_g1p2_ombrage",
+            ],
+        )
+        self.assertTrue(result[-1][1]["sweep"])
+
+    def test_unknown_and_colliding_instances_keep_first_and_warn_selectively(self):
+        messages = []
+        result = self._resolve(
+            choices=("svf", "unknown"),
+            instances=(
+                ("svf", {}),
+                ("svf", {"dist": 20.4}),
+            ),
+            messages=messages,
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][2], "svf_rvt_20m_g2p0_ombrage")
+        self.assertEqual(len(messages), 2)
+        self.assertIn("unknown shading type ignored", messages[0])
+        self.assertIn("collapses to the same name", messages[1])
+
+    def test_orchestrator_keeps_signature_and_delegates_instance_planning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.tif"
+            source.touch()
+            planner = mock.Mock(return_value=[])
+            with mock.patch.object(L, "_resoudre_instances_ombrages", planner):
+                self.assertEqual(
+                    L.generer_ombrages(
+                        source,
+                        root,
+                        choix=["svf"],
+                        elevation_soleil=35,
+                        nom_zone="zone",
+                        svf_gamma=1.2,
+                        svf_conv="rvt",
+                        svf_dist=40,
+                        instances=[("lrm", {"sigma": 5})],
+                    ),
+                    [],
+                )
+            self.assertEqual(planner.call_args.args[0], ["svf"])
+            self.assertEqual(
+                planner.call_args.args[1], [("lrm", {"sigma": 5})]
+            )
+            self.assertEqual(planner.call_args.kwargs["resolution_m"], L.RESOLUTION_M)
+            self.assertIs(planner.call_args.kwargs["shading_types"], L._SHADING_TYPES)
+        self.assertEqual(
+            str(inspect.signature(L.generer_ombrages)),
+            "(cogs, dossier_ville, choix=None, elevation_soleil=None, "
+            "nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, "
+            "use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None, "
+            "bbox_natif=None, instances=None)",
+        )
+
+
+class ShadingOrchestratorExtractionContractTests(unittest.TestCase):
+    @staticmethod
+    def _dependencies(**changes):
+        return replace(L._dependances_generer_ombrages(), **changes)
+
+    @staticmethod
+    def _part_path(path):
+        path = Path(path)
+        return path.with_name(path.name + ".test.part")
+
+    def test_public_facade_forwards_all_arguments_with_late_dependencies(self):
+        dependencies = object()
+        result = object()
+        implementation = mock.Mock(return_value=result)
+        instances = [("lrm", {"sigma": 5})]
+        bbox = (1, 2, 3, 4)
+        with (
+            mock.patch.object(
+                L, "_dependances_generer_ombrages", return_value=dependencies
+            ),
+            mock.patch.object(L, "_generer_ombrages_impl", implementation),
+        ):
+            actual = L.generer_ombrages(
+                "source",
+                "folder",
+                choix=["multi"],
+                elevation_soleil=35,
+                nom_zone="zone",
+                ecraser_ombrages=True,
+                ecraser_tuiles=True,
+                use_sweep=True,
+                svf_gamma=1.4,
+                svf_conv="rvt",
+                svf_dist=40,
+                bbox_natif=bbox,
+                instances=instances,
+            )
+        self.assertIs(actual, result)
+        implementation.assert_called_once_with(
+            "source",
+            "folder",
+            choix=["multi"],
+            elevation_soleil=35,
+            nom_zone="zone",
+            ecraser_ombrages=True,
+            ecraser_tuiles=True,
+            use_sweep=True,
+            svf_gamma=1.4,
+            svf_conv="rvt",
+            svf_dist=40,
+            bbox_natif=bbox,
+            instances=instances,
+            dependances=dependencies,
+        )
+
+    def test_vrt_is_registered_and_transaction_directory_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cogs = [root / "a.tif", root / "b.tif"]
+            for cog in cogs:
+                cog.touch()
+            registered = []
+
+            def build_vrt(_sources, destination, _resolution):
+                destination.write_text("<VRTDataset/>", encoding="utf-8")
+
+            dependencies = self._dependencies(
+                resoudre_instances_ombrages=lambda *_args, **_kwargs: [],
+                chemin_part=self._part_path,
+                creer_fichier=registered.append,
+                build_vrt_xml=build_vrt,
+                normaliser_nom=lambda value: value,
+                imprimer=lambda *_args, **_kwargs: None,
+            )
+            result = terrain_shading.generer_ombrages(
+                cogs,
+                root,
+                choix=[],
+                nom_zone="zone",
+                dependances=dependencies,
+            )
+            transaction = root / "_tmp.test.part"
+            self.assertEqual(result, [])
+            self.assertEqual(
+                [path.name for path in registered], ["_dalles.txt", "_mnt_complet.vrt"]
+            )
+            self.assertFalse(transaction.exists())
+
+    def test_vrt_failure_is_explicit_and_cleans_transaction_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cogs = [root / "a.tif", root / "b.tif"]
+            for cog in cogs:
+                cog.touch()
+
+            def fail_build(*_args):
+                raise OSError("disk full")
+
+            dependencies = self._dependencies(
+                resoudre_instances_ombrages=lambda *_args, **_kwargs: [],
+                chemin_part=self._part_path,
+                creer_fichier=lambda _path: None,
+                build_vrt_xml=fail_build,
+                imprimer=lambda *_args, **_kwargs: None,
+            )
+            with self.assertRaisesRegex(RuntimeError, "Construction VRT échouée"):
+                terrain_shading.generer_ombrages(
+                    cogs,
+                    root,
+                    choix=[],
+                    nom_zone="zone",
+                    dependances=dependencies,
+                )
+            self.assertFalse((root / "_tmp.test.part").exists())
+
+    def test_horn_output_is_published_only_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.tif"
+            source.touch()
+            jobs_seen = []
+            registered = []
+
+            def generate(_source, jobs, **_kwargs):
+                jobs_seen.extend(jobs)
+                for _kind, _params, destination in jobs:
+                    destination.write_bytes(b"complete")
+                return True
+
+            def publish(part, final):
+                part.replace(final)
+
+            dependencies = self._dependencies(
+                resoudre_instances_ombrages=lambda *_args, **_kwargs: [
+                    ("slope", {}, "slope_ombrage")
+                ],
+                chemin_part=self._part_path,
+                creer_fichier=registered.append,
+                source_a_des_donnees=lambda _source: True,
+                publier_tif_atomique=publish,
+                hillshade_chunked_multi=generate,
+                normaliser_nom=lambda value: value,
+                formater_duree=lambda _seconds: "0s",
+                imprimer=lambda *_args, **_kwargs: None,
+            )
+            expected = root / "zone_slope_ombrage.tif"
+            result = terrain_shading.generer_ombrages(
+                source,
+                root,
+                choix=["slope"],
+                nom_zone="zone",
+                dependances=dependencies,
+            )
+            self.assertEqual(result, [expected])
+            self.assertEqual(expected.read_bytes(), b"complete")
+            self.assertEqual(jobs_seen[0][0], "slope")
+            self.assertEqual(registered, [expected])
+            self.assertFalse(self._part_path(expected).exists())
+
+    def test_horn_failure_keeps_previous_final_and_removes_partial(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.tif"
+            source.touch()
+            final = root / "zone_slope_ombrage.tif"
+            final.write_bytes(b"previous")
+
+            def fail_after_partial(_source, jobs, **_kwargs):
+                jobs[0][2].write_bytes(b"partial")
+                return False
+
+            dependencies = self._dependencies(
+                resoudre_instances_ombrages=lambda *_args, **_kwargs: [
+                    ("slope", {}, "slope_ombrage")
+                ],
+                chemin_part=self._part_path,
+                creer_fichier=lambda _path: None,
+                source_a_des_donnees=lambda _source: True,
+                hillshade_chunked_multi=fail_after_partial,
+                normaliser_nom=lambda value: value,
+                imprimer=lambda *_args, **_kwargs: None,
+            )
+            with self.assertRaisesRegex(RuntimeError, "shading\\(s\\) failed"):
+                terrain_shading.generer_ombrages(
+                    source,
+                    root,
+                    choix=["slope"],
+                    nom_zone="zone",
+                    ecraser_ombrages=True,
+                    dependances=dependencies,
+                )
+            self.assertEqual(final.read_bytes(), b"previous")
+            self.assertFalse(self._part_path(final).exists())
+
+
+class TerrainChunkContractTests(unittest.TestCase):
+    def _dependencies(self, root, discover, events):
+        provider = SimpleNamespace(
+            CODE="provider-x",
+            CRS_NATIF="EPSG:2154",
+            discover_dalles=discover,
+        )
+
+        class Transformer:
+            @staticmethod
+            def transform(x, y):
+                return x, y
+
+        def get_transformer(src, dst):
+            events.append(("transformer", src, dst))
+            return Transformer()
+
+        def bbox_transform(transform, *bbox):
+            events.append(("bbox", transform(1, 2), bbox))
+            return 6.0, 43.0, 6.1, 43.1
+
+        @contextlib.contextmanager
+        def manifest_context(manifest, key):
+            events.append(("enter", manifest, key))
+            try:
+                yield
+            finally:
+                events.append(("exit", manifest, key))
+
+        def active_folder(args, project):
+            events.append(("folder", args, project))
+            return root / "tiles"
+
+        def download(*args, **kwargs):
+            events.append(("download", args, kwargs))
+
+        return terrain_chunks.DependancesMorceauTerrain(
+            provider=provider,
+            get_transformer=get_transformer,
+            bbox_enveloppe_transform=bbox_transform,
+            dossier_cache=root / "cache",
+            dossier_travail=root / "work",
+            lidar_subdir=Path("lidar/provider"),
+            dossier_dalles_actif=active_folder,
+            contexte_manifeste=manifest_context,
+            telecharger_dalles_zone=download,
+            decouvrir_et_telecharger_ombrage=lambda *_args, **_kwargs: None,
+            resoudre_choix_ombrages=lambda _args: ([], []),
+            lister_dalles_zone=lambda *_args: [],
+            generer_ombrages=lambda *_args, **_kwargs: None,
+            elevation_soleil=25.0,
+            supprimer_fichiers=lambda *_args, **_kwargs: None,
+        )
+
+    def test_lookahead_discovers_margin_and_returns_only_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calls = []
+
+            def discover(bbox_wgs, bbox_native, cache):
+                calls.append((bbox_wgs, bbox_native, cache))
+                return {"b.tif": "u2", "a.tif": "u1"}
+
+            dependencies = self._dependencies(root, discover, [])
+            self.assertEqual(
+                terrain_chunks.dalles_zone_lookahead(
+                    (1, 2, 3, 4), dependances=dependencies
+                ),
+                {"a.tif", "b.tif"},
+            )
+            self.assertEqual(calls[0][0], (5.95, 42.95, 6.1499999999999995, 43.15))
+            self.assertEqual(calls[0][1], (1, 2, 3, 4))
+            self.assertEqual(calls[0][2], root / "cache/discover_provider-x.json")
+
+    def test_lookahead_is_best_effort_for_empty_and_failed_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            empty = self._dependencies(root, lambda *_args: {}, [])
+            self.assertIsNone(
+                terrain_chunks.dalles_zone_lookahead(
+                    (1, 2, 3, 4), dependances=empty
+                )
+            )
+
+            def failure(*_args):
+                raise OSError("offline")
+
+            failed = self._dependencies(root, failure, [])
+            self.assertIsNone(
+                terrain_chunks.dalles_zone_lookahead(
+                    (1, 2, 3, 4), dependances=failed
+                )
+            )
+
+    def test_chunk_prepares_directories_context_and_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = []
+            discovered = {"tile.tif": "https://invalid/tile"}
+            dependencies = self._dependencies(
+                root, lambda *_args: discovered, events
+            )
+            args = SimpleNamespace(dossier=None, telechargement=True)
+            result = terrain_chunks.decouvrir_et_telecharger_ombrage(
+                args,
+                (1, 2, 3, 4),
+                "zone_001",
+                "zone",
+                "manifest",
+                "001",
+                quiet=True,
+                dependances=dependencies,
+            )
+            project = root / "work/Projets/zone/lidar/provider/zone_001"
+            tiles = root / "tiles"
+            self.assertEqual(result, (discovered, tiles, project))
+            self.assertTrue(project.is_dir())
+            self.assertTrue(tiles.is_dir())
+            self.assertIn(("enter", "manifest", "001_dl"), events)
+            self.assertIn(("exit", "manifest", "001_dl"), events)
+            download = next(event for event in events if event[0] == "download")
+            self.assertEqual(download[1][0:4], (discovered, (1, 2, 3, 4), tiles, project))
+            self.assertEqual(download[2], {"quiet": True})
+
+    def test_chunk_explicit_root_and_no_download_keep_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            explicit = root / "explicit"
+            events = []
+            discovered = {}
+            dependencies = self._dependencies(
+                root, lambda *_args: discovered, events
+            )
+            args = SimpleNamespace(
+                dossier=str(explicit), telechargement=False
+            )
+            result = terrain_chunks.decouvrir_et_telecharger_ombrage(
+                args,
+                (1, 2, 3, 4),
+                "chunk",
+                "ignored-zone",
+                None,
+                "key",
+                dependances=dependencies,
+            )
+            self.assertEqual(result[0], {})
+            self.assertEqual(result[2], explicit.resolve() / "chunk")
+            self.assertFalse(any(event[0] == "download" for event in events))
+
+    def test_chunk_discovery_failures_are_retryable_runtime_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args = SimpleNamespace(dossier=None, telechargement=True)
+            for result, expected in (
+                (None, "tile discovery unavailable"),
+                (OSError("offline"), r"tile discovery failed .*offline"),
+            ):
+                def discover(*_args, result=result):
+                    if isinstance(result, BaseException):
+                        raise result
+                    return result
+
+                dependencies = self._dependencies(root, discover, [])
+                with self.subTest(result=result), self.assertRaisesRegex(
+                    RuntimeError, expected
+                ):
+                    terrain_chunks.decouvrir_et_telecharger_ombrage(
+                        args,
+                        (1, 2, 3, 4),
+                        "chunk",
+                        "zone",
+                        None,
+                        "key",
+                        dependances=dependencies,
+                    )
+
+    def test_chunk_facades_keep_signatures_and_reload_dependencies(self):
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_morceau_terrain", return_value=dependencies
+        ), mock.patch.object(
+            L, "_dalles_zone_lookahead_impl", return_value=marker
+        ) as lookahead, mock.patch.object(
+            L, "_decouvrir_et_telecharger_ombrage_impl", return_value=marker
+        ) as download:
+            self.assertIs(L._dalles_zone_lookahead((1, 2, 3, 4)), marker)
+            args = SimpleNamespace()
+            self.assertIs(
+                L._decouvrir_et_telecharger_ombrage(
+                    args, (1, 2, 3, 4), "chunk", "zone", None, "key", True
+                ),
+                marker,
+            )
+        self.assertIs(lookahead.call_args.kwargs["dependances"], dependencies)
+        self.assertIs(download.call_args.kwargs["dependances"], dependencies)
+        self.assertEqual(
+            str(inspect.signature(L._dalles_zone_lookahead)), "(bbox_natif)"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._decouvrir_et_telecharger_ombrage)),
+            "(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle, quiet=False)",
+        )
+
+    def _classic_args(self, **changes):
+        values = dict(
+            zone_bbox="original-bbox",
+            zone_nom="original-name",
+            dossier=None,
+            telechargement=True,
+            ombrages=["svf"],
+            ombrages_elevation=None,
+            ombrages_ecraser=True,
+            sweep_horizon=True,
+            svf_gamma=0.8,
+            svf_conv=2,
+            svf_dist=30.0,
+            mbtiles=True,
+            rmap=False,
+            sqlitedb=False,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def _classic_dependencies(self, root, discover):
+        events = []
+        provider = SimpleNamespace(
+            CODE="provider-x",
+            CRS_NATIF="EPSG:2154",
+            discover_dalles=discover,
+        )
+
+        class Transformer:
+            @staticmethod
+            def transform(x, y):
+                return x, y
+
+        @contextlib.contextmanager
+        def manifest_context(manifest, key):
+            events.append(("enter", manifest, key))
+            try:
+                yield
+            finally:
+                events.append(("exit", manifest, key))
+
+        def tile(*args, **kwargs):
+            events.append(("tile", args, kwargs))
+            kwargs["mbtiles_attendus"].append(root / "expected.mbtiles")
+            return False
+
+        dependencies = terrain_chunks.DependancesLidarClassique(
+            provider=provider,
+            dossier_travail=root / "work",
+            dossier_cache=root / "cache",
+            lidar_subdir=Path("lidar/provider"),
+            get_transformer=lambda *args: events.append(
+                ("transformer", args)
+            )
+            or Transformer(),
+            bbox_enveloppe_transform=lambda transform, *bbox: events.append(
+                ("bbox", transform(1, 2), bbox)
+            )
+            or (6.0, 43.0, 6.1, 43.1),
+            dossier_dalles_actif=lambda *args: events.append(("folder", args))
+            or root / "tiles",
+            contexte_manifeste=manifest_context,
+            telecharger_dalles_zone=lambda *args, **kwargs: events.append(
+                ("download", args, kwargs)
+            ),
+            resoudre_choix_ombrages=lambda args: events.append(
+                ("resolve", args)
+            )
+            or (["svf"], [{"type": "svf"}]),
+            lister_dalles_zone=lambda *args: events.append(("list-tiles", args))
+            or [root / "tile.tif"],
+            generer_ombrages=lambda *args, **kwargs: events.append(
+                ("shade", args, kwargs)
+            )
+            or [root / "shade.tif"],
+            elevation_soleil=25.0,
+            lister_tifs_ombrages=lambda *args: events.append(("list-tifs", args))
+            or list(args[1] or []),
+            tuiler_tifs_ombrages=tile,
+            resultat_chunk=lambda ok, paths: (ok, tuple(paths)),
+        )
+        return dependencies, events
+
+    def test_classic_lidar_transaction_forwards_halo_shading_and_tiling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            discovery = []
+
+            def discover(*args):
+                discovery.append(args)
+                return {"tile.tif": "url"}
+
+            dependencies, events = self._classic_dependencies(root, discover)
+            args = self._classic_args()
+            result = terrain_chunks.traiter_bbox_lidar(
+                args,
+                (1000, 2000, 5000, 8000),
+                "chunk",
+                "zone",
+                "manifest",
+                "key",
+                dependances=dependencies,
+            )
+            project = root / "work/Projets/zone/lidar/provider/chunk"
+            margin_bbox = (600.0, 1600.0, 5400.0, 8400.0)
+            self.assertEqual(result, (False, (root / "expected.mbtiles",)))
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+            self.assertTrue(project.is_dir())
+            self.assertTrue((root / "tiles").is_dir())
+            self.assertEqual(
+                discovery,
+                [
+                    (
+                        (5.95, 42.95, 6.1499999999999995, 43.15),
+                        margin_bbox,
+                        root / "cache/discover_provider-x.json",
+                    )
+                ],
+            )
+            download = next(event for event in events if event[0] == "download")
+            self.assertEqual(
+                download[1][0:4],
+                ({"tile.tif": "url"}, margin_bbox, root / "tiles", project),
+            )
+            shading = next(event for event in events if event[0] == "shade")
+            self.assertEqual(shading[1][1:], (project, ["svf"]))
+            self.assertEqual(shading[2]["bbox_natif"], margin_bbox)
+            self.assertEqual(shading[2]["elevation_soleil"], 25.0)
+            self.assertEqual(shading[2]["instances"], [{"type": "svf"}])
+            tiling = next(event for event in events if event[0] == "tile")
+            self.assertEqual(tiling[1][1], [root / "shade.tif"])
+            self.assertEqual(tiling[1][2:5], (project, "chunk", (1000, 2000, 5000, 8000)))
+            self.assertEqual(tiling[2]["tampon_coin_max_m"], 400.0)
+            self.assertIn(("enter", "manifest", "key"), events)
+
+    def test_classic_lidar_tiles_only_uses_floor_halo_and_none_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependencies, events = self._classic_dependencies(
+                root, lambda *_args: {}
+            )
+            dependencies = replace(
+                dependencies,
+                tuiler_tifs_ombrages=lambda *args, **kwargs: events.append(
+                    ("tile", args, kwargs)
+                )
+                or True,
+            )
+            result = terrain_chunks.traiter_bbox_lidar(
+                self._classic_args(telechargement=False, ombrages=[]),
+                (0, 0, 1000, 2000),
+                "chunk",
+                "zone",
+                None,
+                "key",
+                dependances=dependencies,
+            )
+            self.assertEqual(result, (True, ()))
+            self.assertFalse(any(event[0] == "download" for event in events))
+            self.assertFalse(any(event[0] == "shade" for event in events))
+            listed = next(event for event in events if event[0] == "list-tifs")
+            self.assertIsNone(listed[1][1])
+            tiling = next(event for event in events if event[0] == "tile")
+            self.assertEqual(tiling[2]["tampon_coin_max_m"], 300.0)
+
+    def test_classic_lidar_without_output_format_keeps_empty_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            explicit = root / "explicit"
+            dependencies, events = self._classic_dependencies(
+                root, lambda *_args: {}
+            )
+            dependencies = replace(
+                dependencies,
+                tuiler_tifs_ombrages=mock.Mock(
+                    side_effect=AssertionError("no output requested")
+                ),
+            )
+            result = terrain_chunks.traiter_bbox_lidar(
+                self._classic_args(
+                    dossier=str(explicit),
+                    telechargement=False,
+                    ombrages=[],
+                    mbtiles=False,
+                    rmap=False,
+                    sqlitedb=False,
+                ),
+                (0, 0, 1000, 1000),
+                "chunk",
+                "zone",
+                None,
+                "key",
+                dependances=dependencies,
+            )
+            self.assertEqual(result, (True, ()))
+            self.assertTrue((explicit.resolve() / "chunk").is_dir())
+            self.assertFalse(any(event[0] == "tile" for event in events))
+
+    def test_classic_lidar_discovery_failures_restore_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for outcome, expected in (
+                (None, "tile discovery unavailable"),
+                (OSError("offline"), r"tile discovery failed .*offline"),
+            ):
+                def discover(*_args, outcome=outcome):
+                    if isinstance(outcome, BaseException):
+                        raise outcome
+                    return outcome
+
+                dependencies, _events = self._classic_dependencies(root, discover)
+                args = self._classic_args()
+                with self.subTest(outcome=outcome), self.assertRaisesRegex(
+                    RuntimeError, expected
+                ):
+                    terrain_chunks.traiter_bbox_lidar(
+                        args,
+                        (0, 0, 1000, 1000),
+                        "chunk",
+                        "zone",
+                        None,
+                        "key",
+                        dependances=dependencies,
+                    )
+                self.assertEqual(args.zone_bbox, "original-bbox")
+                self.assertEqual(args.zone_nom, "original-name")
+
+    def test_classic_lidar_facade_keeps_signature_and_dependencies_late(self):
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_lidar_classique", return_value=dependencies
+        ), mock.patch.object(
+            L, "_traiter_bbox_lidar_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(
+                L._traiter_bbox_lidar(
+                    "args", (1, 2, 3, 4), "chunk", "zone", "manifest", "key"
+                ),
+                marker,
+            )
+        self.assertIs(
+            implementation.call_args.kwargs["dependances"], dependencies
+        )
+        self.assertEqual(
+            str(inspect.signature(L._traiter_bbox_lidar)),
+            "(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle)",
+        )
+
+    def _shading_args(self, **changes):
+        values = dict(
+            zone_bbox="original-bbox",
+            zone_nom="original-name",
+            ombrages=[],
+            ombrages_elevation=None,
+            ombrages_ecraser=False,
+            sweep_horizon=False,
+            svf_gamma=None,
+            svf_conv=None,
+            svf_dist=None,
+            telechargement=False,
+            nettoyage=False,
+            nettoyage_garder_dalles=False,
+            dossier_dalles=None,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def test_shading_transaction_consumes_prefetch_and_restores_args(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = []
+
+            def forbidden(*_args, **_kwargs):
+                raise AssertionError("discovery must be skipped")
+
+            dependencies = replace(
+                self._dependencies(root, lambda *_args: {}, events),
+                decouvrir_et_telecharger_ombrage=forbidden,
+            )
+            args = self._shading_args()
+            callback = mock.Mock()
+            terrain_chunks.traiter_bbox_lidar_ombrage(
+                args,
+                (1, 2, 3, 4),
+                "chunk",
+                "zone",
+                None,
+                "key",
+                dalles_precharge=({}, root / "tiles", root / "project"),
+                on_download_done=callback,
+                dependances=dependencies,
+            )
+            callback.assert_called_once_with()
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+
+    def test_shading_transaction_forwards_all_generation_options(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = []
+            generated = []
+            dependencies = replace(
+                self._dependencies(root, lambda *_args: {}, events),
+                decouvrir_et_telecharger_ombrage=lambda *_args: (
+                    {"tile.tif": "url"},
+                    root / "tiles",
+                    root / "project",
+                ),
+                resoudre_choix_ombrages=lambda _args: (
+                    ["svf"],
+                    [{"type": "svf"}],
+                ),
+                lister_dalles_zone=lambda *args: generated.append(
+                    ("list", args)
+                )
+                or [root / "tile.tif"],
+                generer_ombrages=lambda *args, **kwargs: generated.append(
+                    ("generate", args, kwargs)
+                ),
+                elevation_soleil=27.0,
+            )
+            args = self._shading_args(
+                ombrages=["svf"],
+                ombrages_ecraser=True,
+                sweep_horizon=True,
+                svf_gamma=0.8,
+                svf_conv=2,
+                svf_dist=30.0,
+            )
+            terrain_chunks.traiter_bbox_lidar_ombrage(
+                args,
+                (1, 2, 3, 4),
+                "chunk",
+                "zone",
+                "manifest",
+                "key",
+                dependances=dependencies,
+            )
+            generation = next(item for item in generated if item[0] == "generate")
+            self.assertEqual(generation[1][0], [root / "tile.tif"])
+            self.assertEqual(generation[1][1:], (root / "project", ["svf"]))
+            self.assertEqual(
+                generation[2],
+                {
+                    "elevation_soleil": 27.0,
+                    "nom_zone": "chunk",
+                    "ecraser_ombrages": True,
+                    "use_sweep": True,
+                    "svf_gamma": 0.8,
+                    "svf_conv": 2,
+                    "svf_dist": 30.0,
+                    "bbox_natif": (1, 2, 3, 4),
+                    "instances": [{"type": "svf"}],
+                },
+            )
+            self.assertIn(("enter", "manifest", "key"), events)
+            self.assertIn(("exit", "manifest", "key"), events)
+
+    def test_shading_cleanup_preserves_tile_and_cloud_cache_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            removed = []
+            active = root / "active"
+            cloud = root / "cloud"
+            dependencies = replace(
+                self._dependencies(root, lambda *_args: {}, []),
+                dossier_dalles_actif=lambda _args, *_rest: active,
+                decouvrir_et_telecharger_ombrage=lambda *_args: (
+                    {}, active, root / "project"
+                ),
+                supprimer_fichiers=lambda *args, **kwargs: removed.append(
+                    (args, kwargs)
+                ),
+            )
+
+            class Manifest:
+                def fichiers_morceau(self, key):
+                    self.key = key
+                    return ["download.tif"]
+
+            manifest = Manifest()
+            args = self._shading_args(
+                telechargement=True,
+                nettoyage=True,
+                nettoyage_garder_dalles=True,
+                _cloud_cache_dir=cloud,
+            )
+            terrain_chunks.traiter_bbox_lidar_ombrage(
+                args,
+                (1, 2, 3, 4),
+                "chunk",
+                "zone",
+                manifest,
+                "key",
+                noms_dalles_a_garder={"shared.tif"},
+                dependances=dependencies,
+            )
+            self.assertEqual(manifest.key, "key_dl")
+            self.assertEqual(
+                removed,
+                [
+                    (
+                        (["download.tif"], [active, cloud]),
+                        {"noms_garder": {"shared.tif"}},
+                    )
+                ],
+            )
+
+    def test_shading_failure_restores_args_and_keeps_downloads_for_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            removed = mock.Mock()
+            dependencies = replace(
+                self._dependencies(root, lambda *_args: {}, []),
+                decouvrir_et_telecharger_ombrage=lambda *_args: (
+                    {"tile.tif": "url"}, root / "tiles", root / "project"
+                ),
+                resoudre_choix_ombrages=lambda _args: (["svf"], []),
+                lister_dalles_zone=lambda *_args: [root / "tile.tif"],
+                generer_ombrages=mock.Mock(side_effect=RuntimeError("shading failed")),
+                supprimer_fichiers=removed,
+            )
+            args = self._shading_args(
+                ombrages=["svf"], telechargement=True, nettoyage=True
+            )
+            with self.assertRaisesRegex(RuntimeError, "shading failed"):
+                terrain_chunks.traiter_bbox_lidar_ombrage(
+                    args,
+                    (1, 2, 3, 4),
+                    "chunk",
+                    "zone",
+                    SimpleNamespace(fichiers_morceau=lambda _key: ["tile"]),
+                    "key",
+                    dependances=dependencies,
+                )
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+            removed.assert_not_called()
+
+    def test_shading_facade_keeps_signature_and_reads_dependencies_late(self):
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_morceau_terrain", return_value=dependencies
+        ), mock.patch.object(
+            L, "_traiter_bbox_lidar_ombrage_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(
+                L._traiter_bbox_lidar_ombrage(
+                    "args",
+                    (1, 2, 3, 4),
+                    "chunk",
+                    "zone",
+                    "manifest",
+                    "key",
+                    "prefetch",
+                    "callback",
+                    {"shared.tif"},
+                ),
+                marker,
+            )
+        self.assertIs(
+            implementation.call_args.kwargs["dependances"], dependencies
+        )
+        self.assertEqual(
+            str(inspect.signature(L._traiter_bbox_lidar_ombrage)),
+            "(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle, "
+            "dalles_precharge=None, on_download_done=None, "
+            "noms_dalles_a_garder=None)",
+        )
+
+    def _tiling_args(self, **changes):
+        values = dict(
+            zone_bbox="original-bbox",
+            zone_nom="original-name",
+            mbtiles=True,
+            rmap=False,
+            sqlitedb=False,
+            dossier=None,
+            zoom_min=10,
+            zoom_max=18,
+            tuiles_ecraser=False,
+            formats_image="jpeg",
+            qualite_image=85,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def _tiling_dependencies(self, root, *, tifs=(), neighbors=()):
+        events = []
+
+        @contextlib.contextmanager
+        def manifest_context(manifest, key):
+            events.append(("enter", manifest, key))
+            try:
+                yield
+            finally:
+                events.append(("exit", manifest, key))
+
+        def generate(*args, **kwargs):
+            events.append(("generate", args, kwargs))
+            return root / "generated.mbtiles"
+
+        dependencies = terrain_chunks.DependancesTuilageMorceau(
+            dossier_travail=root / "work",
+            lidar_subdir=Path("lidar/provider"),
+            voisins_dossiers=lambda *args: events.append(
+                ("neighbors", args)
+            )
+            or list(neighbors),
+            contexte_manifeste=manifest_context,
+            lister_tifs_ombrages=lambda *args: events.append(("list", args))
+            or list(tifs),
+            build_vrt_xml=lambda *args: events.append(("vrt", args)),
+            creer_fichier=lambda path: events.append(("register", path)),
+            mbtiles_a_regenerer=lambda *args, **kwargs: events.append(
+                ("freshness", args, kwargs)
+            )
+            or True,
+            generer_mbtiles_lidar=generate,
+            tile_workers_defaut=lambda: 3,
+            convertir_formats=lambda *args, **kwargs: events.append(
+                ("convert", args, kwargs)
+            )
+            or True,
+            resultat_chunk=lambda ok, paths: (ok, tuple(paths)),
+            imprimer=lambda message: events.append(("print", message)),
+        )
+        return dependencies, events
+
+    def test_tiling_without_requested_format_is_noop_and_restores_args(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dependencies, events = self._tiling_dependencies(Path(tmp))
+            args = self._tiling_args(mbtiles=False, rmap=False, sqlitedb=False)
+            self.assertIsNone(
+                terrain_chunks.traiter_bbox_lidar_tuilage(
+                    args,
+                    (0, 0, 900, 600),
+                    "chunk",
+                    "zone",
+                    None,
+                    "key",
+                    0,
+                    0,
+                    1,
+                    1,
+                    dependances=dependencies,
+                )
+            )
+            self.assertEqual(events, [])
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+
+    def test_tiling_single_shading_generates_expected_mbtiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tif = root / "work/Projets/zone/lidar/provider/chunk/chunk_svf.tif"
+            tif.parent.mkdir(parents=True)
+            tif.write_bytes(b"tif")
+            dependencies, events = self._tiling_dependencies(root, tifs=[tif])
+            args = self._tiling_args()
+            result = terrain_chunks.traiter_bbox_lidar_tuilage(
+                args,
+                (0, 0, 900, 600),
+                "chunk",
+                "zone",
+                "manifest",
+                "key",
+                0,
+                0,
+                1,
+                1,
+                dependances=dependencies,
+            )
+            expected = tif.parent / "chunk_svf_z10-18.mbtiles"
+            self.assertEqual(result, (True, (expected,)))
+            self.assertIn(("enter", "manifest", "key_t"), events)
+            generation = next(event for event in events if event[0] == "generate")
+            self.assertEqual(generation[1][0:3], (tif, tif.parent, "chunk_svf"))
+            self.assertEqual(generation[2]["tampon_coin_max_m"], 200.0)
+            self.assertEqual(generation[2]["tile_workers"], 3)
+            freshness = next(event for event in events if event[0] == "freshness")
+            self.assertEqual(freshness[1][0], expected)
+            self.assertEqual(freshness[2], {"source": tif})
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+
+    def test_tiling_neighbor_builds_and_registers_vrt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            city = root / "work/Projets/zone/lidar/provider/chunk"
+            city.mkdir(parents=True)
+            tif = city / "chunk_svf.tif"
+            tif.write_bytes(b"tif")
+            neighbor = root / "neighbor"
+            neighbor.mkdir()
+            neighbor_tif = neighbor / "neighbor_svf.tif"
+            neighbor_tif.write_bytes(b"neighbor")
+            dependencies, events = self._tiling_dependencies(
+                root, tifs=[tif], neighbors=[neighbor]
+            )
+
+            class Dataset:
+                transform = SimpleNamespace(a=0.5)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+            fake_rasterio = SimpleNamespace(open=lambda _path: Dataset())
+            with mock.patch.dict(sys.modules, {"rasterio": fake_rasterio}):
+                terrain_chunks.traiter_bbox_lidar_tuilage(
+                    self._tiling_args(),
+                    (0, 0, 900, 600),
+                    "chunk",
+                    "zone",
+                    None,
+                    "key",
+                    0,
+                    0,
+                    1,
+                    2,
+                    dependances=dependencies,
+                )
+            vrt = city / "_voisins_svf.vrt"
+            self.assertIn(("vrt", ([tif, neighbor_tif], vrt, 0.5)), events)
+            self.assertIn(("register", vrt), events)
+            generation = next(event for event in events if event[0] == "generate")
+            self.assertEqual(generation[1][0], vrt)
+
+    def test_tiling_converts_every_family_and_aggregates_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            city = root / "work/Projets/zone/lidar/provider/chunk"
+            city.mkdir(parents=True)
+            tifs = [city / "chunk_svf.tif", city / "chunk_lrm.tif"]
+            for tif in tifs:
+                tif.write_bytes(b"tif")
+            dependencies, events = self._tiling_dependencies(root, tifs=tifs)
+            outcomes = iter((False, True))
+            dependencies = replace(
+                dependencies,
+                convertir_formats=lambda *args, **kwargs: events.append(
+                    ("convert", args, kwargs)
+                )
+                or next(outcomes),
+            )
+            result = terrain_chunks.traiter_bbox_lidar_tuilage(
+                self._tiling_args(),
+                (0, 0, 900, 600),
+                "chunk",
+                "zone",
+                None,
+                "key",
+                0,
+                0,
+                1,
+                1,
+                dependances=dependencies,
+            )
+            self.assertFalse(result[0])
+            self.assertEqual(len(result[1]), 2)
+            self.assertEqual(
+                len([event for event in events if event[0] == "convert"]), 2
+            )
+
+    def test_tiling_reuses_existing_mbtiles_without_generator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            city = root / "work/Projets/zone/lidar/provider/chunk"
+            city.mkdir(parents=True)
+            tif = city / "chunk_svf.tif"
+            tif.write_bytes(b"tif")
+            dependencies, events = self._tiling_dependencies(root, tifs=[tif])
+            dependencies = replace(
+                dependencies,
+                mbtiles_a_regenerer=lambda *_args, **_kwargs: False,
+                generer_mbtiles_lidar=mock.Mock(
+                    side_effect=AssertionError("must reuse")
+                ),
+            )
+            terrain_chunks.traiter_bbox_lidar_tuilage(
+                self._tiling_args(),
+                (0, 0, 900, 600),
+                "chunk",
+                "zone",
+                None,
+                "key",
+                0,
+                0,
+                1,
+                1,
+                dependances=dependencies,
+            )
+            conversion = next(event for event in events if event[0] == "convert")
+            self.assertEqual(conversion[1][0], city / "chunk_svf_z10-18.mbtiles")
+            self.assertFalse(conversion[2]["mbtiles_neuf"])
+            self.assertTrue(any(event[0] == "print" for event in events))
+
+    def test_tiling_failure_restores_args_and_facade_keeps_signature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            city = root / "work/Projets/zone/lidar/provider/chunk"
+            city.mkdir(parents=True)
+            tif = city / "chunk_svf.tif"
+            tif.write_bytes(b"tif")
+            dependencies, _events = self._tiling_dependencies(root, tifs=[tif])
+            dependencies = replace(
+                dependencies,
+                generer_mbtiles_lidar=mock.Mock(
+                    side_effect=RuntimeError("tiling failed")
+                ),
+            )
+            args = self._tiling_args()
+            with self.assertRaisesRegex(RuntimeError, "tiling failed"):
+                terrain_chunks.traiter_bbox_lidar_tuilage(
+                    args,
+                    (0, 0, 900, 600),
+                    "chunk",
+                    "zone",
+                    None,
+                    "key",
+                    0,
+                    0,
+                    1,
+                    1,
+                    dependances=dependencies,
+                )
+            self.assertEqual(args.zone_bbox, "original-bbox")
+            self.assertEqual(args.zone_nom, "original-name")
+
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_tuilage_morceau", return_value=dependencies
+        ), mock.patch.object(
+            L, "_traiter_bbox_lidar_tuilage_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(
+                L._traiter_bbox_lidar_tuilage(
+                    "args", (1, 2, 3, 4), "chunk", "zone", None, "key", 0, 1, 2, 3
+                ),
+                marker,
+            )
+        self.assertIs(
+            implementation.call_args.kwargs["dependances"], dependencies
+        )
+        self.assertEqual(
+            str(inspect.signature(L._traiter_bbox_lidar_tuilage)),
+            "(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle, "
+            "i_lat, i_lon, n_lat, n_lon)",
+        )
+
+    def _wmts_args(self, **changes):
+        values = dict(
+            zone_nom="original-name",
+            zoom_min=18,
+            zoom_max=10,
+            dossier=None,
+            formats_image="jpeg",
+            qualite_image=77,
+            couche="layer-id",
+            tuiles_ecraser=False,
+            apikey="secret",
+            workers=3,
+            telechargement_ecraser=False,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    def _wmts_dependencies(self, root):
+        events = []
+
+        @contextlib.contextmanager
+        def manifest_context(manifest, key):
+            events.append(("enter", manifest, key))
+            try:
+                yield
+            finally:
+                events.append(("exit", manifest, key))
+
+        tiles = object()
+
+        def generate(**kwargs):
+            events.append(("generate", kwargs))
+            kwargs["chemin"].touch()
+
+        dependencies = terrain_chunks.DependancesWmtsMorceau(
+            dossier_travail=root / "work",
+            dossier_cache=root / "cache",
+            contexte_manifeste=manifest_context,
+            calculer_grille_xyz=lambda *args: events.append(("grid", args)) or tiles,
+            compter_tuiles_xyz=lambda *args: events.append(("count", args)) or 42,
+            jpeg_quality_sortie=lambda *args: events.append(("quality", args)) or 77,
+            nom_mbtiles_wmts=lambda *args: events.append(("name", args))
+            or f"{args[0]}_layer_z{args[2]}-{args[3]}_q{args[4]}",
+            mbtiles_a_regenerer=lambda *args: events.append(("freshness", args))
+            or True,
+            generer_mbtiles_wmts=generate,
+            convertir_formats=lambda *args, **kwargs: events.append(
+                ("convert", args, kwargs)
+            )
+            or True,
+            resultat_chunk=lambda ok, paths: (ok, tuple(paths)),
+        )
+        return dependencies, events, tiles
+
+    def test_wmts_transaction_normalizes_zooms_and_forwards_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependencies, events, tiles = self._wmts_dependencies(root)
+            args = self._wmts_args()
+            result = terrain_chunks.traiter_bbox_wmts(
+                args,
+                (6.0, 43.0, 6.1, 43.1),
+                "chunk",
+                "zone",
+                "LAYER",
+                "normal",
+                "image/jpeg",
+                "jpg",
+                True,
+                "manifest",
+                "key",
+                dependances=dependencies,
+            )
+            expected = (
+                root
+                / "work/Projets/zone/raster/chunk/chunk_layer_z10-18_q77.mbtiles"
+            )
+            self.assertEqual(result, (True, (expected,)))
+            self.assertEqual(args.zone_nom, "original-name")
+            self.assertIn(("enter", "manifest", "key"), events)
+            self.assertIn(
+                ("grid", (43.0, 6.0, 43.1, 6.1, 10, 18)), events
+            )
+            generation = next(event[1] for event in events if event[0] == "generate")
+            self.assertIs(generation["tuiles_iter"], tiles)
+            self.assertEqual(generation["chemin"], expected)
+            self.assertEqual(generation["total"], 42)
+            self.assertEqual(generation["bbox_wgs84"], (6.0, 43.0, 6.1, 43.1))
+            self.assertEqual(generation["jpeg_quality"], 77)
+            self.assertEqual(generation["dossier_cache"], root / "cache/ign_raster")
+            self.assertTrue((root / "cache/ign_raster").is_dir())
+
+    def test_wmts_transaction_reuses_existing_mbtiles_and_explicit_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependencies, events, _tiles = self._wmts_dependencies(root)
+            output = root / "explicit"
+            expected = output / "chunk/chunk_layer_z10-18_q77.mbtiles"
+            expected.parent.mkdir(parents=True)
+            expected.touch()
+            dependencies = replace(
+                dependencies,
+                mbtiles_a_regenerer=lambda *_args: False,
+                generer_mbtiles_wmts=mock.Mock(
+                    side_effect=AssertionError("must reuse")
+                ),
+            )
+            result = terrain_chunks.traiter_bbox_wmts(
+                self._wmts_args(dossier=str(output)),
+                (6.0, 43.0, 6.1, 43.1),
+                "chunk",
+                "zone",
+                "LAYER",
+                "normal",
+                "image/jpeg",
+                "jpg",
+                False,
+                None,
+                "key",
+                dependances=dependencies,
+            )
+            self.assertEqual(result, (True, (expected,)))
+            conversion = next(event for event in events if event[0] == "convert")
+            self.assertEqual(conversion[1][0], expected)
+            self.assertFalse(conversion[2]["mbtiles_neuf"])
+
+    def test_wmts_transaction_reports_missing_generated_mbtiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependencies, events, _tiles = self._wmts_dependencies(root)
+            dependencies = replace(
+                dependencies,
+                generer_mbtiles_wmts=lambda **_kwargs: None,
+                convertir_formats=mock.Mock(
+                    side_effect=AssertionError("missing file cannot be converted")
+                ),
+            )
+            result = terrain_chunks.traiter_bbox_wmts(
+                self._wmts_args(),
+                (6.0, 43.0, 6.1, 43.1),
+                "chunk",
+                "zone",
+                "LAYER",
+                "normal",
+                "image/jpeg",
+                "jpg",
+                False,
+                None,
+                "key",
+                dependances=dependencies,
+            )
+            self.assertFalse(result[0])
+            self.assertEqual(len(result[1]), 1)
+            self.assertFalse(any(event[0] == "convert" for event in events))
+
+    def test_wmts_transaction_propagates_conversion_status_and_restores_on_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dependencies, _events, _tiles = self._wmts_dependencies(root)
+            failed_conversion = replace(
+                dependencies, convertir_formats=lambda *_args, **_kwargs: False
+            )
+            result = terrain_chunks.traiter_bbox_wmts(
+                self._wmts_args(),
+                (6.0, 43.0, 6.1, 43.1),
+                "chunk",
+                "zone",
+                "LAYER",
+                "normal",
+                "image/jpeg",
+                "jpg",
+                False,
+                None,
+                "key",
+                dependances=failed_conversion,
+            )
+            self.assertFalse(result[0])
+
+            args = self._wmts_args()
+            failure = replace(
+                dependencies,
+                generer_mbtiles_wmts=mock.Mock(
+                    side_effect=RuntimeError("WMTS failed")
+                ),
+            )
+            with self.assertRaisesRegex(RuntimeError, "WMTS failed"):
+                terrain_chunks.traiter_bbox_wmts(
+                    args,
+                    (6.0, 43.0, 6.1, 43.1),
+                    "chunk",
+                    "zone",
+                    "LAYER",
+                    "normal",
+                    "image/jpeg",
+                    "jpg",
+                    False,
+                    None,
+                    "key",
+                    dependances=failure,
+                )
+            self.assertEqual(args.zone_nom, "original-name")
+
+    def test_wmts_facade_keeps_signature_and_reads_dependencies_late(self):
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_wmts_morceau", return_value=dependencies
+        ), mock.patch.object(
+            L, "_traiter_bbox_wmts_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(
+                L._traiter_bbox_wmts(
+                    "args",
+                    (1, 2, 3, 4),
+                    "chunk",
+                    "zone",
+                    "layer",
+                    "style",
+                    "format",
+                    "extension",
+                    True,
+                    "manifest",
+                    "key",
+                ),
+                marker,
+            )
+        self.assertIs(
+            implementation.call_args.kwargs["dependances"], dependencies
+        )
+        self.assertEqual(
+            str(inspect.signature(L._traiter_bbox_wmts)),
+            "(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img_fmt, "
+            "fmt_ext, apikey_requis, manifeste, cle)",
+        )
+
+
+class TerrainTilingContractTests(unittest.TestCase):
+    @staticmethod
+    def _args(**changes):
+        values = dict(
+            zoom_min=10,
+            zoom_max=18,
+            tuiles_ecraser=False,
+            formats_image="jpeg",
+            qualite_image=85,
+        )
+        values.update(changes)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(events, outcomes=()):
+        conversions = iter(outcomes)
+
+        def generate(*args, **kwargs):
+            events.append(("generate", args, kwargs))
+            return Path(f"{args[2]}.generated.mbtiles")
+
+        return terrain_chunks.DependancesTuilageOmbrages(
+            mbtiles_a_regenerer=lambda *args, **kwargs: events.append(
+                ("freshness", args, kwargs)
+            )
+            or True,
+            generer_mbtiles_lidar=generate,
+            tile_workers_defaut=lambda: 4,
+            convertir_formats=lambda *args, **kwargs: events.append(
+                ("convert", args, kwargs)
+            )
+            or next(conversions),
+            imprimer=lambda message: events.append(("print", message)),
+        )
+
+    def test_common_tiling_empty_input_is_success_without_side_effect(self):
+        events = []
+        dependencies = self._dependencies(events)
+        self.assertTrue(
+            terrain_chunks.tuiler_tifs_ombrages(
+                self._args(),
+                [],
+                Path("output"),
+                "zone",
+                (1, 2, 3, 4),
+                dependances=dependencies,
+            )
+        )
+        self.assertEqual(events, [])
+
+    def test_common_tiling_generates_every_family_and_aggregates_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = []
+            dependencies = self._dependencies(events, outcomes=(False, True))
+            tifs = [
+                root / "zone_svf_tuilage_z18.tif",
+                root / "foreign_lrm.tif",
+            ]
+            expected = []
+            result = terrain_chunks.tuiler_tifs_ombrages(
+                self._args(tuiles_ecraser=True),
+                tifs,
+                root,
+                "zone",
+                (1, 2, 3, 4),
+                decoupe_sortie=False,
+                verbose=True,
+                tampon_coin_max_m=300.0,
+                mbtiles_attendus=expected,
+                dependances=dependencies,
+            )
+            self.assertFalse(result)
+            self.assertEqual(
+                expected,
+                [
+                    root / "zone_svf_z10-18.mbtiles",
+                    root / "zone_foreign_lrm_z10-18.mbtiles",
+                ],
+            )
+            generations = [event for event in events if event[0] == "generate"]
+            self.assertEqual(len(generations), 2)
+            first = generations[0]
+            self.assertEqual(first[1], (tifs[0], root, "zone_svf"))
+            self.assertEqual(
+                first[2],
+                {
+                    "zoom_min": 10,
+                    "zoom_max": 18,
+                    "format_tuiles": "jpeg",
+                    "jpeg_quality": 85,
+                    "bbox_natif": (1, 2, 3, 4),
+                    "tampon_coin_max_m": 300.0,
+                    "ecraser_tuiles": True,
+                    "tile_workers": 4,
+                },
+            )
+            conversions = [event for event in events if event[0] == "convert"]
+            self.assertEqual(len(conversions), 2)
+            self.assertTrue(
+                all(not event[2]["decoupe_sortie"] for event in conversions)
+            )
+            self.assertEqual(
+                [event[1] for event in events if event[0] == "print"],
+                ["  zone_svf_tuilage_z18.tif", "  foreign_lrm.tif"],
+            )
+
+    def test_common_tiling_reuses_fresh_mbtiles_without_generator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = []
+            dependencies = replace(
+                self._dependencies(events, outcomes=(True,)),
+                mbtiles_a_regenerer=lambda *args, **kwargs: events.append(
+                    ("freshness", args, kwargs)
+                )
+                or False,
+                generer_mbtiles_lidar=mock.Mock(
+                    side_effect=AssertionError("must reuse")
+                ),
+            )
+            tif = root / "zone_lrm.tif"
+            self.assertTrue(
+                terrain_chunks.tuiler_tifs_ombrages(
+                    self._args(),
+                    [tif],
+                    root,
+                    "zone",
+                    (1, 2, 3, 4),
+                    dependances=dependencies,
+                )
+            )
+            expected = root / "zone_lrm_z10-18.mbtiles"
+            freshness = next(event for event in events if event[0] == "freshness")
+            self.assertEqual(freshness[1][0], expected)
+            self.assertEqual(freshness[2], {"source": tif})
+            conversion = next(event for event in events if event[0] == "convert")
+            self.assertEqual(conversion[1][0], expected)
+            self.assertTrue(conversion[2]["decoupe_sortie"])
+            self.assertFalse(conversion[2]["mbtiles_neuf"])
+            self.assertTrue(
+                any("Existing MBTiles" in event[1] for event in events if event[0] == "print")
+            )
+
+    def test_common_tiling_facade_keeps_signature_and_dependencies_late(self):
+        marker = object()
+        dependencies = object()
+        with mock.patch.object(
+            L, "_dependances_tuilage_ombrages", return_value=dependencies
+        ), mock.patch.object(
+            L, "_tuiler_tifs_ombrages_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(
+                L._tuiler_tifs_ombrages(
+                    "args",
+                    "tifs",
+                    "folder",
+                    "zone",
+                    "bbox",
+                    False,
+                    True,
+                    300,
+                    "expected",
+                ),
+                marker,
+            )
+        self.assertIs(
+            implementation.call_args.kwargs["dependances"], dependencies
+        )
+        self.assertEqual(
+            str(inspect.signature(L._tuiler_tifs_ombrages)),
+            "(args, tifs, dossier_ville, nom_zone, bbox, decoupe_sortie=True, "
+            "verbose=False, tampon_coin_max_m=0, mbtiles_attendus=None)",
+        )
+
+
 class TerrainDownloadContractTests(unittest.TestCase):
     def _args(self, **changes):
         values = dict(
@@ -3520,6 +5240,410 @@ class TerrainDownloadContractTests(unittest.TestCase):
         )
         values.update(changes)
         return SimpleNamespace(**values)
+
+    def test_tile_path_rejects_traversal_and_keeps_legacy_root_priority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = root / "legacy.tif"
+            legacy.write_bytes(b"legacy")
+            provider = SimpleNamespace(
+                subdir_from_name=lambda name: (
+                    "0958" if name != "plain.tif" else ""
+                )
+            )
+            with mock.patch.object(L, "PROVIDER", provider):
+                self.assertEqual(L.chemin_dalle(root, "legacy.tif"), legacy)
+                self.assertEqual(
+                    L.chemin_dalle(root, "new.tif"),
+                    root / "0958" / "new.tif",
+                )
+                self.assertEqual(
+                    L.chemin_dalle(root, "plain.tif"), root / "plain.tif"
+                )
+                for unsafe in (
+                    "../x.tif",
+                    "..\\x.tif",
+                    "/x.tif",
+                    "C:\\x.tif",
+                ):
+                    with self.subTest(unsafe=unsafe), self.assertRaises(
+                        ValueError
+                    ):
+                        L.chemin_dalle(root, unsafe)
+
+    def test_active_tile_folder_routes_override_windowed_laz_and_cache(self):
+        args = SimpleNamespace(dossier_dalles=None)
+        cache = Path("cache-root")
+        production = Path("production-root")
+        project = Path("project-root")
+        with mock.patch.object(L, "DOSSIER_CACHE", cache), mock.patch.object(
+            L, "DOSSIER_PRODUCTION", production
+        ), mock.patch.object(L, "LIDAR_SUBDIR", Path("lidar/provider")):
+            with mock.patch.object(
+                L, "PROVIDER", SimpleNamespace(CODE="p", COG_WINDOWED=True)
+            ):
+                self.assertEqual(
+                    L._dossier_dalles_actif(args, project), project
+                )
+            with mock.patch.object(
+                L, "PROVIDER", SimpleNamespace(CODE="p-laz")
+            ):
+                self.assertEqual(
+                    L._dossier_dalles_actif(args),
+                    production / "lidar/provider",
+                )
+            with mock.patch.object(L, "PROVIDER", SimpleNamespace(CODE="p")):
+                self.assertEqual(
+                    L._dossier_dalles_actif(args), cache / "lidar/provider"
+                )
+                args.dossier_dalles = "."
+                self.assertEqual(
+                    L._dossier_dalles_actif(args), Path(".").resolve()
+                )
+
+    def test_tile_validator_accepts_classic_and_big_tiff_magic(self):
+        reads = []
+
+        class Dataset:
+            width = 10
+            height = 12
+            count = 1
+            res = (0.5, 0.5)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, band, window=None):
+                reads.append((band, window))
+
+        fake_rasterio = SimpleNamespace(
+            open=lambda _path: Dataset(),
+            windows=SimpleNamespace(Window=lambda *args: args),
+        )
+        magics = (
+            b"II\x2a\x00",
+            b"MM\x00\x2a",
+            b"II\x2b\x00",
+            b"MM\x00\x2b",
+        )
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            sys.modules, {"rasterio": fake_rasterio}
+        ):
+            for index, magic in enumerate(magics):
+                path = Path(tmp) / f"valid-{index}.tif"
+                path.write_bytes(magic)
+                with self.subTest(magic=magic):
+                    self.assertTrue(L._valider_tif_dalle(path))
+        self.assertEqual(len(reads), 4)
+
+    def test_tile_validator_rejects_bad_magic_metadata_and_data(self):
+        class Dataset:
+            width = 10
+            height = 10
+            count = 1
+            res = (1.0, 1.0)
+            fail_read = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _band, window=None):
+                if self.fail_read:
+                    raise OSError("truncated data")
+
+        dataset = Dataset()
+        fake_rasterio = SimpleNamespace(
+            open=lambda _path: dataset,
+            windows=SimpleNamespace(Window=lambda *args: args),
+        )
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            sys.modules, {"rasterio": fake_rasterio}
+        ):
+            path = Path(tmp) / "tile.tif"
+            path.write_bytes(b"not-a-tiff")
+            self.assertFalse(L._valider_tif_dalle(path))
+            path.write_bytes(b"II\x2a\x00")
+            for attribute, value in (
+                ("width", 0),
+                ("height", 0),
+                ("count", 0),
+                ("res", (0.0, 1.0)),
+                ("res", (1e9, 1.0)),
+                ("fail_read", True),
+            ):
+                previous = getattr(dataset, attribute)
+                setattr(dataset, attribute, value)
+                with self.subTest(attribute=attribute, value=value):
+                    self.assertFalse(L._valider_tif_dalle(path))
+                setattr(dataset, attribute, previous)
+
+    def test_tile_support_facades_keep_signatures_and_late_dependencies(self):
+        marker = object()
+        provider = SimpleNamespace()
+        cache = Path("late-cache")
+        production = Path("late-production")
+        subdir = Path("late-lidar")
+        args = SimpleNamespace(dossier_dalles=None)
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "DOSSIER_CACHE", cache
+        ), mock.patch.object(
+            L, "DOSSIER_PRODUCTION", production
+        ), mock.patch.object(L, "LIDAR_SUBDIR", subdir), mock.patch.object(
+            L, "_nom_dalle_sur_impl", return_value=marker
+        ) as safe_impl, mock.patch.object(
+            L, "_chemin_dalle_impl", return_value=marker
+        ) as path_impl, mock.patch.object(
+            L, "_dossier_dalles_actif_impl", return_value=marker
+        ) as folder_impl, mock.patch.object(
+            L, "_valider_tif_dalle_impl", return_value=marker
+        ) as validator_impl:
+            self.assertIs(L._nom_dalle_sur("tile.tif"), marker)
+            self.assertIs(L.chemin_dalle(Path("root"), "tile.tif"), marker)
+            self.assertIs(L._dossier_dalles_actif(args, Path("project")), marker)
+            self.assertIs(L._valider_tif_dalle("tile.tif"), marker)
+
+        safe_impl.assert_called_once_with("tile.tif")
+        self.assertIs(path_impl.call_args.kwargs["provider"], provider)
+        self.assertIs(path_impl.call_args.kwargs["nom_dalle_sur"], L._nom_dalle_sur)
+        self.assertIs(folder_impl.call_args.kwargs["provider"], provider)
+        self.assertEqual(folder_impl.call_args.kwargs["dossier_cache"], cache)
+        self.assertEqual(
+            folder_impl.call_args.kwargs["dossier_production"], production
+        )
+        self.assertEqual(folder_impl.call_args.kwargs["lidar_subdir"], subdir)
+        validator_impl.assert_called_once_with("tile.tif")
+        self.assertEqual(str(inspect.signature(L._nom_dalle_sur)), "(nom)")
+        self.assertEqual(
+            str(inspect.signature(L.chemin_dalle)), "(dossier_dalles, nom)"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._dossier_dalles_actif)),
+            "(args, dossier_ville=None)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._valider_tif_dalle)), "(chemin)"
+        )
+
+    def test_robust_tif_listing_keeps_root_and_one_level_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            direct = root / "direct.TIF"
+            direct.write_bytes(b"x")
+            child = root / "child"
+            child.mkdir()
+            nested = child / "nested.tif"
+            nested.write_bytes(b"x")
+            deep = child / "deep"
+            deep.mkdir()
+            (deep / "ignored.tif").write_bytes(b"x")
+            self.assertEqual(
+                set(L._rglob_tif_robuste(root)), {direct, nested}
+            )
+
+        messages = []
+
+        class Inaccessible:
+            def __fspath__(self):
+                raise OSError("offline disk")
+
+        self.assertEqual(
+            terrain_download.rglob_tif_robuste(
+                Inaccessible(), imprimer=messages.append
+            ),
+            [],
+        )
+        self.assertIn("tiles folder inaccessible", messages[0])
+
+    def test_cloud_cache_policy_routes_shared_and_windowed_clouds(self):
+        cache = Path("cache")
+        subdir = Path("lidar/provider")
+        values = []
+        provider = SimpleNamespace(
+            COG_WINDOWED=False,
+            COPC_WINDOWED=False,
+            set_cloud_cache_dir=values.append,
+        )
+        args = SimpleNamespace(dossier_dalles=None)
+        terrain_download.configurer_cloud_cache(
+            args,
+            provider=provider,
+            dossier_cache=cache,
+            lidar_subdir=subdir,
+        )
+        self.assertEqual(values, [cache / subdir])
+        self.assertEqual(args._cloud_cache_dir, cache / subdir)
+
+        for change in (
+            {"COG_WINDOWED": True},
+            {"COPC_WINDOWED": True},
+        ):
+            with self.subTest(change=change):
+                values.clear()
+                setattr(provider, next(iter(change)), True)
+                terrain_download.configurer_cloud_cache(
+                    args,
+                    provider=provider,
+                    dossier_cache=cache,
+                    lidar_subdir=subdir,
+                )
+                self.assertEqual(values, [None])
+                self.assertIsNone(args._cloud_cache_dir)
+                setattr(provider, next(iter(change)), False)
+
+        args.dossier_dalles = "explicit"
+        values.clear()
+        terrain_download.configurer_cloud_cache(
+            args,
+            provider=provider,
+            dossier_cache=cache,
+            lidar_subdir=subdir,
+        )
+        self.assertEqual(values, [None])
+
+    def test_laz_profile_uses_injected_state_and_reports_pipeline_bound(self):
+        profile = {
+            "dl_n": 0,
+            "dl_s": 0.0,
+            "conv_n": 0,
+            "conv_s": 0.0,
+            "conv_max": 0.0,
+        }
+        lock = threading.Lock()
+        terrain_download.laz_prof_add(
+            12.0, 8.0, enabled=True, lock=lock, profile=profile
+        )
+        terrain_download.laz_prof_add(
+            conv_s=10.0, enabled=True, lock=lock, profile=profile
+        )
+        self.assertEqual(
+            profile,
+            {
+                "dl_n": 1,
+                "dl_s": 12.0,
+                "conv_n": 2,
+                "conv_s": 18.0,
+                "conv_max": 10.0,
+            },
+        )
+        messages = []
+        terrain_download.laz_prof_resume(
+            20.0,
+            3,
+            2,
+            enabled=True,
+            lock=lock,
+            profile=profile,
+            imprimer=messages.append,
+        )
+        self.assertEqual(len(messages), 2)
+        self.assertIn("download 1 dalles", messages[0])
+        self.assertIn("borne découplé ~9s", messages[1])
+        self.assertIn("gain potentiel x2.2", messages[1])
+
+    def test_prefetch_is_depth_one_and_consumes_only_matching_result(self):
+        events = []
+
+        class ImmediateThread:
+            def __init__(self, *, target, daemon):
+                events.append(("thread", daemon))
+                self.target = target
+
+            def start(self):
+                events.append("start")
+                self.target()
+
+            def join(self):
+                events.append("join")
+
+        def discover(*args, **kwargs):
+            events.append(("discover", args[1], args[2], args[5], kwargs))
+            return "prefetched"
+
+        prefetch = terrain_prefetch.PrefetchDalles(
+            terrain_prefetch.DependancesPrefetchDalles(
+                espace_libre_go=lambda _path: 100.0,
+                decouvrir_et_telecharger_ombrage=discover,
+                thread_factory=ImmediateThread,
+            )
+        )
+        args = SimpleNamespace(min_free_gb=2.0)
+        prefetch.lancer(
+            args, "manifest", Path("root"), "zone", (0, 0, 1, 2, 3, 4), "001"
+        )
+        prefetch.lancer(
+            args, "manifest", Path("root"), "zone", (0, 0, 5, 6, 7, 8), "002"
+        )
+        self.assertIsNone(prefetch.recuperer("other"))
+        self.assertEqual(prefetch.recuperer("001"), "prefetched")
+        self.assertEqual(
+            [event for event in events if isinstance(event, tuple) and event[0] == "discover"],
+            [("discover", (1, 2, 3, 4), "zone_001", "001", {"quiet": True})],
+        )
+        self.assertIsNone(prefetch.recuperer("001"))
+
+    def test_prefetch_low_disk_and_failure_degrade_to_synchronous_path(self):
+        calls = []
+        messages = []
+
+        class ImmediateThread:
+            def __init__(self, *, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+            def join(self):
+                calls.append("join")
+
+        def failure(*_args, **_kwargs):
+            calls.append("discover")
+            raise OSError("network down")
+
+        dependencies = terrain_prefetch.DependancesPrefetchDalles(
+            espace_libre_go=lambda _path: 3.0,
+            decouvrir_et_telecharger_ombrage=failure,
+            thread_factory=ImmediateThread,
+            imprimer=messages.append,
+        )
+        prefetch = terrain_prefetch.PrefetchDalles(dependencies)
+        args = SimpleNamespace(min_free_gb=2.0)
+        prefetch.lancer(args, None, Path("root"), "zone", (0, 0, 1, 2, 3, 4), "low")
+        self.assertEqual(calls, [])
+        args.min_free_gb = 0.0
+        prefetch.lancer(args, None, Path("root"), "zone", (0, 0, 1, 2, 3, 4), "err")
+        self.assertIsNone(prefetch.recuperer("err"))
+        self.assertEqual(calls, ["discover", "join"])
+        self.assertIn("Prefetch err: OSError: network down", messages[0])
+
+    def test_cache_and_prefetch_facades_keep_signatures_and_late_seams(self):
+        marker = object()
+        provider = SimpleNamespace()
+        with mock.patch.object(L, "_rglob_tif_robuste_impl", return_value=marker) as listing, mock.patch.object(
+            L, "_configurer_cloud_cache_impl", return_value=marker
+        ) as cache_impl, mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "DOSSIER_CACHE", Path("late-cache")
+        ), mock.patch.object(L, "LIDAR_SUBDIR", Path("late-subdir")):
+            self.assertIs(L._rglob_tif_robuste(Path("root")), marker)
+            self.assertIs(
+                L._configurer_cloud_cache(SimpleNamespace(dossier_dalles=None)),
+                marker,
+            )
+        listing.assert_called_once()
+        self.assertIs(cache_impl.call_args.kwargs["provider"], provider)
+        self.assertEqual(str(inspect.signature(L._rglob_tif_robuste)), "(dossier)")
+        self.assertEqual(str(inspect.signature(L._configurer_cloud_cache)), "(args)")
+        self.assertEqual(str(inspect.signature(L._laz_prof_add)), "(dl_s=None, conv_s=None)")
+        self.assertEqual(
+            str(inspect.signature(L._laz_prof_resume)),
+            "(wall_s, n_dl_workers, laz_parallel)",
+        )
+        self.assertEqual(str(inspect.signature(L._PrefetchDalles)), "()")
 
     def _dependencies(self, provider, events, *, result="ok"):
         def path_for(root, name):
@@ -3872,6 +5996,184 @@ class TerrainDownloadContractTests(unittest.TestCase):
         self.assertEqual(str(inspect.signature(L._dalles_zone_entete)), "(bbox)")
         self.assertEqual(
             str(inspect.signature(L._dalles_zone_hdr_ok)), "(lignes, bbox)"
+        )
+
+    def test_direct_download_facade_rebuilds_all_runtime_dependencies(self):
+        marker = object()
+        provider = SimpleNamespace()
+        path_resolver = mock.Mock()
+        stage = mock.Mock()
+        downloader = mock.Mock()
+        validator = mock.Mock()
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "chemin_dalle", path_resolver
+        ), mock.patch.object(L, "_stage_dalle_part", stage), mock.patch.object(
+            L, "_download_to_tmp", downloader
+        ), mock.patch.object(L, "_valider_tif_dalle", validator), mock.patch.object(
+            L, "_telecharger_dalle_directe_impl", return_value=marker
+        ) as implementation:
+            result = L.telecharger_dalle_directe(
+                "tile.tif",
+                "https://example.invalid/tile",
+                Path("tiles"),
+                ecraser=True,
+                compresser=True,
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.provider, provider)
+        self.assertIs(dependencies.chemin_dalle, path_resolver)
+        self.assertIs(dependencies.stage_dalle_part, stage)
+        self.assertIs(dependencies.download_to_tmp, downloader)
+        self.assertIs(dependencies.valider_tif_dalle, validator)
+        self.assertIs(
+            dependencies.lier_nuage_existant_au_stage,
+            L._lier_nuage_existant_au_stage,
+        )
+        self.assertIs(
+            dependencies.comprimer_dalle_deflate, L._comprimer_dalle_deflate
+        )
+        self.assertIs(dependencies.publier_nuage_stage, L._publier_nuage_stage)
+        self.assertEqual(
+            str(inspect.signature(L.telecharger_dalle_directe)),
+            "(nom, url_wms, dossier, ecraser=False, compresser=False)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._stage_dalle_part)), "(chemin_final)"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._chemins_nuage_stage)),
+            "(chemin_final, chemin_part)",
+        )
+
+    def test_copc_facades_rebuild_all_runtime_dependencies(self):
+        from providers import common
+
+        marker = object()
+        provider = SimpleNamespace()
+        path_resolver = mock.Mock()
+        transform = mock.Mock()
+        copc_reader = mock.Mock()
+        stage = mock.Mock()
+        validator = mock.Mock()
+        publish_cloud = mock.Mock()
+        register = mock.Mock()
+        lock = object()
+        post_fetch = mock.Mock()
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "chemin_dalle", path_resolver
+        ), mock.patch.object(
+            L, "_bbox_enveloppe_transform", transform
+        ), mock.patch.object(
+            common, "copc_window_to_las", copc_reader
+        ), mock.patch.object(L, "_stage_dalle_part", stage), mock.patch.object(
+            L, "_valider_tif_dalle", validator
+        ), mock.patch.object(
+            L, "_publier_nuage_stage", publish_cloud
+        ), mock.patch.object(L, "_creer_fichier", register), mock.patch.object(
+            L, "_telecharger_copc_fenetre_impl", return_value=marker
+        ) as implementation:
+            result = L.telecharger_copc_fenetre(
+                "tile.tif",
+                "https://example.invalid/copc",
+                Path("tiles"),
+                (1, 2, 3, 4),
+                ecraser=True,
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.provider, provider)
+        self.assertIs(dependencies.chemin_dalle, path_resolver)
+        self.assertIs(dependencies.bbox_enveloppe_transform, transform)
+        self.assertIs(dependencies.copc_window_to_las, copc_reader)
+        self.assertIs(dependencies.stage_dalle_part, stage)
+        self.assertIs(dependencies.valider_tif_dalle, validator)
+        self.assertIs(dependencies.publier_nuage_stage, publish_cloud)
+        self.assertIs(dependencies.creer_fichier, register)
+        self.assertIs(dependencies.copc_post_fetch_crs, L._copc_post_fetch_crs)
+
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "_copc_crs_lock", lock
+        ), mock.patch.object(
+            L, "_post_fetch_si_besoin", post_fetch
+        ), mock.patch.object(
+            L, "_copc_post_fetch_crs_impl", return_value=marker
+        ) as post_fetch_impl:
+            self.assertIs(L._copc_post_fetch_crs(26917, "stage.tif"), marker)
+        self.assertIs(post_fetch_impl.call_args.kwargs["provider"], provider)
+        self.assertIs(post_fetch_impl.call_args.kwargs["lock"], lock)
+        self.assertIs(
+            post_fetch_impl.call_args.kwargs["post_fetch_si_besoin"], post_fetch
+        )
+        self.assertEqual(
+            str(inspect.signature(L.telecharger_copc_fenetre)),
+            "(nom, url, dossier_dalles, bbox, ecraser=False)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._copc_post_fetch_crs)),
+            "(epsg, chemin_part)",
+        )
+
+    def test_cog_facades_rebuild_all_runtime_dependencies(self):
+        marker = object()
+        provider = SimpleNamespace()
+        path_resolver = mock.Mock()
+        stage = mock.Mock()
+        cache = mock.Mock()
+        transformer = mock.Mock()
+        bbox_transform = mock.Mock()
+        validator = mock.Mock()
+        register = mock.Mock()
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "chemin_dalle", path_resolver
+        ), mock.patch.object(L, "_stage_dalle_part", stage), mock.patch.object(
+            L, "_cog_cache_couvre", cache
+        ), mock.patch.object(L, "_get_transformer", transformer), mock.patch.object(
+            L, "_valider_tif_dalle", validator
+        ), mock.patch.object(L, "_creer_fichier", register), mock.patch.object(
+            L, "_telecharger_cog_fenetre_impl", return_value=marker
+        ) as implementation:
+            result = L.telecharger_cog_fenetre(
+                "tile.tif",
+                "https://example.invalid/cog.tif",
+                Path("tiles"),
+                (1, 2, 3, 4),
+                ecraser=True,
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.provider, provider)
+        self.assertIs(dependencies.chemin_dalle, path_resolver)
+        self.assertIs(dependencies.stage_dalle_part, stage)
+        self.assertIs(dependencies.cog_cache_couvre, cache)
+        self.assertIs(dependencies.get_transformer, transformer)
+        self.assertIs(dependencies.valider_tif_dalle, validator)
+        self.assertIs(dependencies.creer_fichier, register)
+        self.assertEqual(dependencies.max_cog_window_px, L._MAX_COG_WINDOW_PX)
+
+        with mock.patch.object(L, "PROVIDER", provider), mock.patch.object(
+            L, "_get_transformer", transformer
+        ), mock.patch.object(
+            L, "_bbox_enveloppe_transform", bbox_transform
+        ), mock.patch.object(
+            L, "_cog_cache_couvre_impl", return_value=marker
+        ) as cache_impl:
+            self.assertIs(L._cog_cache_couvre("tile.tif", (1, 2, 3, 4)), marker)
+        self.assertIs(cache_impl.call_args.kwargs["provider"], provider)
+        self.assertIs(
+            cache_impl.call_args.kwargs["get_transformer"], transformer
+        )
+        self.assertIs(
+            cache_impl.call_args.kwargs["bbox_enveloppe_transform"],
+            bbox_transform,
+        )
+        self.assertEqual(
+            str(inspect.signature(L.telecharger_cog_fenetre)),
+            "(nom, url, dossier_dalles, bbox, ecraser=False)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._cog_cache_couvre)),
+            "(chemin, bbox_natif)",
         )
 
     def test_historical_facade_rebuilds_current_dependencies(self):

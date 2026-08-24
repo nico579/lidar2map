@@ -1244,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.45.0"
+VERSION      = "1.46.0"
 VERSION_DATE = "2026-08"
 
 
@@ -1283,7 +1283,6 @@ WINDOWS, LINUX, MACOS = _runtime_paths_impl.indicateurs_plateforme(
 # silencieux en dehors d'un contexte actif.
 
 import threading as _threading
-from contextlib import contextmanager as _contextmanager
 
 from _split_manifest import (
     Manifeste,
@@ -1410,80 +1409,26 @@ def _garde_disque(chemin, seuil_go: float, cle: str, nb_ok: int, n_total: int):
 _garde_disque.__doc__ = _disk_guard_impl.garder_disque.__doc__
 
 
-class _PrefetchDalles:
-    """Précharge en tâche de fond la découverte+download des dalles du
-    morceau SUIVANT pendant que l'ombrage (LRM/SVF/opos) du morceau courant
-    tourne (_run_split_priori_lidar_glissant) — recouvre le download (réseau,
-    throttle IGN) avec le calcul (CPU), qui peut être du même ordre de
-    grandeur que le download sur un shading lourd (SVF sweep, opos).
+from _terrain_prefetch import (
+    DependancesPrefetchDalles as _DependancesPrefetchDalles,
+    PrefetchDalles as _PrefetchDallesImpl,
+)
 
-    Profondeur 1 strictement : jamais plus d'un morceau d'avance (lancer()
-    est un no-op si un préchargement est déjà en vol). Best-effort : toute
-    erreur réseau/disque dans le thread de fond est avalée avec un message,
-    le morceau se retéléchargera normalement à son tour (recuperer() renvoie
-    None, chemin identique à si aucun préchargement n'avait été tenté).
 
-    N'appelle jamais debut_morceau : le préchargement est invisible à la
-    machine à états de reprise (Manifeste), seul le thread principal marque
-    un morceau comme démarré/fini. Un crash pendant un préchargement laisse
-    juste des dalles orphelines en cache, retrouvées comme cache-hit par le
-    téléchargement normal au tour de ce morceau (aucune perte, aucune
-    incohérence de reprise)."""
+class _PrefetchDalles(_PrefetchDallesImpl):
+    """Façade historique reconstruisant les coutures au démarrage du prefetch."""
 
     def __init__(self):
-        self._thread = None
-        self._cle = None
-        self._resultat = None
-
-    def lancer(self, args, manifeste, racine_pr, nom_zone, sz, cle):
-        if self._thread is not None:
-            return  # profondeur 1 : un préchargement déjà en vol
-        seuil = getattr(args, "min_free_gb", 0.0) or 0.0
-        if seuil > 0 and _espace_libre_go(racine_pr) < 2 * seuil:
-            # Marge insuffisante pour tenir DEUX morceaux à la fois sur le
-            # disque (le courant, pas encore nettoyé, + celui-ci en approche).
-            # Dégradation silencieuse vers le comportement synchrone existant.
-            return
-        nom_z = f"{nom_zone}_{cle}"
-        bbox = tuple(sz[2:])
-
-        def _travail():
-            try:
-                # nom_zone sert de nom_zone_base : même convention que
-                # l'appel synchrone (_etape_ombrage -> _traiter_bbox_lidar_ombrage).
-                self._resultat = _decouvrir_et_telecharger_ombrage(
-                    args, bbox, nom_z, nom_zone, manifeste, cle, quiet=True)
-            except Exception as e:
-                print(f"  ⚠ Prefetch {cle}: {type(e).__name__}: {e} "
-                      f"(ignoré, retéléchargement normal à son tour)")
-                self._resultat = None
-
-        self._cle = cle
-        self._resultat = None
-        self._thread = _threading.Thread(target=_travail, daemon=True)
-        self._thread.start()
-
-    def recuperer(self, cle):
-        """Rejoint le préchargement en vol s'il correspond à cle et renvoie
-        son résultat, sinon None (pas de préchargement en cours pour ce
-        morceau, ou il a échoué) — le chemin synchrone normal prend le relais."""
-        if self._thread is None or self._cle != cle:
-            return None
-        self._thread.join()
-        resultat = self._resultat
-        self._thread = None
-        self._cle = None
-        self._resultat = None
-        return resultat
-
-    def purger(self):
-        """Rejoint un éventuel préchargement résiduel (fin de run) : évite un
-        thread de fond qui traînerait après le retour de la boucle glissante."""
-        if self._thread is not None:
-            self._thread.join()
-            self._thread = None
-            self._cle = None
-            self._resultat = None
+        super().__init__(
+            _DependancesPrefetchDalles(
+                espace_libre_go=_espace_libre_go,
+                decouvrir_et_telecharger_ombrage=(
+                    _decouvrir_et_telecharger_ombrage
+                ),
+                thread_factory=_threading.Thread,
+                imprimer=print,
+            )
+        )
 
 # ============================================================
 # CONFIGURATION
@@ -2470,86 +2415,60 @@ def calculer_grille(cx, cy, rayon_km):
 
 def _rglob_tif_robuste(dossier):
     """rglob("*.tif") avec gestion des erreurs d'accès disque (WinError 121)."""
-    resultats = []
-    try:
-        for sous_dossier in sorted(dossier.iterdir()):
-            try:
-                if sous_dossier.is_dir():
-                    for f in sous_dossier.glob("*.tif"):
-                        resultats.append(f)
-                elif sous_dossier.suffix.lower() == ".tif":
-                    resultats.append(sous_dossier)
-            except OSError as _e:
-                print(f"  WARNING: inaccessible directory {sous_dossier.name} ({_e}) - skipped")
-    except OSError as _e:
-        print(f"  WARNING: tiles folder inaccessible ({_e})")
-    return resultats
+    return _rglob_tif_robuste_impl(dossier, imprimer=print)
+
+
+from _terrain_download import (
+    COPC_CRS_LOCK as _COPC_CRS_LOCK,
+    DependancesTelechargementCog as _DependancesTelechargementCog,
+    DependancesTelechargementCopc as _DependancesTelechargementCopc,
+    DependancesTelechargementDirect as _DependancesTelechargementDirect,
+    chemin_dalle as _chemin_dalle_impl,
+    chemins_nuage_stage as _chemins_nuage_stage_impl,
+    cog_cache_couvre as _cog_cache_couvre_impl,
+    comprimer_dalle_deflate as _comprimer_dalle_deflate_impl,
+    configurer_cloud_cache as _configurer_cloud_cache_impl,
+    copc_post_fetch_crs as _copc_post_fetch_crs_impl,
+    dossier_dalles_actif as _dossier_dalles_actif_impl,
+    laz_prof_add as _laz_prof_add_impl,
+    laz_prof_resume as _laz_prof_resume_impl,
+    lier_nuage_existant_au_stage as _lier_nuage_existant_au_stage_impl,
+    nom_dalle_sur as _nom_dalle_sur_impl,
+    publier_nuage_stage as _publier_nuage_stage_impl,
+    rglob_tif_robuste as _rglob_tif_robuste_impl,
+    stage_dalle_part as _stage_dalle_part_impl,
+    telecharger_cog_fenetre as _telecharger_cog_fenetre_impl,
+    telecharger_copc_fenetre as _telecharger_copc_fenetre_impl,
+    telecharger_dalle_directe as _telecharger_dalle_directe_impl,
+    valider_tif_dalle as _valider_tif_dalle_impl,
+)
 
 
 def _nom_dalle_sur(nom):
-    """True si `nom` est un BASENAME sûr (pas de traversée de chemin).
-
-    Les noms de dalles proviennent d'un index DISTANT du fournisseur (WFS/JSON/
-    ATOM). Un nom piégé (`../…`, séparateur, chemin absolu ou lettre de lecteur)
-    servirait à écrire HORS du cache via `dossier / nom` (traversée, R2#3). On
-    exige un composant de chemin unique, non `.`/`..`, sans NUL."""
-    if not nom or nom in (".", ".."):
-        return False
-    s = str(nom)
-    if "\x00" in s or "/" in s or "\\" in s:
-        return False
-    if os.path.isabs(s) or os.path.splitdrive(s)[0]:
-        return False
-    return os.path.basename(s) == s
+    """Façade historique du contrôle de basename distant."""
+    return _nom_dalle_sur_impl(nom)
 
 
 def chemin_dalle(dossier_dalles, nom):
-    """
-    Retourne le Path complet d'une dalle dans la structure sous-dossiers.
-    Les dalles sont organisées par colonne X : dossier_dalles/XXXX/nom.tif
-    ex: D:/Lidar/Dalles/0958/LHD_FXX_0958_6279_MNT_O_0M50_LAMB93_IGN69.tif
-
-    Fallback transparent : si la dalle existe à la racine (ancienne structure),
-    retourne le chemin racine. Sinon retourne le chemin sous-dossier.
-    """
-    # Invariant de sécurité : jamais construire un chemin à partir d'un nom qui
-    # échapperait le dossier (traversée, R2#3). Lève plutôt que de retourner un
-    # chemin hors cache ; les boucles de consommation pré-filtrent pour dégrader
-    # proprement (cf. _telecharger_dalles_zone / _lister_dalles_zone).
-    if not _nom_dalle_sur(nom):
-        raise ValueError(f"unsafe tile name (path traversal): {nom!r}")
-    # Chemin racine (ancienne structure)
-    chemin_racine = dossier_dalles / nom
-    if chemin_racine.exists():
-        return chemin_racine
-    # Délégation au provider pour extraire le sous-dossier depuis le nom
-    sub = PROVIDER.subdir_from_name(nom)
-    if sub:
-        return dossier_dalles / sub / nom
-    return chemin_racine  # fallback si nom non reconnu
+    """Façade historique de résolution d'une dalle sûre."""
+    return _chemin_dalle_impl(
+        dossier_dalles,
+        nom,
+        provider=PROVIDER,
+        nom_dalle_sur=_nom_dalle_sur,
+    )
 
 
 def _dossier_dalles_actif(args, dossier_ville=None):
-    """Racine des dalles LiDAR, selon la NATURE du .tif :
-      - MNT : le .tif vient du serveur (WMS) = DOWNLOAD → cache ;
-      - LAZ : le .tif est CALCULÉ du nuage avec tes réglages = PRODUIT →
-        production (partagé entre projets, hors du cache). Le nuage .laz, lui,
-        RESTE au cache (posé par _configurer_cloud_cache → set_cloud_cache_dir).
-      - FENÊTRÉ (COPC/COG) : le .tif est une FENÊTRE propre à la zone mais nommée
-        par l'ASSET distant. Cache/production PARTAGÉS le feraient réutiliser
-        entre zones DIFFÉRENTES du même asset → relief d'une autre zone servi en
-        silence (#1, revue 2026-07-22). On le range DANS LE PROJET (dossier_ville)
-        → isolation par zone ; le skip par nom redevient correct (même zone =
-        même dossier). Prioritaire sur cache/production.
-    --dossier-dalles force la racine (prioritaire, tous modes)."""
-    if args.dossier_dalles:
-        return Path(args.dossier_dalles).resolve()
-    if dossier_ville is not None and (getattr(PROVIDER, "COG_WINDOWED", False)
-                                      or getattr(PROVIDER, "COPC_WINDOWED", False)):
-        return Path(dossier_ville)
-    if PROVIDER.CODE.endswith("-laz"):
-        return DOSSIER_PRODUCTION / LIDAR_SUBDIR
-    return DOSSIER_CACHE / LIDAR_SUBDIR
+    """Façade historique de sélection projet/production/cache."""
+    return _dossier_dalles_actif_impl(
+        args,
+        dossier_ville,
+        provider=PROVIDER,
+        dossier_production=DOSSIER_PRODUCTION,
+        dossier_cache=DOSSIER_CACHE,
+        lidar_subdir=LIDAR_SUBDIR,
+    )
 
 
 def _configurer_cloud_cache(args):
@@ -2561,18 +2480,12 @@ def _configurer_cloud_cache(args):
     est une fenêtre propre à la zone → il suit le .tif EN PROJET (co-localisé),
     pas le cache partagé (même collision cross-zone que le .tif sinon, #1).
     No-op pour un provider sans mode LAZ."""
-    _set = getattr(PROVIDER, "set_cloud_cache_dir", None)
-    if _set:
-        _windowed = (getattr(PROVIDER, "COG_WINDOWED", False)
-                     or getattr(PROVIDER, "COPC_WINDOWED", False))
-        _val = (None if (args.dossier_dalles or _windowed)
-                else DOSSIER_CACHE / LIDAR_SUBDIR)
-        _set(_val)
-        # Racine du cache .laz mémorisée pour --cleanup-keep-tiles : le cœur ne
-        # peut pas la relire sur PROVIDER (c'est le MODULE provider, qui ne
-        # ré-exporte pas l'attribut MUTABLE cloud_cache_dir de son _P ; un
-        # ré-export figerait la valeur à None, posée après par le setter).
-        args._cloud_cache_dir = _val
+    return _configurer_cloud_cache_impl(
+        args,
+        provider=PROVIDER,
+        dossier_cache=DOSSIER_CACHE,
+        lidar_subdir=LIDAR_SUBDIR,
+    )
 
 
 def _download_to_tmp(url, chemin_tmp, timeout=60):
@@ -2600,186 +2513,39 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
 
 
 def _valider_tif_dalle(chemin):
-    """
-    Vérifie qu'un fichier TIF téléchargé est un GeoTIFF valide et lisible.
-
-    Deux niveaux de vérification :
-      1. Magic bytes (rapide, sans dépendance) : les 4 premiers octets d'un
-         TIFF sont toujours 49 49 2A 00 (little-endian) ou 4D 4D 00 2A
-         (big-endian). Un fichier tronqué au milieu du transfert n'aura pas
-         ces octets, ou aura un IFD invalide.
-      2. Ouverture rasterio (si disponible) : tente de lire les métadonnées
-         (width, height, CRS) pour détecter les TIF dont le header est intact
-         mais dont les données sont corrompues ou tronquées.
-
-    Retourne True si le fichier est valide, False sinon.
-    Ne lève jamais d'exception.
-    """
-    try:
-        with open(chemin, "rb") as fh:
-            magic = fh.read(4)
-        # TIFF magic = II/MM (byte order) + 42 ou 43 (BigTIFF, supporté par
-        # rasterio/GDAL). BigTIFF est utilisé par certains COG (ex: AHN PDOK)
-        # même pour des fichiers < 4 Go. Refuser BigTIFF = faux négatif.
-        # - TIFF classique LE : II + 2A 00  (42)
-        # - TIFF classique BE : MM + 00 2A  (42)
-        # - BigTIFF LE        : II + 2B 00  (43)
-        # - BigTIFF BE        : MM + 00 2B  (43)
-        if magic[:2] not in (b"II", b"MM"):
-            return False
-        if magic[2:4] not in (b"\x2a\x00", b"\x00\x2a", b"\x2b\x00", b"\x00\x2b"):
-            return False
-    except OSError:
-        return False
-
-    # Vérification approfondie via rasterio si disponible
-    try:
-        import rasterio as _rio_v
-    except ImportError:
-        return True   # rasterio absent : on se fie au magic seul
-    try:
-        with _rio_v.open(str(chemin)) as ds:
-            if ds.width == 0 or ds.height == 0:
-                return False
-            # Bande d'élévation présente + géotransform non dégénérée (audit
-            # providers #2 : l'ancien contrôle ne vérifiait ni le nombre de
-            # bandes ni la résolution). Volontairement PAS de contrôle CRS ici :
-            # ce validateur tourne AUSSI avant post_download (cf. at-bev, COG
-            # LOCAL_CS réétiqueté ENSUITE) ; exiger un CRS rejetterait ces dalles
-            # à tort. L'exigence CRS/résolution est portée par le smoke test,
-            # par provider.
-            if ds.count < 1:
-                return False
-            rx, ry = ds.res
-            if not (0 < rx < 1e9) or not (0 < ry < 1e9):
-                return False
-            # Lire 1 bloc pour détecter une troncature des données
-            ds.read(1, window=_rio_v.windows.Window(
-                0, 0, min(64, ds.width), min(64, ds.height)))
-    except Exception:
-        # Header intact mais métadonnées/données illisibles (troncature
-        # deflate, IFD cassé) : c'est PRÉCISÉMENT le cas que ce niveau 2
-        # doit attraper. L'ancien `pass` validait ces fichiers.
-        return False
-
-    return True
+    """Façade historique de validation approfondie d'une dalle TIFF."""
+    return _valider_tif_dalle_impl(chemin)
 
 
-@_contextmanager
 def _stage_dalle_part(chemin_final):
-    """Crée un espace de staging voisin dont le nom finit par ``.part``.
-
-    Le fichier qu'il contient conserve le basename/extension de la cible. C'est
-    indispensable aux hooks provider qui reconnaissent les dalles par une regexp
-    ``*.tif$`` ou construisent leurs temporaires avec ``with_suffix()``. Tous ces
-    artefacts restent néanmoins confinés dans un dossier ``*.part`` ignoré par la
-    synchronisation, et la cible finale n'est remplacée qu'après validation.
-    """
-    chemin_final = Path(chemin_final)
-    dossier_part = _chemin_part(chemin_final)
-    dossier_part.mkdir(parents=False, exist_ok=False)
-    chemin_part = dossier_part / chemin_final.name
-    try:
-        yield chemin_part
-    finally:
-        shutil.rmtree(dossier_part, ignore_errors=True)
+    """Crée un staging voisin conservant le nom logique de la dalle."""
+    return _stage_dalle_part_impl(chemin_final, chemin_part=_chemin_part)
 
 
 def _chemins_nuage_stage(chemin_final, chemin_part):
-    """Retourne ``(nuage_final, nuage_stage)`` pour un provider LAZ, sinon
-    ``(None, None)``.
-
-    Quand ``cloud_cache_dir`` est désactivé (dossier forcé ou COPC fenêtré), le
-    provider co-localise volontairement le nuage avec le TIF. Le dossier de
-    staging changerait alors son emplacement sans cette correspondance.
-    """
-    _cloud_path = getattr(PROVIDER, "cloud_path", None)
-    if not callable(_cloud_path):
-        return None, None
-    try:
-        _final = _cloud_path(Path(chemin_final))
-        _stage = _cloud_path(Path(chemin_part))
-        return ((Path(_final) if _final is not None else None),
-                (Path(_stage) if _stage is not None else None))
-    except Exception:
-        return None, None
+    """Résout les chemins du nuage co-localisé pour le provider actif."""
+    return _chemins_nuage_stage_impl(
+        chemin_final, chemin_part, provider=PROVIDER
+    )
 
 
 def _lier_nuage_existant_au_stage(chemin_final, chemin_part):
-    """Rend un nuage co-localisé existant visible au hook ``pre_download``.
-
-    Un hardlink évite de recopier un LAZ de plusieurs centaines de Mo. Son
-    retrait avec le dossier ``.part`` ne touche pas le cache final.
-    """
-    nuage_final, nuage_stage = _chemins_nuage_stage(chemin_final, chemin_part)
-    if (nuage_final is None or nuage_stage is None
-            or nuage_final == nuage_stage or not nuage_final.exists()
-            or nuage_stage.exists()):
-        return
-    try:
-        nuage_stage.parent.mkdir(parents=True, exist_ok=True)
-        os.link(nuage_final, nuage_stage)
-    except OSError:
-        # Le hook ne trouvera simplement pas le cache et le téléchargement réseau
-        # normal prendra le relais. Ne jamais recopier un énorme nuage ici.
-        pass
+    """Expose au staging un nuage existant sans le recopier."""
+    return _lier_nuage_existant_au_stage_impl(
+        chemin_final, chemin_part, chemins_nuage=_chemins_nuage_stage
+    )
 
 
 def _publier_nuage_stage(chemin_final, chemin_part):
-    """Publie atomiquement le nuage co-localisé produit dans le dossier .part.
-
-    Le nuage est un cache indépendant et déjà complet à ce stade. S'il s'agit du
-    hardlink posé pour ``pre_download``, seul le lien de staging est retiré.
-    """
-    nuage_final, nuage_stage = _chemins_nuage_stage(chemin_final, chemin_part)
-    if (nuage_final is None or nuage_stage is None
-            or nuage_final == nuage_stage or not nuage_stage.exists()):
-        return
-    nuage_final.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if nuage_final.exists() and os.path.samefile(nuage_stage, nuage_final):
-            nuage_stage.unlink(missing_ok=True)
-            return
-    except OSError:
-        pass
-    nuage_stage.replace(nuage_final)
+    """Publie le nuage co-localisé produit dans le staging."""
+    return _publier_nuage_stage_impl(
+        chemin_final, chemin_part, chemins_nuage=_chemins_nuage_stage
+    )
 
 
 def _comprimer_dalle_deflate(chemin):
-    """Recomprime une dalle GeoTIFF en DEFLATE (tiled) en place, best-effort.
-
-    - Déjà compressée (DEFLATE/LZW, cas des COG fenêtrés) : no-op.
-    - Predictor selon le dtype : 3 pour flottant (DEM float32), 2 pour entier.
-    - Copie par blocs (block_windows) pour borner la RAM sur les grandes
-      dalles (nl-ahn : ~300 Mo décompressé).
-    - Sur échec, le fichier d'origine est conservé tel quel (warning).
-    Appelée en fin de telecharger_dalle_directe quand --download-compress est
-    actif, APRÈS post_fetch/post_download (qui peuvent réécrire le fichier)."""
-    chemin = Path(chemin)
-    tmp = _chemin_part(chemin)
-    try:
-        import rasterio as _rio_c
-        with _rio_c.open(str(chemin)) as src:
-            if (src.profile.get("compress") or "").lower() in ("deflate", "lzw"):
-                return
-            profile = src.profile.copy()
-            profile.update({
-                "compress":   "deflate",
-                "predictor":  3 if src.dtypes[0].startswith("float") else 2,
-                "tiled":      True,
-                "blockxsize": 256,
-                "blockysize": 256,
-                "BIGTIFF":    "IF_SAFER",
-            })
-            with _rio_c.open(str(tmp), "w", **profile) as dst:
-                for _ji, win in src.block_windows(1):
-                    for b in range(1, src.count + 1):
-                        dst.write(src.read(b, window=win), b, window=win)
-        tmp.replace(chemin)
-    except Exception as _e_cmp:
-        tmp.unlink(missing_ok=True)
-        print(f"  ⚠ compression skipped for {chemin.name}: "
-              f"{type(_e_cmp).__name__}: {_e_cmp}", flush=True)
+    """Recomprime une dalle en DEFLATE via une publication best-effort."""
+    return _comprimer_dalle_deflate_impl(chemin, chemin_part=_chemin_part)
 
 
 # Instrumentation R1#6 (LIDAR2MAP_LAZ_PROFILE=1) : mesure le temps-mur DOWNLOAD
@@ -2795,131 +2561,63 @@ _laz_prof = {"dl_n": 0, "dl_s": 0.0, "conv_n": 0, "conv_s": 0.0, "conv_max": 0.0
 
 def _laz_prof_add(dl_s=None, conv_s=None):
     """Accumule un temps de download et/ou de conversion (R1#6). No-op si off."""
-    if not _LAZ_PROFILE:
-        return
-    with _laz_prof_lock:
-        if dl_s is not None:
-            _laz_prof["dl_n"] += 1
-            _laz_prof["dl_s"] += dl_s
-        if conv_s is not None:
-            _laz_prof["conv_n"] += 1
-            _laz_prof["conv_s"] += conv_s
-            _laz_prof["conv_max"] = max(_laz_prof["conv_max"], conv_s)
+    return _laz_prof_add_impl(
+        dl_s,
+        conv_s,
+        enabled=_LAZ_PROFILE,
+        lock=_laz_prof_lock,
+        profile=_laz_prof,
+    )
 
 
 def _laz_prof_resume(wall_s, n_dl_workers, laz_parallel):
     """Résumé profiling R1#6 : cumuls download/conversion, temps-mur ACTUEL (pool
     couplé) et borne théorique d'un modèle DÉCOUPLÉ pipeliné
     max(dl/workers, conv/laz_parallel). Le rapport des deux = gain potentiel."""
-    if not _LAZ_PROFILE:
-        return
-    with _laz_prof_lock:
-        p = dict(_laz_prof)
-    if p["dl_n"] == 0 and p["conv_n"] == 0:
-        return
-    dl, conv = p["dl_s"], p["conv_s"]
-    borne = max(dl / max(n_dl_workers, 1), conv / max(laz_parallel, 1))
-    print(f"  [PROFILE R1#6] download {p['dl_n']} dalles, cumul {dl:.0f}s "
-          f"({dl / max(p['dl_n'], 1):.1f}s/dalle) | conversion {p['conv_n']}, "
-          f"cumul {conv:.0f}s ({conv / max(p['conv_n'], 1):.1f}s/dalle, "
-          f"max {p['conv_max']:.1f}s)")
-    print(f"  [PROFILE R1#6] mur actuel {wall_s:.0f}s @ {n_dl_workers} dl-workers, "
-          f"laz_parallel={laz_parallel} | borne découplé ~{borne:.0f}s "
-          f"(gain potentiel x{wall_s / max(borne, 1e-9):.1f})")
+    return _laz_prof_resume_impl(
+        wall_s,
+        n_dl_workers,
+        laz_parallel,
+        enabled=_LAZ_PROFILE,
+        lock=_laz_prof_lock,
+        profile=_laz_prof,
+        imprimer=print,
+    )
 
 
-def telecharger_dalle_directe(nom, url_wms, dossier, ecraser=False, compresser=False):
-    """Télécharge une dalle depuis son URL WMS fournie par le TMS IGN.
+def _dependances_telechargement_direct():
+    """Reconstruit toutes les coutures du moteur direct à chaque appel."""
+    return _DependancesTelechargementDirect(
+        provider=PROVIDER,
+        chemin_dalle=chemin_dalle,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+        max_tentatives=MAX_TENTATIVES,
+        delai_retry=DELAI_RETRY,
+        stage_dalle_part=_stage_dalle_part,
+        lier_nuage_existant_au_stage=_lier_nuage_existant_au_stage,
+        download_to_tmp=_download_to_tmp,
+        laz_prof_add=_laz_prof_add,
+        post_fetch_si_besoin=_post_fetch_si_besoin,
+        valider_tif_dalle=_valider_tif_dalle,
+        comprimer_dalle_deflate=_comprimer_dalle_deflate,
+        publier_nuage_stage=_publier_nuage_stage,
+        creer_fichier=_creer_fichier,
+        time=time,
+    )
 
-    compresser : recompression DEFLATE de la dalle après validation
-    (--download-compress). Les COG fenêtrés (telecharger_cog_fenetre) sont
-    déjà écrits compressés et n'ont pas besoin de ce paramètre."""
-    chemin = chemin_dalle(dossier, nom)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        if not ecraser:
-            return "skip"
-        # Même en overwrite, conserver l'ancienne dalle valide jusqu'à la
-        # publication atomique de sa remplaçante.
-    for tentative in range(1, MAX_TENTATIVES + 1):
-        with _stage_dalle_part(chemin) as chemin_part:
-            try:
-                # Hook pre_download (optionnel) : le provider peut matérialiser
-                # la dalle SANS réseau depuis son nuage LAZ en cache. Le basename
-                # reste identique dans le dossier .part, donc ses regexp *.tif$
-                # continuent de fonctionner.
-                _pre = (getattr(PROVIDER, "pre_download", None)
-                        if (tentative == 1 and not ecraser) else None)
-                _materialise = False
-                if _pre is not None:
-                    _lier_nuage_existant_au_stage(chemin, chemin_part)
-                    try:
-                        _materialise = bool(_pre(chemin_part)) and chemin_part.exists()
-                    except Exception as _e_pre:
-                        print(f"  WARN pre_download {nom}: "
-                              f"{type(_e_pre).__name__}: {_e_pre}", flush=True)
-                if not _materialise:
-                    _t_dl = time.time()
-                    taille = _download_to_tmp(
-                        url_wms, chemin_part, timeout=(10, 45))
-                    _laz_prof_add(dl_s=time.time() - _t_dl)   # R1#6 profiling
-                    if taille == 0:
-                        # 404 propre. Provider à découverte EXACTE (index WFS/
-                        # STAC/registre : dalle promise) → erreur et retry.
-                        if getattr(PROVIDER, "DISCOVER_EXACT", False):
-                            raise IOError("HTTP 404 sur dalle indexée "
-                                          "(provider à découverte exacte)")
-                        return "absent"
-                    if taille < SEUIL_DALLE_VALIDE:
-                        with open(chemin_part, "rb") as _fh:
-                            _head = _fh.read(200)
-                        # Erreur serveur déguisée en HTTP 200 → retry.
-                        if (_head.lstrip().startswith(b"{")
-                                and b'"error"' in _head):
-                            raise IOError(
-                                f"server error payload: {_head[:120]!r}")
-                        return "absent"
-                    _t_cv = time.time()
-                    _post_fetch_si_besoin(chemin_part)
-                    _laz_prof_add(conv_s=time.time() - _t_cv)   # R1#6 profiling
-                if not _valider_tif_dalle(chemin_part):
-                    raise IOError(
-                        "GeoTIFF invalide après écriture "
-                        "(fichier tronqué ou corrompu)")
-                # Hook post-download (reprojection/réétiquetage) sur le staging.
-                if hasattr(PROVIDER, "post_download"):
-                    try:
-                        PROVIDER.post_download(chemin_part)
-                    except Exception as _e_pd:
-                        raise IOError(f"post_download {nom}: "
-                                      f"{type(_e_pd).__name__}: {_e_pd}")
-                    if not _valider_tif_dalle(chemin_part):
-                        raise IOError(
-                            f"GeoTIFF invalide après post_download ({nom})")
-                if compresser:
-                    _comprimer_dalle_deflate(chemin_part)
-                    if not _valider_tif_dalle(chemin_part):
-                        raise IOError(
-                            f"GeoTIFF invalide après compression ({nom})")
 
-                # Les éventuels caches LAZ co-localisés puis le TIF sont publiés
-                # seulement après le succès de tous les hooks/validateurs.
-                _publier_nuage_stage(chemin, chemin_part)
-                chemin_part.replace(chemin)
-                _creer_fichier(chemin)
-                return "ok"
-            except KeyboardInterrupt:
-                # Le context manager supprime uniquement notre dossier .part.
-                raise
-            except Exception as _e:
-                if tentative < MAX_TENTATIVES:
-                    # Retry silencieux : seul l'échec final reste visible.
-                    time.sleep(DELAI_RETRY)
-                else:
-                    print(f"\n  ERROR {nom} ({type(_e).__name__}, "
-                          f"attempt {tentative}): {_e}")
-                    return "erreur"
-    return "erreur"
+def telecharger_dalle_directe(
+    nom, url_wms, dossier, ecraser=False, compresser=False
+):
+    """Façade historique vers le moteur de téléchargement direct extrait."""
+    return _telecharger_dalle_directe_impl(
+        nom,
+        url_wms,
+        dossier,
+        ecraser=ecraser,
+        compresser=compresser,
+        dependances=_dependances_telechargement_direct(),
+    )
 
 
 def _cog_cache_couvre(chemin, bbox_natif):
@@ -2931,22 +2629,13 @@ def _cog_cache_couvre(chemin, bbox_natif):
     fenêtre (intersection bbox∩COG). Sans ce contrôle, une 2e zone dans le même
     COG réutilisait le fragment de la 1re → relief faux servi en silence (#1).
     Conservateur : illisible ou bbox non couverte → False (re-télécharge)."""
-    try:
-        import rasterio as _rio
-        with _rio.open(str(chemin)) as ds:
-            b = ds.bounds
-            fcrs = ds.crs.to_epsg() if ds.crs else None
-        x1, y1, x2, y2 = bbox_natif
-        ncrs = (int(PROVIDER.CRS_NATIF.split(":")[1])
-                if ":" in getattr(PROVIDER, "CRS_NATIF", "") else None)
-        if fcrs and ncrs and fcrs != ncrs:
-            _tf = _get_transformer(PROVIDER.CRS_NATIF, f"EPSG:{fcrs}")
-            x1, y1, x2, y2 = _bbox_enveloppe_transform(_tf.transform, x1, y1, x2, y2)
-        tol = 1.0   # tolérance arrondi (1 unité CRS)
-        return (b.left - tol <= min(x1, x2) and b.right + tol >= max(x1, x2)
-                and b.bottom - tol <= min(y1, y2) and b.top + tol >= max(y1, y2))
-    except Exception:
-        return False
+    return _cog_cache_couvre_impl(
+        chemin,
+        bbox_natif,
+        provider=PROVIDER,
+        get_transformer=_get_transformer,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+    )
 
 
 # #9 : au-delà de cette taille, la fenêtre COG est copiée par bandes de lignes
@@ -2956,212 +2645,80 @@ def _cog_cache_couvre(chemin, bbox_natif):
 _MAX_COG_WINDOW_PX = 4096 * 4096
 
 
-# R1#10 : la conversion COPC-fenêtrée pose le CRS UTM PAR TUILE sur le provider
-# PARTAGÉ (set_crs → self.crs_epsg), lu ensuite par post_fetch (las_to_dfm). En
-# multi-UTM (couverture straddlant une frontière de zone UTM) deux tuiles
-# concurrentes se corrompaient → las_to_dfm plantait sur _verifie_crs_las (le
-# header LAS d'une tuile ne matche plus le CRS posé par l'autre). Ce lock rend le
-# couple set_crs + post_fetch ATOMIQUE ; le DOWNLOAD (hors lock, vrai goulot des
-# COPC = range-requests) reste parallèle. Ne sérialise QUE la conversion
-# COPC-fenêtrée (ca-nrcan/us-3dep) ; les providers mono-zone posent leur CRS une
-# fois à la découverte, hors de ce chemin.
-_copc_crs_lock = threading.Lock()
+# R1#10 : verrou partagé du couple set_crs + conversion COPC multi-UTM.
+_copc_crs_lock = _COPC_CRS_LOCK
 
 
 def _copc_post_fetch_crs(epsg, chemin_part):
-    """Pose le CRS UTM de la tuile puis convertit, sous _copc_crs_lock (R1#10).
-    Extrait pour être testable (course de concurrence multi-UTM)."""
-    _set = getattr(PROVIDER, "set_crs", None)
-    with _copc_crs_lock:
-        if _set and epsg:
-            _set(int(epsg))
-        _post_fetch_si_besoin(chemin_part)
+    """Façade historique du post-traitement COPC sérialisé."""
+    return _copc_post_fetch_crs_impl(
+        epsg,
+        chemin_part,
+        provider=PROVIDER,
+        lock=_copc_crs_lock,
+        post_fetch_si_besoin=_post_fetch_si_besoin,
+    )
+
+
+def _dependances_telechargement_copc():
+    """Reconstruit toutes les coutures du moteur COPC à chaque appel."""
+    from providers import common as _common
+
+    return _DependancesTelechargementCopc(
+        provider=PROVIDER,
+        chemin_dalle=chemin_dalle,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        natif_vers_wgs84=_natif_vers_wgs84,
+        copc_window_to_las=_common.copc_window_to_las,
+        stage_dalle_part=_stage_dalle_part,
+        copc_post_fetch_crs=_copc_post_fetch_crs,
+        valider_tif_dalle=_valider_tif_dalle,
+        publier_nuage_stage=_publier_nuage_stage,
+        creer_fichier=_creer_fichier,
+    )
 
 
 def telecharger_copc_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
-    """Lecture FENÊTRÉE d'un COPC distant (nuage LAZ octree, ex. ca-nrcan) :
-    ne lit QUE les points de la bbox zone via range-requests, écrit le sous-
-    ensemble, puis PROVIDER.post_fetch le convertit en GeoTIFF DFM/CSF. Évite de
-    rapatrier un COPC entier (200-750 Mo) pour une petite zone. Le CRS (UTM PAR
-    ZONE) est lu dans le header du COPC et posé sur le provider (set_crs) → sortie
-    dans la bonne zone ; le warp du cœur lit ensuite le CRS du fichier produit.
-    `bbox` = bbox zone en CRS_NATIF du provider."""
-    from providers import common as _common
-    chemin = chemin_dalle(dossier_dalles, nom)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    _seuil = getattr(PROVIDER, "SEUIL_DALLE_VALIDE", SEUIL_DALLE_VALIDE)
-    if chemin.exists() and chemin.stat().st_size > _seuil and not ecraser:
-        return "skip"
-    with _stage_dalle_part(chemin) as chemin_part:
-        try:
-            # bbox zone (CRS_NATIF) → WGS84 pour le fenêtrage COPC.
-            bx1, by1, bx2, by2 = bbox
-            lo1, la1, lo2, la2 = _bbox_enveloppe_transform(
-                _natif_vers_wgs84, bx1, by1, bx2, by2)
-            # Signature d'URL propre au provider (SAS courte durée, si besoin).
-            _sign = getattr(PROVIDER, "sign_url", None)
-            _url = _sign(url) if callable(_sign) else url
-            n, epsg = _common.copc_window_to_las(
-                _url, (lo1, la1, lo2, la2), chemin_part)
-            if not n or n < 50_000:
-                return "absent"      # zone hors de ce COPC (ou quasi vide)
-            # R1#10 : CRS du run = zone UTM de la tuile, posé + converti sous lock
-            # (self.crs_epsg est partagé ; 2 tuiles de zones UTM différentes le
-            # corrompaient en concurrence). Le LAS puis sa conversion GeoTIFF
-            # restent dans le dossier .part.
-            _copc_post_fetch_crs(epsg, chemin_part)
-            if not _valider_tif_dalle(chemin_part):
-                raise IOError(
-                    f"GeoTIFF COPC invalide après post_fetch ({nom})")
-            _publier_nuage_stage(chemin, chemin_part)
-            chemin_part.replace(chemin)
-            _creer_fichier(chemin)
-            return "ok"
-        except KeyboardInterrupt:
-            raise
-        except Exception as _e:
-            print(f"\n  ERROR COPC {nom} ({type(_e).__name__}): {_e}")
-            return "erreur"
+    """Façade historique vers le téléchargement COPC fenêtré extrait."""
+    return _telecharger_copc_fenetre_impl(
+        nom,
+        url,
+        dossier_dalles,
+        bbox,
+        ecraser=ecraser,
+        dependances=_dependances_telechargement_copc(),
+    )
+
+
+def _dependances_telechargement_cog():
+    """Reconstruit toutes les coutures du moteur COG à chaque appel."""
+    return _DependancesTelechargementCog(
+        provider=PROVIDER,
+        chemin_dalle=chemin_dalle,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+        max_tentatives=MAX_TENTATIVES,
+        delai_retry=DELAI_RETRY,
+        max_cog_window_px=_MAX_COG_WINDOW_PX,
+        stage_dalle_part=_stage_dalle_part,
+        cog_cache_couvre=_cog_cache_couvre,
+        get_transformer=_get_transformer,
+        valider_tif_dalle=_valider_tif_dalle,
+        creer_fichier=_creer_fichier,
+        time=time,
+    )
 
 
 def telecharger_cog_fenetre(nom, url, dossier_dalles, bbox, ecraser=False):
-    """Lecture FENÊTRÉE d'un COG distant (mosaïque régionale) via /vsicurl/.
-
-    Pour les providers servant de grandes mosaïques COG (ex. ca-nrcan : un COG
-    par levé couvrant des centaines de km²), télécharger le fichier entier pour
-    une petite zone est prohibitif (Go + heures). Un COG (Cloud-Optimized
-    GeoTIFF) supporte les requêtes HTTP par plage (range requests) + le tuilage
-    interne : rasterio/GDAL lisent UNIQUEMENT la fenêtre bbox sans rapatrier le
-    reste. On écrit un GeoTIFF local clippé à l'intersection (bbox zone ∩ COG).
-
-    bbox : (x_min, y_min, x_max, y_max) en CRS natif du provider (= CRS du COG).
-    Retourne "ok" / "skip" / "absent" (pas d'intersection) / "erreur".
-    """
-    import rasterio
-    from rasterio.windows import from_bounds as _win_from_bounds, Window
-
-    chemin = chemin_dalle(dossier_dalles, nom)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    if chemin.exists() and chemin.stat().st_size > SEUIL_DALLE_VALIDE:
-        if not ecraser and _cog_cache_couvre(chemin, bbox):
-            return "skip"
-        # Overwrite ou fragment d'une autre zone : conserver l'ancien fichier
-        # jusqu'à ce que sa nouvelle fenêtre soit intégralement validée.
-
-    bx1, by1, bx2, by2 = bbox
-    vsi = "/vsicurl/" + url
-    for tentative in range(1, MAX_TENTATIVES + 1):
-        with _stage_dalle_part(chemin) as chemin_part:
-            try:
-                # Options GDAL propres au provider (auth Basic, extensions VRT),
-                # limitées à cet environnement.
-                _prov_gdal = getattr(PROVIDER, "gdal_env_options", None)
-                _gdal_extra = _prov_gdal() if callable(_prov_gdal) else {}
-                _env_gdal = {
-                    "GDAL_DISABLE_READDIR_ON_OPEN": "EMPTY_DIR",
-                    "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif,.tiff",
-                    "VSI_CACHE": True,
-                    "GDAL_HTTP_TIMEOUT": "60",
-                }
-                _env_gdal.update(_gdal_extra)
-                with rasterio.Env(**_env_gdal):
-                    with rasterio.open(vsi) as src:
-                        # La bbox provider peut devoir être reprojetée vers le
-                        # CRS réel du COG.
-                        rbx1, rby1, rbx2, rby2 = bx1, by1, bx2, by2
-                        try:
-                            _se = src.crs.to_epsg() if src.crs else None
-                            _ne = (int(PROVIDER.CRS_NATIF.split(":")[1])
-                                   if ":" in getattr(
-                                       PROVIDER, "CRS_NATIF", "") else None)
-                            if _se and _ne and _se != _ne:
-                                _tf = _get_transformer(
-                                    PROVIDER.CRS_NATIF, f"EPSG:{_se}")
-                                _xs, _ys = [], []
-                                for _px, _py in (
-                                        (bx1, by1), (bx1, by2),
-                                        (bx2, by1), (bx2, by2)):
-                                    _tx, _ty = _tf.transform(_px, _py)
-                                    _xs.append(_tx)
-                                    _ys.append(_ty)
-                                rbx1, rby1 = min(_xs), min(_ys)
-                                rbx2, rby2 = max(_xs), max(_ys)
-                        except Exception:
-                            pass
-                        b = src.bounds
-                        l = max(rbx1, b.left)
-                        r = min(rbx2, b.right)
-                        bot = max(rby1, b.bottom)
-                        t = min(rby2, b.top)
-                        if l >= r or bot >= t:
-                            return "absent"
-                        win = _win_from_bounds(l, bot, r, t, src.transform)
-                        win_i = (win.round_offsets(op="floor")
-                                 .round_lengths(op="ceil"))
-                        win_h, win_w = int(win_i.height), int(win_i.width)
-                        if win_h <= 0 or win_w <= 0:
-                            return "absent"
-                        if win_h * win_w > _MAX_COG_WINDOW_PX:
-                            profil = src.profile.copy()
-                            profil.update(
-                                driver="GTiff",
-                                height=win_h, width=win_w,
-                                transform=src.window_transform(win_i),
-                                compress="deflate", predictor=2, tiled=True,
-                                blockxsize=256, blockysize=256,
-                                bigtiff="IF_SAFER")
-                            with rasterio.open(
-                                    chemin_part, "w", **profil) as dst:
-                                r0 = 0
-                                while r0 < win_h:
-                                    h = min(1024, win_h - r0)
-                                    sub = Window(
-                                        win_i.col_off, win_i.row_off + r0,
-                                        win_w, h)
-                                    dst.write(
-                                        src.read(window=sub),
-                                        window=Window(0, r0, win_w, h))
-                                    r0 += h
-                        else:
-                            data = src.read(window=win)
-                            if data.size == 0:
-                                return "absent"
-                            profil = src.profile.copy()
-                            profil.update(
-                                driver="GTiff",
-                                height=data.shape[1], width=data.shape[2],
-                                transform=src.window_transform(win),
-                                compress="deflate", predictor=2, tiled=True,
-                                blockxsize=256, blockysize=256,
-                                bigtiff="IF_SAFER")
-                            with rasterio.open(
-                                    chemin_part, "w", **profil) as dst:
-                                dst.write(data)
-                if not _valider_tif_dalle(chemin_part):
-                    raise IOError("COG fenêtré invalide après écriture")
-                # Reprojection/réétiquetage également confinés dans .part.
-                if hasattr(PROVIDER, "post_download"):
-                    try:
-                        PROVIDER.post_download(chemin_part)
-                    except Exception as _e_pd:
-                        raise IOError(f"post_download {nom}: "
-                                      f"{type(_e_pd).__name__}: {_e_pd}")
-                    if not _valider_tif_dalle(chemin_part):
-                        raise IOError(
-                            f"GeoTIFF invalide après post_download ({nom})")
-                chemin_part.replace(chemin)
-                _creer_fichier(chemin)
-                return "ok"
-            except KeyboardInterrupt:
-                raise
-            except Exception as _e:
-                if tentative < MAX_TENTATIVES:
-                    time.sleep(DELAI_RETRY)
-                else:
-                    print(f"\n  ERROR window {nom} "
-                          f"({type(_e).__name__}): {_e}")
-                    return "erreur"
-    return "erreur"
+    """Façade historique vers le téléchargement COG fenêtré extrait."""
+    return _telecharger_cog_fenetre_impl(
+        nom,
+        url,
+        dossier_dalles,
+        bbox,
+        ecraser=ecraser,
+        dependances=_dependances_telechargement_cog(),
+    )
 
 
 # NB : l'ancienne telecharger_dalle(x_km, y_km, ...) (grille interne +
@@ -3279,732 +2836,66 @@ from _shading_specs import (
 )
 
 
+from _terrain_shading import (
+    DependancesGenererOmbrages as _DependancesGenererOmbrages,
+    generer_ombrages as _generer_ombrages_impl,
+    resoudre_instances_ombrages as _resoudre_instances_ombrages,
+)
+
+
+def _dependances_generer_ombrages():
+    return _DependancesGenererOmbrages(
+        provider=PROVIDER,
+        elevation_soleil=ELEVATION_SOLEIL,
+        resolution_m=RESOLUTION_M,
+        svf_gamma=SVF_GAMMA,
+        shading_types=_SHADING_TYPES,
+        fetch_provider_shadings=_fetch_provider_shadings,
+        resoudre_instances_ombrages=_resoudre_instances_ombrages,
+        chemin_part=_chemin_part,
+        creer_fichier=_creer_fichier,
+        build_vrt_xml=_build_vrt_xml,
+        formater_duree=_hms,
+        source_a_des_donnees=_source_a_des_donnees,
+        publier_tif_atomique=_publier_tif_atomique,
+        hillshade_chunked_multi=_hillshade_chunked_multi,
+        stop_event=_stop_event,
+        svf_chunked=_svf_chunked,
+        svf_numpy=_svf_numpy,
+        sauver_array_georef=_sauver_array_georef,
+        lire_dem_rasterio=_lire_dem_rasterio,
+        lrm_array=_lrm_array,
+        lrm_chunked=_lrm_chunked,
+        hillshade_chunked=_hillshade_chunked,
+        rrim_chunked=_rrim_chunked,
+        svf_opos_chunked=_svf_opos_chunked,
+        vat_compose=_vat_compose,
+        mstp_chunked=_mstp_chunked,
+        e4mstp_compose=_e4mstp_compose,
+        normaliser_nom=normaliser_nom,
+        time_module=time,
+        imprimer=print,
+    )
+
+
 def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom_zone=None, ecraser_ombrages=False, ecraser_tuiles=False, use_sweep=False, svf_gamma=None, svf_conv=None, svf_dist=None, bbox_natif=None, instances=None):
-    """
-    Génère les ombrages depuis le VRT/COG source (MNT EPSG:2154).
-
-    Types gdaldem  : 315, 045, 135, 225, multi, slope
-    Types numpy/scipy (sans WhiteboxTools) :
-        svf  — Sky-View Factor paramétrique (conv flux cos²γ / rvt 1−sin γ,
-               distance svf_dist, gamma svf_gamma) : micro-relief, fossés, murs
-        opos — Openness positive (Yokoyama 2002, rayon/gamma du SVF) : crêtes
-        oneg — Openness négative inversée : fossés/chemins creux sombres
-        rrim — Red Relief Image Map  : composite RGB couleur (R=pente, G=B=LRM)
-        lrm  — Local Relief Model    : SLRM = DEM − gaussienne(σ auto 15 pixels
-               natifs, ou valeur explicite en mètres) — scipy requis
-        vat  — Visualization for Archaeological Topography : variante VAT-style
-               en niveaux de gris, SVF + openness positif + pente
-        e4mstp — Multiscale Topographic Position, enhanced version 4 : variante
-               lidar2map multi-échelle (SVF, O+/O−, pente, MSTP et deux SLRM)
-
-    Deux chemins d'entrée, cumulables :
-      choix     : liste de TYPES (--shadings, GUI historique) — chaque type
-                  devient une instance aux paramètres GLOBAUX ci-dessous ;
-      instances : liste (type, params explicites) du flag répétable
-                  --shading TYPE:cle=val,... (cf. parser_shading_spec) —
-                  permet plusieurs instances du même type (svf 20 m + 100 m).
-    Les suffixes de fichier sont normalisés et certains paramètres sont arrondis.
-    Si deux instances aboutissent au même nom, la première sortie est conservée.
-
-    elevation_soleil : angle solaire des hillshades directionnels (défaut: 25°).
-    svf_conv  : "flux" (cos²γ, contraste) ou "rvt" (1−sin γ, archéo).  Défaut flux.
-    svf_dist  : rayon SVF/openness en mètres (GUI : 10–200).  Défaut 20.
-    svf_gamma : gamma après stretch (défaut: SVF_GAMMA ; miroir pour oneg).
-    use_sweep : kernel sweep-horizon (SVF uniquement).
-    SVF/LRM/RRIM : implémentés en numpy/scipy — aucun outil externe requis.
-    """
-
-    if elevation_soleil is None:
-        elevation_soleil = ELEVATION_SOLEIL
-    if svf_gamma is None:
-        svf_gamma = SVF_GAMMA
-    if svf_conv is None:
-        svf_conv = "flux"
-    if svf_dist is None:
-        svf_dist = 20.0
-
-    if choix is None:
-        choix = ["315", "045", "135", "225", "multi", "slope"]
-
-    if isinstance(cogs, Path):
-        cogs = [cogs]
-
-    # Aucune dalle valide pour ce chunk (hors couverture IGN, ou
-    # téléchargements tous en échec). On retourne proprement plutôt que
-    # de planter sur `sources[0]` plus bas — la boucle des chunks
-    # poursuit avec les morceaux suivants. Le chunk ne produira pas
-    # de .tif d'ombrage donc pas de mbtiles non plus.
-    if not cogs:
-        print("  ⚠ No tile available in this chunk "
-              "(outside LiDAR coverage or downloads failed), "
-              "shadings skipped.", flush=True)
-        return []
-
-    # Ombrages precalcules fournis par le provider (PROVIDES_SHADINGS) :
-    # telecharges directement depuis le WCS du provider (ex. Digitaal Vlaanderen
-    # SVF/Hillshade 25cm) AVANT la resolution en instances, pour que les cles
-    # ainsi servies soient retirees de choix et NON recalculees localement.
-    # Seules les instances "par defaut" (issues de choix) sont servies — une
-    # instance --shading aux params explicites est toujours calculee localement.
-    _cles_provider = []   # clés servies par le provider (pour la liste des cibles)
-    if bbox_natif is not None and hasattr(PROVIDER, "PROVIDES_SHADINGS") and choix:
-        _choix_avant = list(choix)
-        choix = list(choix)
-        _fetch_provider_shadings(
-            choix, bbox_natif, dossier_ville, nom_zone, ecraser_ombrages,
-            PROVIDER.PROVIDES_SHADINGS
-        )
-        _cles_provider = [c for c in _choix_avant if c not in choix]
-
-    # ── Résolution en instances (typ, params_explicites, params_résolus, suffixe)
-    # Le suffixe encode un param uniquement s'il est EXPLICITE et différent du
-    # défaut canonique : les noms historiques (multi_ombrage, lrm_ombrage…)
-    # restent inchangés aux réglages par défaut → caches préservés.
-    HORN_TYPES     = ("315", "045", "135", "225", "multi", "slope")
-    sigma_defaut_m = 15 * RESOLUTION_M   # = 15 px quel que soit le provider (compat)
-
-    def _resoudre_params(typ, prm):
-        p = dict(prm or {})
-        if typ in ("315", "045", "135", "225", "multi"):
-            p.setdefault("elevation", float(elevation_soleil))
-        if typ == "svf":
-            p.setdefault("conv", "rvt" if str(svf_conv).lower() == "rvt" else "flux")
-        if typ in ("svf", "opos", "oneg"):
-            p.setdefault("dist", float(svf_dist))
-            p.setdefault("gamma", float(svf_gamma))
-        if typ == "vat":
-            # dist = rayon SVF/openness ; gamma = gamma FINAL du composite,
-            # défaut = --svf-gamma comme SVF (les composantes entrent linéaires
-            # dans le blend → pas de double gamma).
-            p.setdefault("dist", float(svf_dist))
-            p.setdefault("gamma", float(svf_gamma))
-        if typ == "e4mstp":
-            # gamma FINAL du composite couleur : défaut 0.8 (éclaircit),
-            # PAS svf_gamma (2.0 par défaut écraserait un composite déjà blendé,
-            # rendu très sombre). Le blend interne porte déjà le contraste.
-            p.setdefault("dist", float(svf_dist))
-            p.setdefault("gamma", 0.8)
-        if typ in ("lrm", "rrim"):
-            p.setdefault("sigma", float(sigma_defaut_m))
-        return p
-
-    def _suffixe_instance(typ, prm, p):
-        def _tag(v):
-            return f"{v:g}".replace(".", "p").replace("-", "m")
-        if typ == "slope":
-            return "slope_ombrage"
-        if typ in ("315", "045", "135", "225", "multi"):
-            if "elevation" in (prm or {}) and p["elevation"] != ELEVATION_SOLEIL:
-                return f"{typ}_e{_tag(p['elevation'])}_ombrage"
-            return f"{typ}_ombrage"
-        if typ in ("svf", "opos", "oneg"):
-            gtag = f"{p['gamma']:.1f}".replace(".", "p")
-            base = (f"svf_{p['conv']}" if typ == "svf" else typ)
-            return f"{base}_{int(round(p['dist']))}m_g{gtag}_ombrage"
-        if typ in ("vat", "e4mstp"):
-            if prm:   # params explicites → encoder dist/gamma, sinon nom canonique
-                gtag = f"{p['gamma']:.1f}".replace(".", "p")
-                return f"{typ}_{int(round(p['dist']))}m_g{gtag}_ombrage"
-            return f"{typ}_ombrage"
-        # lrm / rrim : encode sigma dès qu'il est explicite (comme svf/opos/vat),
-        # pour que le nom porte toujours l'échelle. Bare `--shading lrm` (sans
-        # sigma) reste canonique `lrm_ombrage`.
-        if "sigma" in (prm or {}):
-            return f"{typ}_s{_tag(p['sigma'])}m_ombrage"
-        return f"{typ}_ombrage"
-
-    insts, _vus = [], {}
-    for typ, prm in ([(t, {}) for t in choix] + list(instances or [])):
-        if typ not in _SHADING_TYPES:
-            print(f"  ⚠ unknown shading type ignored: {typ}")
-            continue
-        p = _resoudre_params(typ, prm)
-        sfx = _suffixe_instance(typ, prm, p)
-        if sfx in _vus:
-            # Le nom encodé est volontairement grossier (mètres entiers, gamma
-            # à une décimale) : deux réglages distincts peuvent retomber sur le
-            # même suffixe. Si les params diffèrent réellement, on prévient au
-            # lieu d'abandonner en silence (le second serait un fichier écrasant
-            # le premier). Sinon c'est un vrai doublon → silencieux.
-            if _vus[sfx] != (typ, p):
-                print(f"  ⚠ shading '{typ}' {prm} collapses to the same name "
-                      f"'{sfx}' as an earlier setting; keeping the first, "
-                      f"ignoring this one")
-            continue
-        _vus[sfx] = (typ, p)
-        insts.append((typ, p, sfx))
-
-    horn_insts  = [i for i in insts if i[0] in HORN_TYPES]
-    numpy_insts = [i for i in insts if i[0] not in HORN_TYPES]
-
-    # ── Construction VRT global (seamless, évite jointures gdaldem) ─────────
-    # VRT dans un dossier de transaction unique finissant par .part sous
-    # dossier_ville : la synchronisation distante ignore tout le chantier.
-    import shutil as _shutil_vrt
-    _vrt_tmpdir = None
-    # ── Merge des dalles via rasterio (remplace gdalbuildvrt + gdal_translate) ──
-    # Au lieu de produire un VRT puis de le convertir en GeoTIFF avec
-    # gdal_translate, on fait un merge direct rasterio en GeoTIFF compressed.
-    # Avantages : un seul passage, plus de dépendance à GDAL CLI, sortie
-    # immédiatement utilisable par numpy (les hillshades sont calculés ensuite
-    # en numpy, cf. étape ombrage).
-    if len(cogs) > 1:
-        _vrt_tmpdir = _chemin_part(dossier_ville / "_tmp")
-        _vrt_tmpdir.mkdir(parents=True, exist_ok=True)
-        # VRT XML : vue logique sur les dalles, ~200 o/dalle, construction <1 s.
-        # Évite la matérialisation d'une mosaïque physique multi-Go (le merge
-        # rasterio sur 2000+ dalles avec compression deflate est pathologique).
-        # rasterio lit le VRT transparemment via libgdal — les calculs chunked
-        # en aval reçoivent leurs fenêtres comme depuis un raster ordinaire.
-        vrt_path      = _vrt_tmpdir / "_mnt_complet.vrt"
-        filelist_path = _vrt_tmpdir / "_dalles.txt"
-        try:
-            filelist_path.write_text(
-                "\n".join(str(c) for c in cogs), encoding="utf-8")
-            _creer_fichier(filelist_path)
-            print(f"  Building VRT ({len(cogs)} tiles)...", flush=True)
-            _t0_vrt = time.time()
-            _build_vrt_xml(cogs, vrt_path, RESOLUTION_M)
-            _creer_fichier(vrt_path)
-            print(f"  VRT OK  ({_hms(time.time()-_t0_vrt)}, "
-                  f"{vrt_path.stat().st_size // 1024} Ko)", flush=True)
-            sources = [vrt_path]
-        except BaseException as e:
-            _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
-            if isinstance(e, (KeyboardInterrupt, SystemExit)):
-                raise
-            # Hard-fail au lieu du fallback `sources = cogs` : sources[0] ne
-            # garderait que la 1ère dalle, produisant un MBTiles vide.
-            raise RuntimeError(
-                f"Construction VRT échouée : {e}\n"
-                f"  → vérifier l'accès disque sur {_vrt_tmpdir}"
-            ) from e
-    else:
-        sources = cogs
-
-    source   = sources[0]
-    nom_base = normaliser_nom(nom_zone) if nom_zone else normaliser_nom(dossier_ville.name)
-
-    # Garde-fou zone tout-nodata : si le DEM assemble n'a aucun pixel d'altitude
-    # valide, tous les kernels sont inutiles (et le SVF planterait sur un
-    # percentile de tableau vide). On saute les ombrages avec un message clair
-    # plutot qu'un traceback. Vider les listes suffit : les deux boucles ne
-    # s'executent pas et le nettoyage de fin a quand meme lieu.
-    if (horn_insts or numpy_insts) and not _source_a_des_donnees(source):
-        print("  WARNING: no valid elevation data in the zone "
-              "(tiles are entirely nodata).")
-        print("  Likely cause: no LiDAR data published here yet, or the tile "
-              "index was unavailable at download time (empty tiles fetched).")
-        print("  Shadings skipped.")
-        horn_insts  = []
-        numpy_insts = []
-
-    # Chaque sortie demandée est d'abord écrite dans un nom unique finissant
-    # par .part. Le final éventuellement présent reste lisible pendant tout le
-    # recalcul et n'est remplacé qu'après fermeture + validation.
-    _parts_ombrages_actifs = {}
-    _sorties_a_regenerer = set()
-
-    def _preparer_sortie_ombrage(chemin_final):
-        chemin_part = _chemin_part(chemin_final)
-        _parts_ombrages_actifs[chemin_part] = chemin_final
-        _sorties_a_regenerer.add(chemin_final)
-        return chemin_part
-
-    def _abandonner_sortie_ombrage(chemin_part):
-        chemin_final = _parts_ombrages_actifs.pop(chemin_part, None)
-        if chemin_part.exists():
-            chemin_part.unlink(missing_ok=True)
-            nom_affiche = chemin_final.name if chemin_final else chemin_part.name
-            print(f"  Partial file removed: {nom_affiche}")
-
-    def _publier_sortie_ombrage(chemin_part, chemin_final):
-        _publier_tif_atomique(chemin_part, chemin_final)
-        _parts_ombrages_actifs.pop(chemin_part, None)
-        _sorties_a_regenerer.discard(chemin_final)
-
-    try:
-        # ── Hillshades numpy chunked (RAM bornée — voir _hillshade_chunked_multi)
-        # Traitement par fenêtres 2048×2048 px avec halo 1 px (Horn 3x3).
-        # Tous les types demandés sont calculés en UNE passe de lecture :
-        # sur une grande zone le coût dominant est l'I/O + décompression
-        # deflate des dalles derrière le VRT, pas les kernels.
-        if horn_insts:
-            jobs_h = []
-            publications_h = []
-            for typ_h, p_h, sfx_h in horn_insts:
-                nom_fichier = nom_base + "_" + sfx_h + ".tif"
-                chemin_out  = dossier_ville / nom_fichier
-                if chemin_out.exists() and not ecraser_ombrages:
-                    print("  " + nom_fichier.ljust(56) + " -> already present")
-                    continue
-                chemin_part = _preparer_sortie_ombrage(chemin_out)
-                publications_h.append((chemin_part, chemin_out))
-                if typ_h == "multi":
-                    jobs_h.append(("hillshade_multi",
-                                   {"altitude_deg": float(p_h["elevation"])},
-                                   chemin_part))
-                elif typ_h == "slope":
-                    jobs_h.append(("slope", {}, chemin_part))
-                else:
-                    jobs_h.append(("hillshade",
-                                   {"azimuth_deg":  float(int(typ_h)),
-                                    "altitude_deg": float(p_h["elevation"])},
-                                   chemin_part))
-
-            if jobs_h:
-                print(f"  Hillshades chunked: {len(jobs_h)} type(s),"
-                      f" single read pass...", flush=True)
-                t0_hill = time.time()
-                try:
-                    ok_h = _hillshade_chunked_multi(
-                        Path(str(source)), jobs_h,
-                        dx=RESOLUTION_M, dy=RESOLUTION_M)
-                    if not ok_h:
-                        raise RuntimeError("chunked failed (rasterio absent ?)")
-                    for chemin_part, chemin_out in publications_h:
-                        _publier_sortie_ombrage(chemin_part, chemin_out)
-                        _creer_fichier(chemin_out)
-                        print(f"  {chemin_out.name.ljust(56)}"
-                              f"  {_hms(int(time.time() - t0_hill))}"
-                              f"  {chemin_out.stat().st_size / 1e6:.0f} Mo")
-                except BaseException as e_hill:
-                    # Fichiers partiellement écrits (structurellement valides
-                    # mais incomplets) → supprimer, sinon ils seraient pris
-                    # pour des caches sains au prochain lancement (même
-                    # logique que le SVF).
-                    for chemin_part, _chemin_out in publications_h:
-                        _abandonner_sortie_ombrage(chemin_part)
-                    if isinstance(e_hill, (KeyboardInterrupt, SystemExit)):
-                        raise
-                    print(f"\n  ERROR hillshades chunked: {e_hill}")
-
-        # ── SVF / openness / LRM / RRIM — numpy/scipy ────────────────────────
-        # NB : rasterio.merge (étape 2 du refactor) produit déjà un GeoTIFF
-        # directement utilisable par numpy/PIL/rasterio en aval. Plus aucune
-        # conversion intermédiaire VRT→GTiff nécessaire.
-        src_str = str(source)
-
-        for cle, p_i, sfx_i in numpy_insts:
-            # Cancellation propre entre 2 ombrages : si l'utilisateur a fait
-            # Ctrl+C pendant le précédent (kernel Numba intuable), l'ombrage
-            # courant a été sauvegardé mais on n'enchaîne pas le suivant.
-            if _stop_event.is_set():
-                print("  Interruption - remaining shadings skipped.")
-                break
-
-            # Params résolus de L'INSTANCE (et plus des args globaux) : deux
-            # instances du même type avec des réglages différents coexistent,
-            # le suffixe sfx_i encodant les params.
-            if cle in ("svf", "opos", "oneg"):
-                _svf_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
-                _gamma_i     = float(p_i["gamma"])
-                # sweep par instance (svf:sweep=0|1) ; défaut = --svf-sweep
-                # global. Pas encodé dans le nom : même produit, autre kernel.
-                _sweep_i = (bool(p_i["sweep"]) if "sweep" in p_i else use_sweep)
-                if cle == "svf":
-                    _svf_conv_str = p_i["conv"]
-                    _svf_conv_i   = 1 if _svf_conv_str == "rvt" else 0
-                else:
-                    _svf_conv_str = cle   # libellé pour les prints
-                    _svf_conv_i   = 2 if cle == "opos" else 3
-            elif cle in ("lrm", "rrim"):
-                _sigma_px = max(1, int(round(p_i["sigma"] / RESOLUTION_M)))
-
-            nom_fichier  = nom_base + "_" + sfx_i + ".tif"
-            chemin_out   = dossier_ville / nom_fichier
-
-            if chemin_out.exists() and not ecraser_ombrages:
-                print("  " + nom_fichier.ljust(56) + " -> already present")
-                continue
-            chemin_part = _preparer_sortie_ombrage(chemin_out)
-
-            t0_numpy = time.time()
-
-            if cle in ("svf", "opos", "oneg"):
-                # ── SVF / openness chunked (RAM bornée) ──────────────────────
-                # Traitement par fenêtres 2048×2048 avec halo = max_dist_px.
-                # Permet de traiter des zones de département entier sans OOM.
-                max_dist_px  = _svf_dist_px
-                n_directions = 16
-                conv = _svf_conv_i
-                dist_m = max_dist_px * RESOLUTION_M
-                _lbl_svf = "SVF" if cle == "svf" else f"Openness {cle}"
-                print(f"  {_lbl_svf} chunked ({n_directions} dir, rayon {dist_m:.0f} m"
-                      f" = {max_dist_px} px, conv={_svf_conv_str}, gamma={_gamma_i:g})...", flush=True)
-                try:
-                    ok = _svf_chunked(
-                        src_path     = Path(src_str),
-                        dst_path     = chemin_part,
-                        max_dist_px  = max_dist_px,
-                        n_directions = n_directions,
-                        resolution   = RESOLUTION_M,
-                        gamma        = _gamma_i,
-                        use_sweep    = _sweep_i,
-                        conv         = conv,
-                    )
-                    if not ok:
-                        # Repli pleine mémoire (numba absent ou échantillon
-                        # trop petit) — limité aux zones modestes.
-                        import numpy as np
-                        # Garde OOM : le fallback charge le DEM entier + plusieurs
-                        # tableaux pleine taille par direction (ThreadPool). Au-delà
-                        # d'un seuil on refuse plutôt que de risquer l'OOM sur une
-                        # grande zone sans numba.
-                        _MAX_SVF_FULLMEM_PX = 6000 * 6000   # ~36 Mpx (~3 km à 0,5 m)
-                        try:
-                            import rasterio as _rio_sz
-                            with _rio_sz.open(src_str) as _dsz:
-                                _npx = _dsz.width * _dsz.height
-                        except Exception:
-                            _npx = 0
-                        if _npx > _MAX_SVF_FULLMEM_PX:
-                            print(f"  SVF: numba unavailable and zone too large "
-                                  f"({_npx / 1e6:.0f} Mpx) for the full-memory "
-                                  f"fallback. Install numba, or split the zone "
-                                  f"with --split-cols/--split-rows.", flush=True)
-                            continue
-                        print("  SVF chunked KO → fallback to full memory", flush=True)
-                        dem_arr, _nd = _lire_dem_rasterio(src_str)
-                        arr_svf = _svf_numpy(dem_arr, max_dist_px, n_directions,
-                                             RESOLUTION_M, use_sweep=_sweep_i,
-                                             conv=conv, nodata=_nd)
-                        # > 0 strict : les nodata valent exactement 0.0 et
-                        # tireraient p2 vers 0 (stretch délavé).
-                        svf_valid = arr_svf[arr_svf > 0]
-                        if svf_valid.size == 0:
-                            print("  SVF: no valid pixel (nodata zone), shading skipped")
-                            continue
-                        p2  = float(np.percentile(svf_valid, 2))
-                        p98 = float(np.percentile(svf_valid, 98))
-                        if p98 > p2:
-                            arr_stretched = np.clip((arr_svf - p2) / (p98 - p2), 0, 1)
-                        else:
-                            arr_stretched = np.clip(arr_svf, 0, 1)
-                        if conv == 3:
-                            # Gamma miroir pour l'openness négative inversée
-                            # (cf. _svf_chunked) : creux renforcés, fond clair.
-                            arr_u8 = ((1.0 - (1.0 - arr_stretched) ** _gamma_i)
-                                      * 255).astype(np.uint8)
-                        else:
-                            arr_u8 = (arr_stretched ** _gamma_i * 255).astype(np.uint8)
-                        _sauver_array_georef(arr_u8, Path(src_str), chemin_part)
-                except Exception as e_svf:
-                    import traceback as _tb
-                    print(f"  ERROR SVF: {e_svf}")
-                    print("  --- full traceback ---")
-                    _tb.print_exc()
-                    print("  ---------------------------")
-                    # Supprimer le fichier partiellement écrit : _svf_chunked
-                    # écrit chunk par chunk via rasterio. Si une exception
-                    # survient au milieu, le TIF résultant est incomplet (ex :
-                    # 109 MB au lieu de 300 MB) mais structurellement valide.
-                    # Sans suppression, le tuileur l'accepte et produit 0 tuile
-                    # silencieusement. Sur le prochain lancement, le fichier
-                    # "already present" est réutilisé → bug persistant.
-                    _abandonner_sortie_ombrage(chemin_part)
-                    continue
-
-            elif cle == "lrm":
-                # ── Local Relief Model — filtre gaussien ─────────────────────
-                # LRM = DEM − gaussienne(σ) → normalisation p5-p95 → uint8 (128=plat)
-                # Traitement par blocs avec overlap pour borner la RAM :
-                #   chemin 1 : _lrm_chunked() si rasterio + scipy disponibles
-                #   chemin 2 : pleine mémoire (fallback)
-                sigma_px = _sigma_px   # défaut 15 px ; --shading lrm:sigma=M en mètres
-                print(f"  LRM gaussien (σ={sigma_px} px = {sigma_px * RESOLUTION_M:.0f} m)"
-                      f" — peut prendre 3-7 min...", flush=True)
-
-                # ── Chemin 1 : traitement chunké (RAM bornée) ───────────────
-                _lrm_ok = _lrm_chunked(
-                    src_path = Path(src_str),
-                    dst_path = chemin_part,
-                    sigma_px = sigma_px,
-                )
-
-                if not _lrm_ok:
-                    # ── Chemin 2 : fallback pleine mémoire ─────────────────
-                    try:
-                        import numpy as np
-                        dem_arr, _nd_val = _lire_dem_rasterio(src_str)
-                        lrm, nodata_mask = _lrm_array(dem_arr, _nd_val, sigma_px)
-                        lrm_valid = lrm[np.isfinite(lrm)]
-                        p1  = float(np.percentile(lrm_valid,  5))
-                        p99 = float(np.percentile(lrm_valid, 95))
-                        if p99 > p1:
-                            arr_f     = np.clip((lrm - p1) / (p99 - p1), 0, 1) * 255
-                            clip_info = f"p5={p1:.2f}m p95={p99:.2f}m"
-                        else:
-                            clip_val  = max(0.1, 2.0 * float(np.nanstd(lrm)))
-                            arr_f     = (np.clip(lrm, -clip_val, clip_val) + clip_val) / (2 * clip_val) * 255
-                            clip_info = f"±{clip_val:.2f}m (σ fallback)"
-                        arr_u8 = arr_f.astype(np.uint8)
-                        arr_u8[nodata_mask] = 128
-                        _sauver_array_georef(arr_u8, Path(src_str), chemin_part)
-                        _lrm_ok = True
-                        print(f"  LRM scipy (full memory): σ={sigma_px} px, {clip_info}")
-                    except ImportError:
-                        print("  scipy missing - LRM skipped (pip install scipy)", flush=True)
-                        continue
-                    except Exception as e_scipy:
-                        print(f"  ERROR scipy LRM: {e_scipy}")
-                        continue
-
-            elif cle == "rrim":
-                # ── Red Relief Image Map (RRIM) ───────────────────────────────
-                # Composite RGB couleur — Chiba et al. (2008), standard
-                # archéo-LiDAR européen :
-                #   R = pente, rampe ABSOLUE 0–45° + gamma 0.7 (relief en
-                #       amplitude, comparable d'une zone à l'autre)
-                #   G = B = LRM normalisé p5–p95 + gamma 0.8 (micro-relief ;
-                #       choisi plutôt que le SVF du RRIM canonique : sur
-                #       terrain ouvert SVF ≈ 0.97 partout → dominance bleue)
-                # Révèle simultanément creux ET bosses — optimal prospection.
-                print("  RRIM: Red Relief Image Map (slope × LRM)"
-                      ", may take 5-10 min...", flush=True)
-
-                sigma_rrim = _sigma_px   # défaut 15 px ; --shading rrim:sigma=M en mètres
-
-                # Slope temporaire (réutilisé si already present)
-                slope_rrim_path = dossier_ville / (nom_base + "_slope_ombrage.tif")
-                slope_tmp_path  = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp")
-                )
-                _slope_src = None
-                try:
-                    if slope_rrim_path.exists():
-                        _slope_src = slope_rrim_path
-                        print("  RRIM: existing slope reused", flush=True)
-                    else:
-                        # Slope chunked (RAM bornée) — même moteur que
-                        # l'ombrage slope standalone.
-                        try:
-                            ok_sl = _hillshade_chunked(
-                                Path(src_str), slope_tmp_path, "slope", {},
-                                dx=RESOLUTION_M, dy=RESOLUTION_M)
-                            if not ok_sl:
-                                raise RuntimeError(
-                                    "slope chunked failed (rasterio absent ?)")
-                            _slope_src = slope_tmp_path
-                        except Exception as _e_sl:
-                            print(f"  ERROR slope for RRIM: {_e_sl}")
-                            continue
-
-                    # ── Chemin 1 : composite chunked (RAM bornée) ───────────
-                    try:
-                        ok_rrim = _rrim_chunked(
-                            Path(src_str), _slope_src, chemin_part,
-                            sigma_px=sigma_rrim)
-                    except Exception as e_rrim:
-                        print(f"  ERROR composite RRIM: {e_rrim}")
-                        # Fichier partiellement écrit → supprimer (sinon pris
-                        # pour un cache sain au prochain lancement).
-                        _abandonner_sortie_ombrage(chemin_part)
-                        continue
-
-                    if not ok_rrim:
-                        # ── Chemin 2 : fallback pleine mémoire ──────────────
-                        # (rasterio/scipy absent, ou échantillon dégénéré) —
-                        # limité aux zones modestes.
-                        try:
-                            import numpy as np
-
-                            slope_arr, _ = _lire_dem_rasterio(str(_slope_src))
-                            dem_rrim, _nd_rr = _lire_dem_rasterio(src_str)
-                            lrm_r, nd_mask_r = _lrm_array(dem_rrim, _nd_rr,
-                                                          sigma_rrim)
-
-                            # Aligner dimensions
-                            h = min(slope_arr.shape[0], lrm_r.shape[0])
-                            w = min(slope_arr.shape[1], lrm_r.shape[1])
-                            slope_arr = slope_arr[:h, :w]
-                            lrm_r     = lrm_r[:h, :w]
-                            nd_mask_r = nd_mask_r[:h, :w]
-
-                            # R : pente décodée (uint8 1–255 → 0–90°), rampe
-                            # absolue 0–45° + gamma 0.7 (cf. _rrim_chunked).
-                            slope_deg = np.clip(slope_arr - 1.0, 0.0, None) \
-                                        * (90.0 / 254.0)
-                            r_chan = (np.clip(slope_deg / 45.0, 0, 1) ** 0.7
-                                      * 255).astype(np.uint8)
-
-                            # G = B : LRM normalisé p5–p95, gamma 0.8
-                            # LRM > 0 = élévation → clair ; < 0 = creux → foncé
-                            lrm_valid = lrm_r[np.isfinite(lrm_r)]
-                            if len(lrm_valid) == 0:
-                                raise RuntimeError("LRM vide (tout nodata)")
-                            lo = float(np.percentile(lrm_valid, 5))
-                            hi = float(np.percentile(lrm_valid, 95))
-                            if hi > lo:
-                                lrm_n = np.clip((lrm_r - lo) / (hi - lo), 0, 1)
-                            else:
-                                lrm_n = np.zeros_like(lrm_r)
-                            gb_chan = (np.nan_to_num(lrm_n) ** 0.8
-                                       * 255).astype(np.uint8)
-
-                            r_chan[nd_mask_r]  = 0
-                            gb_chan[nd_mask_r] = 0
-                            r_chan[slope_arr == 0] = 0   # nodata du slope
-
-                            rgb = np.stack([r_chan, gb_chan, gb_chan], axis=2)
-                            _sauver_array_georef(rgb, Path(src_str), chemin_part)
-                            print(f"  RRIM (full memory): {chemin_out.name}"
-                                  f" — RGB 3 canaux")
-                        except Exception as e_rrim:
-                            print(f"  ERROR composite RRIM: {e_rrim}")
-                            continue
-                finally:
-                    if slope_tmp_path.exists():
-                        slope_tmp_path.unlink(missing_ok=True)
-
-            elif cle == "vat":
-                # ── VAT — composite SVF + openness positif + slope ────────────
-                # Même patron que RRIM : calcule les 3 composantes en temp (SVF
-                # conv=0 et openness conv=2 via _svf_chunked, slope via
-                # _hillshade_chunked), blende avec _vat_compose, nettoie. Les
-                # composantes entrent LINÉAIRES (gamma 1) ; le gamma final est
-                # appliqué par le composite.
-                _vat_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
-                _vat_gamma   = float(p_i["gamma"])
-                print(f"  VAT: composite SVF + openness + slope"
-                      f" (radius {_vat_dist_px * RESOLUTION_M:.0f} m)"
-                      f", may take 10-20 min...", flush=True)
-                _svf_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_svf_tmp"))
-                _opos_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_opos_tmp"))
-                _slope_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp"))
-                try:
-                    # SVF (conv=0) et openness positif (conv=2) en UN seul scan
-                    # d'horizon (kernel fusionné) : ~43% plus rapide que deux
-                    # passes _svf_chunked, sorties numériquement identiques.
-                    _ok_comp = (
-                        _svf_opos_chunked(Path(src_str), _svf_t, _opos_t,
-                                          _vat_dist_px, 16, RESOLUTION_M, 1.0)
-                        and _hillshade_chunked(Path(src_str), _slope_t, "slope",
-                                               {}, dx=RESOLUTION_M, dy=RESOLUTION_M))
-                    if not _ok_comp:
-                        print("  VAT: components unavailable (numba required for"
-                              " SVF/openness), shading skipped.", flush=True)
-                        continue
-                    if not _vat_compose(_svf_t, _opos_t, _slope_t, chemin_part,
-                                        gamma=_vat_gamma):
-                        _abandonner_sortie_ombrage(chemin_part)
-                        continue
-                except Exception as e_vat:
-                    print(f"  ERROR composite VAT: {e_vat}")
-                    _abandonner_sortie_ombrage(chemin_part)
-                    continue
-                finally:
-                    for _t in (_svf_t, _opos_t, _slope_t):
-                        if _t.exists():
-                            _t.unlink(missing_ok=True)
-
-            elif cle == "e4mstp":
-                # ── Variante lidar2map inspirée de l'e4MSTP publié (Kokalj
-                # 2025/RVT), sans reproduire son preset exact. Même patron que
-                # VAT : composantes en temp, blend, nettoie. Combine la couleur
-                # multi-échelle du MSTP et la netteté du SVF. Lourd (openness
-                # pos+neg + SVF + slope + 2 LRM + MSTP) ; réservé aux zones et
-                # chunks, pas le défaut.
-                _e4_dist_px = max(1, int(round(p_i["dist"] / RESOLUTION_M)))
-                _e4_gamma   = float(p_i["gamma"])
-                _slrm_fine_px = max(1, int(round(1.5 / RESOLUTION_M)))  # micro-relief
-                _slrm_path_px = max(1, int(round(8.0 / RESOLUTION_M)))  # échelle chemin
-                print(f"  e4MSTP-style (lidar2map variant):"
-                      f" composite MSTP + coloured relief + SVF"
-                      f" (radius {_e4_dist_px * RESOLUTION_M:.0f} m)"
-                      f", may take 15-30 min...", flush=True)
-                _svf_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_svf_tmp"))
-                _opos_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_opos_tmp"))
-                _oneg_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_oneg_tmp"))
-                _slope_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_slope_tmp"))
-                _mstp_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_mstp_tmp"))
-                _slf_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_slf_tmp"))
-                _slp_t = _chemin_part(
-                    dossier_ville / nom_fichier.replace(".tif", "_slp_tmp"))
-                _e4_tmps = (_svf_t, _opos_t, _oneg_t, _slope_t, _mstp_t, _slf_t, _slp_t)
-                try:
-                    _ok = (
-                        _svf_opos_chunked(Path(src_str), _svf_t, _opos_t,
-                                          _e4_dist_px, 16, RESOLUTION_M, 1.0)
-                        and _svf_chunked(Path(src_str), _oneg_t, _e4_dist_px, 16,
-                                         RESOLUTION_M, 1.0, False, 3)
-                        and _hillshade_chunked(Path(src_str), _slope_t, "slope",
-                                               {}, dx=RESOLUTION_M, dy=RESOLUTION_M)
-                        and _mstp_chunked(Path(src_str), _mstp_t, res=RESOLUTION_M)
-                        and _lrm_chunked(Path(src_str), _slf_t, _slrm_fine_px)
-                        and _lrm_chunked(Path(src_str), _slp_t, _slrm_path_px))
-                    if not _ok:
-                        print("  e4MSTP: components unavailable (numba/scipy"
-                              " required), shading skipped.", flush=True)
-                        continue
-                    if not _e4mstp_compose(_mstp_t, _svf_t, _opos_t, _oneg_t,
-                                           _slope_t, _slf_t, _slp_t, chemin_part,
-                                           gamma=_e4_gamma):
-                        _abandonner_sortie_ombrage(chemin_part)
-                        continue
-                except Exception as e_e4:
-                    print(f"  ERROR composite e4MSTP: {e_e4}")
-                    _abandonner_sortie_ombrage(chemin_part)
-                    continue
-                finally:
-                    for _t in _e4_tmps:
-                        if _t.exists():
-                            _t.unlink(missing_ok=True)
-
-            if not chemin_part.exists():
-                print(f"  ERROR {nom_fichier}: no complete temporary output")
-                continue
-            try:
-                _publier_sortie_ombrage(chemin_part, chemin_out)
-            except Exception as e_publication:
-                print(f"  ERROR publishing {nom_fichier}: {e_publication}")
-                _abandonner_sortie_ombrage(chemin_part)
-                continue
-            _creer_fichier(chemin_out)
-            taille = chemin_out.stat().st_size / 1e6
-            elap_numpy = int(time.time() - t0_numpy)
-            print(f"  {nom_fichier.ljust(56)}  {_hms(elap_numpy)}  {taille:.0f} Mo")
-
-    finally:
-        # Couvre aussi les ``continue`` précoces et Ctrl+C : seule la version
-        # temporaire de ce processus est supprimée, jamais l'ancien final.
-        for _chemin_part_actif in tuple(_parts_ombrages_actifs):
-            _abandonner_sortie_ombrage(_chemin_part_actif)
-        # Suppression du dossier transactionnel .part (VRT + dalles.txt).
-        if _vrt_tmpdir and _vrt_tmpdir.exists():
-            _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)
-
-    print("\n  Shadings in: " + str(dossier_ville))
-    # Fichiers cibles de CE run (instances + pré-calculés provider) : permet à
-    # l'étape MBTiles de ne tuiler QUE les ombrages demandés au lieu de tout le
-    # dossier projet (sinon --tiles-overwrite re-tuile aussi les anciens).
-    #
-    # R2#23 : ne pas rendre de chemins théoriques. On lève aussi quand une
-    # régénération demandée a échoué mais qu'un ancien final existe encore :
-    # l'ancien reste volontairement intact pour la sécurité atomique, sans pour
-    # autant masquer l'échec du recalcul.
-    _cibles = [dossier_ville / f"{nom_base}_{sfx}.tif" for _t, _p, sfx in insts]
-    _manquants = [
-        p.name for p in _cibles
-        if not p.exists() or p in _sorties_a_regenerer
-    ]
-    if _manquants:
-        raise RuntimeError(
-            "shading(s) failed"
-            " (previous complete output preserved when present): "
-            + ", ".join(_manquants) + " - rerun to complete"
-        )
-    _prov = [dossier_ville / f"{nom_base}_{c}_ombrage.tif" for c in _cles_provider]
-    return _cibles + [p for p in _prov if p.exists()]
+    """Façade compatible vers l'orchestrateur d'ombrage extrait."""
+    return _generer_ombrages_impl(
+        cogs,
+        dossier_ville,
+        choix=choix,
+        elevation_soleil=elevation_soleil,
+        nom_zone=nom_zone,
+        ecraser_ombrages=ecraser_ombrages,
+        ecraser_tuiles=ecraser_tuiles,
+        use_sweep=use_sweep,
+        svf_gamma=svf_gamma,
+        svf_conv=svf_conv,
+        svf_dist=svf_dist,
+        bbox_natif=bbox_natif,
+        instances=instances,
+        dependances=_dependances_generer_ombrages(),
+    )
 
 
 from _mbtiles_lidar import (
@@ -4698,6 +3589,33 @@ def _lister_tifs_ombrages(dossier_ville, tifs_run):
     return tifs
 
 
+from _terrain_chunks import (
+    DependancesLidarClassique as _DependancesLidarClassique,
+    DependancesMorceauTerrain as _DependancesMorceauTerrain,
+    DependancesTuilageMorceau as _DependancesTuilageMorceau,
+    DependancesTuilageOmbrages as _DependancesTuilageOmbrages,
+    DependancesWmtsMorceau as _DependancesWmtsMorceau,
+    dalles_zone_lookahead as _dalles_zone_lookahead_impl,
+    decouvrir_et_telecharger_ombrage as _decouvrir_et_telecharger_ombrage_impl,
+    traiter_bbox_lidar as _traiter_bbox_lidar_impl,
+    traiter_bbox_lidar_ombrage as _traiter_bbox_lidar_ombrage_impl,
+    traiter_bbox_lidar_tuilage as _traiter_bbox_lidar_tuilage_impl,
+    traiter_bbox_wmts as _traiter_bbox_wmts_impl,
+    tuiler_tifs_ombrages as _tuiler_tifs_ombrages_impl,
+)
+
+
+def _dependances_tuilage_ombrages():
+    """Reconstruit les coutures du tuilage commun à chaque appel."""
+    return _DependancesTuilageOmbrages(
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        generer_mbtiles_lidar=generer_mbtiles_lidar,
+        tile_workers_defaut=_tile_workers_defaut,
+        convertir_formats=_convertir_formats,
+        imprimer=print,
+    )
+
+
 def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
                           decoupe_sortie=True, verbose=False, tampon_coin_max_m=0,
                           mbtiles_attendus=None):
@@ -4711,33 +3629,18 @@ def _tuiler_tifs_ombrages(args, tifs, dossier_ville, nom_zone, bbox,
     découpé) : aucune incidence, cette zone n'a pas de coin partagé avec un
     voisin. Retourne False si au moins une génération/conversion demandée
     échoue sans lever d'exception."""
-    ok = True
-    for tif in tifs:
-        if verbose:
-            print("  " + tif.name)
-        stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
-        suffix = stem[len(nom_zone) + 1:] if stem.startswith(nom_zone + "_") else stem
-        nom_base = f"{nom_zone}_{suffix}"
-        mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
-        if mbtiles_attendus is not None:
-            mbtiles_attendus.append(mbt_path)
-        mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
-        if mbt_neuf:
-            mbt_out = generer_mbtiles_lidar(
-                tif, dossier_ville, nom_base,
-                zoom_min=args.zoom_min, zoom_max=args.zoom_max,
-                format_tuiles=args.formats_image,
-                jpeg_quality=args.qualite_image,
-                bbox_natif=bbox, tampon_coin_max_m=tampon_coin_max_m,
-                ecraser_tuiles=args.tuiles_ecraser,
-                tile_workers=_tile_workers_defaut())
-        else:
-            print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
-            mbt_out = mbt_path
-        ok = (_convertir_formats(
-            mbt_out, args, decoupe_sortie=decoupe_sortie,
-            mbtiles_neuf=mbt_neuf) and ok)
-    return ok
+    return _tuiler_tifs_ombrages_impl(
+        args,
+        tifs,
+        dossier_ville,
+        nom_zone,
+        bbox,
+        decoupe_sortie=decoupe_sortie,
+        verbose=verbose,
+        tampon_coin_max_m=tampon_coin_max_m,
+        mbtiles_attendus=mbtiles_attendus,
+        dependances=_dependances_tuilage_ombrages(),
+    )
 
 
 def _appliquer_defauts_cli_lidar(args):
@@ -6755,6 +5658,28 @@ def _run_split_priori(args, sous_zones, mode_desc, nom_zone, racine_pr,
     )
 
 
+def _dependances_lidar_classique():
+    """Reconstruit les coutures du morceau autonome à chaque appel."""
+    return _DependancesLidarClassique(
+        provider=PROVIDER,
+        dossier_travail=DOSSIER_TRAVAIL,
+        dossier_cache=DOSSIER_CACHE,
+        lidar_subdir=LIDAR_SUBDIR,
+        get_transformer=_get_transformer,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        dossier_dalles_actif=_dossier_dalles_actif,
+        contexte_manifeste=_contexte_manifeste,
+        telecharger_dalles_zone=_telecharger_dalles_zone,
+        resoudre_choix_ombrages=_resoudre_choix_ombrages,
+        lister_dalles_zone=_lister_dalles_zone,
+        generer_ombrages=generer_ombrages,
+        elevation_soleil=ELEVATION_SOLEIL,
+        lister_tifs_ombrages=_lister_tifs_ombrages,
+        tuiler_tifs_ombrages=_tuiler_tifs_ombrages,
+        resultat_chunk=_ResultatChunk,
+    )
+
+
 def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
     """
     Traite un morceau LiDAR directement en Python (sans subprocess).
@@ -6762,114 +5687,15 @@ def _traiter_bbox_lidar(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle):
     nom_zone_base : nom du projet parent (ex: gareoult2).
     nom_z         : nom du morceau   (ex: gareoult2_001x001).
     """
-    bx1, by1, bx2, by2 = bbox_natif
-
-    # Sauvegarder / restaurer les args modifiés temporairement
-    _bbox_orig = args.zone_bbox
-    _nom_orig  = args.zone_nom
-    args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
-    args.zone_nom  = nom_z
-
-    # Halo (cf. calcul par blocs / ghost cells) : ce morceau télécharge et
-    # calcule ses ombrages sur une emprise élargie d'une marge GARANTIE,
-    # au-delà de sa bbox nominale — pas seulement le débord accidentel de
-    # l'arrondi aux dalles entières (mesuré 100-900 m selon l'endroit, jamais
-    # garanti). generer_mbtiles_lidar CALCULE ensuite (pas une constante,
-    # cf. son commentaire) l'ampleur exacte à publier en plus pour fermer le
-    # petit trou qui reste au coin partagé par 4 blocs, bornée par cette
-    # marge. Toujours de vrais pixels : la marge est dans les dalles
-    # réellement téléchargées pour CE morceau, jamais une extrapolation.
-    #
-    # Proportionnelle à la taille du bloc (10 %, plancher 300 m), pas une
-    # constante fixe : --block sert des providers du monde entier avec des
-    # tailles de bloc au choix de l'utilisateur, et l'ampleur du trou de
-    # coin (cisaillement de la reprojection) croît avec la taille du bloc.
-    MARGE_HALO_M = max(300.0, 0.1 * min(bx2 - bx1, by2 - by1))
-
-    traitement_ok = True
-    mbtiles_attendus = []
-    try:
-        with _contexte_manifeste(manifeste, cle):
-            bbox = (bx1, by1, bx2, by2)
-            bbox_marge = (bx1 - MARGE_HALO_M, by1 - MARGE_HALO_M,
-                          bx2 + MARGE_HALO_M, by2 + MARGE_HALO_M)
-            # Structure : <racine>/<nom_zone_base>/ign_lidar/<nom_z>/
-            # (tous les morceaux sont sous-dossiers du même projet parent)
-            racine_base = (Path(args.dossier).resolve() if args.dossier
-                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
-            racine = racine_base
-            dossier_ville = racine / nom_z
-            dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
-            dossier_ville.mkdir(parents=True, exist_ok=True)
-            dossier_dalles.mkdir(parents=True, exist_ok=True)
-
-            # Découverte des dalles via le provider — retourne {nom: url} en
-            # combinant index officiel (TMS pour FR, JSON pour NL, etc.) et
-            # éventuel fallback grille interne au provider. Le pipeline reste
-            # provider-agnostique : il ne suppose ni grille (x_km, y_km) ni
-            # protocole d'accès particulier. bbox_marge (pas bbox) pour le
-            # filtre géométrique : voir MARGE_HALO_M ci-dessus.
-            _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-            _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
-                _t.transform, *bbox_marge)
-            bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-            cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
-            # discover_dalles : None = échec réseau/endpoint, {} = pas de
-            # couverture. On DISTINGUE (#5) : None -> lever, sinon le chunk
-            # finirait sans erreur et le manifeste le marquerait FAIT (données
-            # perdues sur une panne réseau, malgré le message « retry »). La
-            # boucle de split rattrape l'exception (fail-fast + reprise) et un
-            # re-run rejoue le chunk. {} = hors-couverture légitime -> le chunk
-            # se termine vide et fait, comme une cellule mer.
-            try:
-                _d = PROVIDER.discover_dalles(bbox_wgs, bbox_marge, cache_discover)
-            except Exception as _e_disc:
-                raise RuntimeError(
-                    f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
-                    " - rerun to resume this chunk") from _e_disc
-            if _d is None:
-                raise RuntimeError(
-                    "tile discovery unavailable (network/endpoint)"
-                    " - rerun to resume this chunk")
-            dalles_dict = _d
-
-            if args.telechargement:
-                _telecharger_dalles_zone(dalles_dict, bbox_marge, dossier_dalles, dossier_ville, args)
-
-            # tifs_run hoisté HORS du `if args.ombrages` : un run tuiles-seules
-            # chunké (mbtiles sans --shadings) levait NameError sur tifs_run.
-            tifs_run = None   # cibles du run (cf. site jumeau dans main)
-            if args.ombrages:
-                choix, _spec_i = _resoudre_choix_ombrages(args)
-                if choix or _spec_i:
-                    dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
-                                                          dossier_ville, bbox_marge)
-                    elev = (args.ombrages_elevation if args.ombrages_elevation is not None
-                            else ELEVATION_SOLEIL)
-                    tifs_run = generer_ombrages(dalles_ombrages, dossier_ville, choix,
-                                     elevation_soleil=elev, nom_zone=nom_z,
-                                     ecraser_ombrages=args.ombrages_ecraser,
-                                     use_sweep=args.sweep_horizon,
-                                     svf_gamma=args.svf_gamma,
-                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                                     bbox_natif=tuple(bbox_marge),
-                                     instances=_spec_i or None)
-
-            if args.mbtiles or args.rmap or args.sqlitedb:
-                # Glob/filtre/tuilage factorisés avec le site jumeau de main()
-                # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages). bbox
-                # (nominale, PAS bbox_marge) pour la frontière exacte avec les
-                # voisins directs ; tampon_coin_max_m borne le calcul du
-                # tampon de coin dans la marge halo ci-dessus.
-                traitement_ok = _tuiler_tifs_ombrages(
-                    args, _lister_tifs_ombrages(dossier_ville, tifs_run),
-                    dossier_ville, nom_z, bbox, decoupe_sortie=False,
-                    tampon_coin_max_m=MARGE_HALO_M,
-                    mbtiles_attendus=mbtiles_attendus)
-    finally:
-        args.zone_bbox = _bbox_orig
-        args.zone_nom  = _nom_orig
-    return _ResultatChunk(traitement_ok, mbtiles_attendus)
+    return _traiter_bbox_lidar_impl(
+        args,
+        bbox_natif,
+        nom_z,
+        nom_zone_base,
+        manifeste,
+        cle,
+        dependances=_dependances_lidar_classique(),
+    )
 
 
 from _split_sliding import (
@@ -6877,6 +5703,46 @@ from _split_sliding import (
     _run_split_priori_lidar_glissant as _run_split_priori_lidar_glissant_impl,
     _voisins_dossiers,
 )
+
+
+def _dependances_morceau_terrain():
+    """Reconstruit les coutures de découverte d'un morceau à chaque appel."""
+    return _DependancesMorceauTerrain(
+        provider=PROVIDER,
+        get_transformer=_get_transformer,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        dossier_cache=DOSSIER_CACHE,
+        dossier_travail=DOSSIER_TRAVAIL,
+        lidar_subdir=LIDAR_SUBDIR,
+        dossier_dalles_actif=_dossier_dalles_actif,
+        contexte_manifeste=_contexte_manifeste,
+        telecharger_dalles_zone=_telecharger_dalles_zone,
+        decouvrir_et_telecharger_ombrage=_decouvrir_et_telecharger_ombrage,
+        resoudre_choix_ombrages=_resoudre_choix_ombrages,
+        lister_dalles_zone=_lister_dalles_zone,
+        generer_ombrages=generer_ombrages,
+        elevation_soleil=ELEVATION_SOLEIL,
+        supprimer_fichiers=_supprimer_fichiers,
+    )
+
+
+def _dependances_tuilage_morceau():
+    """Reconstruit les coutures du tuilage glissant à chaque appel."""
+    return _DependancesTuilageMorceau(
+        dossier_travail=DOSSIER_TRAVAIL,
+        lidar_subdir=LIDAR_SUBDIR,
+        voisins_dossiers=_voisins_dossiers,
+        contexte_manifeste=_contexte_manifeste,
+        lister_tifs_ombrages=_lister_tifs_ombrages,
+        build_vrt_xml=_build_vrt_xml,
+        creer_fichier=_creer_fichier,
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        generer_mbtiles_lidar=generer_mbtiles_lidar,
+        tile_workers_defaut=_tile_workers_defaut,
+        convertir_formats=_convertir_formats,
+        resultat_chunk=_ResultatChunk,
+        imprimer=print,
+    )
 
 
 def _dalles_zone_lookahead(bbox_natif):
@@ -6889,16 +5755,9 @@ def _dalles_zone_lookahead(bbox_natif):
     fraîches parce que son voisin venait de les purger). Best-effort :
     toute erreur renvoie None, jamais fatal (le cleanup se rabat alors sur
     son comportement d'avant ce garde-fou, pas de régression possible)."""
-    try:
-        bx1, by1, bx2, by2 = bbox_natif
-        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, bx1, by1, bx2, by2)
-        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
-        _d = PROVIDER.discover_dalles(bbox_wgs, (bx1, by1, bx2, by2), cache_discover)
-        return set(_d.keys()) if _d else None
-    except Exception:
-        return None
+    return _dalles_zone_lookahead_impl(
+        bbox_natif, dependances=_dependances_morceau_terrain()
+    )
 
 
 def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
@@ -6913,36 +5772,16 @@ def _decouvrir_et_telecharger_ombrage(args, bbox_natif, nom_z, nom_zone_base, ma
 
     Retourne (dalles_dict, dossier_dalles, dossier_ville).
     """
-    bx1, by1, bx2, by2 = bbox_natif
-    bbox = (bx1, by1, bx2, by2)
-    racine = (Path(args.dossier).resolve() if args.dossier
-              else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
-    dossier_ville = racine / nom_z
-    dossier_dalles = _dossier_dalles_actif(args, dossier_ville)
-    dossier_ville.mkdir(parents=True, exist_ok=True)
-    dossier_dalles.mkdir(parents=True, exist_ok=True)
-
-    cle_dl = cle + "_dl"
-    with _contexte_manifeste(manifeste, cle_dl):
-        _t = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(_t.transform, *bbox)
-        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
-        try:
-            _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
-        except Exception as _e_disc:
-            raise RuntimeError(
-                f"tile discovery failed ({type(_e_disc).__name__}: {_e_disc})"
-                " - rerun to resume this chunk") from _e_disc
-        if _d is None:
-            raise RuntimeError(
-                "tile discovery unavailable (network/endpoint)"
-                " - rerun to resume this chunk")
-        dalles_dict = _d
-        if args.telechargement:
-            _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args,
-                                      quiet=quiet)
-    return dalles_dict, dossier_dalles, dossier_ville
+    return _decouvrir_et_telecharger_ombrage_impl(
+        args,
+        bbox_natif,
+        nom_z,
+        nom_zone_base,
+        manifeste,
+        cle,
+        quiet=quiet,
+        dependances=_dependances_morceau_terrain(),
+    )
 
 
 def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
@@ -6972,53 +5811,18 @@ def _traiter_bbox_lidar_ombrage(args, bbox_natif, nom_z, nom_zone_base, manifest
     est appelé dès que ce morceau a ses dalles en main (fraîches ou préchargées) :
     signal pour lancer le préchargement du morceau SUIVANT.
     """
-    bx1, by1, bx2, by2 = bbox_natif
-    _bbox_orig = args.zone_bbox
-    _nom_orig  = args.zone_nom
-    args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
-    args.zone_nom  = nom_z
-    try:
-        bbox = (bx1, by1, bx2, by2)
-        if dalles_precharge is not None:
-            dalles_dict, dossier_dalles, dossier_ville = dalles_precharge
-        else:
-            dalles_dict, dossier_dalles, dossier_ville = _decouvrir_et_telecharger_ombrage(
-                args, bbox, nom_z, nom_zone_base, manifeste, cle)
-        if on_download_done:
-            on_download_done()
-
-        if args.ombrages:
-            choix, _spec_i = _resoudre_choix_ombrages(args)
-            if choix or _spec_i:
-                with _contexte_manifeste(manifeste, cle):
-                    dalles_ombrages = _lister_dalles_zone(dalles_dict.keys(), dossier_dalles,
-                                                          dossier_ville, bbox)
-                    elev = (args.ombrages_elevation if args.ombrages_elevation is not None
-                            else ELEVATION_SOLEIL)
-                    generer_ombrages(dalles_ombrages, dossier_ville, choix,
-                                     elevation_soleil=elev, nom_zone=nom_z,
-                                     ecraser_ombrages=args.ombrages_ecraser,
-                                     use_sweep=args.sweep_horizon,
-                                     svf_gamma=args.svf_gamma,
-                                     svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                                     bbox_natif=tuple(bbox),
-                                     instances=_spec_i or None)
-
-        if args.telechargement and getattr(args, "nettoyage", False):
-            if getattr(args, "nettoyage_garder_dalles", False):
-                _keep = [_dossier_dalles_actif(args)]
-                _cloud_cache = getattr(args, "_cloud_cache_dir", None)
-                if _cloud_cache is not None:
-                    _keep.append(_cloud_cache)
-            else:
-                _keep = None
-            # cle_dl : même sous-clé que _decouvrir_et_telecharger_ombrage (download,
-            # fraîchement fait ou préchargé en tâche de fond, cf. dalles_precharge).
-            _supprimer_fichiers(manifeste.fichiers_morceau(cle + "_dl"), _keep,
-                               noms_garder=noms_dalles_a_garder)
-    finally:
-        args.zone_bbox = _bbox_orig
-        args.zone_nom  = _nom_orig
+    return _traiter_bbox_lidar_ombrage_impl(
+        args,
+        bbox_natif,
+        nom_z,
+        nom_zone_base,
+        manifeste,
+        cle,
+        dalles_precharge=dalles_precharge,
+        on_download_done=on_download_done,
+        noms_dalles_a_garder=noms_dalles_a_garder,
+        dependances=_dependances_morceau_terrain(),
+    )
 
 
 def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifeste, cle,
@@ -7034,69 +5838,19 @@ def _traiter_bbox_lidar_tuilage(args, bbox_natif, nom_z, nom_zone_base, manifest
     plus qu'un simple coin (contrairement à la marge de téléchargement
     fixe de l'étape 1 / --block).
     """
-    bx1, by1, bx2, by2 = bbox_natif
-    TAMPON_MAX_M = min(bx2 - bx1, by2 - by1) / 3.0
-    _bbox_orig = args.zone_bbox
-    _nom_orig  = args.zone_nom
-    args.zone_bbox = f"{bx1:.2f},{by1:.2f},{bx2:.2f},{by2:.2f}"
-    args.zone_nom  = nom_z
-    conversion_ok = True
-    mbtiles_attendus = []
-    try:
-        if not (args.mbtiles or args.rmap or args.sqlitedb):
-            return
-        bbox = (bx1, by1, bx2, by2)
-        racine = (Path(args.dossier).resolve() if args.dossier
-                  else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / LIDAR_SUBDIR)
-        dossier_ville = racine / nom_z
-        voisins = _voisins_dossiers(racine, nom_zone_base, i_lat, i_lon, n_lat, n_lon)
-
-        cle_t = cle + "_t"
-        with _contexte_manifeste(manifeste, cle_t):
-            for tif in _lister_tifs_ombrages(dossier_ville, None):
-                stem   = re.sub(r'_tuilage_z\d+$', '', tif.stem)
-                suffix = stem[len(nom_z) + 1:] if stem.startswith(nom_z + "_") else stem
-                nom_base = f"{nom_z}_{suffix}"
-
-                _cogs = [tif]
-                for vd in voisins:
-                    vf = vd / f"{vd.name}_{suffix}.tif"
-                    if vf.exists():
-                        _cogs.append(vf)
-
-                if len(_cogs) > 1:
-                    import rasterio as _rio_vres
-                    with _rio_vres.open(str(tif)) as _ds_res:
-                        _res = _ds_res.transform.a
-                    vrt_path = dossier_ville / f"_voisins_{suffix}.vrt"
-                    _build_vrt_xml(_cogs, vrt_path, _res)
-                    _creer_fichier(vrt_path)
-                    tif_source = vrt_path
-                else:
-                    tif_source = tif   # bord de zone sans voisin encore prêt
-
-                mbt_path = dossier_ville / f"{nom_base}_z{args.zoom_min}-{args.zoom_max}.mbtiles"
-                mbtiles_attendus.append(mbt_path)
-                mbt_neuf = _mbtiles_a_regenerer(mbt_path, args.tuiles_ecraser, source=tif)
-                if mbt_neuf:
-                    mbt_out = generer_mbtiles_lidar(
-                        tif_source, dossier_ville, nom_base,
-                        zoom_min=args.zoom_min, zoom_max=args.zoom_max,
-                        format_tuiles=args.formats_image,
-                        jpeg_quality=args.qualite_image,
-                        bbox_natif=bbox, tampon_coin_max_m=TAMPON_MAX_M,
-                        ecraser_tuiles=args.tuiles_ecraser,
-                        tile_workers=_tile_workers_defaut())
-                else:
-                    print(f"  Existing MBTiles: {mbt_path.name}, direct split/conversion")
-                    mbt_out = mbt_path
-                conversion_ok = (_convertir_formats(
-                    mbt_out, args, decoupe_sortie=False,
-                    mbtiles_neuf=mbt_neuf) and conversion_ok)
-    finally:
-        args.zone_bbox = _bbox_orig
-        args.zone_nom  = _nom_orig
-    return _ResultatChunk(conversion_ok, mbtiles_attendus)
+    return _traiter_bbox_lidar_tuilage_impl(
+        args,
+        bbox_natif,
+        nom_z,
+        nom_zone_base,
+        manifeste,
+        cle,
+        i_lat,
+        i_lon,
+        n_lat,
+        n_lon,
+        dependances=_dependances_tuilage_morceau(),
+    )
 
 
 def _run_split_priori_lidar_glissant(
@@ -7139,6 +5893,23 @@ def _run_split_priori_lidar_glissant(
     )
 
 
+def _dependances_wmts_morceau():
+    """Reconstruit les coutures du morceau WMTS à chaque appel."""
+    return _DependancesWmtsMorceau(
+        dossier_travail=DOSSIER_TRAVAIL,
+        dossier_cache=DOSSIER_CACHE,
+        contexte_manifeste=_contexte_manifeste,
+        calculer_grille_xyz=calculer_grille_xyz,
+        compter_tuiles_xyz=compter_tuiles_xyz,
+        jpeg_quality_sortie=_jpeg_quality_sortie,
+        nom_mbtiles_wmts=_nom_mbtiles_wmts,
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        generer_mbtiles_wmts=generer_mbtiles_wmts,
+        convertir_formats=_convertir_formats,
+        resultat_chunk=_ResultatChunk,
+    )
+
+
 def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img_fmt, fmt_ext,
                        apikey_requis, manifeste, cle):
     """
@@ -7147,64 +5918,20 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
     nom_zone_base : nom du projet parent (ex: gareoult2).
     nom_z         : nom du morceau   (ex: gareoult2_001x001).
     """
-    lon_w, lat_s, lon_e, lat_n = bbox_wgs84
-    _nom_orig = args.zone_nom
-    args.zone_nom = nom_z
-    traitement_ok = True
-    mbtiles_attendus = []
-    try:
-        with _contexte_manifeste(manifeste, cle):
-            zoom_min = min(args.zoom_min, args.zoom_max)
-            zoom_max = max(args.zoom_min, args.zoom_max)
-            tuiles = calculer_grille_xyz(lat_s, lon_w, lat_n, lon_e, zoom_min, zoom_max)
-            total_tuiles = compter_tuiles_xyz(lat_s, lon_w, lat_n, lon_e,
-                                              zoom_min, zoom_max)
-            # Structure : <racine>/<nom_zone_base>/raster/<nom_z>/
-            racine_base = (Path(args.dossier).resolve() if args.dossier
-                           else DOSSIER_TRAVAIL / "Projets" / nom_zone_base / "raster")
-            dossier = racine_base / nom_z
-            dossier.mkdir(parents=True, exist_ok=True)
-            # Source de vérité UNIQUE (fin du drift jumeau R2#14) : le split
-            # honore --image-format png comme la passe simple, et encode la
-            # qualité dans le nom (R2#18) via le même helper.
-            _jpeg_q = _jpeg_quality_sortie(img_fmt, args.formats_image,
-                                           args.qualite_image)
-            nom_fichier    = _nom_mbtiles_wmts(nom_z, args.couche,
-                                               zoom_min, zoom_max, _jpeg_q)
-            chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
-            mbtiles_attendus.append(chemin_mbtiles)
-            dossier_cache  = DOSSIER_CACHE / "ign_raster"
-            dossier_cache.mkdir(parents=True, exist_ok=True)
-            _mbt_neuf = _mbtiles_a_regenerer(chemin_mbtiles, args.tuiles_ecraser)
-            if _mbt_neuf:
-                generer_mbtiles_wmts(
-                    chemin=chemin_mbtiles,
-                    tuiles_iter=tuiles,
-                    total=total_tuiles,
-                    nom_zone=nom_z,
-                    fmt_ext=fmt_ext,
-                    zoom_min=zoom_min,
-                    zoom_max=zoom_max,
-                    layer=layer,
-                    style=style,
-                    img_fmt=img_fmt,
-                    apikey=args.apikey,
-                    apikey_requis=apikey_requis,
-                    workers=args.workers,
-                    bbox_wgs84=(lon_w, lat_s, lon_e, lat_n),
-                    jpeg_quality=_jpeg_q,
-                    dossier_cache=dossier_cache,
-                    ecraser_tuiles=args.tuiles_ecraser,
-                    ecraser_dalles=args.telechargement_ecraser)
-            if chemin_mbtiles.exists():
-                traitement_ok = _convertir_formats(
-                    chemin_mbtiles, args, decoupe_sortie=False,
-                    mbtiles_neuf=_mbt_neuf)
-            else:
-                traitement_ok = False
-    finally:
-        args.zone_nom = _nom_orig
-    return _ResultatChunk(traitement_ok, mbtiles_attendus)
+    return _traiter_bbox_wmts_impl(
+        args,
+        bbox_wgs84,
+        nom_z,
+        nom_zone_base,
+        layer,
+        style,
+        img_fmt,
+        fmt_ext,
+        apikey_requis,
+        manifeste,
+        cle,
+        dependances=_dependances_wmts_morceau(),
+    )
 
 
 def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,

@@ -1,8 +1,8 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot déployé : 18 août 2026, **v1.43.0**. Il regroupe la phase 15a :
-sources autonomes LiDAR/OSM et WMTS, avec façades compatibles et dépendances
-reconstruites à chaque appel.
+Dernier lot déployé : 20 août 2026, **v1.45.0**. Il regroupe les phases 15a à
+15g : sources, résolution et orchestration terrain, avec façades compatibles et
+dépendances reconstruites à chaque appel.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -53,7 +53,10 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_zones.py       primitives pures de résolution des zones terrain
 ├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
 ├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
+├── _terrain_chunks.py      découverte et téléchargement par morceau glissant
 ├── _terrain_download.py    pool, routage, preuve et inventaire des dalles terrain
+├── _terrain_prefetch.py    préchargement terrain profondeur un et best-effort
+├── _terrain_shading.py     planification pure des instances d'ombrage
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
@@ -167,8 +170,21 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Résolveur de zone LiDAR (15e, mesuré) | 162 | 0,76 % |
 | Orchestration téléchargement terrain (15f, mesuré) | 118 | 0,55 % |
 | Preuve et inventaire `dalles_zone` (15g, mesuré) | 29 | 0,14 % |
-| **Total sorti du monolithe (mesuré)** | **10 171** | **47,72 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **11 144** | **52,28 %** |
+| Staging et téléchargement direct (15h, mesuré) | 135 | 0,63 % |
+| Téléchargement COPC fenêtré (15i, mesuré) | 18 | 0,08 % |
+| Téléchargement COG fenêtré (15j, mesuré) | 116 | 0,54 % |
+| Chemins et validation des dalles (15k, mesuré) | 96 | 0,45 % |
+| Cache, profilage LAZ et préchargement (15l, mesuré) | 78 | 0,37 % |
+| Découverte et téléchargement par morceau (15m, mesuré) | 5 | 0,02 % |
+| Orchestration d'ombrage par morceau (15n, mesuré) | 28 | 0,13 % |
+| Orchestration du tuilage glissant (15o, mesuré) | 29 | 0,14 % |
+| Transaction raster WMTS par morceau (15p, mesuré) | 25 | 0,12 % |
+| Transaction LiDAR autonome `--block` (15q, mesuré) | 75 | 0,35 % |
+| Tuilage commun des ombrages (15r, mesuré) | 2 | 0,01 % |
+| Planification des instances d'ombrage (15s-a, mesuré) | 56 | 0,26 % |
+| Orchestrateur d'ombrage (15s-b, mesuré) | 610 | 2,86 % |
+| **Total sorti du monolithe (mesuré)** | **11 444** | **53,69 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **9 871** | **46,31 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -235,7 +251,7 @@ faible gain net anticipé pour un orchestrateur de seulement 119 lignes.
 La cible de fin de refonte est désormais fixée à **30–35 % du périmètre de
 référence** dans `lidar2map.py`. Avec la référence constante de 21 315 lignes,
 cela correspond à un script principal d'environ **6 395 à 7 460 lignes**. L'état
-post-15g est de 11 144 lignes (52,28 %) : il reste donc à sortir **3 684 à 4 749
+post-15s-b est de 9 871 lignes (46,31 %) : il reste donc à sortir **2 411 à 3 476
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
@@ -296,7 +312,7 @@ rester dans le script principal.
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 | 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
-| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS, résolveur de zone, ordonnanceur et inventaire terrain extraits (15a-g) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné, 24 branches de résolution, routage direct/COG/COPC et preuve de zone |
+| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS, résolveur de zone, ordonnanceur, inventaire, moteurs direct/COPC/COG, chemins, cache, préchargement, découverte, ombrage, tuilages commun/glissant, transactions WMTS/LiDAR autonome, planification des instances et orchestrateur d'ombrage extraits (15a–15s-b) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné, 24 branches de résolution, routage direct/COG/COPC, preuve de zone, voisinage 3×3, halos `--block`, suffixes/collisions d'ombrage, VRT temporaire, publication atomique, cache WMTS, agrégation multi-TIFF et concurrence profondeur un |
 
 ## Travail déjà sécurisé
 
@@ -2373,21 +2389,470 @@ lignes, 52,28 %**. Le module `_terrain_download.py` contient désormais 281
 lignes physiques ; la faible baisse nette est le coût volontaire des quatre
 façades de compatibilité et de leurs injections explicites.
 
-### Sous-phase 15h : staging atomique et téléchargement direct (contrats en cours)
+### Sous-phase 15h : staging atomique et téléchargement direct extraits (terminée localement)
 
-Caractériser d'abord `_stage_dalle_part`, la réutilisation du nuage LAZ et le
-moteur `telecharger_dalle_directe` : conservation d'une ancienne dalle valide,
-nettoyage des `.part` et sidecars sur toute exception, retries, validation TIFF,
-compression et hooks provider. Le déplacement ne commencera qu'après ces
-contrats, sans mélanger dans le même lot les moteurs COG/COPC ni la production
-d'ombrages.
+Le moteur `telecharger_dalle_directe`, le dossier de staging, la correspondance
+des caches LAZ et la recompression DEFLATE résident désormais dans
+`_terrain_download.py`. Le moteur conserve l'ordre historique : cache,
+`pre_download`, transfert, `post_fetch`, validations, `post_download`,
+compression, publication du nuage puis du TIFF et enregistrement au manifeste.
+Les retours `ok`, `skip`, `absent` et `erreur`, ainsi que le retry d'un provider à
+découverte exacte, sont inchangés.
 
-Quatre contrats supplémentaires sont déjà verts dans
-`_test_atomic_downloads.py` : nettoyage complet du staging sur
-`KeyboardInterrupt`, court-circuit sans aucun effet pour une dalle valide en
-cache, retry d'une erreur transitoire suivi d'une publication réussie, et mise à
-disposition du nuage LAZ par hardlink au hook `pre_download` sans republier ni
-altérer le cache existant. La suite atomique contient désormais **16 tests**.
-Ce palier ne déplace encore aucun moteur : le code reste stable pendant que les
-branches JSON d'erreur, validation/compression et publication d'un nouveau nuage
-LAZ sont complétées.
+Une dataclass immuable de quinze dépendances est reconstruite par la façade à
+chaque appel. Le provider, les seuils/retries, le téléchargement HTTP, les hooks,
+le validateur TIFF, la compression, le staging et le manifeste restent donc
+monkeypatchables. Les helpers historiques `_stage_dalle_part`,
+`_chemins_nuage_stage`, `_lier_nuage_existant_au_stage`,
+`_publier_nuage_stage` et `_comprimer_dalle_deflate` conservent également leurs
+signatures ; les façades COG/COPC continuent de les appeler.
+
+Sept contrats ajoutés au cours de 15h portent la suite atomique à **19 tests**.
+Ils couvrent le nettoyage sur interruption, le cache sans effet, les retries, le
+payload JSON d'erreur, l'absence réelle, la compression invalide, le hardlink
+LAZ et la publication d'un nouveau nuage seulement après validation. Un contrat
+de façade supplémentaire porte la suite de refonte à **184 tests** et vérifie
+toutes les coutures tardives.
+
+Validation locale : suite atomique, 184 contrats de refonte, corrections
+scientifiques, robustesse, interactions, garde de livraison, compilation et Ruff
+verts. Le contrôle textuel d'overwrite suit maintenant le module extrait au lieu
+de rechercher l'algorithme dans la façade.
+
+Aucun nouveau fichier livrable n'est créé : `_terrain_download.py` est déjà dans
+`deploy.MAP` et couvert par les motifs rebuild/CI. La version reste **1.45.0** ;
+ce lot est postérieur à la release et n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 11 144 → 11 009 lignes (**-135**, soit **0,63 %**
+du périmètre figé). Total sorti : **10 306 lignes, 48,35 %** ; reste **11 009
+lignes, 51,65 %**. `_terrain_download.py` contient désormais 526 lignes
+physiques.
+
+### Sous-phase 15i : moteur COPC fenêtré extrait (terminée localement)
+
+`telecharger_copc_fenetre`, son état de dépendances immuable et l'implémentation
+du verrou multi-UTM résident désormais dans `_terrain_download.py`. La façade
+historique conserve sa signature et reconstruit à chaque appel le provider, le
+résolveur sécurisé, la transformation de bbox, le lecteur COPC, le staging, la
+validation, la publication LAZ/TIFF et le manifeste. Le lecteur
+`providers.common.copc_window_to_las` reste donc remplaçable à chaud dans les
+tests et les intégrations.
+
+Le téléchargement distant et l'écriture LAS restent parallèles. Seul le couple
+`set_crs` puis `post_fetch` est protégé par le verrou partagé, afin qu'une tuile
+d'un autre fuseau UTM ne modifie pas le CRS pendant la conversion. Le cache et
+le seuil propre au provider, la signature éventuelle de l'URL, le seuil minimal
+de 50 000 points, les statuts `ok`/`skip`/`absent`/`erreur`, la publication
+atomique et la propagation de `KeyboardInterrupt` sont inchangés.
+
+Trois nouveaux tests atomiques portent cette suite à **22 tests** : succès avec
+URL signée et ordre validation/publication, fenêtre quasi vide sans conversion,
+et interruption avec nettoyage. Un contrat de façade supplémentaire porte la
+suite de refonte à **185 tests** et vérifie les dépendances tardives ainsi que
+les signatures historiques. Le test scientifique concurrent multi-UTM et le
+contrôle d'interaction du hook `sign_url` suivent désormais le module extrait.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+Aucun nouveau fichier livrable n'est créé : `_terrain_download.py` est déjà dans
+`deploy.MAP` et couvert par les motifs rebuild/CI. La version reste **1.45.0** et
+ce lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 11 009 → 10 991 lignes (**-18**, soit **0,08 %**
+du périmètre figé). Total sorti : **10 324 lignes, 48,43 %** ; reste **10 991
+lignes, 51,57 %**. `_terrain_download.py` contient désormais 624 lignes
+physiques. Le faible gain net est assumé : cette petite frontière conserve deux
+façades et une injection explicite de onze dépendances.
+
+### Sous-phase 15j : moteur COG fenêtré extrait (terminée localement)
+
+`telecharger_cog_fenetre`, le contrôle de couverture du fragment en cache et une
+dataclass immuable de douze dépendances résident désormais dans
+`_terrain_download.py`. Les imports rasterio restent locaux au moteur afin que le
+module terrain demeure importable sans cette dépendance. La façade historique
+conserve sa signature et relit à chaque appel provider, chemins, seuil, retries,
+taille maximale, staging, transformeur, cache, validateur, manifeste et horloge.
+
+Les options GDAL par défaut restent confinées dans `rasterio.Env` et les options
+du provider les surchargent comme avant. La bbox est reprojetée vers le CRS réel
+du COG lorsque nécessaire, intersectée avec ses bornes puis copiée en une passe
+ou par bandes de 1 024 lignes au-delà du plafond. L'ancien fragment n'est
+remplacé qu'après les validations précédant et suivant `post_download`.
+`KeyboardInterrupt` est propagée ; les erreurs transitoires conservent leurs
+retries et les statuts `ok`/`skip`/`absent`/`erreur` restent inchangés.
+
+Six contrats COG supplémentaires portent la suite atomique à **28 tests**. Ils
+couvrent le succès et l'ordre validation/hook/publication, les options provider,
+l'absence d'intersection, le retry, l'interruption, la copie bornée d'une fenêtre
+de 2 050 lignes et la reprojection du contrôle de cache. Un contrat de façade
+porte la suite de refonte à **186 tests** et verrouille les dépendances tardives
+ainsi que les signatures historiques. Le scénario d'interaction avec un vrai
+GeoTIFF confirme toujours la couverture, le débordement et le fragment illisible.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+Aucun nouveau fichier livrable n'est créé : `_terrain_download.py` est déjà dans
+`deploy.MAP` et couvert par les motifs rebuild/CI. La version reste **1.45.0** et
+ce lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 991 → 10 875 lignes (**-116**, soit **0,54 %**
+du périmètre figé). Total sorti : **10 440 lignes, 48,98 %** ; reste **10 875
+lignes, 51,02 %**. `_terrain_download.py` contient désormais 862 lignes
+physiques.
+
+### Sous-phase 15k : chemins et validation des dalles extraits (terminée localement)
+
+Les politiques `_nom_dalle_sur`, `chemin_dalle`, `_dossier_dalles_actif` et
+`_valider_tif_dalle` résident désormais dans `_terrain_download.py`. Les quatre
+façades historiques gardent leurs signatures et relisent le provider, les
+racines cache/production, le sous-dossier LiDAR et le contrôle de basename à
+chaque appel.
+
+Un nom issu d'un index distant reste limité à un composant sans séparateur,
+lettre de lecteur, chemin absolu, NUL, `.` ou `..`. L'ancienne dalle placée à la
+racine conserve sa priorité ; sinon le sous-dossier du provider est utilisé. La
+racine explicitement demandée reste prioritaire, puis viennent le projet pour
+les providers fenêtrés, la production pour les jumeaux LAZ et enfin le cache
+pour les MNT téléchargés.
+
+Le validateur accepte les TIFF classiques et BigTIFF dans les deux endiannesses.
+Sans rasterio, le magic reste le repli historique ; avec rasterio, dimensions,
+nombre de bandes, résolution finie et lecture d'un bloc 64×64 sont exigés. Un
+header correct avec métadonnées ou données tronquées reste donc rejeté sans
+exception visible.
+
+Cinq contrats supplémentaires portent la suite de refonte à **191 tests**. Ils
+verrouillent la traversée de chemin, le cache racine historique, le sous-dossier
+provider, les quatre routes de stockage, les quatre magics TIFF/BigTIFF, les
+métadonnées invalides, la lecture en erreur et les dépendances tardives des
+façades. La suite atomique reste à **28 tests**.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+Aucun nouveau fichier livrable n'est créé : `_terrain_download.py` est déjà dans
+`deploy.MAP` et couvert par les motifs rebuild/CI. La version reste **1.45.0** et
+ce lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 875 → 10 779 lignes (**-96**, soit **0,45 %**
+du périmètre figé). Total sorti : **10 536 lignes, 49,43 %** ; reste **10 779
+lignes, 50,57 %**. `_terrain_download.py` contient désormais 953 lignes
+physiques.
+
+### Sous-phase 15l : cache, profilage LAZ et préchargement extraits (terminée localement)
+
+Les politiques `_configurer_cloud_cache` et `_rglob_tif_robuste`, ainsi que
+l'accumulation et le résumé du profilage LAZ, résident maintenant dans
+`_terrain_download.py`. Elles reçoivent explicitement provider, racines,
+verrou, état et sortie texte ; les façades historiques relisent toujours les
+globals actifs à chaque appel.
+
+Le préchargement concurrent est volontairement isolé dans le nouveau module
+`_terrain_prefetch.py` (84 lignes). `PrefetchDalles` conserve une profondeur
+strictement égale à un, refuse l'anticipation quand la marge disque ne peut pas
+tenir deux morceaux, attend uniquement la clé correspondante et transforme une
+erreur du thread en repli synchrone. Il ne touche jamais au manifeste. La classe
+historique `_PrefetchDalles()` reste une façade sans argument et injecte au
+moment de son instanciation la sonde disque, le téléchargement, la fabrique de
+threads et l'affichage du monolithe.
+
+Six contrats supplémentaires portent la suite de refonte à **197 tests**. Ils
+verrouillent le parcours TIFF racine + un niveau, les erreurs d'accès disque,
+les routes du cache LAZ partagé/fenêtré/explicite, les cumuls et la borne du
+profilage, la profondeur un, la correspondance des clés, la marge disque, le
+repli sur erreur et les signatures des façades. Les 68 tests de reprise du
+découpage et les 28 tests de téléchargement atomique restent verts.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison est préparée sans publication : `_terrain_prefetch.py` est ajouté
+à `deploy.MAP` ; le motif `_terrain_*.py` imposait déjà le rebuild et couvrait
+les deux filtres CI. Les imports sont statiques et ne demandent aucun hidden
+import PyInstaller. La version reste **1.45.0** et ce lot n'est pas encore
+déployé.
+
+Mesure nette : `lidar2map.py` 10 779 → 10 701 lignes (**-78**, soit **0,37 %**
+du périmètre figé). Total sorti : **10 614 lignes, 49,79 %** ; reste **10 701
+lignes, 50,21 %**. `_terrain_download.py` contient désormais 1 037 lignes
+physiques et `_terrain_prefetch.py` 84.
+
+### Sous-phase 15m : découverte et téléchargement par morceau extraits (terminée localement)
+
+Le nouveau module `_terrain_chunks.py` (106 lignes) porte la transformation de
+la bbox native vers une enveloppe WGS84 élargie, le chemin du cache de
+découverte, le lookahead best-effort, la préparation des dossiers du morceau et
+le téléchargement sous la sous-clé manifeste `<chunk>_dl`.
+
+Une dataclass immuable reçoit provider, transformeurs, racines, sélection du
+dossier de dalles, contexte manifeste et moteur de téléchargement. Les façades
+`_dalles_zone_lookahead(bbox_natif)` et
+`_decouvrir_et_telecharger_ombrage(..., quiet=False)` conservent exactement leurs
+signatures et reconstruisent ces coutures à chaque appel. Une erreur de
+découverte du morceau principal reste fatale et rejouable ; le lookahead absorbe
+la même erreur et laisse le chemin synchrone reprendre normalement.
+
+Six contrats supplémentaires portent la suite de refonte à **203 tests**. Ils
+verrouillent la marge WGS84, le cache par provider, le résultat vide, le repli
+du lookahead, les racines implicite et explicite, la création des dossiers,
+l'ordre du contexte manifeste, le flag `quiet`, le mode sans téléchargement et
+les deux formes d'échec de découverte. Les 68 tests de reprise du découpage,
+interactions, compilation, Ruff et garde de livraison restent verts.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison est préparée sans publication : `_terrain_chunks.py` est ajouté à
+`deploy.MAP` et le motif `_terrain_*.py` couvre déjà rebuild et les deux filtres
+CI. L'import est statique et n'ajoute aucun hidden import PyInstaller. La version
+reste **1.45.0**.
+
+Mesure nette : `lidar2map.py` 10 701 → 10 696 lignes (**-5**, soit **0,02 %** du
+périmètre figé). Le faible gain est assumé : les 106 lignes du module sont
+presque compensées par la dataclass de neuf dépendances et les deux façades de
+compatibilité. Total sorti : **10 619 lignes, 49,82 %** ; reste **10 696 lignes,
+50,18 %**.
+
+### Sous-phase 15n : orchestration d'ombrage par morceau extraite (terminée localement)
+
+`_terrain_chunks.py` porte maintenant la transaction
+`traiter_bbox_lidar_ombrage`. Elle substitue temporairement la bbox et le nom du
+morceau dans `args`, consomme un résultat préchargé ou déclenche la découverte,
+signale immédiatement la disponibilité des dalles, résout les instances
+d'ombrage, ouvre le contexte manifeste et délègue le calcul scientifique à
+`generer_ombrages` injecté.
+
+Le nettoyage reste volontairement postérieur au succès du calcul. Il cible la
+sous-clé `<chunk>_dl`, préserve les noms nécessaires au morceau suivant et, avec
+`--cleanup-keep-tiles`, conserve à la fois la racine des TIFF et le cache séparé
+des nuages LAZ. Une exception de découverte ou d'ombrage restaure toujours
+`args.zone_bbox` et `args.zone_nom`, mais garde les téléchargements afin que la
+reprise puisse les réutiliser.
+
+Cinq contrats supplémentaires portent la suite de refonte à **208 tests**. Ils
+verrouillent la consommation du préchargement, le callback, toutes les options
+transmises au générateur, l'élévation par défaut, le contexte manifeste, le
+nettoyage sélectif, la conservation après échec, la restauration transactionnelle
+et la signature historique. Les noyaux raster et `generer_ombrages` n'ont pas
+été déplacés.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison ne crée aucun fichier supplémentaire : `_terrain_chunks.py` est
+déjà dans `deploy.MAP` et couvert par `_terrain_*.py` pour le rebuild et les deux
+filtres CI. La version reste **1.45.0** et ce lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 696 → 10 668 lignes (**-28**, soit **0,13 %**
+du périmètre figé). `_terrain_chunks.py` contient désormais 192 lignes. Total
+sorti : **10 647 lignes, 49,95 %** ; reste **10 668 lignes, 50,05 %**.
+
+### Sous-phase 15o : orchestration du tuilage glissant extraite (terminée localement)
+
+`_terrain_chunks.py` contient désormais `traiter_bbox_lidar_tuilage` et une
+dataclass séparée de treize dépendances. La transaction calcule le tampon maximal
+depuis le plus petit côté du morceau, résout les dossiers voisins via le
+planificateur 3×3 déjà extrait, associe les TIFF portant le même suffixe et ne
+construit un VRT que lorsqu'au moins un voisin réel est disponible.
+
+Chaque famille d'ombrage conserve son nom historique, sa source de fraîcheur et
+son chemin MBTiles attendu. Un MBTiles frais est réutilisé sans rappeler le
+générateur ; sinon le moteur MBTiles reçoit la bbox exacte, le tampon, le format,
+la qualité et le nombre de workers. Toutes les conversions sont exécutées même
+si la première échoue, et leur statut est agrégé dans `_ResultatChunk` avec la
+liste complète des livrables attendus. Les arguments temporaires de zone sont
+restaurés sur succès, retour anticipé et exception.
+
+Six contrats supplémentaires portent la suite de refonte à **214 tests**. Ils
+verrouillent l'absence de formats, le bord sans voisin, la construction et
+l'enregistrement du VRT, la résolution raster, le tampon, les chemins attendus,
+la réutilisation du cache, plusieurs familles, l'agrégation all-of et la
+restauration après échec. Les moteurs MBTiles, rasterio et conversion restent
+injectés ou importés localement ; aucun noyau scientifique n'est déplacé.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison ne crée aucun nouveau fichier : `_terrain_chunks.py` est déjà dans
+`deploy.MAP` et couvert par `_terrain_*.py` pour rebuild et CI. La version reste
+**1.45.0** et le lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 668 → 10 639 lignes (**-29**, soit **0,14 %**
+du périmètre figé). `_terrain_chunks.py` contient désormais 323 lignes. Total
+sorti : **10 676 lignes, 50,08 %** ; le script principal passe sous la moitié du
+périmètre initial avec **10 639 lignes, 49,92 %**.
+
+### Sous-phase 15p : transaction raster WMTS par morceau extraite (terminée localement)
+
+`_terrain_chunks.py` contient désormais `traiter_bbox_wmts` et une dataclass
+dédiée de onze dépendances. La transaction normalise les zooms inversés, calcule
+la grille et son cardinal, résout la racine explicite ou celle du projet, puis
+construit le nom MBTiles avec la qualité JPEG par les mêmes helpers que la passe
+WMTS simple. Le cache reste isolé sous `ign_raster` et toutes les options du
+téléchargeur historique sont transmises sans modification.
+
+Un MBTiles frais est réutilisé sans rappeler le générateur. Une génération qui
+ne publie pas le fichier attendu produit un `_ResultatChunk` incomplet sans
+tenter de conversion ; sinon le statut réel de la conversion est propagé. Le
+nom de zone temporaire est restauré sur succès comme sur exception. La façade
+`_traiter_bbox_wmts` et sa signature historique restent dans `lidar2map.py`, avec
+reconstruction tardive des coutures pour préserver les monkeypatches.
+
+Cinq contrats supplémentaires portent la suite de refonte à **219 tests**. Ils
+verrouillent les zooms inversés, la bbox et toutes les options de génération, le
+nom versionné par qualité, la racine explicite, la réutilisation du MBTiles, le
+fichier attendu absent, l'échec de conversion, la restauration après exception
+et la signature de façade.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison ne crée aucun nouveau fichier : `_terrain_chunks.py` est déjà dans
+`deploy.MAP` et couvert par `_terrain_*.py` pour rebuild et CI. La version reste
+**1.45.0** et le lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 639 → 10 614 lignes (**-25**, soit **0,12 %**
+du périmètre figé). `_terrain_chunks.py` contient désormais 429 lignes. Total
+sorti : **10 701 lignes, 50,20 %** ; reste **10 614 lignes, 49,80 %**.
+
+### Sous-phase 15q : transaction LiDAR autonome `--block` extraite (terminée localement)
+
+`_terrain_chunks.py` contient désormais `traiter_bbox_lidar` et une dataclass
+dédiée de seize dépendances. Cette voie est réservée au découpage distribué
+`--block`, où les machines ne partagent pas les ombrages voisins. Elle conserve
+le halo historique, égal à 10 % du plus petit côté avec un plancher de 300 m,
+pour la découverte, le téléchargement et le calcul d'ombrage ; le tuilage reçoit
+toujours la bbox nominale et ce halo comme borne du tampon de coin.
+
+La racine explicite et la racine de projet gardent leurs chemins historiques.
+La découverte distingue toujours l'absence légitime de couverture `{}` de
+l'indisponibilité réseau `None` ou d'une exception, ces deux derniers cas restant
+rejouables. La voie « tuiles seules » transmet `tifs_run=None` au sélecteur et
+évite le `NameError` déjà corrigé. Toutes les options scientifiques et le statut
+réel du tuilage sont propagés, tandis que `zone_bbox` et `zone_nom` sont restaurés
+sur succès ou échec. Aucun nettoyage n'a été ajouté : il reste sous la
+responsabilité du runner classique, comme avant l'extraction.
+
+Cinq contrats supplémentaires portent la suite de refonte à **224 tests**. Ils
+verrouillent les deux régimes de halo, les emprises découverte/ombrage/tuilage,
+les chemins et le cache provider, le téléchargement optionnel, toutes les
+options d'ombrage, la voie tuiles seules, l'absence de format, les échecs de
+découverte, la restauration transactionnelle et la signature de façade.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison ne crée aucun nouveau fichier : `_terrain_chunks.py` est déjà dans
+`deploy.MAP` et couvert par `_terrain_*.py` pour rebuild et CI. La version reste
+**1.45.0** et le lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 614 → 10 539 lignes (**-75**, soit **0,35 %**
+du périmètre figé). `_terrain_chunks.py` contient désormais 578 lignes. Total
+sorti : **10 776 lignes, 50,56 %** ; reste **10 539 lignes, 49,44 %**.
+
+### Sous-phase 15r : tuilage commun des ombrages extrait (terminée localement)
+
+`_terrain_chunks.py` contient désormais `tuiler_tifs_ombrages` et une dataclass
+de cinq coutures. Le helper reste partagé par le traitement monolithique et la
+transaction autonome `--block`. Il normalise le suffixe `_tuilage_zN`, construit
+un MBTiles attendu par famille, vérifie sa fraîcheur par rapport au TIFF source,
+appelle le producteur uniquement si nécessaire puis exécute chaque conversion.
+
+L'agrégation conserve son ordre historique, avec la conversion courante évaluée
+avant le statut accumulé : un premier échec ne court-circuite donc jamais les
+familles suivantes. Le mode verbeux, la découpe de sortie, le tampon de coin, le
+format, la qualité et le nombre de workers sont transmis sans modification. La
+façade `_tuiler_tifs_ombrages` conserve sa signature complète et reconstruit les
+coutures à chaque appel.
+
+Quatre contrats supplémentaires portent la suite de refonte à **228 tests**. Ils
+verrouillent l'entrée vide, deux conventions de nommage, plusieurs TIFF, la
+liste ordonnée des livrables attendus, toutes les options du producteur, le mode
+verbeux, l'agrégation all-of, la réutilisation du cache et la signature de façade.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison ne crée aucun nouveau fichier : `_terrain_chunks.py` est déjà dans
+`deploy.MAP` et couvert par `_terrain_*.py` pour rebuild et CI. La version reste
+**1.45.0** et le lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 539 → 10 537 lignes (**-2**, soit **0,01 %** du
+périmètre figé). `_terrain_chunks.py` contient désormais 654 lignes. Le faible
+gain est assumé : les 40 lignes historiques sont remplacées par une façade et
+une fabrique de dépendances explicites ; cette couture améliore l'isolation mais
+n'est pas un lot de réduction. Total sorti : **10 778 lignes, 50,56 %** ; reste
+**10 537 lignes, 49,44 %**.
+
+### Sous-phase 15s-a : planification des instances d'ombrage extraite (terminée localement)
+
+L'audit de `generer_ombrages` mesure **726 lignes** et **23 coutures métier** en
+plus des builtins. Il confirme que le bloc assemble plusieurs responsabilités :
+résolution des instances, VRT transactionnel, publication atomique, passe Horn
+multi-sorties, SVF/openness, LRM, RRIM et composites VAT/e4MSTP. Une extraction
+monolithique immédiate aurait rendu les régressions difficiles à localiser ; la
+phase 15s est donc scindée en un palier pur puis le déplacement de l'orchestrateur.
+
+Le nouveau module `_terrain_shading.py` contient
+`resoudre_instances_ombrages`. Cette fonction pure applique les paramètres par
+défaut, construit les suffixes historiques et paramétrés, conserve l'ordre
+`choix` puis `instances`, ignore les types inconnus et résout les collisions par
+la règle « première instance gagnante ». Un vrai doublon reste silencieux ; deux
+réglages distincts arrondis vers le même suffixe produisent toujours un warning.
+Les dictionnaires reçus sont copiés et ne sont jamais modifiés.
+
+Quatre contrats supplémentaires portent la suite de refonte à **232 tests**. Ils
+verrouillent les suffixes canoniques de dix familles, les valeurs par défaut,
+les suffixes explicites direction/LRM/VAT/e4MSTP/SVF, l'ordre, l'absence de
+mutation, les types inconnus, les deux formes de collision et le câblage tardif
+depuis `generer_ombrages`. Les tests scientifiques existants continuent de
+couvrir les kernels et composites réels.
+
+Validation locale : profils FAST (12 suites) et scientifique (5 suites),
+compilation, Ruff, garde de livraison et 320 liens documentaires verts.
+
+La livraison est préparée sans publication : `_terrain_shading.py` est ajouté à
+`deploy.MAP`; le motif `_terrain_*.py` couvrait déjà rebuild et les deux filtres
+CI. La version reste **1.45.0** et le lot n'est pas encore déployé.
+
+Mesure nette : `lidar2map.py` 10 537 → 10 481 lignes (**-56**, soit **0,26 %**
+du périmètre figé). `_terrain_shading.py` contient 95 lignes. Total sorti :
+**10 834 lignes, 50,83 %** ; reste **10 481 lignes, 49,17 %**.
+
+### Sous-phase 15s-b : orchestrateur d'ombrage extrait (terminée localement)
+
+Le corps restant de `generer_ombrages` est déplacé mécaniquement dans
+`_terrain_shading.py`. `lidar2map.py` ne conserve qu'une façade de signature
+strictement identique et reconstruit à chaque appel une dataclass de **30
+coutures** : configuration active, provider, VRT et publications atomiques,
+kernels, composites, annulation, temps et journalisation. Les fonctions
+scientifiques restent dans `_ombrages_pures.py` et `_ombrages_provider.py` ;
+elles sont injectées sans duplication ni modification algorithmique.
+
+Cinq contrats supplémentaires portent la suite de refonte à **237 tests**. Ils
+verrouillent le transfert intégral des arguments par la façade, la création et
+le nettoyage du répertoire VRT transactionnel, l'échec explicite de construction
+du VRT, la publication d'un TIFF Horn uniquement après succès et, en cas
+d'échec, la suppression du `.part` avec conservation byte-identique de l'ancien
+fichier final.
+
+Validation locale : compilation des modules, profil FAST complet (**12/12**) et
+profil scientifique complet (**5/5**). La suite scientifique produit réellement
+les ombrages paramétrés, les composites et les sorties raster ; elle confirme
+donc que l'extraction n'a pas modifié les kernels ni leur orchestration. Ruff
+n'est pas installé dans le venv local et n'a pas été compté comme validation.
+
+Mesure nette : `lidar2map.py` 10 481 → 9 871 lignes (**-610**, soit **2,86 %**
+du périmètre figé). `_terrain_shading.py` contient désormais 831 lignes. Total
+sorti : **11 444 lignes, 53,69 %** ; reste **9 871 lignes, 46,31 %**.
+
+### Prochaine étape proposée : 15t — planches et emprises de restitution
+
+Caractériser puis extraire ensemble `_planche_depuis_dossier`,
+`_planche_contours_dept` et `_generer_planche`, en gardant dans le script
+principal des façades tardives pour les helpers géographiques et les formats de
+sortie. Ce lot représente environ 340 lignes brutes ; il doit d'abord verrouiller
+les emprises WFS recadrées, l'ordre des morceaux, les noms de planche et le cas
+sans image avant tout déplacement.
