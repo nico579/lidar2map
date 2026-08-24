@@ -1012,6 +1012,7 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
       "applyProviderLaz" in _appjs and "laz_hmin" in _appjs
       and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
+_zone_cli_src = (_ROOT / "_zone_cli.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
 _terrain_resolution_src = (_ROOT / "_terrain_resolution.py").read_text(
@@ -1166,8 +1167,7 @@ check("app.js : couches raster groupées par propriétaire (IGN / USGS)",
       "_RASTER_OWNER" in _appjs and "createElement('optgroup')" in _appjs)
 check("raster : main_wmts résout la zone en WGS84, sans PROVIDER",
       "_resoudre_zone_wgs84(args)" in _src
-      and "CRS_NATIF" not in _src[_src.find("def _resoudre_zone_wgs84"):
-                                  _src.find("def _resoudre_zone_wgs84") + 4000])
+      and "CRS_NATIF" not in _zone_cli_src)
 # Zoom natif : premier zoom Web Mercator au moins aussi fin que la source.
 # 0,5 m → z18 aux latitudes métropolitaines ; au-delà = agrandissement pur.
 check("app.js : zoomNatif + bornage du champ Zoom max (miroir du cap raster)",
@@ -1469,7 +1469,7 @@ check("--cache-dir : racine de cache unique et déplaçable",
       'dossier_travail / "cache"' in _runtime_paths_src
       and "_runtime_paths_impl.calculer_chemins" in _src
       and "def _appliquer_cache_dir(args):" in _src
-      and 'parser.add_argument("--cache-dir", "--dossier-cache"' in _src)
+      and '"--cache-dir", "--dossier-cache"' in _zone_cli_src)
 check("--cache-dir : appliqué au début des 3 mains zone-based",
       _src.count("_appliquer_cache_dir(args)") >= 3)
 # GUI : le champ cache est global (Projet, à côté de « Dossier sortie »), plus

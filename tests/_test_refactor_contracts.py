@@ -7,11 +7,14 @@ déjà couverts par les autres suites.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
+import gzip
 import inspect
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -50,6 +53,7 @@ import _terrain_chunks as terrain_chunks  # noqa: E402
 import _terrain_download as terrain_download  # noqa: E402
 import _terrain_prefetch as terrain_prefetch  # noqa: E402
 import _terrain_shading as terrain_shading  # noqa: E402
+import _terrain_index as terrain_index  # noqa: E402
 import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
@@ -60,6 +64,10 @@ import _split_manifest as split_manifest  # noqa: E402
 import _split_planning as split_planning  # noqa: E402
 import _split_runner as split_runner  # noqa: E402
 import _split_sliding as split_sliding  # noqa: E402
+import _split_mbtiles as split_mbtiles  # noqa: E402
+import _deliverable_lifecycle as deliverable_lifecycle  # noqa: E402
+import _provider_runtime as provider_runtime  # noqa: E402
+import _zone_cli as zone_cli  # noqa: E402
 import _wfs_pipeline as wfs_pipeline  # noqa: E402
 import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
 import _bdtopo_layers as bdtopo_layers  # noqa: E402
@@ -415,6 +423,361 @@ class SplitSlidingContractTests(unittest.TestCase):
         )
 
 
+class SplitMbtilesExtractionContractTests(unittest.TestCase):
+    """Contrats du découpage MBTiles postérieur extrait en phase 15v."""
+
+    def _deps(self, **overrides):
+        values = {
+            "calculer_sous_zones_priori": L._calculer_sous_zones_priori,
+            "chemin_part": L._chemin_part,
+            "nettoyer_sqlite_part": L._nettoyer_sqlite_part,
+            "valider_sqlite_part": L._valider_sqlite_part,
+            "sqlite_connect": sqlite3.connect,
+        }
+        values.update(overrides)
+        return split_mbtiles.DependancesDecoupageMbtiles(**values)
+
+    def _create_world_source(self, path):
+        connection = sqlite3.connect(str(path))
+        connection.executescript(
+            "CREATE TABLE metadata (name TEXT, value TEXT);"
+            "CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,"
+            " tile_row INTEGER, tile_data BLOB);"
+        )
+        metadata = {
+            "name": "world",
+            "format": "png",
+            "minzoom": "3",
+            "maxzoom": "3",
+            "bounds": "-180,-85,180,85",
+            "attribution": "test attribution",
+        }
+        connection.executemany(
+            "INSERT INTO metadata VALUES (?, ?)", metadata.items()
+        )
+        connection.executemany(
+            "INSERT INTO tiles VALUES (3, ?, ?, ?)",
+            [(1, 1, b"sw"), (6, 1, b"se"), (1, 6, b"nw"), (6, 6, b"ne")],
+        )
+        connection.commit()
+        connection.close()
+
+    def test_facade_keeps_signature_and_rebuilds_dependencies(self):
+        marker = object()
+        planner = mock.Mock()
+        stage = mock.Mock()
+        cleanup = mock.Mock()
+        validator = mock.Mock()
+        connect = mock.Mock()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(L, "_calculer_sous_zones_priori", planner)
+            )
+            stack.enter_context(mock.patch.object(L, "_chemin_part", stage))
+            stack.enter_context(
+                mock.patch.object(L, "_nettoyer_sqlite_part", cleanup)
+            )
+            stack.enter_context(
+                mock.patch.object(L, "_valider_sqlite_part", validator)
+            )
+            stack.enter_context(mock.patch.object(L.sqlite3, "connect", connect))
+            implementation = stack.enter_context(
+                mock.patch.object(L, "_decouper_mbtiles_impl", return_value=marker)
+            )
+            result = L.decouper_mbtiles(
+                Path("source.mbtiles"), 5.0, 4, 2, 2, Path("out"), True
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.calculer_sous_zones_priori, planner)
+        self.assertIs(dependencies.chemin_part, stage)
+        self.assertIs(dependencies.nettoyer_sqlite_part, cleanup)
+        self.assertIs(dependencies.valider_sqlite_part, validator)
+        self.assertIs(dependencies.sqlite_connect, connect)
+        self.assertEqual(
+            str(inspect.signature(L.decouper_mbtiles)),
+            "(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, "
+            "n_rows=0, dossier=None, ecraser=False)",
+        )
+
+    def test_no_split_is_noop_even_when_source_is_absent(self):
+        source = Path("absent.mbtiles")
+        dependencies = SimpleNamespace()
+        self.assertEqual(
+            split_mbtiles.decouper_mbtiles(source, dependances=dependencies),
+            [source],
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = split_mbtiles.decouper_mbtiles(
+                source, n_cols=2, n_rows=1, dependances=dependencies
+            )
+        self.assertEqual(result, [])
+        self.assertIn("not found", output.getvalue())
+
+    def test_explicit_grid_outputs_are_row_major_and_keep_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "world.mbtiles"
+            self._create_world_source(source)
+            outputs = split_mbtiles.decouper_mbtiles(
+                source,
+                n_cols=2,
+                n_rows=2,
+                dossier=root / "out",
+                ecraser=True,
+                dependances=self._deps(),
+            )
+            self.assertEqual(
+                [path.name for path in outputs],
+                [
+                    "world_001x001.mbtiles",
+                    "world_001x002.mbtiles",
+                    "world_002x001.mbtiles",
+                    "world_002x002.mbtiles",
+                ],
+            )
+            for output in outputs:
+                connection = sqlite3.connect(str(output))
+                metadata = dict(
+                    connection.execute("SELECT name, value FROM metadata")
+                )
+                tile_count = connection.execute(
+                    "SELECT count(*) FROM tiles"
+                ).fetchone()[0]
+                connection.close()
+                self.assertEqual(metadata["attribution"], "test attribution")
+                self.assertEqual(metadata["name"], output.stem)
+                self.assertGreater(tile_count, 0)
+
+    def test_validation_failure_preserves_previous_chunk_and_cleans_part(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            source = root / "world.mbtiles"
+            output_dir = root / "out"
+            output_dir.mkdir()
+            previous = output_dir / "world_001x001.mbtiles"
+            previous.write_bytes(b"previous-complete-chunk")
+            self._create_world_source(source)
+            dependencies = self._deps(
+                valider_sqlite_part=mock.Mock(side_effect=ValueError("invalid"))
+            )
+            with self.assertRaisesRegex(ValueError, "invalid"):
+                split_mbtiles.decouper_mbtiles(
+                    source,
+                    n_cols=2,
+                    n_rows=2,
+                    dossier=output_dir,
+                    ecraser=True,
+                    dependances=dependencies,
+                )
+            self.assertEqual(previous.read_bytes(), b"previous-complete-chunk")
+            self.assertFalse(list(output_dir.glob("*.part")))
+
+
+class DeliverableLifecycleExtractionContractTests(unittest.TestCase):
+    """Contrats du cycle de vie des livrables extrait en phase 15w."""
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        marker = object()
+        path_factory = mock.Mock(name="path-factory")
+        validator = mock.Mock(name="chunk-validator")
+        connect = mock.Mock(name="sqlite-connect")
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(L, "Path", path_factory))
+            stack.enter_context(
+                mock.patch.object(L, "_chunk_livrable_complet", validator)
+            )
+            stack.enter_context(mock.patch.object(L.sqlite3, "connect", connect))
+            cleanup = stack.enter_context(
+                mock.patch.object(L, "_supprimer_fichiers_impl", return_value=marker)
+            )
+            resume = stack.enter_context(
+                mock.patch.object(
+                    L, "_morceau_termine_reutilisable_impl", return_value=marker
+                )
+            )
+            freshness = stack.enter_context(
+                mock.patch.object(
+                    L, "_mbtiles_a_regenerer_impl", return_value=marker
+                )
+            )
+            self.assertIs(L._supprimer_fichiers([]), marker)
+            self.assertIs(
+                L._morceau_termine_reutilisable(
+                    mock.Mock(), "001x001", Path("chunk"), SimpleNamespace()
+                ),
+                marker,
+            )
+            self.assertIs(
+                L._mbtiles_a_regenerer(Path("tiles.mbtiles"), False), marker
+            )
+
+        self.assertIs(
+            cleanup.call_args.kwargs["dependances"].path_factory, path_factory
+        )
+        self.assertIs(
+            resume.call_args.kwargs["dependances"].chunk_livrable_complet,
+            validator,
+        )
+        freshness_dependencies = freshness.call_args.kwargs["dependances"]
+        self.assertIs(freshness_dependencies.path_factory, path_factory)
+        self.assertIs(freshness_dependencies.sqlite_connect, connect)
+        self.assertEqual(
+            list(inspect.signature(L._supprimer_fichiers).parameters),
+            ["fichiers", "dossiers_garder", "noms_garder"],
+        )
+        self.assertEqual(
+            str(inspect.signature(L._morceau_termine_reutilisable)),
+            "(manifeste, cle, dossier_chunk, args)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._mbtiles_a_regenerer)),
+            "(mbt_path, ecraser, source=None)",
+        )
+
+    def test_cleanup_keeps_cache_roots_and_next_chunk_basenames(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tile_cache = root / "cache" / "tiles"
+            cloud_cache = root / "cache" / "cloud"
+            work = root / "work" / "nested"
+            for directory in (tile_cache, cloud_cache, work):
+                directory.mkdir(parents=True)
+            tile = tile_cache / "tile.tif"
+            cloud = cloud_cache / "cloud.laz"
+            shared = work / "shared.tif"
+            transient = work / "shade.tif"
+            for path in (tile, cloud, shared, transient):
+                path.write_bytes(b"x")
+            messages = []
+            deliverable_lifecycle.supprimer_fichiers(
+                [tile, cloud, shared, transient],
+                [tile_cache, cloud_cache],
+                {shared.name},
+                dependances=deliverable_lifecycle.DependancesNettoyage(
+                    ecrire=messages.append
+                ),
+            )
+            self.assertTrue(tile.exists())
+            self.assertTrue(cloud.exists())
+            self.assertTrue(shared.exists())
+            self.assertFalse(transient.exists())
+            self.assertEqual(
+                messages,
+                [
+                    "  Cleanup: 1 intermediate file(s) removed, "
+                    "3 cached tile(s) kept"
+                ],
+            )
+
+    def test_resume_requires_persisted_output_proof(self):
+        args = SimpleNamespace()
+        validator = mock.Mock(return_value=True)
+        dependencies = deliverable_lifecycle.DependancesRepriseMorceau(
+            chunk_livrable_complet=validator,
+            ecrire=mock.Mock(),
+        )
+
+        no_coverage = mock.Mock()
+        no_coverage.deja_traite.return_value = True
+        no_coverage.mbtiles_attendus_morceau.return_value = ()
+        self.assertTrue(
+            deliverable_lifecycle.morceau_termine_reutilisable(
+                no_coverage, "001x001", Path("chunk"), args,
+                dependances=dependencies,
+            )
+        )
+        validator.assert_not_called()
+
+        proven = mock.Mock()
+        proven.deja_traite.return_value = True
+        proven.mbtiles_attendus_morceau.return_value = ("shade.mbtiles",)
+        self.assertTrue(
+            deliverable_lifecycle.morceau_termine_reutilisable(
+                proven, "001x002", Path("chunk"), args,
+                dependances=dependencies,
+            )
+        )
+        validator.assert_called_once_with(
+            Path("chunk"), args, ("shade.mbtiles",)
+        )
+
+        legacy = mock.Mock()
+        legacy.deja_traite.return_value = True
+        legacy.mbtiles_attendus_morceau.return_value = None
+        self.assertFalse(
+            deliverable_lifecycle.morceau_termine_reutilisable(
+                legacy, "002x001", Path("chunk"), args,
+                dependances=dependencies,
+            )
+        )
+        legacy.invalider_morceau.assert_called_once_with("002x001")
+
+    def test_mbtiles_freshness_handles_mtime_empty_and_unreadable_stores(self):
+        messages = []
+
+        def write(message, **_kwargs):
+            messages.append(message)
+
+        dependencies = deliverable_lifecycle.DependancesFraicheurMbtiles(
+            ecrire=write
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            complete = root / "complete.mbtiles"
+            connection = sqlite3.connect(str(complete))
+            connection.execute(
+                "CREATE TABLE tiles (zoom_level INT, tile_column INT, "
+                "tile_row INT, tile_data BLOB)"
+            )
+            connection.execute("INSERT INTO tiles VALUES (10, 0, 0, x'ff')")
+            connection.commit()
+            connection.close()
+            source = root / "source.tif"
+            source.write_bytes(b"source")
+            os.utime(source, (1_000_000_000, 1_000_000_000))
+            os.utime(complete, (1_000_000_100, 1_000_000_100))
+            self.assertFalse(
+                deliverable_lifecycle.mbtiles_a_regenerer(
+                    complete, False, source,
+                    dependances=dependencies,
+                )
+            )
+            os.utime(source, (1_000_000_200, 1_000_000_200))
+            self.assertTrue(
+                deliverable_lifecycle.mbtiles_a_regenerer(
+                    complete, False, source,
+                    dependances=dependencies,
+                )
+            )
+
+            empty = root / "empty.mbtiles"
+            connection = sqlite3.connect(str(empty))
+            connection.execute(
+                "CREATE TABLE tiles (zoom_level INT, tile_column INT, "
+                "tile_row INT, tile_data BLOB)"
+            )
+            connection.commit()
+            connection.close()
+            self.assertTrue(
+                deliverable_lifecycle.mbtiles_a_regenerer(
+                    empty, False, dependances=dependencies
+                )
+            )
+
+            broken = root / "broken.mbtiles"
+            broken.write_bytes(b"not sqlite")
+            self.assertTrue(
+                deliverable_lifecycle.mbtiles_a_regenerer(
+                    broken, False, dependances=dependencies
+                )
+            )
+        self.assertTrue(any("older than source.tif" in line for line in messages))
+        self.assertTrue(any("empty (0 tiles)" in line for line in messages))
+        self.assertTrue(any("SQLite unreadable" in line for line in messages))
+
+
 class MbtilesWmtsFacadeContractTests(unittest.TestCase):
     """La façade WMTS relit ses coutures à CHAQUE appel.
 
@@ -650,6 +1013,200 @@ class TerrainZonesContractTests(unittest.TestCase):
             terrain_zones.wgs84_vers_natif(
                 7.4, 47.0, crs_natif="EPSG:2056", get_transformer=indisponible,
             )
+
+
+class ZoneCliCharacterizationTests(unittest.TestCase):
+    """Caractérise le contrat de zone partagé avant son extraction (15y)."""
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            zone_nom=None,
+            zone_region=None,
+            zone_departement=None,
+            zone_bbox=None,
+            zone_gps=None,
+            zone_ville=None,
+            zone_width=None,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._ajouter_args_zone)),
+            "(parser, *, width_default, bbox_metavar, bbox_help=None, "
+            "avec_dossier=False, avec_help_full=False)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._resoudre_zone_wgs84)), "(args)",
+        )
+
+        validator = mock.Mock()
+        marker = object()
+        with mock.patch.object(L, "_arg_float_positif", validator), \
+             mock.patch.object(
+                 L, "_ajouter_args_zone_impl", return_value=marker,
+             ) as implementation:
+            result = L._ajouter_args_zone(
+                object(), width_default=20.0, bbox_metavar="W,S,E,N",
+            )
+        self.assertIs(result, marker)
+        parser_dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIsInstance(
+            parser_dependencies, zone_cli.DependancesArgumentsZone,
+        )
+        self.assertIs(parser_dependencies.arg_float_positif, validator)
+
+        normalize = mock.Mock()
+        region = mock.Mock()
+        with mock.patch.object(L, "normaliser_nom", normalize), \
+             mock.patch.object(L, "geocoder_region", region), \
+             mock.patch.object(
+                 L, "_resoudre_zone_wgs84_impl", return_value=marker,
+             ) as implementation:
+            result = L._resoudre_zone_wgs84(object())
+        self.assertIs(result, marker)
+        resolution_dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIsInstance(
+            resolution_dependencies, zone_cli.DependancesResolutionZone,
+        )
+        self.assertIs(resolution_dependencies.normaliser_nom, normalize)
+        self.assertIs(resolution_dependencies.geocoder_region, region)
+        self.assertIs(
+            resolution_dependencies.geocoder_ville_wgs84,
+            L.geocoder_ville_wgs84,
+        )
+
+    def test_shared_parser_keeps_aliases_defaults_and_exclusivity(self):
+        parser = argparse.ArgumentParser(add_help=False)
+        group = L._ajouter_args_zone(
+            parser,
+            width_default=20.0,
+            bbox_metavar="W,S,E,N",
+            bbox_help="bbox help",
+            avec_dossier=True,
+            avec_help_full=True,
+        )
+        args = parser.parse_args([
+            "--zone-ville", "Garéoult",
+            "--zone-largeur", "12.5",
+            "--zone-nom", "test",
+            "--dossier", "out",
+            "--dossier-cache", "cache",
+            "--dossier-production", "production",
+        ])
+        self.assertIn(group, parser._mutually_exclusive_groups)
+        self.assertEqual(args.zone_ville, "Garéoult")
+        self.assertEqual(args.zone_width, 12.5)
+        self.assertEqual(args.zone_nom, "test")
+        self.assertEqual(args.dossier, "out")
+        self.assertEqual(args.cache_dir, "cache")
+        self.assertEqual(args.production_dir, "production")
+
+        defaults = parser.parse_args(["--zone-gps", "43.3,6.0"])
+        self.assertEqual(defaults.zone_width, 20.0)
+        self.assertIsNone(defaults.zone_nom)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args([
+                "--zone-region", "paca", "--zone-gps", "43.3,6.0",
+            ])
+
+    def test_region_has_precedence_and_preserves_explicit_name(self):
+        args = self._args(
+            zone_nom="Manual Name",
+            zone_region="  PACA  ",
+            zone_departement="83",
+            zone_bbox="1,2,3,4",
+            zone_gps="43,6",
+            zone_ville="Garéoult",
+        )
+        with mock.patch.object(
+            L, "normaliser_nom", return_value="manual_name",
+        ) as normalize, mock.patch.object(
+            L, "geocoder_region", return_value=("Paca", 1, 2, 3, 4),
+        ) as geocode, mock.patch.object(
+            L, "_bbox_enveloppe_transform", return_value=(5, 6, 7, 8),
+        ) as transform, mock.patch.object(
+            L, "geocoder_departement",
+        ) as department:
+            result = L._resoudre_zone_wgs84(args)
+        self.assertEqual(result, (5, 6, 7, 8, "manual_name"))
+        normalize.assert_called_once_with("Manual Name")
+        geocode.assert_called_once_with("paca")
+        transform.assert_called_once_with(L._natif_vers_wgs84, 1, 2, 3, 4)
+        department.assert_not_called()
+
+    def test_department_and_bbox_modes_keep_names_and_conversions(self):
+        with mock.patch.object(
+            L, "geocoder_departement", return_value=("Var", 1, 2, 3, 4),
+        ) as geocode, mock.patch.object(
+            L, "normaliser_nom", return_value="var",
+        ), mock.patch.object(
+            L, "_bbox_enveloppe_transform", return_value=(5, 6, 7, 8),
+        ):
+            department = L._resoudre_zone_wgs84(
+                self._args(zone_departement=" 83 ")
+            )
+        self.assertEqual(department, (5, 6, 7, 8, "var_83"))
+        geocode.assert_called_once_with("83")
+
+        with mock.patch.object(
+            L, "_bbox_valide_wgs84", return_value=(1.0, 2.0, 3.0, 4.0),
+        ) as validate, mock.patch.object(
+            L, "_nom_zone_bbox_auto", return_value="bbox_auto",
+        ) as auto_name:
+            bbox = L._resoudre_zone_wgs84(
+                self._args(zone_bbox=" 1, 2, 3, 4 ")
+            )
+        self.assertEqual(bbox, (1.0, 2.0, 3.0, 4.0, "bbox_auto"))
+        validate.assert_called_once_with(1.0, 2.0, 3.0, 4.0)
+        auto_name.assert_called_once_with(1.0, 2.0, 3.0, 4.0)
+
+    def test_gps_and_city_modes_keep_width_semantics(self):
+        with mock.patch.object(
+            L, "_nom_zone_gps_auto", return_value="gps_auto",
+        ):
+            gps = L._resoudre_zone_wgs84(
+                self._args(zone_gps="43.0;6.0", zone_width=22.2)
+            )
+        self.assertAlmostEqual(gps[1], 42.9)
+        self.assertAlmostEqual(gps[3], 43.1)
+        self.assertAlmostEqual((gps[0] + gps[2]) / 2.0, 6.0)
+        self.assertEqual(gps[4], "gps_auto")
+
+        with mock.patch.object(
+            L, "normaliser_nom", return_value="gareoult",
+        ), mock.patch.object(
+            L, "geocoder_ville_wgs84", return_value=(43.0, 6.0),
+        ) as geocode, contextlib.redirect_stdout(io.StringIO()):
+            city = L._resoudre_zone_wgs84(
+                self._args(zone_ville="Garéoult", zone_width=None)
+            )
+        self.assertAlmostEqual(city[3] - city[1], 20.0 / 111.0)
+        self.assertAlmostEqual((city[0] + city[2]) / 2.0, 6.0)
+        self.assertEqual(city[4], "gareoult")
+        geocode.assert_called_once_with("Garéoult")
+
+    def test_invalid_or_unresolved_zones_exit_one(self):
+        cases = (
+            self._args(zone_bbox="1,2,3"),
+            self._args(zone_gps="91,0"),
+            self._args(),
+        )
+        for args in cases:
+            with self.subTest(args=args), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    L._resoudre_zone_wgs84(args)
+            self.assertEqual(ctx.exception.code, 1)
+
+        with mock.patch.object(
+            L, "geocoder_region", return_value=(None, None, None, None, None),
+        ), contextlib.redirect_stdout(io.StringIO()), self.assertRaises(
+            SystemExit,
+        ) as ctx:
+            L._resoudre_zone_wgs84(self._args(zone_region="unknown"))
+        self.assertEqual(ctx.exception.code, 1)
 
 
 class SourceAutonomeContractTests(unittest.TestCase):
@@ -1561,6 +2118,240 @@ class ProviderContractTests(unittest.TestCase):
                     else:
                         expected = str(expected)
                     self.assertEqual(actual, expected)
+
+
+class ProviderLoadingCharacterizationTests(unittest.TestCase):
+    """Contrats du catalogue et du chargement dynamique avant extraction."""
+
+    @staticmethod
+    def _missing_module(name):
+        error = ModuleNotFoundError(f"No module named '{name}'")
+        error.name = name
+        return error
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        marker = object()
+        importer = mock.Mock(name="provider-importer")
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.object(L, "_import_patchable_source_module", importer)
+            )
+            discovery = stack.enter_context(
+                mock.patch.object(L, "_discover_providers_impl", return_value=marker)
+            )
+            loader = stack.enter_context(
+                mock.patch.object(
+                    L, "_load_provider_impl", return_value=(marker, True)
+                )
+            )
+            pre_value = stack.enter_context(
+                mock.patch.object(
+                    L, "_pre_valeur_suivante_impl", return_value=marker
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(L, "_PROVIDER_CLI_EXPLICIT", False)
+            )
+            self.assertIs(L._discover_providers(), marker)
+            self.assertIs(L._pre_valeur_suivante(["--x", "value"], 0), marker)
+            self.assertIs(L._load_provider(), marker)
+            explicit = L._PROVIDER_CLI_EXPLICIT
+
+        self.assertIs(
+            discovery.call_args.kwargs["dependances"].importer, importer
+        )
+        load_dependencies = loader.call_args.kwargs["dependances"]
+        self.assertIs(load_dependencies.importer, importer)
+        self.assertIs(load_dependencies.quitter, L.sys.exit)
+        self.assertTrue(explicit)
+        pre_value.assert_called_once_with(["--x", "value"], 0)
+        self.assertIs(L._discover_providers_impl, provider_runtime.discover_providers)
+        self.assertIs(L._load_provider_impl, provider_runtime.load_provider)
+        self.assertEqual(str(inspect.signature(L._discover_providers)), "()")
+        self.assertEqual(str(inspect.signature(L._load_provider)), "()")
+        self.assertEqual(
+            str(inspect.signature(L._pre_valeur_suivante)), "(argv, i)"
+        )
+
+    def test_discovery_is_sorted_skips_helpers_and_survives_broken_modules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_dir = root / "providers"
+            provider_dir.mkdir()
+            for name in (
+                "_private.py",
+                "alpha.py",
+                "alpha_laz.py",
+                "broken.py",
+                "common.py",
+                "helper.py",
+                "zulu.py",
+            ):
+                (provider_dir / name).write_text("# fixture\n", encoding="utf-8")
+            modules = {
+                "common": SimpleNamespace(
+                    COUNTRY_INFO={
+                        "aa": (2, "Alpha country", "Pays alpha"),
+                        "zz": (9, "Zulu country", "Pays zulu"),
+                    }
+                ),
+                "alpha": SimpleNamespace(
+                    CODE="alpha",
+                    NAME="Alpha",
+                    COUNTRY="aa",
+                    APIKEY_REQUISE=True,
+                    RESOLUTION_M=1,
+                ),
+                "alpha_laz": SimpleNamespace(
+                    LAZ_HMIN=0.6,
+                    LAZ_HMAX=3.0,
+                    LAZ_CLASSES=(1, 4),
+                    LAZ_GROUND="csf",
+                    LAZ_CSF_THRESHOLD=0.4,
+                    LAZ_CSF_RESOLUTION=0.75,
+                    LAZ_CSF_RIGIDNESS=2,
+                    DOWNLOAD_WORKERS_MAX=3,
+                ),
+                "helper": SimpleNamespace(),
+                "zulu": SimpleNamespace(
+                    CODE="zulu", NAME="Zulu", COUNTRY="zz", RESOLUTION_M=5
+                ),
+            }
+
+            def importer(_package, module_name):
+                if module_name == "broken":
+                    raise RuntimeError("broken fixture")
+                return modules[module_name]
+
+            stderr = io.StringIO()
+            with mock.patch.object(L, "__file__", str(root / "lidar2map.py")), \
+                    mock.patch.object(
+                        L, "_import_patchable_source_module", side_effect=importer
+                    ), contextlib.redirect_stderr(stderr):
+                catalog = L._discover_providers()
+
+        self.assertEqual([entry["code"] for entry in catalog], ["alpha", "zulu"])
+        self.assertEqual(catalog[0]["country_rank"], 2)
+        self.assertEqual(catalog[0]["country_fr"], "Pays alpha")
+        self.assertTrue(catalog[0]["apikey_requise"])
+        self.assertEqual(
+            catalog[0]["laz"],
+            {
+                "hmin": 0.6,
+                "hmax": 3.0,
+                "classes": "1,4",
+                "ground": "csf",
+                "csf_threshold": 0.4,
+                "csf_resolution": 0.75,
+                "csf_rigidness": 2,
+                "download_workers_max": 3,
+            },
+        )
+        self.assertIn("broken.py skipped: RuntimeError", stderr.getvalue())
+
+    def test_load_consumes_preflags_and_applies_historical_laz_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "providers").mkdir()
+            setter = mock.Mock()
+            provider = SimpleNamespace(set_laz_params=setter)
+            argv = [
+                "lidar2map.py",
+                "--provider=fr-ign",
+                "--laz",
+                "--laz-hmin",
+                "-0.5",
+                "--laz-hmax=3.2",
+                "--laz-classes",
+                "1,4,9",
+                "--laz-ground=csf",
+                "--laz-csf-threshold",
+                "0.4",
+                "--laz-csf-resolution=0.75",
+                "--laz-csf-rigidness",
+                "2",
+                "--lidar",
+            ]
+            importer = mock.Mock(return_value=provider)
+            with mock.patch.object(L, "__file__", str(root / "lidar2map.py")), \
+                    mock.patch.object(L.sys, "argv", argv), \
+                    mock.patch.object(L._os, "environ", {}), \
+                    mock.patch.object(L, "_PROVIDER_CLI_EXPLICIT", False), \
+                    mock.patch.object(
+                        L, "_import_patchable_source_module", importer
+                    ):
+                result = L._load_provider()
+                explicit = L._PROVIDER_CLI_EXPLICIT
+
+        self.assertIs(result, provider)
+        self.assertTrue(explicit)
+        self.assertEqual(argv, ["lidar2map.py", "--lidar"])
+        importer.assert_called_once_with("providers", "fr_ign_laz")
+        setter.assert_called_once_with(
+            hmin=-0.5,
+            hmax=3.2,
+            classes=(1, 4, 9),
+            ground="csf",
+            csf_threshold="0.4",
+            csf_resolution="0.75",
+            csf_rigidness="2",
+        )
+
+    def test_load_distinguishes_unknown_provider_and_missing_dependency(self):
+        cases = (
+            (
+                "unknown",
+                self._missing_module("providers.unknown"),
+                "unknown provider 'unknown'",
+            ),
+            (
+                "fr-ign",
+                self._missing_module("laspy"),
+                "missing dependency 'laspy'",
+            ),
+        )
+        for code, error, expected in cases:
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                provider_dir = root / "providers"
+                provider_dir.mkdir()
+                (provider_dir / "fr_ign.py").write_text(
+                    "# fixture\n", encoding="utf-8"
+                )
+                stderr = io.StringIO()
+                argv = ["lidar2map.py", "--provider", code]
+                with mock.patch.object(
+                    L, "__file__", str(root / "lidar2map.py")
+                ), mock.patch.object(L.sys, "argv", argv), mock.patch.object(
+                    L._os, "environ", {}
+                ), mock.patch.object(
+                    L, "_import_patchable_source_module", side_effect=error
+                ), contextlib.redirect_stderr(stderr), self.assertRaises(
+                    SystemExit
+                ) as raised:
+                    L._load_provider()
+                self.assertEqual(raised.exception.code, 1)
+                self.assertIn(expected, stderr.getvalue())
+
+    def test_missing_provider_package_keeps_the_inline_france_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = ["lidar2map.py"]
+            with mock.patch.object(L, "__file__", str(root / "lidar2map.py")), \
+                    mock.patch.object(L.sys, "argv", argv), \
+                    mock.patch.object(L._os, "environ", {}), \
+                    mock.patch.object(L, "_PROVIDER_CLI_EXPLICIT", False), \
+                    mock.patch.object(
+                        L,
+                        "_import_patchable_source_module",
+                        side_effect=self._missing_module("providers"),
+                    ):
+                provider = L._load_provider()
+
+        self.assertEqual(provider.CODE, "fr-ign")
+        self.assertEqual(provider.CRS_NATIF, "EPSG:2154")
+        self.assertEqual(provider.discover_dalles(None, None, None), {})
+        self.assertIsNone(provider.subdir_from_name("tile.tif"))
 
 
 class GeojsonMapsforgeFacadeContractTests(unittest.TestCase):
@@ -6201,6 +6992,290 @@ class TerrainDownloadContractTests(unittest.TestCase):
             str(inspect.signature(L._telecharger_dalles_zone)),
             "(dalles_dict, bbox, dossier_dalles, dossier_ville, args, quiet=False)",
         )
+
+
+class TerrainIndexExtractionContractTests(unittest.TestCase):
+    """Contrats des planches et emprises extraites en phase 15t."""
+
+    def _deps(self, root, **overrides):
+        values = {
+            "extraire_bbox_wgs84": mock.Mock(),
+            "planche_contours_dept": mock.Mock(return_value=[]),
+            "generer_planche": mock.Mock(),
+            "dossier_cache": Path(root),
+            "http_ua": "test-agent",
+            "ecrire_json_atomique": mock.Mock(),
+            "request_url": mock.Mock(),
+            "ouvrir_url": mock.Mock(),
+            "attendre": mock.Mock(),
+        }
+        values.update(overrides)
+        return terrain_index.DependancesPlanches(**values)
+
+    def test_extent_facades_keep_signatures_and_late_dependencies(self):
+        marker = object()
+        tile_to_geo = mock.Mock()
+        connect = mock.Mock()
+        with mock.patch.object(
+            L, "_bbox_geojson_stream_impl", return_value=marker
+        ) as geojson_impl:
+            self.assertIs(L._bbox_geojson_stream("stream"), marker)
+        geojson_impl.assert_called_once_with("stream")
+
+        with mock.patch.object(L, "_tile_to_geo", tile_to_geo), mock.patch.object(
+            L.sqlite3, "connect", connect
+        ), mock.patch.object(
+            L, "_bbox_sqlite_tiles_impl", return_value=marker
+        ) as sqlite_impl:
+            self.assertIs(L._bbox_sqlite_tiles("tiles.db", rmaps=True), marker)
+        self.assertIs(sqlite_impl.call_args.kwargs["tile_to_geo"], tile_to_geo)
+        self.assertIs(sqlite_impl.call_args.kwargs["sqlite_connect"], connect)
+
+        sqlite_reader = mock.Mock()
+        geojson_reader = mock.Mock()
+        with mock.patch.object(L, "_bbox_sqlite_tiles", sqlite_reader), mock.patch.object(
+            L, "_bbox_geojson_stream", geojson_reader
+        ), mock.patch.object(
+            L, "_extraire_bbox_wgs84_impl", return_value=marker
+        ) as dispatcher:
+            self.assertIs(L._extraire_bbox_wgs84("product.mbtiles"), marker)
+        self.assertIs(
+            dispatcher.call_args.kwargs["bbox_sqlite_tiles"], sqlite_reader
+        )
+        self.assertIs(
+            dispatcher.call_args.kwargs["bbox_geojson_stream"], geojson_reader
+        )
+        self.assertEqual(str(inspect.signature(L._bbox_geojson_stream)), "(fh)")
+        self.assertEqual(
+            str(inspect.signature(L._bbox_sqlite_tiles)), "(path, rmaps=False)"
+        )
+        self.assertEqual(
+            str(inspect.signature(L._extraire_bbox_wgs84)), "(fichier)"
+        )
+
+    def test_geojson_stream_walks_nested_coordinates(self):
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [[6.2, 43.4], [5.9, 43.1], [6.1, 43.7], [6.2, 43.4]]
+                        ],
+                    },
+                }
+            ],
+        }
+        stream = io.BytesIO(json.dumps(payload).encode("utf-8"))
+        self.assertEqual(
+            terrain_index.bbox_geojson_stream(stream),
+            (5.9, 43.1, 6.2, 43.7),
+        )
+
+    def test_mbtiles_metadata_bounds_take_priority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "metadata.mbtiles"
+            connection = sqlite3.connect(str(database))
+            connection.execute("CREATE TABLE metadata (name TEXT, value TEXT)")
+            connection.execute(
+                "INSERT INTO metadata VALUES ('bounds', '5.9,43.1,6.2,43.7')"
+            )
+            connection.commit()
+            connection.close()
+            tile_to_geo = mock.Mock()
+            result = terrain_index.bbox_sqlite_tiles(
+                database, tile_to_geo=tile_to_geo
+            )
+        self.assertEqual(result, (5.9, 43.1, 6.2, 43.7))
+        tile_to_geo.assert_not_called()
+
+    def test_legacy_bigplanet_schema_restores_real_zoom(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "legacy.sqlitedb"
+            connection = sqlite3.connect(str(database))
+            connection.executescript(
+                "CREATE TABLE tiles (x INT, y INT, z INT, s INT, image BLOB);"
+                "CREATE TABLE info (minzoom INT, maxzoom INT);"
+            )
+            connection.execute("INSERT INTO info VALUES (3, 3)")
+            connection.execute(
+                "INSERT INTO tiles VALUES (8465, 6093, 3, 0, ?)", (b"tile",)
+            )
+            connection.commit()
+            connection.close()
+            result = terrain_index.bbox_sqlite_tiles(
+                database, rmaps=True, tile_to_geo=L._tile_to_geo
+            )
+        top_left = L._tile_to_geo(8465, 6093, 14)
+        self.assertEqual(result, (top_left[0], top_left[1], top_left[2], top_left[3]))
+
+    def test_extent_dispatcher_reads_gzip_and_fails_closed(self):
+        payload = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {},
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[6.0, 43.0], [6.2, 43.3]],
+                    },
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            compressed = root / "product.geojson.gz"
+            with gzip.open(compressed, "wt", encoding="utf-8") as stream:
+                json.dump(payload, stream)
+            self.assertEqual(
+                L._extraire_bbox_wgs84(compressed), (6.0, 43.0, 6.2, 43.3)
+            )
+            unreadable = root / "broken.geojson.gz"
+            unreadable.write_bytes(b"not gzip")
+            self.assertIsNone(L._extraire_bbox_wgs84(unreadable))
+            self.assertIsNone(L._extraire_bbox_wgs84(root / "ignored.txt"))
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        extract = mock.Mock()
+        contours = mock.Mock()
+        render = mock.Mock()
+        atomic = mock.Mock()
+        request = mock.Mock()
+        open_url = mock.Mock()
+        sleep = mock.Mock()
+        folder = Path("late-cache")
+        marker = object()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(L, "_extraire_bbox_wgs84", extract))
+            stack.enter_context(mock.patch.object(L, "_planche_contours_dept", contours))
+            stack.enter_context(mock.patch.object(L, "_generer_planche", render))
+            stack.enter_context(mock.patch.object(L, "DOSSIER_CACHE", folder))
+            stack.enter_context(mock.patch.object(L, "_HTTP_UA", "late-agent"))
+            stack.enter_context(mock.patch.object(L, "_ecrire_json_atomique", atomic))
+            stack.enter_context(mock.patch.object(L.urllib.request, "Request", request))
+            stack.enter_context(mock.patch.object(L.urllib.request, "urlopen", open_url))
+            stack.enter_context(mock.patch.object(L.time, "sleep", sleep))
+            implementation = stack.enter_context(
+                mock.patch.object(L, "_planche_depuis_dossier_impl", return_value=marker)
+            )
+            self.assertIs(
+                L._planche_depuis_dossier("project", SimpleNamespace()), marker
+            )
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.extraire_bbox_wgs84, extract)
+        self.assertIs(dependencies.planche_contours_dept, contours)
+        self.assertIs(dependencies.generer_planche, render)
+        self.assertEqual(dependencies.dossier_cache, folder)
+        self.assertEqual(dependencies.http_ua, "late-agent")
+        self.assertIs(dependencies.ecrire_json_atomique, atomic)
+        self.assertIs(dependencies.request_url, request)
+        self.assertIs(dependencies.ouvrir_url, open_url)
+        self.assertIs(dependencies.attendre, sleep)
+        self.assertEqual(
+            str(inspect.signature(L._planche_depuis_dossier)),
+            "(dossier, args, nom_zone=None, zone_bbox_wgs84=None)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._planche_contours_dept)),
+            "(bbox_wgs84, args)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._generer_planche)),
+            "(bbox_wgs84, cells, nom_zone, dossier, args, contours=None)",
+        )
+
+    def test_folder_scan_clips_wfs_extents_and_sorts_cells(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            east = root / "zone_002x001_multi_ombrage.mbtiles"
+            west = root / "zone_001x001_multi_ombrage.mbtiles"
+            east.write_bytes(b"east")
+            west.write_bytes(b"west")
+            boxes = {
+                west.name: (-1.0, -1.0, 1.0, 1.0),
+                east.name: (1.0, 1.0, 3.0, 3.0),
+            }
+            render = mock.Mock()
+            contours = mock.Mock(return_value=[[(0.0, 0.0), (2.0, 2.0)]])
+            dependencies = self._deps(
+                root,
+                extraire_bbox_wgs84=lambda path: boxes[path.name],
+                planche_contours_dept=contours,
+                generer_planche=render,
+            )
+            terrain_index.planche_depuis_dossier(
+                root,
+                SimpleNamespace(index_map=True),
+                nom_zone="zone",
+                zone_bbox_wgs84=(0.0, 0.0, 2.0, 2.0),
+                dependances=dependencies,
+            )
+        contours.assert_called_once_with((0.0, 0.0, 2.0, 2.0), mock.ANY)
+        self.assertEqual(render.call_count, 1)
+        call = render.call_args
+        self.assertEqual(call.args[0], (0.0, 0.0, 2.0, 2.0))
+        self.assertEqual(
+            call.args[1],
+            [
+                ("001x001", (0.0, 0.0, 1.0, 1.0)),
+                ("002x001", (1.0, 1.0, 2.0, 2.0)),
+            ],
+        )
+        self.assertEqual(call.args[2], "zone_multi_ombrage")
+
+    def test_folder_scan_without_readable_deliverable_skips_render(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            render = mock.Mock()
+            dependencies = self._deps(tmp, generer_planche=render)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                terrain_index.planche_depuis_dossier(
+                    tmp,
+                    SimpleNamespace(index_map=True),
+                    dependances=dependencies,
+                )
+        render.assert_not_called()
+        self.assertIn("no readable deliverable found", output.getvalue())
+
+    def test_department_outline_uses_disk_cache_without_http(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ring = [[6.0, 43.0], [6.1, 43.0], [6.0, 43.1]]
+            (root / "dep_bbox_cache.json").write_text(
+                json.dumps({"83": {"nom": "Var"}}), encoding="utf-8"
+            )
+            (root / "dep_contour_cache.json").write_text(
+                json.dumps({"Var": [ring]}), encoding="utf-8"
+            )
+            open_url = mock.Mock()
+            dependencies = self._deps(root, ouvrir_url=open_url)
+            result = terrain_index.planche_contours_dept(
+                (6.0, 43.0, 6.1, 43.1),
+                SimpleNamespace(zone_departement="83"),
+                dependances=dependencies,
+            )
+        self.assertEqual(result, [ring])
+        open_url.assert_not_called()
+
+    def test_render_writes_expected_planche_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dependencies = self._deps(tmp)
+            terrain_index.generer_planche(
+                (6.0, 43.0, 6.1, 43.1),
+                None,
+                "produit",
+                tmp,
+                SimpleNamespace(index_map=True),
+                contours=[],
+                dependances=dependencies,
+            )
+            output = Path(tmp) / "produit_planche.png"
+            self.assertTrue(output.is_file())
+            self.assertGreater(output.stat().st_size, 0)
 
 
 if __name__ == "__main__":

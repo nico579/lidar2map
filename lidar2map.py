@@ -1244,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.46.0"
+VERSION      = "1.47.0"
 VERSION_DATE = "2026-08"
 
 
@@ -1284,6 +1284,14 @@ WINDOWS, LINUX, MACOS = _runtime_paths_impl.indicateurs_plateforme(
 
 import threading as _threading
 
+from _deliverable_lifecycle import (
+    DependancesFraicheurMbtiles as _DependancesFraicheurMbtiles,
+    DependancesNettoyage as _DependancesNettoyage,
+    DependancesRepriseMorceau as _DependancesRepriseMorceau,
+    mbtiles_a_regenerer as _mbtiles_a_regenerer_impl,
+    morceau_termine_reutilisable as _morceau_termine_reutilisable_impl,
+    supprimer_fichiers as _supprimer_fichiers_impl,
+)
 from _split_manifest import (
     Manifeste,
     _contexte_manifeste,
@@ -1293,86 +1301,13 @@ from _split_manifest import (
 
 
 def _supprimer_fichiers(fichiers: list, dossiers_garder=None, noms_garder=None):
-    """
-    Supprime tous les fichiers créés par un morceau (--nettoyage).
-    Cela inclut : dalles LiDAR, nuages .laz cachés, tuiles WMTS, TIF ombrages,
-    TIF warpé. Conserve uniquement les sorties finales (.mbtiles, .rmap, .sqlitedb).
-
-    But : permettre le traitement d'une grande BBox sans saturer le disque —
-    chaque morceau libère son espace avant que le suivant démarre.
-
-    Sont supprimés TOUS les fichiers enregistrés au manifest pour ce morceau via
-    _creer_fichier. ATTENTION (R1#5/#9) : cela inclut une dalle ou un nuage .laz
-    qui PRÉEXISTAIT (run antérieur, ou dalle de bord partagée avec un morceau
-    voisin) — depuis que le cleanup .laz les enregistre pour libérer le disque,
-    la garantie « les fichiers préexistants ne sont pas touchés » ne tient plus
-    en général. Le cas du morceau SUIVANT immédiat (glissant, profondeur 1) est
-    couvert par *noms_garder* (analyse de dépendance minimale, cf.
-    _noms_dalles_morceau_suivant dans _run_split_priori_lidar_glissant) : au-delà
-    de ce voisin direct, un morceau plus lointain peut toujours re-télécharger une
-    dalle de bord. --cleanup-keep-tiles épargne le cache entièrement pour
-    contourner ce cas résiduel.
-
-    *dossiers_garder* non nul (--cleanup-keep-tiles) : un dossier OU un itérable
-    de dossiers dont les fichiers sont ÉPARGNÉS (le cache de dalles, et en mode
-    LAZ le cache de nuages .laz — partagés entre runs), les autres intermédiaires
-    supprimés normalement. Sert quand une tâche ultérieure de la même file
-    retraite la même zone : sans ça elle re-télécharge (ou reconvertit) des
-    dalles qu'on vient d'effacer.
-
-    *noms_garder* non nul (R1#5/#9) : ensemble de BASENAMES (indépendant du
-    dossier) épargnés en plus de *dossiers_garder* — sert à protéger une
-    dalle de bord dont le morceau SUIVANT (glissant) a encore besoin, sans
-    épargner tout le cache comme le ferait --cleanup-keep-tiles.
-    """
-    suppr = 0
-    gardees = 0
-    dirs_a_verifier = set()
-    _noms_garder = noms_garder or ()
-    # Normaliser en liste de racines résolues à épargner (accepte Path unique,
-    # itérable, ou None). None dans l'itérable = ignoré (provider sans cache LAZ).
-    if dossiers_garder is None:
-        _caches = []
-    elif isinstance(dossiers_garder, (str, Path)):
-        _caches = [Path(dossiers_garder).resolve()]
-    else:
-        _caches = [Path(d).resolve() for d in dossiers_garder if d is not None]
-    for chemin in fichiers:
-        p = Path(chemin)
-        if p.name in _noms_garder:
-            gardees += 1
-            continue          # réclamé par le morceau suivant → gardé
-        if _caches:
-            _epargne = False
-            for _c in _caches:
-                try:
-                    p.resolve().relative_to(_c)
-                    _epargne = True
-                    break
-                except (ValueError, OSError):
-                    continue      # hors de ce cache → tester le suivant
-            if _epargne:
-                gardees += 1
-                continue          # sous un cache épargné → intermédiaire gardé
-        # Tous les fichiers du manifest sont intermédiaires.
-        # Les sorties finales (.mbtiles, .rmap…) ne sont jamais enregistrées
-        # via _creer_fichier → elles ne se retrouvent jamais ici.
-        if p.exists():
-            try:
-                p.unlink()
-                dirs_a_verifier.add(p.parent)
-                suppr += 1
-            except Exception:
-                pass
-    for d in sorted(dirs_a_verifier, key=lambda x: len(x.parts), reverse=True):
-        try:
-            if d.exists() and not any(d.iterdir()):
-                d.rmdir()
-        except Exception:
-            pass
-    if suppr or gardees:
-        _kept = f", {gardees} cached tile(s) kept" if gardees else ""
-        print(f"  Cleanup: {suppr} intermediate file(s) removed{_kept}")
+    """Façade compatible vers le nettoyage extrait des intermédiaires."""
+    return _supprimer_fichiers_impl(
+        fichiers,
+        dossiers_garder,
+        noms_garder,
+        dependances=_DependancesNettoyage(path_factory=Path, ecrire=print),
+    )
 
 
 # Code de sortie dédié au garde-fou disque (--min-free-gb). Permet à un
@@ -1491,93 +1426,31 @@ def _appliquer_production_dir(args):
 # Codes disponibles : fr-ign (défaut), nl-ahn (POC).
 import os as _os
 
-def _discover_providers():
-    """Liste les providers disponibles dans providers/*.py.
+from _provider_runtime import (
+    DependancesCatalogueProviders as _DependancesCatalogueProviders,
+    DependancesChargementProvider as _DependancesChargementProvider,
+    discover_providers as _discover_providers_impl,
+    load_provider as _load_provider_impl,
+    pre_valeur_suivante as _pre_valeur_suivante_impl,
+)
 
-    Retourne une liste de dicts {code, name, country, country_rank,
-    country_fr, country_en, ...} (sans erreur si un module est cassé). Utilisé
-    par la GUI pour peupler son sélecteur de provider, groupé par pays selon
-    country_rank.
-    """
-    try:
-        _common_provider = _import_patchable_source_module(
-            "providers", "common")
-        _COUNTRY_INFO = _common_provider.COUNTRY_INFO
-    except Exception:
-        _COUNTRY_INFO = {}
+
+def _discover_providers():
+    """Façade compatible vers le catalogue dynamique extrait."""
     providers_dir = Path(__file__).resolve().parent / "providers"
-    result = []
-    if not providers_dir.exists():
-        return result
-    for f in sorted(providers_dir.glob("*.py")):
-        if f.stem.startswith("_"):
-            continue
-        # Les modules *_laz sont des MODES (jumeaux LAZ d'une source), pas des
-        # sources : ils ne vont pas dans le dropdown. La GUI les atteint via la
-        # case « mode LAZ » du provider parent (champ "laz" ci-dessous).
-        if f.stem.endswith("_laz"):
-            continue
-        try:
-            mod = _import_patchable_source_module("providers", f.stem)
-            # Un module SANS CODE n'est pas un provider mais un utilitaire
-            # partagé (ex. providers/common.py) — ne pas le lister.
-            if not hasattr(mod, "CODE"):
-                continue
-            # Pays : nom + rang d'affichage lus de la table unique
-            # providers.common.COUNTRY_INFO (même ordre que les READMEs et la
-            # carte de couverture). La GUI groupe sa dropdown là-dessus ; un
-            # pays inconnu tombe en fin de liste sous son code brut.
-            _cc = getattr(mod, "COUNTRY", "")
-            _rank, _cn_en, _cn_fr = _COUNTRY_INFO.get(
-                _cc, (9999, _cc.upper(), _cc.upper()))
-            entry = {
-                "code":           getattr(mod, "CODE",           f.stem),
-                "name":           getattr(mod, "NAME",           f.stem),
-                "country":        _cc,
-                "country_rank":   _rank,
-                "country_fr":     _cn_fr,
-                "country_en":     _cn_en,
-                "apikey_requise": bool(getattr(mod, "APIKEY_REQUISE", False)),
-                "resolution_m":   float(getattr(mod, "RESOLUTION_M", 0.5)),
-            }
-            # Capacité LAZ : jumeau providers/<stem>_laz.py présent → la GUI
-            # affiche la case « mode LAZ » + réglages (défauts lus du jumeau =
-            # source de vérité unique, anti-drift GUI×pipeline).
-            if (providers_dir / f"{f.stem}_laz.py").exists():
-                try:
-                    twin = _import_patchable_source_module(
-                        "providers", f"{f.stem}_laz")
-                    entry["laz"] = {
-                        "hmin":    float(getattr(twin, "LAZ_HMIN", 0.4)),
-                        "hmax":    float(getattr(twin, "LAZ_HMAX", 2.5)),
-                        "classes": ",".join(str(c) for c in
-                                            getattr(twin, "LAZ_CLASSES", (1, 3, 4))),
-                        "ground":  str(getattr(twin, "LAZ_GROUND", "classes")),
-                        "csf_threshold":  float(getattr(twin, "LAZ_CSF_THRESHOLD", 0.5)),
-                        "csf_resolution": float(getattr(twin, "LAZ_CSF_RESOLUTION", 0.5)),
-                        "csf_rigidness":  int(getattr(twin, "LAZ_CSF_RIGIDNESS", 1)),
-                        # Plafond de download parallèle (gros nuages LAZ) : la GUI
-                        # l'affiche en mode LAZ. 0 = pas de plafond annoncé.
-                        "download_workers_max": int(getattr(twin, "DOWNLOAD_WORKERS_MAX", 0)),
-                    }
-                except Exception:
-                    pass
-            result.append(entry)
-        except Exception as e:
-            print(f"  [provider scan] {f.name} skipped: {type(e).__name__}: {e}",
-                  file=sys.stderr)
-    return result
+    return _discover_providers_impl(
+        providers_dir,
+        dependances=_DependancesCatalogueProviders(
+            importer=_import_patchable_source_module,
+            ecrire=print,
+            stderr=sys.stderr,
+        ),
+    )
 
 
 def _pre_valeur_suivante(argv, i):
-    """Valeur du token qui suit un pré-flag `--x VAL`, ou None si absente ou si
-    c'est un autre flag (`--…`) / le séparateur `--` (R2#39 : le pré-parser
-    manuel avalait `--` ou le flag suivant comme valeur, ex. `--provider --laz`
-    posait code=`--laz`, `--provider --` posait code=`--`). Les nombres négatifs
-    (`-0.5`, simple tiret) restent des valeurs valides."""
-    if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
-        return argv[i + 1]
-    return None
+    """Façade compatible vers la lecture pure d'un pré-flag."""
+    return _pre_valeur_suivante_impl(argv, i)
 
 
 _PROVIDER_CLI_EXPLICIT = False
@@ -1585,157 +1458,20 @@ _PROVIDER_CLI_EXPLICIT = False
 
 def _load_provider():
     global _PROVIDER_CLI_EXPLICIT
-    code = None
-    # CLI scan léger (sans dépendre d'argparse qui n'est pas encore configuré).
-    # --provider est un pré-flag GLOBAL : on le lit puis on le RETIRE de sys.argv
-    # pour qu'aucun des parsers par-mode (raster, vecteur, fusion, découpe…) n'ait
-    # à le déclarer. Sinon `--raster --provider us-tnm` → "unrecognized arguments".
-    # Accepte les deux formes : `--provider code` et `--provider=code`.
-    #
-    # Pré-flags LAZ (mode « structures debout », cf. providers/fr_ign_laz.py) :
-    #   --laz            bascule vers le provider jumeau <code>-laz (module
-    #                    providers/<code>_laz.py — convention de nommage)
-    #   --laz-hmin/--laz-hmax  tranche de hauteur réintroduite (m)
-    #   --laz-classes    classes LAS réintroduites (ex. 1,3,4)
-    #   --laz-ground     socle terrain : "classes" (défaut) ou "csf" (Cloth
-    #                    Simulation Filter — hmin/hmax/classes alors ignorés)
-    #   --laz-csf-threshold/-resolution/-rigidness  réglages du tissu (mode
-    #                    csf seulement ; surface standard CloudCompare)
-    # Réglages appliqués au module via set_laz_params() après import.
-    _laz_mode = False
-    _laz_params = {}
-    _argv = sys.argv
-    _i = 0
-    while _i < len(_argv):
-        _a = _argv[_i]
-        if _a == "--provider":
-            _v = _pre_valeur_suivante(_argv, _i)
-            if _v is None:
-                print("  ERROR: --provider requires a code "
-                      "(e.g. --provider us-tnm).", file=sys.stderr)
-                sys.exit(1)
-            code = _v
-            _PROVIDER_CLI_EXPLICIT = True
-            del _argv[_i:_i + 2]
-            continue
-        if _a.startswith("--provider="):
-            code = _a.split("=", 1)[1]
-            _PROVIDER_CLI_EXPLICIT = True
-            del _argv[_i]
-            continue
-        if _a == "--laz":
-            _laz_mode = True
-            del _argv[_i]
-            continue
-        _m = None
-        for _k in ("hmin", "hmax", "classes", "ground",
-                   "csf-threshold", "csf-resolution", "csf-rigidness"):
-            if _a == f"--laz-{_k}":
-                _v = _pre_valeur_suivante(_argv, _i)
-                if _v is None:
-                    print(f"  ERROR: --laz-{_k} requires a value.",
-                          file=sys.stderr)
-                    sys.exit(1)
-                _laz_params[_k] = _v
-                del _argv[_i:_i + 2]
-                _m = True
-                break
-            if _a.startswith(f"--laz-{_k}="):
-                _laz_params[_k] = _a.split("=", 1)[1]
-                del _argv[_i]
-                _m = True
-                break
-        if _m:
-            continue
-        _i += 1
-    code = code or _os.environ.get("LIDAR2MAP_PROVIDER") or "fr-ign"
-    if (_laz_mode or _laz_params) and not code.endswith("-laz"):
-        code = code + "-laz"
-    # Mapping code → module (kebab-case → snake_case)
-    module_name = code.replace("-", "_")
-    _pdir = Path(__file__).resolve().parent / "providers"
-    try:
-        _mod = _import_patchable_source_module("providers", module_name)
-        # Réglages LAZ (--laz-hmin/hmax/classes) → posés sur le module jumeau.
-        if _laz_params:
-            _setp = getattr(_mod, "set_laz_params", None)
-            if _setp is None:
-                print(f"  ERROR: provider '{code}' has no LAZ settings "
-                      f"(set_laz_params).", file=sys.stderr)
-                sys.exit(1)
-            try:
-                _setp(hmin=float(_laz_params["hmin"]) if "hmin" in _laz_params else None,
-                      hmax=float(_laz_params["hmax"]) if "hmax" in _laz_params else None,
-                      classes=tuple(int(c) for c in _laz_params["classes"].split(","))
-                              if "classes" in _laz_params else None,
-                      ground=_laz_params.get("ground"),
-                      csf_threshold=_laz_params.get("csf-threshold"),
-                      csf_resolution=_laz_params.get("csf-resolution"),
-                      csf_rigidness=_laz_params.get("csf-rigidness"))
-            except ValueError as _e_v:
-                print(f"  ERROR: invalid --laz-* value: {_e_v}", file=sys.stderr)
-                sys.exit(1)
-        return _mod
-    except ModuleNotFoundError as _e_imp:
-        _missing = getattr(_e_imp, "name", "") or ""
-        _pkg = f"providers.{module_name}"
-        # (a') --laz sur un provider sans jumeau LAZ : message dédié (la liste
-        #      brute mélangerait sources et modes).
-        if _missing == _pkg and _pdir.exists() and code.endswith("-laz") and _laz_mode:
-            print(f"  ERROR: provider '{code[:-4]}' has no LAZ mode (no module "
-                  f"providers/{module_name}.py). LAZ is available for: "
-                  + ", ".join(sorted(p.stem[:-4].replace("_", "-")
-                                     for p in _pdir.glob("*_laz.py"))),
-                  file=sys.stderr)
-            sys.exit(1)
-        # (a) code inconnu (module absent alors que le package providers/ est
-        #     présent) = faute de frappe -> échouer + lister, au lieu de devenir
-        #     silencieusement FR-IGN (mauvais CRS/source de données).
-        if _missing == _pkg and _pdir.exists():
-            _dispo = sorted(p.stem.replace("_", "-") for p in _pdir.glob("*.py")
-                            if not p.stem.startswith("_"))
-            print(f"  ERROR: unknown provider '{code}'. Available: "
-                  f"{', '.join(_dispo)}", file=sys.stderr)
-            sys.exit(1)
-        # (b) dépendance INTERNE au module provider manquante (ex. laspy pour
-        #     cz-cuzk) : échouer clairement, ne pas masquer en FR-IGN.
-        if _missing not in ("providers", _pkg):
-            print(f"  ERROR: provider '{code}' failed to load: missing "
-                  f"dependency '{_missing}'. Install it or choose another "
-                  f"provider.", file=sys.stderr)
-            sys.exit(1)
-        # (c) package providers/ entièrement absent (distribution minimale) :
-        #     fallback FR-IGN inline pour ne pas crasher.
-        import types as _types
-        _p = _types.SimpleNamespace(
-            CODE               = "fr-ign",
-            NAME               = "France IGN LiDAR HD",
-            COUNTRY            = "fr",
-            CRS_NATIF          = "EPSG:2154",
-            RESOLUTION_M       = 0.5,
-            DALLE_KM           = 1,
-            PX_PAR_DALLE       = 2000,
-            SEUIL_DALLE_VALIDE = 50_000,
-            APIKEY_REQUISE     = False,
-            WMS_URL            = None,
-            WMS_LAYER          = None,
-            WFS_URL            = None,
-        )
-        # discover_dalles : retourne {} — les call sites font déjà `or {}`
-        # et le téléchargement est sauté si dalles_dict est vide.
-        _p.discover_dalles = lambda bbox_wgs84, bbox_natif, cache_path, workers=1: {}
-        # subdir_from_name : None → chemin_dalle retombe sur la racine (ok)
-        _p.subdir_from_name = lambda nom: None
-        # post_download / set_apikey : no-op silencieux
-        _p.post_download    = lambda chemin: None
-        _p.post_fetch       = None   # None = pas de conversion pre-validation
-        _p.set_apikey       = lambda key:    None
-        return _p
-    except ImportError as _e_imp2:
-        # ImportError autre que ModuleNotFound (rare) : ne pas la masquer.
-        print(f"  ERROR loading provider '{code}': "
-              f"{type(_e_imp2).__name__}: {_e_imp2}", file=sys.stderr)
-        sys.exit(1)
+    providers_dir = Path(__file__).resolve().parent / "providers"
+    provider, _PROVIDER_CLI_EXPLICIT = _load_provider_impl(
+        sys.argv,
+        _os.environ,
+        providers_dir,
+        _PROVIDER_CLI_EXPLICIT,
+        dependances=_DependancesChargementProvider(
+            importer=_import_patchable_source_module,
+            ecrire=print,
+            stderr=sys.stderr,
+            quitter=sys.exit,
+        ),
+    )
+    return provider
 
 PROVIDER = _load_provider()
 
@@ -5091,527 +4827,122 @@ def _chunk_livrable_complet(dossier_chunk, args, mbtiles_attendus=None):
 
 
 def _morceau_termine_reutilisable(manifeste, cle, dossier_chunk, args):
-    """Valide la preuve persistée avant de croire ``termine=True``.
-
-    Les anciens manifests sans ``mbtiles_attendus`` sont rejoués une fois : un
-    scan permissif du dossier pourrait prendre un ancien produit pour la sortie
-    courante. Une liste vide est au contraire une preuve explicite de zone hors
-    couverture et reste réutilisable sans fichier.
-    """
-    if not manifeste.deja_traite(cle):
-        return False
-    attendus = manifeste.mbtiles_attendus_morceau(cle)
-    if attendus == ():
-        return True
-    if (attendus is not None
-            and _chunk_livrable_complet(dossier_chunk, args, attendus)):
-        return True
-    raison = ("legacy manifest without output proof" if attendus is None
-              else "expected deliverable missing or invalid")
-    print(f"  [{cle}] {raison} - replaying chunk")
-    manifeste.invalider_morceau(cle)
-    return False
+    """Façade compatible vers la validation de reprise d'un morceau."""
+    return _morceau_termine_reutilisable_impl(
+        manifeste,
+        cle,
+        dossier_chunk,
+        args,
+        dependances=_DependancesRepriseMorceau(
+            chunk_livrable_complet=_chunk_livrable_complet,
+            ecrire=print,
+        ),
+    )
 
 
 def _mbtiles_a_regenerer(mbt_path, ecraser, source=None):
-    """Détermine si un mbtiles doit être (re)généré.
-
-    Retourne True si :
-    - le fichier n'existe pas,
-    - --tuiles-ecraser est passé,
-    - `source` (TIF d'ombrage) est PLUS RÉCENT que le mbtiles : un
-      --shadings-overwrite sans --tiles-overwrite recalcule l'ombrage, les
-      tuiles doivent suivre (sinon l'utilisateur regarde l'ancien rendu),
-    - le fichier existe mais contient 0 tuiles (artefact d'un run interrompu),
-    - le fichier existe mais est corrompu (SQLite unreadable).
-
-    Sinon retourne False (mbtiles valide, on le réutilise). Logue la raison
-    de la regenerating pour éviter les disparitions silencieuses.
-    """
-    if not mbt_path.exists() or ecraser:
-        return True
-    if source is not None:
-        try:
-            if Path(source).stat().st_mtime > mbt_path.stat().st_mtime:
-                print(f"  {mbt_path.name} → older than {Path(source).name}, regenerating",
-                      flush=True)
-                return True
-        except OSError:
-            pass
-    # Distinguer fichier illisible vs vide pour un log clair
-    try:
-        _c = sqlite3.connect(f"file:{mbt_path}?mode=ro", uri=True)
-        try:
-            _n = _c.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
-        finally:
-            _c.close()
-    except (sqlite3.DatabaseError, sqlite3.OperationalError) as _e:
-        print(f"  {mbt_path.name} → SQLite unreadable ({type(_e).__name__}), regenerating", flush=True)
-        return True
-    if _n == 0:
-        print(f"  {mbt_path.name} → exists but empty (0 tiles), regenerating", flush=True)
-        return True
-    return False
+    """Façade compatible vers la politique de fraîcheur MBTiles."""
+    return _mbtiles_a_regenerer_impl(
+        mbt_path,
+        ecraser,
+        source,
+        dependances=_DependancesFraicheurMbtiles(
+            path_factory=Path,
+            sqlite_connect=sqlite3.connect,
+            sqlite_errors=(sqlite3.DatabaseError, sqlite3.OperationalError),
+            ecrire=print,
+        ),
+    )
 
 
 def _bbox_geojson_stream(fh):
-    """bbox WGS84 d'un GeoJSON lu en STREAMING (ijson) : un département de
-    vecteurs fait des centaines de Mo décompressés — le charger entier en RAM
-    juste pour une bbox serait absurde. RAM O(1) : on ne garde que les min/max."""
-    import ijson
-    from decimal import Decimal   # ijson rend les nombres en Decimal
-    lon0 = lat0 = float("inf"); lon1 = lat1 = float("-inf")
-    def _walk(c):
-        nonlocal lon0, lat0, lon1, lat1
-        if isinstance(c, (list, tuple)):
-            if (len(c) >= 2 and isinstance(c[0], (int, float, Decimal))
-                    and isinstance(c[1], (int, float, Decimal))):
-                x = float(c[0]); y = float(c[1])
-                if x < lon0: lon0 = x
-                if x > lon1: lon1 = x
-                if y < lat0: lat0 = y
-                if y > lat1: lat1 = y
-            else:
-                for e in c:
-                    _walk(e)
-    for coords in ijson.items(fh, "features.item.geometry.coordinates"):
-        _walk(coords)
-    return (lon0, lat0, lon1, lat1) if lon1 > lon0 else None
+    """Façade compatible vers le lecteur GeoJSON streaming extrait."""
+    return _bbox_geojson_stream_impl(fh)
 
 
 def _bbox_sqlite_tiles(path, rmaps=False):
-    """bbox WGS84 d'un magasin de tuiles SQLite, best-effort. mbtiles : metadata
-    `bounds`, sinon étendue des tuiles. sqlitedb RMaps : selon info.tilenumbering
-    ('simple' = z réel + y XYZ, notre writer ; défaut BigPlanet = z stocké 17-zoom).
-    IMPORTANT : l'agrégat min/max est fait À UN SEUL NIVEAU de zoom — mélanger
-    les colonnes/lignes de zooms différents donnerait une bbox fausse.
-    None si illisible/incohérent."""
-    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    try:
-        cur = con.cursor()
-        if not rmaps:
-            try:
-                row = cur.execute(
-                    "SELECT value FROM metadata WHERE name='bounds'").fetchone()
-                if row and row[0]:
-                    l, b, r, t = (float(x) for x in str(row[0]).split(","))
-                    return (l, b, r, t)
-            except Exception:
-                pass
-            zrow = cur.execute("SELECT max(zoom_level) FROM tiles").fetchone()
-            if not zrow or zrow[0] is None:
-                return None
-            z = int(zrow[0])
-            xmin, xmax, ytmin, ytmax = cur.execute(
-                "SELECT min(tile_column),max(tile_column),"
-                "min(tile_row),max(tile_row) FROM tiles WHERE zoom_level=?",
-                (z,)).fetchone()
-            ymin = (1 << z) - 1 - ytmax     # TMS -> XYZ
-            ymax = (1 << z) - 1 - ytmin
-        else:
-            numbering = "simple"            # notre writer (tilenumbering='simple')
-            try:
-                row = cur.execute("SELECT tilenumbering FROM info").fetchone()
-                if row and row[0]:
-                    numbering = str(row[0]).lower()
-            except Exception:
-                numbering = ""              # pas de colonne = vieux schéma BigPlanet
-            if numbering == "simple":
-                zrow = cur.execute("SELECT max(z) FROM tiles").fetchone()
-                if not zrow or zrow[0] is None:
-                    return None
-                zst = int(zrow[0]); z = zst
-            else:
-                zrow = cur.execute("SELECT min(z) FROM tiles").fetchone()
-                if not zrow or zrow[0] is None:
-                    return None
-                zst = int(zrow[0]); z = 17 - zst
-            if not (0 <= z <= 25):
-                return None
-            xmin, xmax, ymin, ymax = cur.execute(
-                "SELECT min(x),max(x),min(y),max(y) FROM tiles WHERE z=?",
-                (zst,)).fetchone()
-        tl = _tile_to_geo(xmin, ymin, z)    # coin NO : (lon_min, lat_min, lon_max, lat_max)
-        br = _tile_to_geo(xmax, ymax, z)    # coin SE
-        bbox = (tl[0], br[1], br[2], tl[3])
-        if -180 <= bbox[0] <= 180 and -85 <= bbox[1] <= 85 and bbox[2] > bbox[0]:
-            return bbox
-        return None
-    except Exception:
-        return None
-    finally:
-        try: con.close()
-        except Exception: pass
+    """Façade compatible vers le lecteur d'emprise SQLite extrait."""
+    return _bbox_sqlite_tiles_impl(
+        path,
+        rmaps,
+        tile_to_geo=_tile_to_geo,
+        sqlite_connect=sqlite3.connect,
+    )
 
 
 def _extraire_bbox_wgs84(fichier):
-    """Emprise WGS84 (lon0,lat0,lon1,lat1) d'un livrable, ou None. Best-effort."""
-    f = Path(fichier)
-    nom = f.name.lower()
-    try:
-        if nom.endswith(".mbtiles"):
-            return _bbox_sqlite_tiles(f, rmaps=False)
-        if nom.endswith(".sqlitedb"):
-            return _bbox_sqlite_tiles(f, rmaps=True)
-        if nom.endswith(".geojson"):
-            with open(f, "rb") as fh:
-                return _bbox_geojson_stream(fh)
-        if nom.endswith(".geojson.gz"):
-            with gzip.open(f, "rb") as fh:
-                return _bbox_geojson_stream(fh)
-    except Exception:
-        return None
-    return None
+    """Façade compatible vers le répartiteur d'emprises extrait."""
+    return _extraire_bbox_wgs84_impl(
+        fichier,
+        bbox_sqlite_tiles=_bbox_sqlite_tiles,
+        bbox_geojson_stream=_bbox_geojson_stream,
+        path_factory=Path,
+        open_file=open,
+        gzip_open=gzip.open,
+    )
+
+
+
+
+from _terrain_index import (
+    DependancesPlanches as _DependancesPlanches,
+    bbox_geojson_stream as _bbox_geojson_stream_impl,
+    bbox_sqlite_tiles as _bbox_sqlite_tiles_impl,
+    extraire_bbox_wgs84 as _extraire_bbox_wgs84_impl,
+    generer_planche as _generer_planche_impl,
+    planche_contours_dept as _planche_contours_dept_impl,
+    planche_depuis_dossier as _planche_depuis_dossier_impl,
+)
+
+
+def _dependances_planches():
+    """Reconstruit les coutures des planches à chaque appel."""
+    return _DependancesPlanches(
+        extraire_bbox_wgs84=_extraire_bbox_wgs84,
+        planche_contours_dept=_planche_contours_dept,
+        generer_planche=_generer_planche,
+        dossier_cache=DOSSIER_CACHE,
+        http_ua=_HTTP_UA,
+        ecrire_json_atomique=_ecrire_json_atomique,
+        request_url=urllib.request.Request,
+        ouvrir_url=urllib.request.urlopen,
+        attendre=time.sleep,
+    )
 
 
 def _planche_depuis_dossier(dossier, args, nom_zone=None, zone_bbox_wgs84=None):
-    """Balaie un dossier projet et génère UNE planche d'assemblage PAR PRODUIT
-    (ombrage / couche : lrm, svf, ortho…) : sinon leurs emprises se
-    superposeraient sur une même planche, illisible. Groupe par (produit, cellule
-    NNNxNNN) ; le produit = le nom de fichier sans le token de cellule ni
-    l'extension → le mbtiles et le sqlitedb d'un même produit restent groupés.
-    Indépendant du run (mode --planche DIR). Une cellule sans fichier (mer)
-    n'apparaît pas : c'est voulu.
-
-    zone_bbox_wgs84 : bbox WGS84 effectivement demandée par l'utilisateur
-    (lon_min, lat_min, lon_max, lat_max), si connue de l'appelant. Sert à
-    borner l'emprise lue dans les fichiers : le WFS IGN renvoie la géométrie
-    ENTIÈRE d'un itinéraire qui traverse seulement la zone (ex. un GR ou une
-    véloroute de plusieurs centaines de km pour une zone de quelques km), pas
-    la portion locale. Sans ce recadrage, l'emprise calculée peut dériver très
-    loin de la zone réelle, faire échouer le reverse-geocoding du département
-    et rendre la planche illisible (le point demandé devient invisible à
-    l'échelle de l'emprise entière). Absent en mode --planche DIR autonome
-    (pas de requête associée) : l'ancien comportement best-effort s'applique."""
-    if not getattr(args, "index_map", True):
-        return
-    try:
-        import re as _re
-
-        def _clip(bbox):
-            """Intersecte `bbox` avec la zone demandée, si connue. Conserve
-            `bbox` tel quel en l'absence d'intersection (défensif : ne doit
-            jamais produire une bbox vide ou inversée)."""
-            if zone_bbox_wgs84 is None:
-                return bbox
-            x0 = max(bbox[0], zone_bbox_wgs84[0]); y0 = max(bbox[1], zone_bbox_wgs84[1])
-            x1 = min(bbox[2], zone_bbox_wgs84[2]); y1 = min(bbox[3], zone_bbox_wgs84[3])
-            return (x0, y0, x1, y1) if (x0 < x1 and y0 < y1) else bbox
-
-        d = Path(dossier)
-        if not d.is_dir():
-            print(f"  (index sheet: {d} is not a folder)", flush=True)
-            return
-        nom_zone = nom_zone or d.name
-        _SUFS = (".geojson.gz", ".mbtiles", ".sqlitedb", ".rmap", ".map", ".geojson")
-        # mbtiles/geojson d'abord (emprise fiable), sqlitedb en dernier recours.
-        _prio = {".mbtiles": 0, ".geojson": 1, ".gz": 2, ".sqlitedb": 3}
-        fichiers = sorted(
-            [p for pat in ("*.mbtiles", "*.sqlitedb", "*.geojson", "*.geojson.gz")
-             for p in d.rglob(pat)],
-            key=lambda p: _prio.get(p.suffix.lower(), 9))
-        produits = {}   # produit -> {cle: bbox}  ('__single__' hors découpage)
-        geo_bboxes = []; geo_stems = []
-        for f in fichiers:
-            stem = f.name
-            for suf in _SUFS:
-                if stem.lower().endswith(suf):
-                    stem = stem[:-len(suf)]; break
-            # Famille GeoJSON (vecteur IGN/OSM/fusion) : les couches d'un même
-            # run décrivent la MÊME zone → UNE planche pour l'ensemble (demande
-            # de Nico), pas une par couche. Collectées à part, groupées après.
-            if f.name.lower().endswith((".geojson", ".geojson.gz")):
-                bbox = _extraire_bbox_wgs84(f)
-                if bbox:
-                    geo_bboxes.append(_clip(bbox)); geo_stems.append(stem)
-                continue
-            m = _re.search(r"(\d{3})x(\d{3})", stem)
-            cle = f"{m.group(1)}x{m.group(2)}" if m else "__single__"
-            produit = _re.sub(r"_?\d{3}x\d{3}", "", stem).strip("_") or nom_zone
-            cells = produits.setdefault(produit, {})
-            if cle in cells:
-                continue
-            bbox = _extraire_bbox_wgs84(f)
-            if bbox:
-                cells[cle] = _clip(bbox)
-        if geo_bboxes:
-            # Emprise du groupe = INTERSECTION des couches, pas l'union : les
-            # couches d'itinéraires (GR) portent des features ENTIÈRES
-            # traversant la région — l'union donnerait une emprise de centaines
-            # de km (et un centre potentiellement en mer, vécu). L'intersection
-            # approxime la zone réellement demandée. Union en repli si vide.
-            ib = (max(b[0] for b in geo_bboxes), max(b[1] for b in geo_bboxes),
-                  min(b[2] for b in geo_bboxes), min(b[3] for b in geo_bboxes))
-            if not (ib[0] < ib[2] and ib[1] < ib[3]):
-                ib = (min(b[0] for b in geo_bboxes), min(b[1] for b in geo_bboxes),
-                      max(b[2] for b in geo_bboxes), max(b[3] for b in geo_bboxes))
-            import os.path as _osp
-            nom_geo = _osp.commonprefix(geo_stems).strip("_") or nom_zone
-            produits[nom_geo] = {"__single__": ib}
-        produits = {k: v for k, v in produits.items() if v}
-        if not produits:
-            print("  (index sheet: no readable deliverable found)", flush=True)
-            return
-        # Contour(s) département : une seule requête Nominatim pour tous les
-        # produits (même zone), sur l'emprise globale.
-        # Contour département : viser le centre du produit le PLUS LOCAL (plus
-        # petite bbox), pas l'union. Les couches d'itinéraires (GR) contiennent
-        # des features ENTIÈRES traversant la région : l'union est énorme et
-        # son centre peut tomber en mer (vécu : centre en Méditerranée → reverse
-        # sans département → aucune planche avec contour). Repli sur l'union si
-        # le produit local ne résout rien.
-        def _pbbox(cells_d):
-            v = list(cells_d.values())
-            return (min(b[0] for b in v), min(b[1] for b in v),
-                    max(b[2] for b in v), max(b[3] for b in v))
-        pb_all = {k: _pbbox(v) for k, v in produits.items()}
-        ref_bbox = min(pb_all.values(),
-                       key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
-        allb = [b for v in produits.values() for b in v.values()]
-        gbbox = (min(b[0] for b in allb), min(b[1] for b in allb),
-                 max(b[2] for b in allb), max(b[3] for b in allb))
-        contours = _planche_contours_dept(ref_bbox, args)
-        if not contours and gbbox != ref_bbox:
-            time.sleep(1.1)   # Nominatim : 1 req/s
-            contours = _planche_contours_dept(gbbox, args)
-        for produit, cells_d in sorted(produits.items()):
-            cells = sorted((k, v) for k, v in cells_d.items() if k != "__single__")
-            _generer_planche(pb_all[produit], cells or None, produit, d, args,
-                             contours=contours)
-    except Exception as e:
-        print(f"  (index sheet skipped: {type(e).__name__}: {e})", flush=True)
+    """Façade compatible vers la production de planches extraite."""
+    return _planche_depuis_dossier_impl(
+        dossier,
+        args,
+        nom_zone,
+        zone_bbox_wgs84,
+        dependances=_dependances_planches(),
+    )
 
 
 def _planche_contours_dept(bbox_wgs84, args):
-    """Contour(s) RÉEL(s) du/des département(s) couvrant la zone (polygone, pas
-    la bbox), best-effort via Nominatim polygon_geojson. Retourne une liste
-    d'anneaux extérieurs [(lon,lat), ...] en WGS84, ou [] si rien de résolvable
-    (offline, hors FR, etc.) — la planche est alors dessinée sans fond dép."""
-    lon0, lat0, lon1, lat1 = bbox_wgs84
-    noms = []
-    dep_arg = str(getattr(args, "zone_departement", "") or "").strip()
-    if dep_arg:
-        # Numéros simples séparés par des virgules : nom lu dans le cache rempli
-        # par geocoder_departement pendant le run (pas de nouvel Overpass).
-        try:
-            _cache = json.loads((DOSSIER_CACHE / "dep_bbox_cache.json")
-                                .read_text(encoding="utf-8"))
-        except Exception:
-            _cache = {}
-        for tok in dep_arg.replace(";", ",").split(","):
-            n = (_cache.get(tok.strip()) or {}).get("nom")
-            if n and n not in noms:
-                noms.append(n)
-    if not noms:
-        # Reverse-geocode du centre → département (address.county en FR).
-        lonc = (lon0 + lon1) / 2; latc = (lat0 + lat1) / 2
-        try:
-            url = ("https://nominatim.openstreetmap.org/reverse?"
-                   + urllib.parse.urlencode({"lat": f"{latc:.5f}", "lon": f"{lonc:.5f}",
-                                             "format": "jsonv2", "zoom": 8}))
-            req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                addr = (json.load(r) or {}).get("address", {}) or {}
-            n = addr.get("county") or addr.get("state_district") or addr.get("state")
-            if n:
-                noms.append(n)
-            else:
-                # Pas d'exception mais rien de résolu (centre en mer, hors
-                # couverture admin...) : le dire, sinon indiagnosticable.
-                print(f"  (index sheet: no department at "
-                      f"{latc:.4f},{lonc:.4f} - outline skipped)", flush=True)
-        except Exception as _e_rev:
-            # Visible : un best-effort qui échoue en silence est indiagnosticable
-            # (leçon du 2026-07-10 : la planche sortait sans département sans
-            # aucun indice sur la cause).
-            print(f"  (index sheet: reverse geocoding failed: "
-                  f"{type(_e_rev).__name__}: {_e_rev})", flush=True)
-    # Cache disque des polygones (même logique que dep_bbox_cache.json) : les
-    # contours administratifs ne changent pas, les re-télécharger à chaque run
-    # coûtait des requêtes Nominatim + les sleep de politesse par planche.
-    _cache_path = DOSSIER_CACHE / "dep_contour_cache.json"
-    try:
-        _cache = json.loads(_cache_path.read_text(encoding="utf-8"))
-        if not isinstance(_cache, dict):
-            _cache = {}
-    except Exception:
-        _cache = {}
-    contours = []
-    _cache_dirty = False
-    for nom in noms[:4]:   # borne : ne pas spammer Nominatim
-        if nom in _cache:
-            contours.extend(_cache[nom])
-            continue
-        try:
-            url = ("https://nominatim.openstreetmap.org/search?"
-                   + urllib.parse.urlencode({"q": nom, "format": "jsonv2",
-                                             "polygon_geojson": 1,
-                                             "polygon_threshold": 0.005, "limit": 1}))
-            req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                res = json.load(r)
-            g = (res[0].get("geojson") if res else None) or {}
-            rings = []
-            if g.get("type") == "Polygon":
-                rings.append(g["coordinates"][0])
-            elif g.get("type") == "MultiPolygon":
-                for poly in g["coordinates"]:
-                    rings.append(poly[0])
-            contours.extend(rings)
-            if rings:   # ne pas cacher un résultat vide (permet de réessayer)
-                _cache[nom] = rings
-                _cache_dirty = True
-            time.sleep(1.1)   # Nominatim : 1 req/s
-        except Exception as _e_sea:
-            print(f"  (index sheet: no outline for '{nom}': "
-                  f"{type(_e_sea).__name__}: {_e_sea})", flush=True)
-    if _cache_dirty:
-        try:
-            _ecrire_json_atomique(_cache_path, _cache)
-        except Exception:
-            pass   # cache best-effort, jamais un point de panne
-    return contours
+    """Façade compatible vers la résolution des contours extraite."""
+    return _planche_contours_dept_impl(
+        bbox_wgs84,
+        args,
+        dependances=_dependances_planches(),
+    )
 
 
 def _generer_planche(bbox_wgs84, cells, nom_zone, dossier, args, contours=None):
-    """<zone>_planche.png : planche d'assemblage (index/key map) d'UN produit.
-    Emprise (cadre) + contour(s) département réels + cellules numérotées (si
-    découpage). `contours` pré-calculé (partagé entre produits) sinon récupéré
-    ici. PIL seul (bundle app). Entièrement best-effort : toute erreur est
-    avalée (l'artefact est un bonus, jamais un point de panne du run)."""
-    if not getattr(args, "index_map", True):
-        return
-    try:
-        import math as _m
-        from PIL import Image, ImageDraw, ImageFont
-        lon0, lat0, lon1, lat1 = bbox_wgs84
-        if lon1 <= lon0 or lat1 <= lat0:
-            return
-        if contours is None:
-            contours = _planche_contours_dept(bbox_wgs84, args)
+    """Façade compatible vers le rendu de planche extrait."""
+    return _generer_planche_impl(
+        bbox_wgs84,
+        cells,
+        nom_zone,
+        dossier,
+        args,
+        contours,
+        dependances=_dependances_planches(),
+    )
 
-        # Emprise d'affichage = union(zone, contours), mais CAPÉE pour la
-        # lisibilité : si l'emprise est minuscule vs le département, les cellules
-        # deviennent illisibles (numéros qui se chevauchent). On limite la vue à
-        # _CAP× l'emprise, centrée dessus, sans jamais exclure l'emprise. À
-        # l'échelle départementale (emprise ≈ département) le cap ne mord pas :
-        # tout le contour reste visible. Ratio corrigé du cos(lat) plus bas.
-        lons = [lon0, lon1]; lats = [lat0, lat1]
-        for ring in contours:
-            lons += [p[0] for p in ring]; lats += [p[1] for p in ring]
-        ulon0, ulon1 = min(lons), max(lons)
-        ulat0, ulat1 = min(lats), max(lats)
-        _CAP = 4.0
-        ecx = (lon0 + lon1) / 2; ecy = (lat0 + lat1) / 2
-        _hw = max(lon1 - lon0, 1e-6) * _CAP / 2
-        _hh = max(lat1 - lat0, 1e-6) * _CAP / 2
-        dlon0 = min(lon0, max(ulon0, ecx - _hw))
-        dlon1 = max(lon1, min(ulon1, ecx + _hw))
-        dlat0 = min(lat0, max(ulat0, ecy - _hh))
-        dlat1 = max(lat1, min(ulat1, ecy + _hh))
-        mlon = (dlon1 - dlon0) * 0.04 or 0.01
-        mlat = (dlat1 - dlat0) * 0.04 or 0.01
-        dlon0 -= mlon; dlon1 += mlon; dlat0 -= mlat; dlat1 += mlat
-        lat_mid = (dlat0 + dlat1) / 2
-        w_g = (dlon1 - dlon0) * _m.cos(_m.radians(lat_mid))
-        h_g = (dlat1 - dlat0)
-        if w_g <= 0 or h_g <= 0:
-            return
-        MAXPX = 1000
-        if w_g >= h_g:
-            W = MAXPX; H = max(1, round(MAXPX * h_g / w_g))
-        else:
-            H = MAXPX; W = max(1, round(MAXPX * w_g / h_g))
 
-        def _px(lon, lat):
-            return ((lon - dlon0) / (dlon1 - dlon0) * W,
-                    (dlat1 - lat) / (dlat1 - dlat0) * H)
-
-        img = Image.new("RGB", (W, H), (247, 249, 252))
-        dr = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.load_default(size=15)
-        except Exception:
-            font = ImageFont.load_default()
-
-        # Département : contour RÉEL (polygone), léger fond + trait gris.
-        for ring in contours:
-            pts = [_px(lon, lat) for lon, lat in ring]
-            if len(pts) >= 3:
-                dr.polygon(pts, fill=(228, 233, 240), outline=(140, 150, 165))
-
-        # Emprise globale des livrables (cadre bleu).
-        ex0, ey0 = _px(lon0, lat1); ex1, ey1 = _px(lon1, lat0)
-        dr.rectangle([ex0, ey0, ex1, ey1], outline=(37, 99, 235), width=3)
-
-        # Cellules du découpage : rectangle + numéro centré.
-        for cle, (clo0, cla0, clo1, cla1) in (cells or []):
-            cx0, cy0 = _px(clo0, cla1); cx1, cy1 = _px(clo1, cla0)
-            dr.rectangle([cx0, cy0, cx1, cy1], outline=(200, 70, 50), width=1)
-            try:
-                dr.text(((cx0 + cx1) / 2, (cy0 + cy1) / 2), cle,
-                        fill=(120, 30, 20), font=font, anchor="mm")
-            except TypeError:   # anchor absent (Pillow < 8) : coin haut-gauche
-                dr.text((cx0 + 3, cy0 + 3), cle, fill=(120, 30, 20), font=font)
-
-        titre = nom_zone + (f"  -  {len(cells)} zones" if cells else "")
-        dr.text((8, 6), titre, fill=(30, 41, 59), font=font)
-
-        # Carton de localisation (locator inset, standard cartes IGN papier) :
-        # quand la vue principale est zoomée (cap 4× sur petite zone), le
-        # contour du département est hors-champ — le fond couvre tout et la
-        # planche perd son contexte. On dessine alors en coin le département
-        # ENTIER avec l'emprise en rouge. Sauté quand la vue montre déjà le
-        # département (run départemental : le carton serait redondant).
-        if contours:
-            klon0 = min(p[0] for ring in contours for p in ring)
-            klon1 = max(p[0] for ring in contours for p in ring)
-            klat0 = min(p[1] for ring in contours for p in ring)
-            klat1 = max(p[1] for ring in contours for p in ring)
-            # Test de CONFINEMENT (pas un ratio d'aires : sur un petit
-            # département, une vue capée 4× peut en couvrir 30 % et un seuil
-            # d'aire sautait le carton à tort) : si le département ne tient
-            # pas entier dans la vue, on ajoute le carton.
-            _tol = 0.02 * max(klon1 - klon0, klat1 - klat0)
-            _dept_visible = (klon0 >= dlon0 - _tol and klon1 <= dlon1 + _tol
-                             and klat0 >= dlat0 - _tol and klat1 <= dlat1 + _tol)
-            if not _dept_visible:
-                kmid = _m.cos(_m.radians((klat0 + klat1) / 2))
-                kw_g = (klon1 - klon0) * kmid
-                kh_g = (klat1 - klat0)
-                iw = int(W * 0.30)
-                ih = max(24, int(iw * kh_g / max(kw_g, 1e-9)))
-                if ih > int(H * 0.38):          # borne : carton ≤ ~1/3 de haut
-                    ih = int(H * 0.38)
-                    iw = max(24, int(ih * kw_g / max(kh_g, 1e-9)))
-                pad = 6; marge = 8
-                x0i = W - iw - 2 * pad - marge
-                y0i = H - ih - 2 * pad - marge   # coin bas-droit
-                dr.rectangle([x0i, y0i, x0i + iw + 2 * pad, y0i + ih + 2 * pad],
-                             fill=(255, 255, 255), outline=(140, 150, 165))
-
-                def _kpx(lon, lat):
-                    return (x0i + pad + (lon - klon0) / (klon1 - klon0) * iw,
-                            y0i + pad + (klat1 - lat) / (klat1 - klat0) * ih)
-
-                for ring in contours:
-                    pts = [_kpx(lon, lat) for lon, lat in ring]
-                    if len(pts) >= 3:
-                        dr.polygon(pts, fill=(228, 233, 240),
-                                   outline=(140, 150, 165))
-                # Emprise en rouge, épaissie à 3 px minimum pour rester
-                # visible même quand la zone est minuscule vs le département.
-                kx0, ky0 = _kpx(lon0, lat1); kx1, ky1 = _kpx(lon1, lat0)
-                if kx1 - kx0 < 3: kx1 = kx0 + 3
-                if ky1 - ky0 < 3: ky1 = ky0 + 3
-                dr.rectangle([kx0, ky0, kx1, ky1], outline=(220, 38, 38), width=2)
-
-        out = Path(dossier) / f"{nom_zone}_planche.png"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        img.save(out)
-        print(f"  {out.name} : index sheet ({W}x{H})", flush=True)
-    except Exception as _e_pl:
-        print(f"  (index sheet skipped: {type(_e_pl).__name__}: {_e_pl})", flush=True)
 
 
 def _signature_config(args, sous_zones):
@@ -5934,226 +5265,38 @@ def _traiter_bbox_wmts(args, bbox_wgs84, nom_z, nom_zone_base, layer, style, img
     )
 
 
+from _split_mbtiles import (
+    DependancesDecoupageMbtiles as _DependancesDecoupageMbtiles,
+    decouper_mbtiles as _decouper_mbtiles_impl,
+)
+
+
+def _dependances_decoupage_mbtiles():
+    """Reconstruit les coutures du découpage MBTiles à chaque appel."""
+    return _DependancesDecoupageMbtiles(
+        calculer_sous_zones_priori=_calculer_sous_zones_priori,
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        sqlite_connect=sqlite3.connect,
+    )
+
+
 def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
                      dossier=None, ecraser=False):
-    """
-    Découpe un MBTiles source en sous-MBTiles.
+    """Façade compatible vers le découpage MBTiles extrait."""
+    return _decouper_mbtiles_impl(
+        src_mbtiles,
+        cote_km,
+        n_morceaux,
+        n_cols,
+        n_rows,
+        dossier,
+        ecraser,
+        dependances=_dependances_decoupage_mbtiles(),
+    )
 
-    Modes (par ordre de priorité) :
-      - n_cols > 0 et n_rows > 0 : grille explicite cols×rows (depuis la GUI).
-      - n_morceaux > 1            : N morceaux, grille auto la plus carrée.
-      - cote_km  > 0              : carrés de ~cote_km km de côté.
-      - sinon                     : retourne [src_mbtiles] sans découpe.
 
-    Nommage des sorties : {stem}_{ligne:03d}x{col:03d}.mbtiles
-    Retourne la liste des Path créés.
-    """
-    import sqlite3 as _sq
-
-    if n_cols > 0 and n_rows > 0:
-        # Grille explicite — on force n_morceaux cohérent pour la suite
-        n_morceaux = n_cols * n_rows
-    if n_morceaux <= 1 and cote_km <= 0:
-        return [src_mbtiles]
-
-    if not src_mbtiles.exists():
-        print(f"  ERROR splitting: {src_mbtiles.name} not found")
-        return []
-
-    out_dir = dossier or src_mbtiles.parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    con = _sq.connect(str(src_mbtiles))
-    meta = dict(con.execute("SELECT name, value FROM metadata").fetchall())
-    fmt      = meta.get("format", "jpeg")
-    # Zooms : LIRE les tuiles si les métadonnées manquent, au lieu d'un 0/17
-    # arbitraire (R2#12). Un mbtiles z18-seul sans metadata donnait minzoom=0/
-    # maxzoom=17 → la boucle range(0,18) ratait z18 → morceaux vides, et les
-    # métadonnées des sorties mentaient. Miroir du fix zooms sqlitedb (R2#11).
-    _zr = con.execute("SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").fetchone()
-    _z_reel_min = _zr[0] if _zr and _zr[0] is not None else 0
-    _z_reel_max = _zr[1] if _zr and _zr[1] is not None else 17
-    zoom_min = int(meta["minzoom"]) if "minzoom" in meta else _z_reel_min
-    zoom_max = int(meta["maxzoom"]) if "maxzoom" in meta else _z_reel_max
-
-    # Lire la bbox globale depuis metadata ou calculer depuis les tuiles
-    if "bounds" in meta:
-        lon0, lat0, lon1, lat1 = [float(v) for v in meta["bounds"].split(",")]
-    else:
-        rows = con.execute(
-            "SELECT MIN(tile_column), MAX(tile_column), MIN(tile_row), MAX(tile_row) "
-            "FROM tiles WHERE zoom_level=?", (zoom_max,)).fetchone()
-        if not rows or rows[0] is None:
-            print("  ERROR: MBTiles empty")
-            con.close()
-            return []
-        n = 2 ** zoom_max
-        lon0 = rows[0] / n * 360.0 - 180.0          # MIN(col) → ouest
-        lon1 = (rows[1] + 1) / n * 360.0 - 180.0    # MAX(col)+1 → est
-        # tile_row est en TMS (y=0 au SUD) ; XYZ y = n-1-tms (y=0 au NORD).
-        # Nord = plus PETIT y XYZ = n-1-MAX(tms) ; Sud = plus GRAND y XYZ =
-        # n-1-MIN(tms). L'ancien code prenait MIN(tms) pour le nord : correct
-        # par accident sur UNE tuile (bords de la seule tuile), mais dès ≥2
-        # lignes lat1 recevait le bord nord de la tuile SUD → bbox retournée
-        # ET rétrécie (R2#12).
-        y_nord_xyz = n - 1 - rows[3]   # MAX(tms) → tuile la plus au NORD
-        y_sud_xyz  = n - 1 - rows[2]   # MIN(tms) → tuile la plus au SUD
-        def _tile_to_lat(y, n):
-            return math.degrees(math.atan(math.sinh(math.pi * (1 - 2*y/n))))
-        lat1 = _tile_to_lat(y_nord_xyz,     n)   # lat_max = bord nord (haut tuile nord)
-        lat0 = _tile_to_lat(y_sud_xyz + 1,  n)   # lat_min = bord sud (bas tuile sud)
-
-    lat_c = (lat0 + lat1) / 2
-
-    # ── Calcul de la grille via la fonction unifiée ────────────────────────
-    if n_cols > 0 and n_rows > 0:
-        # Grille explicite cols×rows
-        r_lat = (lat1 - lat0) / n_rows
-        r_lon = (lon1 - lon0) / n_cols
-        r_lat_km = r_lat * 111.0
-        r_lon_km = r_lon * 111.0 * math.cos(math.radians(lat_c))
-        mode_desc = (f"{n_rows}×{n_cols} grille"
-                     f" (~{r_lat_km:.0f}×{r_lon_km:.0f} km/morceau)")
-        sous_zones = []
-        for i_lat in range(n_rows):
-            lat_s = lat0 + i_lat * r_lat
-            lat_n = min(lat_s + r_lat, lat1)
-            for i_lon in range(n_cols):
-                lon_w = lon0 + i_lon * r_lon
-                lon_e = min(lon_w + r_lon, lon1)
-                sous_zones.append((i_lat, i_lon, lon_w, lat_s, lon_e, lat_n))
-    else:
-        sous_zones, mode_desc = _calculer_sous_zones_priori(
-            lon0, lat0, lon1, lat1, n_morceaux, cote_km, unite_m=False)
-
-    if len(sous_zones) <= 1:
-        print("  Splitting: zone too small -> single file")
-        con.close()
-        return [src_mbtiles]
-
-    print(f"  Splitting: {mode_desc}")
-
-    # Nom de base : garder le suffixe _z{min}-{max} pour que les morceaux l'incluent
-    stem_base = src_mbtiles.stem  # ex: 83_multi_ombrage_z8-18
-
-    # Compter lignes/colonnes pour le padding. Dérivé de sous_zones (et pas de
-    # i_lat/i_lon de boucle) : robuste aux DEUX branches — la branche else
-    # (rayon / n_morceaux) ne lie jamais i_lat/i_lon → NameError sinon. Le +1
-    # donne le COMPTE (pas l'index max), donc pad correct jusqu'aux puissances
-    # exactes (1000 lignes → pad 4).
-    n_lats = max(z[0] for z in sous_zones) + 1
-    n_lons = max(z[1] for z in sous_zones) + 1
-    pad = max(3, len(str(max(n_lats, n_lons))))
-
-    sorties = []
-
-    for i_lat, i_lon, lon_w, lat_s, lon_e, lat_n in sous_zones:
-        sfx   = f"_{(i_lat+1):0{pad}d}x{(i_lon+1):0{pad}d}"
-        nom_z    = f"{stem_base}{sfx}"
-        chemin_z = out_dir / f"{nom_z}.mbtiles"
-
-        if chemin_z.exists() and not ecraser:
-            print(f"  Existing chunk: {chemin_z.name} - skipped")
-            sorties.append(chemin_z)
-            continue
-        # Sur écrasement, PAS d'unlink préalable : chemin_z_part.replace()
-        # écrase atomiquement en fin de découpe. Supprimer maintenant perdrait
-        # le morceau précédent si la découpe de celui-ci échoue.
-
-        # Écriture via .part + rename : un sous-mbtiles présent est toujours
-        # complet (un kill mi-découpe laissait un partiel repris tel quel par
-        # le check "Existing chunk" au run suivant).
-        chemin_z_part = _chemin_part(chemin_z)
-        con_z = _sq.connect(str(chemin_z_part))
-        # Écritures rapides SANS risque : la cible est un .part, jeté sur
-        # échec (au pire un crash OS laisse un .part corrompu, purgé par
-        # _chemin_part au run suivant). fsync par commit inutile ici.
-        con_z.execute("PRAGMA journal_mode=MEMORY;")
-        con_z.execute("PRAGMA synchronous=OFF;")
-        con_z.executescript("""
-            CREATE TABLE metadata (name TEXT, value TEXT);
-            CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,
-                                tile_row INTEGER, tile_data BLOB);
-            CREATE UNIQUE INDEX idx_tiles ON tiles (zoom_level, tile_column, tile_row);
-        """)
-
-        cx = (lon_w + lon_e) / 2
-        cy = (lat_s + lat_n) / 2
-        # Reprendre TOUTES les métadonnées source (attribution, json/vector_layers,
-        # scheme, licence...), puis surcharger celles PROPRES au morceau (R2#13).
-        # L'ancien code ne recréait que 9 clés → attribution/json/scheme/licence
-        # étaient perdues à chaque découpe (contrat MBTiles cassé pour un lecteur
-        # qui les attend : couche vecteur sans json = illisible, attribution/
-        # licence effacées). type/version/description viennent maintenant de la
-        # source telle quelle (avec défauts si absentes).
-        _meta_z = dict(meta)
-        _meta_z.setdefault("type", "overlay")
-        _meta_z.setdefault("version", "1.0")
-        _meta_z.setdefault("description", "")
-        _meta_z.update({
-            "name":    nom_z,
-            "format":  fmt,
-            "minzoom": str(zoom_min),
-            "maxzoom": str(zoom_max),
-            "bounds":  f"{lon_w:.6f},{lat_s:.6f},{lon_e:.6f},{lat_n:.6f}",
-            "center":  f"{cx:.6f},{cy:.6f},{zoom_max}",
-        })
-        for k, v in _meta_z.items():
-            con_z.execute("INSERT INTO metadata VALUES (?,?)", (k, str(v)))
-        con_z.commit()
-
-        # Copier les tuiles de la bbox — itération INCRÉMENTALE (fetchmany) :
-        # l'ancien fetchall() chargeait TOUTES les tuiles du zoom (BLOBs
-        # compris) en RAM — plusieurs Go au niveau z18 départemental ; le
-        # batch de 500 ne bornait que l'INSERT, pas le pic de lecture.
-        n_tuiles = 0
-        BATCH    = 2000
-        for z in range(zoom_min, zoom_max + 1):
-            n  = 2 ** z
-            # bbox WGS84 → colonnes/lignes XYZ
-            x0 = int((lon_w + 180) / 360 * n)
-            x1 = int((lon_e + 180) / 360 * n)
-            lat_n_r = math.radians(lat_n)
-            lat_s_r = math.radians(lat_s)
-            y0 = int((1 - math.log(math.tan(lat_n_r) + 1/math.cos(lat_n_r))/math.pi) / 2 * n)
-            y1 = int((1 - math.log(math.tan(lat_s_r) + 1/math.cos(lat_s_r))/math.pi) / 2 * n)
-            # TMS : tile_row = n-1-y_xyz
-            row0 = n - 1 - y1   # lat_s → y_xyz max → tms min
-            row1 = n - 1 - y0   # lat_n → y_xyz min → tms max
-            cur_src = con.execute(
-                "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles "
-                "WHERE zoom_level=? AND tile_column BETWEEN ? AND ? "
-                "AND tile_row BETWEEN ? AND ?",
-                (z, x0, x1, row0, row1)
-            )
-            while True:
-                rows = cur_src.fetchmany(BATCH)
-                if not rows:
-                    break
-                con_z.executemany(
-                    "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", rows)
-                con_z.commit()
-                n_tuiles += len(rows)
-        con_z.close()
-
-        if n_tuiles == 0:
-            _nettoyer_sqlite_part(chemin_z_part)
-            print(f"  Sub-zone [{i_lat},{i_lon}]: empty - skipped")
-            continue
-
-        try:
-            _valider_sqlite_part(
-                chemin_z_part, {"metadata": None, "tiles": n_tuiles}
-            )
-        except BaseException:
-            _nettoyer_sqlite_part(chemin_z_part)
-            raise
-        chemin_z_part.replace(chemin_z)
-        print(f"  Sub-zone [{i_lat},{i_lon}]: {n_tuiles:,} tiles → {chemin_z.name}")
-        sorties.append(chemin_z)
-
-    con.close()
-    return sorties
 
 
 def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
@@ -6184,174 +5327,48 @@ def _convertir_formats(
     )
 
 
+from _zone_cli import (
+    DependancesArgumentsZone as _DependancesArgumentsZone,
+    DependancesResolutionZone as _DependancesResolutionZone,
+    ajouter_args_zone as _ajouter_args_zone_impl,
+    resoudre_zone_wgs84 as _resoudre_zone_wgs84_impl,
+)
+
+
 def _ajouter_args_zone(parser, *, width_default, bbox_metavar, bbox_help=None,
                         avec_dossier=False, avec_help_full=False):
-    """Ajoute les flags --zone-{ville,gps,bbox,departement,width,nom}
-    au parser fourni, en factorisant la duplication entre main(),
-    main_wmts(), main_wfs(). Les divergences réelles sont :
-
-    - width_default : LARGEUR (côté du carré) par défaut, en km. main()
-      utilise None (résolu à 20 plus tard), main_wmts/wfs utilisent 20.0 dès
-      le parser. NB : c'est un CÔTÉ, pas un rayon (20 km de large = l'ancien
-      rayon de 10 km, avant le passage au modèle largeur).
-    - bbox_metavar  : libellé de la bbox WGS84 "W,S,E,N".
-    - bbox_help     : help textuel propre à chaque mode.
-    - avec_dossier  : si True, ajoute aussi --dossier (uniquement pour main()
-      qui le mélange avec --dossier-dalles ; les autres l'ajoutent à part).
-    - avec_help_full : si True, help détaillé (mode CLI top-level main()).
-
-    Retourne le mutually exclusive group, au cas où l'appelant veut y ajouter
-    d'autres flags.
-    """
-    loc = parser.add_mutually_exclusive_group()
-    if avec_help_full:
-        loc.add_argument("--zone-city", "--zone-ville",  metavar="NAME", dest="zone_ville",
-                         help="City name (Nominatim geocoding)")
-        loc.add_argument("--zone-gps",    metavar="LAT,LON",
-                         help="GPS coordinates, e.g. 43.3156,6.0423")
-        loc.add_argument("--zone-bbox",   metavar=bbox_metavar,
-                         help=bbox_help or "")
-        loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement",
-                         help="Department number, e.g. 83, 2A, 971. "
-                              "Automatically fetches the bbox from geo.api.gouv.fr. "
-                              "The folder name is set automatically (e.g. var_83).")
-        loc.add_argument("--zone-region", metavar="SLUG",
-                         help="Geofabrik region, e.g. provence-alpes-cote-d-azur. "
-                              "Processes the whole region = bounding box of its departments. "
-                              "With --osm: single regional map (full PBF, no re-clip).")
-    else:
-        loc.add_argument("--zone-city", "--zone-ville",       metavar="NAME", dest="zone_ville")
-        loc.add_argument("--zone-gps",         metavar="LAT,LON")
-        if bbox_help:
-            loc.add_argument("--zone-bbox",    metavar=bbox_metavar, help=bbox_help)
-        else:
-            loc.add_argument("--zone-bbox",    metavar=bbox_metavar)
-        loc.add_argument("--zone-department", "--zone-departement", metavar="NUM", dest="zone_departement")
-        loc.add_argument("--zone-region", metavar="SLUG")
-
-    _width_contract = (f"default: {width_default}"
-                       if width_default is not None
-                       else "required with --zone-city/--zone-gps")
-    parser.add_argument("--zone-width", "--zone-largeur", type=_arg_float_positif,
-                        default=width_default, metavar="KM", dest="zone_width",
-                        help=f"Width in km of the square around the point "
-                             f"(the side, not a radius; {_width_contract})")
-    parser.add_argument("--zone-name", "--zone-nom", metavar="NAME", default=None, dest="zone_nom",
-                        help="Output folder name for the processed zone. "
-                             "Automatically derived from the city, GPS coordinates, "
-                             "bbox, department, or region when omitted.")
-    if avec_dossier:
-        parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier",
-                            help="Root output folder.")
-    # Racine du cache partagé (dalles, tuiles WMTS, PBF OSM, index…). Commune à
-    # tous les modes zone-based, d'où sa place ici. --tiles-dir reste le réglage
-    # fin des seules dalles LiDAR, prioritaire.
-    parser.add_argument("--cache-dir", "--dossier-cache", metavar="PATH", default=None,
-                        dest="cache_dir",
-                        help="Root folder for ALL persistent caches (tiles, WMTS, "
-                             "OSM PBF, discovery index). Default: <work-dir>/cache. "
-                             "Handy to put a large cache on another drive.")
-    # Racine de PRODUCTION : les artefacts CALCULES mais partages entre projets.
-    # Aujourd'hui = le .tif du mode LAZ (calcule du nuage avec tes reglages ;
-    # le .tif MNT, lui, vient du serveur et reste au cache). LiDAR uniquement.
-    parser.add_argument("--production-dir", "--dossier-production", metavar="PATH",
-                        default=None, dest="production_dir",
-                        help="Root folder for COMPUTED-but-shared artifacts "
-                             "(LAZ .tif). Default: <work-dir>/production. The "
-                             "downloaded point cloud (.laz) stays in the cache.")
-    return loc
+    """Façade compatible vers le contrat partagé des arguments de zone."""
+    return _ajouter_args_zone_impl(
+        parser,
+        width_default=width_default,
+        bbox_metavar=bbox_metavar,
+        bbox_help=bbox_help,
+        avec_dossier=avec_dossier,
+        avec_help_full=avec_help_full,
+        dependances=_DependancesArgumentsZone(
+            arg_float_positif=_arg_float_positif,
+        ),
+    )
 
 
 def _resoudre_zone_wgs84(args):
-    """
-    Résout la zone géographique depuis les arguments CLI → bbox WGS84 + nom_zone.
-    Commun à main_wmts() et main_wfs().
-    Retourne (lon_min, lat_min, lon_max, lat_max, nom_zone).
-    """
-    lat_min = lon_min = lat_max = lon_max = None
-    # Normalisation systématique dès l'entrée : élimine les différences
-    # de casse et d'accentuation entre pipelines (--ignraster, --ignvecteur,
-    # --fusionner) quel que soit ce que l'utilisateur a saisi.
-    _zone_nom_raw = getattr(args, 'zone_nom', None)
-    nom_zone = normaliser_nom(_zone_nom_raw) if _zone_nom_raw else None
-
-    if getattr(args, "zone_region", None):
-        slug = args.zone_region.strip().lower()
-        nom_reg, bx1, by1, bx2, by2 = geocoder_region(slug)
-        if nom_reg is None:
-            sys.exit(1)
-        if not nom_zone:
-            nom_zone = normaliser_nom(slug)
-        # geocoder_region retourne du Lambert 93 — reconvertir en WGS84
-        # (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
-        lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
-            _natif_vers_wgs84, bx1, by1, bx2, by2)
-
-    elif args.zone_departement:
-        num_dep = args.zone_departement.strip().upper()
-        nom_dep, bx1, by1, bx2, by2 = geocoder_departement(num_dep)
-        if nom_dep is None:
-            sys.exit(1)
-        if not nom_zone:
-            nom_zone = normaliser_nom(nom_dep) + "_" + num_dep.lower()
-        # geocoder_departement retourne du Lambert 93 — reconvertir en WGS84
-        # pour le WFS (enveloppe 4 coins, cf. _bbox_enveloppe_transform)
-        lon_min, lat_min, lon_max, lat_max = _bbox_enveloppe_transform(
-            _natif_vers_wgs84, bx1, by1, bx2, by2)
-
-    elif args.zone_bbox:
-        try:
-            parts = [float(v.strip()) for v in args.zone_bbox.split(",")]
-            lon_min, lat_min, lon_max, lat_max = parts
-        except (ValueError, IndexError):
-            print("  Invalid bbox format. Example: --zone-bbox 5.9,43.1,6.6,43.8")
-            sys.exit(1)
-        lon_min, lat_min, lon_max, lat_max = _bbox_valide_wgs84(
-            lon_min, lat_min, lon_max, lat_max)
-        if not nom_zone:
-            nom_zone = _nom_zone_bbox_auto(
-                lon_min, lat_min, lon_max, lat_max)
-
-    elif args.zone_gps:
-        try:
-            parts = [p.strip() for p in args.zone_gps.replace(";", ",").split(",")]
-            lat_c, lon_c = float(parts[0]), float(parts[1])
-        except (ValueError, IndexError):
-            print("  Invalid GPS format. Example: --zone-gps 43.3156,6.0423")
-            sys.exit(1)
-        if not (math.isfinite(lat_c) and math.isfinite(lon_c)
-                and -90 <= lat_c <= 90 and -180 <= lon_c <= 180):
-            print("  ERROR: GPS out of range (lat [-90,90], lon [-180,180]).")
-            sys.exit(1)
-        if not nom_zone:
-            nom_zone = _nom_zone_gps_auto(lat_c, lon_c)
-        _demi  = (args.zone_width or 20.0) / 2.0   # côté → demi-étendue
-        r     = _demi / 111.0
-        r_lon = _demi / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
-        lat_min, lat_max = lat_c - r,     lat_c + r
-        lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
-
-    elif args.zone_ville:
-        nom_zone = nom_zone or normaliser_nom(args.zone_ville)
-        print(f"  Geocoding '{args.zone_ville}'...")
-        lat_c, lon_c = geocoder_ville_wgs84(args.zone_ville)
-        if lat_c is None:
-            sys.exit(1)
-        _demi  = (args.zone_width or 20.0) / 2.0   # côté → demi-étendue
-        r     = _demi / 111.0
-        r_lon = _demi / (111.0 * max(0.01, math.cos(math.radians(lat_c))))  # garde pôle (R2#45)
-        lat_min, lat_max = lat_c - r,     lat_c + r
-        lon_min, lon_max = lon_c - r_lon, lon_c + r_lon
-
-    else:
-        print("  ERROR: a zone option is required "
-              "(--zone-city / --zone-gps / --zone-bbox / --zone-department)")
-        sys.exit(1)
-
-    if not nom_zone:
-        sys.exit(1)
-
-    return lon_min, lat_min, lon_max, lat_max, nom_zone
+    """Façade compatible vers la résolution de zone WGS84 partagée."""
+    return _resoudre_zone_wgs84_impl(
+        args,
+        dependances=_DependancesResolutionZone(
+            normaliser_nom=normaliser_nom,
+            geocoder_region=geocoder_region,
+            geocoder_departement=geocoder_departement,
+            bbox_enveloppe_transform=_bbox_enveloppe_transform,
+            natif_vers_wgs84=_natif_vers_wgs84,
+            bbox_valide_wgs84=_bbox_valide_wgs84,
+            nom_zone_bbox_auto=_nom_zone_bbox_auto,
+            nom_zone_gps_auto=_nom_zone_gps_auto,
+            geocoder_ville_wgs84=geocoder_ville_wgs84,
+            ecrire=print,
+            quitter=sys.exit,
+        ),
+    )
 
 
 def main_decouper():

@@ -41,6 +41,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _atomic_files.py        staging atomique et validation SQLite fermée
 ├── _http_helpers.py        ouverture URL et téléchargement streaming contrôlé
 ├── _runtime_paths.py       chemins source/frozen et indicateurs de plateforme
+├── _provider_runtime.py    catalogue, pré-flags et chargement des providers
 ├── _disk_guard.py          sonde de capacité et arrêt propre avant un chunk
 ├── _wfs_pipeline.py        pagination WFS et publication GeoJSON atomique
 ├── _bdtopo_bulk.py         découverte, téléchargement et extraction GPKG bulk
@@ -59,12 +60,15 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_download.py    pool, routage, preuve et inventaire des dalles terrain
 ├── _terrain_prefetch.py    préchargement terrain profondeur un et best-effort
 ├── _terrain_shading.py     planification et orchestration des ombrages
+├── _terrain_index.py       planches d'assemblage et contours administratifs
 ├── _geojson_merge.py       fusion GeoJSON streamée et publication atomique
 ├── _geojson_merge_cli.py   sélection des sources et livrables de --merge
 ├── _geojson_osm_export.py  export PBF OSM vers GeoJSON multi-fichier atomique
 ├── _split_manifest.py      état persistant et suivi des intermédiaires
 ├── _split_deliverables.py  résultats et validation des livrables
 ├── _split_planning.py      grille, sharding, identifiants et signature
+├── _split_mbtiles.py       découpage postérieur des magasins MBTiles
+├── _deliverable_lifecycle.py  fraîcheur, reprise et nettoyage des livrables
 ├── _split_runner.py        runner classique et dépendances injectées
 ├── _split_sliding.py       runner LiDAR glissant et voisinage 3×3
 ├── _raster_formats.py      conversions RMAP/SQLiteDB et orchestration
@@ -2854,11 +2858,168 @@ Déploiement : bump `VERSION` 1.45.0 → **1.46.0**, commit `e2621bc`, tag
 `v1.46.0` poussé par `deploy.py --new-tag`, puis rebuild des quatre cibles du
 workflow `release.yml` (Windows, Linux, macOS Intel et Apple Silicon).
 
-### Prochaine étape proposée : 15t — planches et emprises de restitution
+### Sous-phase 15t — planches et contours de restitution (terminée localement)
 
-Caractériser puis extraire ensemble `_planche_depuis_dossier`,
-`_planche_contours_dept` et `_generer_planche`, en gardant dans le script
-principal des façades tardives pour les helpers géographiques et les formats de
-sortie. Ce lot représente environ 340 lignes brutes ; il doit d'abord verrouiller
-les emprises WFS recadrées, l'ordre des morceaux, les noms de planche et le cas
-sans image avant tout déplacement.
+Les corps de `_planche_depuis_dossier`, `_planche_contours_dept` et
+`_generer_planche` sont déplacés dans `_terrain_index.py`. Le script principal
+conserve les trois signatures historiques et reconstruit à chaque appel une
+dataclass de coutures : extraction d'emprise, résolution des contours, rendu,
+cache, client HTTP, temporisation Nominatim et écriture JSON atomique. Les
+monkeypatchs historiques appliqués à `lidar2map.py` restent donc observés par le
+module extrait.
+
+Cinq contrats supplémentaires portent la suite de refonte à **242 tests**. Ils
+verrouillent les signatures et dépendances tardives, le recadrage des emprises
+WFS à la zone demandée, l'ordre des cellules et le nom du produit, le cas sans
+livrable lisible, la réutilisation du cache de contours sans appel HTTP et le
+nom du PNG réellement produit. Compilation et suite complète des contrats de
+refonte sont vertes. La grammaire Python 3.8 est validée, le profil FAST passe
+**12/12** en 43,3 s et le profil scientifique **5/5** en 99,1 s, y compris le
+scénario historique de recadrage WFS. Le lot est ajouté à `deploy.MAP`; les
+filtres CI et rebuild `_terrain_*.py` le couvrent déjà. Cette sous-phase n'est
+pas encore déployée.
+
+Mesure nette : `lidar2map.py` 9 871 → 9 579 lignes (**-292**, soit **1,37 %**
+du périmètre figé). `_terrain_index.py` contient 373 lignes. Total sorti :
+**11 736 lignes, 55,06 %** ; reste **9 579 lignes, 44,94 %**.
+
+### Sous-phase 15u — lecteurs d'emprises de livrables (terminée localement)
+
+Les corps de `_bbox_geojson_stream`, `_bbox_sqlite_tiles` et
+`_extraire_bbox_wgs84` rejoignent `_terrain_index.py`. Les façades du script
+principal conservent leurs signatures et résolvent tardivement `_tile_to_geo`,
+les deux lecteurs spécialisés et la connexion SQLite. Le parcours GeoJSON
+reste streamé avec `ijson`; aucune collection complète n'est chargée en RAM.
+
+Cinq contrats supplémentaires portent la suite de refonte à **247 tests**. Ils
+verrouillent les coutures tardives, les coordonnées GeoJSON imbriquées, la
+priorité de `metadata.bounds` en MBTiles, le schéma SQLiteDB BigPlanet historique
+avec zoom stocké inversé, le dispatch GeoJSON GZip et le repli fermé sur un
+fichier illisible. La suite de robustesse multi-zoom existante reste verte et la
+grammaire Python 3.8 est validée. Le profil FAST passe **12/12** en 36,0 s et
+le profil scientifique **5/5** en 91,1 s, y compris les scénarios SQLite
+multi-zoom et le recadrage WFS. Cette sous-phase n'est pas encore déployée.
+
+Mesure nette : `lidar2map.py` 9 579 → 9 501 lignes (**-78**, soit **0,37 %**
+du périmètre figé). `_terrain_index.py` contient désormais 488 lignes. Total
+sorti : **11 814 lignes, 55,43 %** ; reste **9 501 lignes, 44,57 %**.
+
+### Sous-phase 15v — découpage MBTiles postérieur (terminée localement)
+
+Le corps de `decouper_mbtiles` rejoint `_split_mbtiles.py`. La façade publique
+du script principal conserve exactement sa signature historique et reconstruit
+à chaque appel les cinq coutures mutables : calcul de grille, chemin de staging,
+nettoyage SQLite, validation SQLite et connexion SQLite. Les monkeypatchs
+historiques appliqués à `lidar2map.py` restent donc observables par le module
+extrait.
+
+Quatre contrats supplémentaires portent la suite de refonte à **251 tests**.
+Ils verrouillent la signature et la résolution tardive des dépendances, le no-op
+historique sans demande de découpage, une vraie grille SQLite 2×2 avec noms en
+ordre ligne-par-ligne, conservation des métadonnées et comptage des tuiles, ainsi
+que la conservation d'un ancien morceau si la validation du nouveau staging
+échoue. La grammaire Python 3.8 est validée. Le profil FAST passe **12/12** en
+54,1 s et le profil scientifique **5/5** en 115,1 s, dont les régressions R2#12
+(zooms et bbox) et R2#14 (formats de sortie). Le module est ajouté à
+`deploy.MAP`; les filtres CI et rebuild `_split_*.py` le couvrent déjà. Cette
+sous-phase n'est pas encore déployée.
+
+Mesure nette : `lidar2map.py` 9 501 → 9 313 lignes (**-188**, soit **0,88 %**
+du périmètre figé). `_split_mbtiles.py` contient 236 lignes. Total sorti :
+**12 002 lignes, 56,31 %** ; reste **9 313 lignes, 43,69 %**.
+
+### Sous-phase 15w — fraîcheur et nettoyage des livrables (terminée localement)
+
+Les corps de `_mbtiles_a_regenerer`, `_morceau_termine_reutilisable` et
+`_supprimer_fichiers` rejoignent `_deliverable_lifecycle.py`. Trois dataclasses
+de coutures distinctes évitent de coupler le nettoyage de fichiers à SQLite ou
+au validateur de morceaux. Les façades du script principal conservent leurs
+signatures et reconstruisent à chaque appel les chemins, la connexion et les
+exceptions SQLite, le validateur de livrables et la sortie de log.
+
+Quatre contrats supplémentaires portent la suite de refonte à **255 tests**.
+Ils verrouillent les signatures et coutures tardives, la protection simultanée
+des caches de dalles et de nuages avec le nom réclamé par le morceau suivant, le
+rejet des manifestes historiques sans preuve de sortie, la preuve explicite
+d'une zone hors couverture, ainsi que les quatre décisions de fraîcheur MBTiles
+(date source, magasin valide, vide ou illisible). Le premier passage FAST a
+signalé l'absence du nouveau module dans le garde de rebuild ; `deploy.py` et
+les deux filtres CI, push et pull request, couvrent maintenant
+`_deliverable_*.py`.
+
+La grammaire Python 3.8 et Ruff sont verts. Le profil FAST passe **12/12** en
+53,1 s et le profil scientifique **5/5** en 123,2 s, y compris R2#22, la reprise
+des manifestes et les nettoyages MNT/LAZ avec ou sans conservation des caches.
+Le module est ajouté à `deploy.MAP`. Cette sous-phase n'est pas encore
+déployée.
+
+Mesure nette : `lidar2map.py` 9 313 → 9 213 lignes (**-100**, soit **0,47 %**
+du périmètre figé). `_deliverable_lifecycle.py` contient 174 lignes. Total
+sorti : **12 102 lignes, 56,78 %** ; reste **9 213 lignes, 43,22 %**.
+
+### Sous-phase 15x — catalogue et chargement des providers (terminée localement)
+
+Les corps de `_discover_providers`, `_load_provider` et du lecteur pur
+`_pre_valeur_suivante` rejoignent `_provider_runtime.py`. Le module extrait
+reçoit explicitement le dossier `providers`, l'environnement, le vecteur
+d'arguments, l'importeur patchable, la sortie d'erreur et la fonction d'arrêt.
+Le script principal conserve les trois signatures historiques, reconstruit les
+coutures à chaque appel, met à jour `_PROVIDER_CLI_EXPLICIT` et reste seul
+responsable de l'affectation finale de `PROVIDER`.
+
+Cinq contrats supplémentaires portent la suite de refonte à **260 tests**. Ils
+verrouillent les façades tardives, l'ordre du catalogue, l'exclusion des helpers
+et jumeaux LAZ, la tolérance à un module cassé, les métadonnées pays et capacités
+LAZ, la consommation en place des pré-flags, leurs types historiques, les
+diagnostics distincts pour code inconnu et dépendance manquante, ainsi que le
+fallback France lorsque le paquet `providers` est entièrement absent.
+
+La grammaire Python 3.8 et Ruff sont vertes. Le profil FAST passe **12/12** en
+54,7 s et le profil scientifique **5/5** en 148,9 s, dont les 27 pays du
+catalogue, les jumeaux LAZ, R2#39 et les contrats CLI réels. Le module est ajouté
+à `deploy.MAP`; `deploy.py` et les filtres CI push/pull request couvrent
+`_provider_*.py`. Cette sous-phase n'est pas encore déployée.
+
+Mesure nette : `lidar2map.py` 9 213 → 9 014 lignes (**-199**, soit **0,93 %**
+du périmètre figé). `_provider_runtime.py` contient 315 lignes. Total sorti :
+**12 301 lignes, 57,71 %** ; reste **9 014 lignes, 42,29 %**.
+
+### Sous-phase 15y — contrat de zone CLI partagé (terminée localement)
+
+Les corps de `_ajouter_args_zone` et `_resoudre_zone_wgs84` rejoignent
+`_zone_cli.py`. Deux dataclasses distinctes empêchent la construction argparse
+de dépendre des géocodeurs : la première ne reçoit que le validateur de largeur,
+la seconde reçoit explicitement les conventions de nommage, les géocodeurs, la
+conversion de bbox, la validation WGS84, la sortie et l'arrêt. Le module extrait
+ne connaît ni provider ni CRS natif. `lidar2map.py` conserve les deux signatures
+historiques et reconstruit toutes les coutures à chaque appel.
+
+Six contrats supplémentaires portent la suite de refonte à **266 tests**. Ils
+verrouillent les alias et valeurs par défaut argparse, l'exclusion mutuelle des
+modes, la priorité région, les noms explicites et automatiques, les conversions
+des régions et départements, les bbox WGS84, la sémantique de largeur des modes
+GPS et ville, les sorties d'erreur ainsi que les dépendances relues tardivement.
+Le test d'interaction `--cache-dir` et la garde d'absence de `CRS_NATIF` lisent
+maintenant le module propriétaire du contrat au lieu d'une fenêtre textuelle
+fragile dans le monolithe.
+
+Compilation et Ruff sont verts. Le profil FAST passe **12/12** en 69,2 s et le
+profil scientifique **5/5** en 126,9 s, y compris les interactions CLI réelles,
+les 27 providers et les scénarios de tuilage. `_zone_cli.py` est ajouté à
+`deploy.MAP`; `deploy.py` le classe comme changement exigeant un rebuild et les
+filtres CI push/pull request couvrent `_zone_*.py`. Cette sous-phase n'est pas
+encore déployée. Le dry-run de `deploy.py` reconnaît bien `_zone_cli.py` et le
+lot cumulatif attendu, sans commit ni push.
+
+Mesure nette : `lidar2map.py` 9 014 → 8 888 lignes (**-126**, soit **0,59 %**
+du périmètre figé). `_zone_cli.py` contient 241 lignes. Total sorti :
+**12 427 lignes, 58,30 %** ; reste **8 888 lignes, 41,70 %**.
+
+### Prochaine étape proposée : 16a — construction du parser LiDAR
+
+Caractériser puis extraire `_construire_parser_lidar` et, si les contrats
+confirment leur cohésion, `_appliquer_defauts_cli_lidar`, soit environ 300 lignes
+brutes. Le corps de `main()` restera hors périmètre : cette première sous-phase
+de la phase 16 ne déplacera que la déclaration argparse et les défauts de CLI.
+Les contrats devront comparer les alias, valeurs par défaut, groupes exclusifs,
+erreurs de validation et l'aide produite avant/après extraction.

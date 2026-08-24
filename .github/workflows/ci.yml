@@ -5,6 +5,9 @@ on:
     paths:
       - 'lidar2map.py'
       - '_split_*.py'
+      - '_deliverable_*.py'
+      - '_provider_*.py'
+      - '_zone_*.py'
       - '_raster_formats.py'
       - '_mbtiles_*.py'
       - '_ombrages_*.py'
@@ -47,6 +50,9 @@ on:
     paths:
       - 'lidar2map.py'
       - '_split_*.py'
+      - '_deliverable_*.py'
+      - '_provider_*.py'
+      - '_zone_*.py'
       - '_raster_formats.py'
       - '_mbtiles_*.py'
       - '_ombrages_*.py'

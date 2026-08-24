@@ -72,6 +72,10 @@ MAP = {
     "_split_planning.py":            "_split_planning.py",
     "_split_runner.py":              "_split_runner.py",
     "_split_sliding.py":             "_split_sliding.py",
+    "_split_mbtiles.py":             "_split_mbtiles.py",
+    "_deliverable_lifecycle.py":     "_deliverable_lifecycle.py",
+    "_provider_runtime.py":          "_provider_runtime.py",
+    "_zone_cli.py":                  "_zone_cli.py",
     "_raster_formats.py":            "_raster_formats.py",
     "_mbtiles_wmts.py":              "_mbtiles_wmts.py",
     "_mbtiles_lidar.py":             "_mbtiles_lidar.py",
@@ -107,6 +111,7 @@ MAP = {
     "_terrain_chunks.py":             "_terrain_chunks.py",
     "_terrain_prefetch.py":           "_terrain_prefetch.py",
     "_terrain_shading.py":            "_terrain_shading.py",
+    "_terrain_index.py":              "_terrain_index.py",
     "_geojson_geometry.py":          "_geojson_geometry.py",
     "_geojson_mapsforge.py":         "_geojson_mapsforge.py",
     "_geojson_merge.py":             "_geojson_merge.py",
@@ -191,6 +196,9 @@ def is_rebuild_file(name: str) -> bool:
     return (
         name == "_loader.py"
         or (name.startswith("_split_") and name.endswith(".py"))
+        or (name.startswith("_deliverable_") and name.endswith(".py"))
+        or (name.startswith("_provider_") and name.endswith(".py"))
+        or (name.startswith("_zone_") and name.endswith(".py"))
         or name == "_raster_formats.py"
         or name == "_mbtiles_wmts.py"
         or name == "_mbtiles_lidar.py"
