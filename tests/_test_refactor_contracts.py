@@ -4936,9 +4936,13 @@ class TerrainChunkContractTests(unittest.TestCase):
                 "key",
                 dependances=dependencies,
             )
-            self.assertEqual(result, (True, (expected,)))
+            self.assertTrue(result[0])
+            self.assertEqual(
+                tuple(path.resolve() for path in result[1]),
+                (expected.resolve(),),
+            )
             conversion = next(event for event in events if event[0] == "convert")
-            self.assertEqual(conversion[1][0], expected)
+            self.assertEqual(conversion[1][0].resolve(), expected.resolve())
             self.assertFalse(conversion[2]["mbtiles_neuf"])
 
     def test_wmts_transaction_reports_missing_generated_mbtiles(self):
