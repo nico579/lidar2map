@@ -2858,7 +2858,7 @@ Déploiement : bump `VERSION` 1.45.0 → **1.46.0**, commit `e2621bc`, tag
 `v1.46.0` poussé par `deploy.py --new-tag`, puis rebuild des quatre cibles du
 workflow `release.yml` (Windows, Linux, macOS Intel et Apple Silicon).
 
-### Sous-phase 15t — planches et contours de restitution (terminée localement)
+### Sous-phase 15t — planches et contours de restitution (terminée et déployée)
 
 Les corps de `_planche_depuis_dossier`, `_planche_contours_dept` et
 `_generer_planche` sont déplacés dans `_terrain_index.py`. Le script principal
@@ -2876,14 +2876,13 @@ nom du PNG réellement produit. Compilation et suite complète des contrats de
 refonte sont vertes. La grammaire Python 3.8 est validée, le profil FAST passe
 **12/12** en 43,3 s et le profil scientifique **5/5** en 99,1 s, y compris le
 scénario historique de recadrage WFS. Le lot est ajouté à `deploy.MAP`; les
-filtres CI et rebuild `_terrain_*.py` le couvrent déjà. Cette sous-phase n'est
-pas encore déployée.
+filtres CI et rebuild `_terrain_*.py` le couvrent déjà.
 
 Mesure nette : `lidar2map.py` 9 871 → 9 579 lignes (**-292**, soit **1,37 %**
 du périmètre figé). `_terrain_index.py` contient 373 lignes. Total sorti :
 **11 736 lignes, 55,06 %** ; reste **9 579 lignes, 44,94 %**.
 
-### Sous-phase 15u — lecteurs d'emprises de livrables (terminée localement)
+### Sous-phase 15u — lecteurs d'emprises de livrables (terminée et déployée)
 
 Les corps de `_bbox_geojson_stream`, `_bbox_sqlite_tiles` et
 `_extraire_bbox_wgs84` rejoignent `_terrain_index.py`. Les façades du script
@@ -2898,13 +2897,13 @@ avec zoom stocké inversé, le dispatch GeoJSON GZip et le repli fermé sur un
 fichier illisible. La suite de robustesse multi-zoom existante reste verte et la
 grammaire Python 3.8 est validée. Le profil FAST passe **12/12** en 36,0 s et
 le profil scientifique **5/5** en 91,1 s, y compris les scénarios SQLite
-multi-zoom et le recadrage WFS. Cette sous-phase n'est pas encore déployée.
+multi-zoom et le recadrage WFS.
 
 Mesure nette : `lidar2map.py` 9 579 → 9 501 lignes (**-78**, soit **0,37 %**
 du périmètre figé). `_terrain_index.py` contient désormais 488 lignes. Total
 sorti : **11 814 lignes, 55,43 %** ; reste **9 501 lignes, 44,57 %**.
 
-### Sous-phase 15v — découpage MBTiles postérieur (terminée localement)
+### Sous-phase 15v — découpage MBTiles postérieur (terminée et déployée)
 
 Le corps de `decouper_mbtiles` rejoint `_split_mbtiles.py`. La façade publique
 du script principal conserve exactement sa signature historique et reconstruit
@@ -2921,14 +2920,13 @@ que la conservation d'un ancien morceau si la validation du nouveau staging
 échoue. La grammaire Python 3.8 est validée. Le profil FAST passe **12/12** en
 54,1 s et le profil scientifique **5/5** en 115,1 s, dont les régressions R2#12
 (zooms et bbox) et R2#14 (formats de sortie). Le module est ajouté à
-`deploy.MAP`; les filtres CI et rebuild `_split_*.py` le couvrent déjà. Cette
-sous-phase n'est pas encore déployée.
+`deploy.MAP`; les filtres CI et rebuild `_split_*.py` le couvrent déjà.
 
 Mesure nette : `lidar2map.py` 9 501 → 9 313 lignes (**-188**, soit **0,88 %**
 du périmètre figé). `_split_mbtiles.py` contient 236 lignes. Total sorti :
 **12 002 lignes, 56,31 %** ; reste **9 313 lignes, 43,69 %**.
 
-### Sous-phase 15w — fraîcheur et nettoyage des livrables (terminée localement)
+### Sous-phase 15w — fraîcheur et nettoyage des livrables (terminée et déployée)
 
 Les corps de `_mbtiles_a_regenerer`, `_morceau_termine_reutilisable` et
 `_supprimer_fichiers` rejoignent `_deliverable_lifecycle.py`. Trois dataclasses
@@ -2950,14 +2948,13 @@ les deux filtres CI, push et pull request, couvrent maintenant
 La grammaire Python 3.8 et Ruff sont verts. Le profil FAST passe **12/12** en
 53,1 s et le profil scientifique **5/5** en 123,2 s, y compris R2#22, la reprise
 des manifestes et les nettoyages MNT/LAZ avec ou sans conservation des caches.
-Le module est ajouté à `deploy.MAP`. Cette sous-phase n'est pas encore
-déployée.
+Le module est ajouté à `deploy.MAP`.
 
 Mesure nette : `lidar2map.py` 9 313 → 9 213 lignes (**-100**, soit **0,47 %**
 du périmètre figé). `_deliverable_lifecycle.py` contient 174 lignes. Total
 sorti : **12 102 lignes, 56,78 %** ; reste **9 213 lignes, 43,22 %**.
 
-### Sous-phase 15x — catalogue et chargement des providers (terminée localement)
+### Sous-phase 15x — catalogue et chargement des providers (terminée et déployée)
 
 Les corps de `_discover_providers`, `_load_provider` et du lecteur pur
 `_pre_valeur_suivante` rejoignent `_provider_runtime.py`. Le module extrait
@@ -2978,13 +2975,13 @@ La grammaire Python 3.8 et Ruff sont vertes. Le profil FAST passe **12/12** en
 54,7 s et le profil scientifique **5/5** en 148,9 s, dont les 27 pays du
 catalogue, les jumeaux LAZ, R2#39 et les contrats CLI réels. Le module est ajouté
 à `deploy.MAP`; `deploy.py` et les filtres CI push/pull request couvrent
-`_provider_*.py`. Cette sous-phase n'est pas encore déployée.
+`_provider_*.py`.
 
 Mesure nette : `lidar2map.py` 9 213 → 9 014 lignes (**-199**, soit **0,93 %**
 du périmètre figé). `_provider_runtime.py` contient 315 lignes. Total sorti :
 **12 301 lignes, 57,71 %** ; reste **9 014 lignes, 42,29 %**.
 
-### Sous-phase 15y — contrat de zone CLI partagé (terminée localement)
+### Sous-phase 15y — contrat de zone CLI partagé (terminée et déployée)
 
 Les corps de `_ajouter_args_zone` et `_resoudre_zone_wgs84` rejoignent
 `_zone_cli.py`. Deux dataclasses distinctes empêchent la construction argparse
@@ -3007,13 +3004,17 @@ Compilation et Ruff sont verts. Le profil FAST passe **12/12** en 69,2 s et le
 profil scientifique **5/5** en 126,9 s, y compris les interactions CLI réelles,
 les 27 providers et les scénarios de tuilage. `_zone_cli.py` est ajouté à
 `deploy.MAP`; `deploy.py` le classe comme changement exigeant un rebuild et les
-filtres CI push/pull request couvrent `_zone_*.py`. Cette sous-phase n'est pas
-encore déployée. Le dry-run de `deploy.py` reconnaît bien `_zone_cli.py` et le
-lot cumulatif attendu, sans commit ni push.
+filtres CI push/pull request couvrent `_zone_*.py`. Le dry-run de `deploy.py`
+reconnaît bien `_zone_cli.py` et le lot cumulatif attendu.
 
 Mesure nette : `lidar2map.py` 9 014 → 8 888 lignes (**-126**, soit **0,59 %**
 du périmètre figé). `_zone_cli.py` contient 241 lignes. Total sorti :
 **12 427 lignes, 58,30 %** ; reste **8 888 lignes, 41,70 %**.
+
+Déploiement du lot 15t–15y : bump `VERSION` 1.46.0 → **1.47.0**, commit
+`22c27c7`, tag `v1.47.0` poussé par `deploy.py --new-tag`, puis rebuild réussi
+des quatre cibles (Windows, Linux, macOS Intel et Apple Silicon). La release
+publique contient les quatre artefacts attendus.
 
 ### Prochaine étape proposée : 16a — construction du parser LiDAR
 
