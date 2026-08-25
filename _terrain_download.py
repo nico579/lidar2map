@@ -438,8 +438,12 @@ def telecharger_dalle_directe(
                         )
                 if not materialise:
                     debut_download = d.time.time()
+                    codes_absence = getattr(
+                        provider, "NO_COVERAGE_HTTP_CODES", frozenset({404})
+                    )
                     taille = d.download_to_tmp(
-                        url_wms, chemin_stage, timeout=(10, 45)
+                        url_wms, chemin_stage, timeout=(10, 45),
+                        codes_absence=codes_absence,
                     )
                     d.laz_prof_add(dl_s=d.time.time() - debut_download)
                     if taille == 0:

@@ -43,6 +43,15 @@ COVERAGE = "13787b9a-26a4-4775-8523-806d13af58fc__Lidar_Composite_Elevation_DTM_
 # Étendue du coverage en EPSG:27700 (depuis DescribeCoverage) — clippe la grille.
 COVERAGE_EXTENT = (80000, 4000, 656000, 665000)   # (E_min, N_min, E_max, N_max)
 
+# La grille est synthétisée puis clippée à COVERAGE_EXTENT (rectangle), pas à
+# la couverture réelle (côte, mer, zones d'exclusion type chantier naval
+# militaire de Barrow-in-Furness) : des dalles à l'intérieur du rectangle
+# tombent hors couverture. Le WCS EA y répond HTTP 500 (pas 404) — signalé
+# par un utilisateur (forum Locus, 2026-08-21) sur une bbox Lake District
+# dont le coin mordait sur la mer près de Barrow : ces 500 faisaient échouer
+# tout le run après ~1h de téléchargement. Traitées comme 404 (dalle absente).
+NO_COVERAGE_HTTP_CODES = frozenset({404, 500})
+
 
 # ── Nommage des dalles ───────────────────────────────────────────────────────
 def dalle_filename(x_km, y_km):

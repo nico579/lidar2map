@@ -1244,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.47.0"
+VERSION      = "1.47.1"
 VERSION_DATE = "2026-08"
 
 
@@ -2224,12 +2224,13 @@ def _configurer_cloud_cache(args):
     )
 
 
-def _download_to_tmp(url, chemin_tmp, timeout=60):
+def _download_to_tmp(url, chemin_tmp, timeout=60, *, codes_absence=frozenset({404})):
     """
     Télécharge url vers chemin_tmp (streaming).
     Retourne le nombre d'octets écrits, ou lève une exception.
-    404 → 0 (dalle absente) ; réponse d'erreur XML/HTML en 200 → IOError
-    (erreur de service, retry côté caller — pas une absence).
+    Un code HTTP dans ``codes_absence`` (404 par défaut) → 0 (dalle absente) ;
+    réponse d'erreur XML/HTML en 200 → IOError (erreur de service, retry côté
+    caller — pas une absence).
     timeout : tuple (connexion_s, lecture_s) ou entier.
 
     Protection contre les coupures TCP silencieuses (typiques sur VM/macOS) :
@@ -2245,6 +2246,7 @@ def _download_to_tmp(url, chemin_tmp, timeout=60):
         timeout=timeout,
         ouvrir_url=_urlopen,
         taille_bloc=HTTP_CHUNK_SIZE,
+        codes_absence=codes_absence,
     )
 
 

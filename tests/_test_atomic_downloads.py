@@ -148,7 +148,7 @@ class AtomicDownloadTests(unittest.TestCase):
         final.write_bytes(old)
         seen = []
 
-        def download(_url, path, timeout=60):
+        def download(_url, path, timeout=60, **_kwargs):
             path = Path(path)
             seen.append(("download", path))
             self.assertTrue(path.parent.name.endswith(".part"))
@@ -208,7 +208,7 @@ class AtomicDownloadTests(unittest.TestCase):
         old = self._old_bytes()
         final.write_bytes(old)
 
-        def download(_url, path, timeout=60):
+        def download(_url, path, timeout=60, **_kwargs):
             Path(path).write_bytes(b"RAW")
             return L.SEUIL_DALLE_VALIDE + 1
 
@@ -299,7 +299,7 @@ class AtomicDownloadTests(unittest.TestCase):
         final = self.tmp / "tile.tif"
         attempts = []
 
-        def download(_url, path, timeout=60):
+        def download(_url, path, timeout=60, **_kwargs):
             attempts.append(Path(path))
             if len(attempts) == 1:
                 raise OSError("temporary")
@@ -357,7 +357,7 @@ class AtomicDownloadTests(unittest.TestCase):
     def test_direct_small_server_error_retries_but_plain_payload_is_absent(self):
         calls = []
 
-        def download(url, path, timeout=60):
+        def download(url, path, timeout=60, **_kwargs):
             calls.append(url)
             if url.endswith("json"):
                 Path(path).write_bytes(b'{"error":"temporary"}')
@@ -386,7 +386,7 @@ class AtomicDownloadTests(unittest.TestCase):
         old = self._old_bytes()
         final.write_bytes(old)
 
-        def download(_url, path, timeout=60):
+        def download(_url, path, timeout=60, **_kwargs):
             Path(path).write_bytes(b"RAW")
             return L.SEUIL_DALLE_VALIDE + 1
 
@@ -416,7 +416,7 @@ class AtomicDownloadTests(unittest.TestCase):
         final = self.tmp / "tile.tif"
         cloud = final.with_suffix(".laz")
 
-        def download(_url, path, timeout=60):
+        def download(_url, path, timeout=60, **_kwargs):
             Path(path).write_bytes(b"RAW")
             return L.SEUIL_DALLE_VALIDE + 1
 

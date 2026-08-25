@@ -19,18 +19,22 @@ def ouvrir_url(url, headers=None, timeout=15, *, user_agent, request_cls=None,
 
 
 def telecharger_vers_tmp(url, chemin_tmp, timeout=60, *, ouvrir_url,
-                         taille_bloc):
+                         taille_bloc, codes_absence=frozenset({404})):
     """Télécharge une ressource en streaming et vérifie sa taille annoncée.
 
-    Un HTTP 404 représente une ressource absente et retourne zéro. Les autres
-    erreurs HTTP, les réponses XML/HTML et les transferts tronqués sont des
-    erreurs visibles afin que l'appelant puisse appliquer sa politique de retry.
+    Un code HTTP dans ``codes_absence`` (404 par défaut) représente une
+    ressource absente et retourne zéro. Certains services WCS (ex. EA
+    gb-england) répondent 500 plutôt que 404 pour un subset hors couverture
+    réelle (mer, zone d'exclusion) : le provider élargit alors l'ensemble.
+    Les autres erreurs HTTP, les réponses XML/HTML et les transferts
+    tronqués sont des erreurs visibles afin que l'appelant puisse appliquer
+    sa politique de retry.
     """
     timeout_effectif = max(timeout) if isinstance(timeout, tuple) else timeout
     try:
         reponse = ouvrir_url(url, timeout=timeout_effectif)
     except urllib.error.HTTPError as erreur:
-        if erreur.code == 404:
+        if erreur.code in codes_absence:
             return 0
         raise IOError(f"HTTP {erreur.code}") from erreur
 
