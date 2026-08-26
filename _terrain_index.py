@@ -279,13 +279,32 @@ def planche_contours_dept(bbox_wgs84, args, *, dependances):
     if not noms:
         # Reverse-geocode du centre → département (address.county en FR).
         lonc = (lon0 + lon1) / 2; latc = (lat0 + lat1) / 2
-        try:
-            url = ("https://nominatim.openstreetmap.org/reverse?"
-                   + urllib.parse.urlencode({"lat": f"{latc:.5f}", "lon": f"{lonc:.5f}",
-                                             "format": "jsonv2", "zoom": 8}))
-            req = dependances.request_url(url, headers={"User-Agent": dependances.http_ua})
-            with dependances.ouvrir_url(req, timeout=10) as r:
-                addr = (json.load(r) or {}).get("address", {}) or {}
+        url = ("https://nominatim.openstreetmap.org/reverse?"
+               + urllib.parse.urlencode({"lat": f"{latc:.5f}", "lon": f"{lonc:.5f}",
+                                         "format": "jsonv2", "zoom": 8}))
+        addr, _e_rev = None, None
+        # 1 retry : un aléa réseau/DNS transitoire (VPN, reprise Wi-Fi) faisait
+        # échouer cette décoration best-effort sur un run par ailleurs complet
+        # (signalé forum Locus par Col, macOS, errno 8 nodename nor servname).
+        # L'attente entre tentatives sert aussi de politesse Nominatim (1 req/s).
+        for _tentative in range(2):
+            try:
+                req = dependances.request_url(url, headers={"User-Agent": dependances.http_ua})
+                with dependances.ouvrir_url(req, timeout=10) as r:
+                    addr = (json.load(r) or {}).get("address", {}) or {}
+                _e_rev = None
+                break
+            except Exception as _exc:
+                _e_rev = _exc
+                if _tentative == 0:
+                    dependances.attendre(2.0)
+        if _e_rev is not None:
+            # Visible : un best-effort qui échoue en silence est indiagnosticable
+            # (leçon du 2026-07-10 : la planche sortait sans département sans
+            # aucun indice sur la cause).
+            print(f"  (index sheet: reverse geocoding failed: "
+                  f"{type(_e_rev).__name__}: {_e_rev})", flush=True)
+        elif addr is not None:
             n = addr.get("county") or addr.get("state_district") or addr.get("state")
             if n:
                 noms.append(n)
@@ -294,12 +313,6 @@ def planche_contours_dept(bbox_wgs84, args, *, dependances):
                 # couverture admin...) : le dire, sinon indiagnosticable.
                 print(f"  (index sheet: no department at "
                       f"{latc:.4f},{lonc:.4f} - outline skipped)", flush=True)
-        except Exception as _e_rev:
-            # Visible : un best-effort qui échoue en silence est indiagnosticable
-            # (leçon du 2026-07-10 : la planche sortait sans département sans
-            # aucun indice sur la cause).
-            print(f"  (index sheet: reverse geocoding failed: "
-                  f"{type(_e_rev).__name__}: {_e_rev})", flush=True)
     # Cache disque des polygones (même logique que dep_bbox_cache.json) : les
     # contours administratifs ne changent pas, les re-télécharger à chaque run
     # coûtait des requêtes Nominatim + les sleep de politesse par planche.

@@ -7489,6 +7489,58 @@ class TerrainIndexExtractionContractTests(unittest.TestCase):
         self.assertEqual(result, [ring])
         open_url.assert_not_called()
 
+    def test_reverse_geocode_retries_once_then_succeeds(self):
+        # Signalé forum Locus par Col (macOS) : un DNS/réseau transitoire
+        # (errno 8, nodename nor servname) faisait échouer cette décoration
+        # best-effort sur un run par ailleurs complet. 1 retry avant d'abandonner.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ring = [[6.0, 43.0], [6.1, 43.0], [6.0, 43.1]]
+            (root / "dep_contour_cache.json").write_text(
+                json.dumps({"Var": [ring]}), encoding="utf-8"
+            )
+            geocode_response = contextlib.nullcontext(
+                io.BytesIO(json.dumps({"address": {"county": "Var"}}).encode())
+            )
+            open_url = mock.Mock(side_effect=[
+                OSError("[Errno 8] nodename nor servname provided, or not known"),
+                geocode_response,
+            ])
+            wait = mock.Mock()
+            dependencies = self._deps(root, ouvrir_url=open_url, attendre=wait)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = terrain_index.planche_contours_dept(
+                    (6.0, 43.0, 6.1, 43.1), SimpleNamespace(),
+                    dependances=dependencies,
+                )
+        self.assertEqual(result, [ring])
+        self.assertEqual(open_url.call_count, 2)
+        wait.assert_called_once_with(2.0)
+        self.assertNotIn("reverse geocoding failed", output.getvalue())
+
+    def test_reverse_geocode_prints_diagnostic_after_exhausting_retries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            open_url = mock.Mock(
+                side_effect=OSError(
+                    "[Errno 8] nodename nor servname provided, or not known"
+                )
+            )
+            wait = mock.Mock()
+            dependencies = self._deps(root, ouvrir_url=open_url, attendre=wait)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = terrain_index.planche_contours_dept(
+                    (6.0, 43.0, 6.1, 43.1), SimpleNamespace(),
+                    dependances=dependencies,
+                )
+        self.assertEqual(result, [])
+        self.assertEqual(open_url.call_count, 2)
+        wait.assert_called_once_with(2.0)
+        self.assertIn("reverse geocoding failed", output.getvalue())
+        self.assertIn("nodename nor servname", output.getvalue())
+
     def test_render_writes_expected_planche_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             dependencies = self._deps(tmp)
