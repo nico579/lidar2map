@@ -780,6 +780,28 @@ class MergeMbtilesExtractionContractTests(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertFalse(list(root.glob("*.part")))
 
+    def test_progress_is_reported_via_carriage_return_percent(self):
+        # Contrat avec le lecteur de stdout du GUI (lidar2map.py, run() du
+        # thread de log) : un \r suivi d'un motif NN% pilote la barre de
+        # progression sans code GUI dédié (même mécanisme que le download
+        # PBF Geofabrik). Un \r "nu" cassant ce contrat romprait la barre en
+        # silence sur une fusion MBTiles lancée depuis le GUI.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = root / "a.mbtiles"
+            b = root / "b.mbtiles"
+            self._create_source(a, bounds="-1,-1,0,0", zoom=5, tiles=[(1, 1, b"a")])
+            self._create_source(b, bounds="0,0,1,1", zoom=5, tiles=[(2, 2, b"b")])
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                merge_mbtiles.fusionner_mbtiles(
+                    [a, b], root / "out.mbtiles", ecraser=True,
+                    dependances=self._deps(),
+                )
+            captured = output.getvalue()
+            self.assertIn("\r", captured)
+            self.assertRegex(captured, r"\r\s*[\d,]+ / [\d,]+ tiles\s+\d+%")
+
 
 class DeliverableLifecycleExtractionContractTests(unittest.TestCase):
     """Contrats du cycle de vie des livrables extrait en phase 15w."""

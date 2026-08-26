@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import sqlite3
+import sys
 
 
 @dataclass(frozen=True)
@@ -52,17 +53,18 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
         meta = dict(con.execute("SELECT name, value FROM metadata").fetchall())
         zr = con.execute(
             "SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles").fetchone()
+        n_src = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
         con.close()
-        metas.append((src, meta, zr))
+        metas.append((src, meta, zr, n_src))
 
-    formats = {meta.get("format", "jpeg") for _, meta, _ in metas}
+    formats = {meta.get("format", "jpeg") for _, meta, _, _ in metas}
     if len(formats) > 1:
         print("  ERROR: mixed tile formats across sources: "
               + ", ".join(sorted(formats)))
         return None
     fmt = formats.pop()
 
-    zr_valides = [zr for _, _, zr in metas if zr and zr[0] is not None]
+    zr_valides = [zr for _, _, zr, _ in metas if zr and zr[0] is not None]
     if not zr_valides:
         print("  ERROR: no source contains any tile")
         return None
@@ -70,7 +72,7 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
     zoom_max = max(z[1] for z in zr_valides)
 
     bounds_tous = []
-    for _, meta, _ in metas:
+    for _, meta, _, _ in metas:
         if "bounds" in meta:
             bounds_tous.append(tuple(float(v) for v in meta["bounds"].split(",")))
     if bounds_tous:
@@ -98,7 +100,7 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
     # Métadonnées reprises de la PREMIÈRE source (attribution, licence, type
     # vecteur json...), puis surchargées par les valeurs calculées pour
     # l'union (même logique que le découpage post-hoc).
-    _, meta_base, _ = metas[0]
+    _, meta_base, _, _ = metas[0]
     meta_fusion = dict(meta_base)
     meta_fusion.setdefault("type", "overlay")
     meta_fusion.setdefault("version", "1.0")
@@ -120,7 +122,10 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
     # Copie par lot (fetchmany), pas de fetchall RAM (mêmes gardes que le
     # découpage post-hoc sur un mbtiles départemental).
     BATCH = 2000
-    for src, _, _ in metas:
+    total = sum(n for _, _, _, n in metas)
+    copies = 0
+    pct_precedent = -1
+    for src, _, _, _ in metas:
         con_src = dependances.sqlite_connect(str(src))
         cur_src = con_src.execute(
             "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles")
@@ -132,7 +137,20 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
             con_out.executemany(
                 "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", rows)
             con_out.commit()
+            copies += len(rows)
+            # \r sur le terminal, ligne de progression "en place" dans le
+            # panneau de log GUI (même contrat que le download PBF Geofabrik :
+            # le lecteur de stdout du GUI reconnaît \r + un motif NN% et pilote
+            # la barre de progression sans code GUI supplémentaire).
+            if total:
+                pct = copies * 100 // total
+                if pct >= pct_precedent + 5:
+                    pct_precedent = pct
+                    sys.stdout.write(f"\r  {copies:,} / {total:,} tiles  {pct}%")
+                    sys.stdout.flush()
         con_src.close()
+    if total:
+        sys.stdout.write("\r" + " " * 40 + "\r")
 
     n_tuiles = con_out.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
     con_out.close()
