@@ -1012,6 +1012,7 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
       "applyProviderLaz" in _appjs and "laz_hmin" in _appjs
       and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
+_terrain_cli_src = (_ROOT / "_terrain_cli.py").read_text(encoding="utf-8")
 _zone_cli_src = (_ROOT / "_zone_cli.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
@@ -1060,7 +1061,7 @@ check("découpe : côté 5 km → 2×2 morceaux de 5000 m (côté)",
 # zone en M blocs, ce run ne traite que le i-ème ; composable avec --split-width
 # (chunking interne du bloc). Pour distribuer un département sur plusieurs VM.
 check("CLI : --block déclaré (i/M) et câblé dans le main (sélection + suffixe _b)",
-      '"--block"' in _src and '"--bloc"' in _src
+      '"--block"' in _terrain_cli_src and '"--bloc"' in _terrain_cli_src
       and "def _parse_block(" in _src
       and 'd.parse_block(getattr(args, "block", ""))' in _terrain_resolution_src
       and 'nom_zone = f"{nom_zone}_b{index}"' in _terrain_resolution_src)
@@ -1104,8 +1105,9 @@ check("laz-parallel : sur la ligne Socle (dans la row laz-params), hors Téléch
 check("overwrite → pre_download sauté si ecraser (bypass cache LAZ)",
       "tentative == 1 and not ecraser" in _terrain_download_src)
 check("overwrite → les 2 flags convergent (_force_dl) dans le download de zone",
-      "_force_dl" in _src
-      and "args.telechargement_forcer or args.telechargement_ecraser" in _src)
+      "force_dl = bool(" in _terrain_download_src
+      and "args.telechargement_forcer or args.telechargement_ecraser"
+      in _terrain_download_src)
 _provs_gui = l2m._discover_providers()
 _fr = next((p for p in _provs_gui if p["code"] == "fr-ign"), None)
 check("dropdown : fr-ign porte la capacité dfm aux défauts du module",
@@ -1191,7 +1193,8 @@ for _nom, _debut, _fin, _champs in (
 # du cache partagé sont épargnées, et uniquement si une tâche ULTÉRIEURE de la
 # file retélécharge exactement les mêmes (même provider × surface × zone).
 check("CLI : --cleanup-keep-tiles déclaré et câblé au nettoyage",
-      "--cleanup-keep-tiles" in _src and "nettoyage_garder_dalles" in _src
+      "--cleanup-keep-tiles" in _terrain_cli_src
+      and "nettoyage_garder_dalles" in _terrain_chunks_src
       and "def _supprimer_fichiers(" in _src and "dossiers_garder" in _src)
 check("_build_cmd émet --cleanup-keep-tiles depuis cleanup_keep_tiles",
       'cfg.get("cleanup_keep_tiles")' in _src)
@@ -1455,8 +1458,10 @@ check("les sites de zone routés sur les helpers (plus de try/except dupliqués)
       and "_lamb93_to_merc" not in _src)
 check("--zone-bbox : metavar/help WGS84 sur tous les modes (plus de X1,Y1)",
       'bbox_metavar="W,S,E,N"' in _src
+      and 'bbox_metavar="W,S,E,N"' in _terrain_cli_src
       and 'bbox_metavar="X1,Y1,X2,Y2"' not in _src
-      and "WGS84 bbox in degrees" in _src)
+      and 'bbox_metavar="X1,Y1,X2,Y2"' not in _terrain_cli_src
+      and "WGS84 bbox in degrees" in _terrain_cli_src)
 check("--zone-bbox : centre natif calculé (détection dept OSM en mode bbox)",
       "cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2"
       in _terrain_resolution_src)

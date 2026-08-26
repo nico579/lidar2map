@@ -46,6 +46,7 @@ import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _osm_runtime as osm_runtime  # noqa: E402
 import _terrain_sources as terrain_sources  # noqa: E402
+import _terrain_cli as terrain_cli  # noqa: E402
 import _terrain_zones as terrain_zones  # noqa: E402
 import _terrain_geocoding as terrain_geocoding  # noqa: E402
 import _terrain_resolution as terrain_resolution  # noqa: E402
@@ -1435,6 +1436,195 @@ class ZoneCliCharacterizationTests(unittest.TestCase):
         ) as ctx:
             L._resoudre_zone_wgs84(self._args(zone_region="unknown"))
         self.assertEqual(ctx.exception.code, 1)
+
+
+class LidarCliExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16a du parser et de ses défauts."""
+
+    @staticmethod
+    def _default_args(**overrides):
+        values = dict(
+            ignlidar=True,
+            source=None,
+            telechargement=None,
+            telechargement_forcer=False,
+            telechargement_ecraser=False,
+            dalles_purger_invalides=False,
+            dalles_purger_hors_zone=False,
+            ombrages_compresser=False,
+            ombrages=None,
+            shading_specs=None,
+            shading_preset=None,
+            formats_fichier=[],
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._construire_parser_lidar)), "()",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._appliquer_defauts_cli_lidar)), "(args)",
+        )
+
+        marker = object()
+        args = object()
+        with mock.patch.object(
+            L, "_appliquer_defauts_cli_lidar_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._appliquer_defauts_cli_lidar(args), marker)
+        implementation.assert_called_once_with(args)
+
+        zone = mock.Mock()
+        non_negative = mock.Mock()
+        positive_int = mock.Mock()
+        positive_float = mock.Mock()
+        with mock.patch.object(L, "_ajouter_args_zone", zone), \
+             mock.patch.object(L, "_arg_float_non_negatif", non_negative), \
+             mock.patch.object(L, "_arg_int_positif", positive_int), \
+             mock.patch.object(L, "_arg_float_positif", positive_float), \
+             mock.patch.object(
+                 L, "_construire_parser_lidar_impl", return_value=marker,
+             ) as implementation:
+            self.assertIs(L._construire_parser_lidar(), marker)
+
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIsInstance(dependencies, terrain_cli.DependancesParserLidar)
+        self.assertIs(dependencies.argparse, L.argparse)
+        self.assertIs(dependencies.ajouter_args_zone, zone)
+        self.assertIs(dependencies.arg_float_non_negatif, non_negative)
+        self.assertIs(dependencies.arg_int_positif, positive_int)
+        self.assertIs(dependencies.arg_float_positif, positive_float)
+        self.assertIs(dependencies.shading_types_ordre, L.SHADING_TYPES_ORDRE)
+        self.assertEqual(dependencies.version, L.VERSION)
+        self.assertEqual(dependencies.nb_workers, L.NB_WORKERS)
+
+    def test_parser_keeps_defaults_and_french_aliases(self):
+        parser = L._construire_parser_lidar()
+        defaults = parser.parse_args([])
+        self.assertFalse(defaults.ignlidar)
+        self.assertEqual(defaults.cols_decoupe, 0)
+        self.assertEqual(defaults.rows_decoupe, 0)
+        self.assertEqual(defaults.split_width, 0.0)
+        self.assertEqual(defaults.block, "")
+        self.assertEqual(defaults.workers, L.NB_WORKERS)
+        self.assertTrue(defaults.telechargement_compresser)
+        self.assertTrue(defaults.index_map)
+        self.assertIsNone(defaults.telechargement)
+        self.assertTrue(defaults.sweep_horizon)
+        self.assertEqual(defaults.formats_fichier, [])
+        self.assertEqual((defaults.zoom_min, defaults.zoom_max), (13, 18))
+
+        args = parser.parse_args([
+            "--ignlidar",
+            "--zone-ville", "Garéoult",
+            "--zone-largeur", "5",
+            "--cols-decoupe", "2",
+            "--rows-decoupe", "3",
+            "--split-largeur", "4.5",
+            "--bloc", "1/2",
+            "--nettoyage",
+            "--cleanup-keep-tiles",
+            "--min-disque-go", "7",
+            "--dossier", "out",
+            "--dossier-dalles", "tiles",
+            "--apikey", "secret",
+            "--no-download-compress",
+            "--telechargement-forcer",
+            "--no-index-map",
+            "--ombrages", "multi", "svf",
+            "--ombrages-elevation", "25",
+            "--no-download",
+            "--ombrages-ecraser",
+            "--no-svf-sweep",
+            "--tuiles-ecraser",
+            "--formats-fichier", "mbtiles", "rmap",
+            "--qualite-image", "80",
+            "--formats-image", "jpeg",
+            "--couche", "highway=*", "waterway=*",
+        ])
+        self.assertTrue(args.ignlidar)
+        self.assertEqual(args.zone_ville, "Garéoult")
+        self.assertEqual(args.zone_width, 5.0)
+        self.assertEqual(
+            (args.cols_decoupe, args.rows_decoupe, args.split_width),
+            (2, 3, 4.5),
+        )
+        self.assertEqual(args.block, "1/2")
+        self.assertTrue(args.nettoyage)
+        self.assertTrue(args.nettoyage_garder_dalles)
+        self.assertEqual(args.min_free_gb, 7.0)
+        self.assertEqual((args.dossier, args.dossier_dalles), ("out", "tiles"))
+        self.assertEqual(args.apikey, "secret")
+        self.assertFalse(args.telechargement_compresser)
+        self.assertTrue(args.telechargement_forcer)
+        self.assertFalse(args.index_map)
+        self.assertEqual(args.ombrages, ["multi", "svf"])
+        self.assertEqual(args.ombrages_elevation, 25)
+        self.assertFalse(args.telechargement)
+        self.assertTrue(args.ombrages_ecraser)
+        self.assertFalse(args.sweep_horizon)
+        self.assertTrue(args.tuiles_ecraser)
+        self.assertEqual(args.formats_fichier, ["mbtiles", "rmap"])
+        self.assertEqual((args.qualite_image, args.formats_image), (80, "jpeg"))
+        self.assertEqual(args.couche, ["highway=*", "waterway=*"])
+
+    def test_parser_keeps_exclusivity_and_numeric_validation(self):
+        parser = L._construire_parser_lidar()
+        invalid_commands = (
+            ["--zone-city", "A", "--zone-gps", "43,6"],
+            ["--split-width", "-1"],
+            ["--min-free-gb", "nan"],
+            ["--workers", "0"],
+            ["--svf-dist", "0"],
+        )
+        for command in invalid_commands:
+            with self.subTest(command=command), \
+                 contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as ctx:
+                parser.parse_args(command)
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_parser_help_keeps_sections_options_and_examples(self):
+        help_text = L._construire_parser_lidar().format_help()
+        expected = (
+            "A priori splitting — --lidar only",
+            "--split-cols N, --cols-decoupe N",
+            "--zone-city NAME, --zone-ville NAME",
+            "--download | --no-download",
+            "--shading TYPE[:k=v,...]",
+            "--file-formats FMT",
+            "python lidar2map.py --lidar --provider fr-ign",
+        )
+        for fragment in expected:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, help_text)
+
+    def test_default_policy_keeps_force_source_and_none_semantics(self):
+        forced = terrain_cli.appliquer_defauts_cli_lidar(
+            self._default_args(
+                dalles_purger_invalides=True,
+                telechargement_forcer=True,
+            )
+        )
+        self.assertTrue(forced.telechargement)
+        self.assertIsNone(forced.ombrages)
+        self.assertEqual(forced.formats_fichier, [])
+
+        source_tif = terrain_cli.appliquer_defauts_cli_lidar(
+            self._default_args(source="existing.TIFF")
+        )
+        self.assertFalse(source_tif.telechargement)
+        self.assertIsNone(source_tif.ombrages)
+        self.assertEqual(source_tif.formats_fichier, ["mbtiles"])
+
+        disabled = terrain_cli.appliquer_defauts_cli_lidar(
+            self._default_args(ombrages=["none"])
+        )
+        self.assertTrue(disabled.telechargement)
+        self.assertEqual(disabled.ombrages, ["none"])
+        self.assertEqual(disabled.formats_fichier, [])
 
 
 class SourceAutonomeContractTests(unittest.TestCase):

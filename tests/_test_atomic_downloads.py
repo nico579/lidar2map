@@ -141,6 +141,47 @@ class AtomicDownloadTests(unittest.TestCase):
             with self.assertRaisesRegex(IOError, "HTTP 503"):
                 L._download_to_tmp("https://example.invalid", self.tmp / "503.part")
 
+    def test_stream_download_only_maps_explicit_provider_500_to_absent(self):
+        error = urllib.error.HTTPError(
+            "https://example.invalid", 500, "Internal Server Error", None, None
+        )
+
+        with mock.patch.object(L, "_urlopen", side_effect=error):
+            with self.assertRaisesRegex(IOError, "HTTP 500"):
+                L._download_to_tmp(
+                    "https://example.invalid", self.tmp / "default-500.part"
+                )
+
+        with mock.patch.object(L, "_urlopen", side_effect=error):
+            self.assertEqual(
+                L._download_to_tmp(
+                    "https://example.invalid",
+                    self.tmp / "provider-500.part",
+                    codes_absence=frozenset({404, 500}),
+                ),
+                0,
+            )
+
+    def test_direct_download_forwards_provider_no_coverage_codes(self):
+        from providers import gb_england
+
+        codes_seen = []
+
+        def download(_url, _path, timeout=60, **kwargs):
+            codes_seen.append(kwargs.get("codes_absence"))
+            return 0
+
+        L.PROVIDER = gb_england
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            result = L.telecharger_dalle_directe(
+                "sea.tif", "https://example.invalid/500", self.tmp
+            )
+
+        self.assertEqual(result, "absent")
+        self.assertEqual(codes_seen, [gb_england.NO_COVERAGE_HTTP_CODES])
+        self._assert_no_part()
+
     def test_direct_all_hooks_run_in_part_directory_then_publish(self):
         nom = "tile.tif"
         final = self.tmp / nom

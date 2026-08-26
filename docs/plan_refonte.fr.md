@@ -1,10 +1,10 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot déployé : 24 août 2026, **v1.46.0**. Il regroupe les phases 15h à
-15s-b : téléchargements et caches terrain, transactions par morceau, tuilage et
-orchestration complète des ombrages, avec façades compatibles et dépendances
-reconstruites à chaque appel. Les quatre bundles Windows, Linux, macOS Intel et
-macOS Apple Silicon ont été reconstruits par `release.yml`.
+Dernier lot déployé : 26 août 2026, **v1.48.2**. La modularisation publiée va
+jusqu'à 15y ; les versions 1.48.x ajoutent les correctifs fonctionnels livrés
+depuis ce jalon. La phase 16a est terminée localement et attend un prochain
+rebuild. Les quatre bundles Windows, Linux, macOS Intel et macOS Apple Silicon
+de la dernière release ont été reconstruits par `release.yml`.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -54,6 +54,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _osm_runtime.py         découverte, installation et exécution Java/Osmosis
 ├── _terrain_sources.py     sources autonomes LiDAR/OSM et raster WMTS
 ├── _terrain_zones.py       primitives pures de résolution des zones terrain
+├── _terrain_cli.py         parser LiDAR/OSM et politique de défauts CLI
 ├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
 ├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
 ├── _terrain_chunks.py      découverte et téléchargement par morceau glissant
@@ -189,8 +190,16 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Tuilage commun des ombrages (15r, mesuré) | 2 | 0,01 % |
 | Planification des instances d'ombrage (15s-a, mesuré) | 56 | 0,26 % |
 | Orchestrateur d'ombrage (15s-b, mesuré) | 610 | 2,86 % |
-| **Total sorti du monolithe (mesuré)** | **11 444** | **53,69 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **9 871** | **46,31 %** |
+| Planches et contours de restitution (15t, mesuré) | 292 | 1,37 % |
+| Lecteurs d'emprises de livrables (15u, mesuré) | 78 | 0,37 % |
+| Découpage MBTiles postérieur (15v, mesuré) | 188 | 0,88 % |
+| Fraîcheur et nettoyage des livrables (15w, mesuré) | 100 | 0,47 % |
+| Catalogue et chargement des providers (15x, mesuré) | 199 | 0,93 % |
+| Contrat de zone CLI partagé (15y, mesuré) | 126 | 0,59 % |
+| Évolutions fonctionnelles v1.48.x réintroduites dans le monolithe | -135 | -0,63 % |
+| Parser et défauts CLI terrain (16a, mesuré) | 273 | 1,28 % |
+| **Total sorti du monolithe (mesuré)** | **12 565** | **58,95 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **8 750** | **41,05 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -261,7 +270,9 @@ post-15s-b est de 9 871 lignes (46,31 %) : il reste donc à sortir **2 411 à 3 
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
-la lisibilité. Sous 30 %, il faudrait probablement déplacer la façade publique,
+la lisibilité. Après 16a, le script principal compte **8 750 lignes (41,05 %)** :
+il reste donc à sortir **1 290 à 2 355 lignes nettes** pour atteindre la zone
+6 395–7 460. Sous 30 %, il faudrait probablement déplacer la façade publique,
 le dispatch ou des adaptateurs de compatibilité dont la présence dans le point
 d'entrée reste utile. Toute poursuite sous ce seuil demandera une décision
 explicite et un nouveau plan.
@@ -3016,11 +3027,38 @@ Déploiement du lot 15t–15y : bump `VERSION` 1.46.0 → **1.47.0**, commit
 des quatre cibles (Windows, Linux, macOS Intel et Apple Silicon). La release
 publique contient les quatre artefacts attendus.
 
-### Prochaine étape proposée : 16a — construction du parser LiDAR
+### Sous-phase 16a — parser et défauts CLI terrain (terminée localement)
 
-Caractériser puis extraire `_construire_parser_lidar` et, si les contrats
-confirment leur cohésion, `_appliquer_defauts_cli_lidar`, soit environ 300 lignes
-brutes. Le corps de `main()` restera hors périmètre : cette première sous-phase
-de la phase 16 ne déplacera que la déclaration argparse et les défauts de CLI.
-Les contrats devront comparer les alias, valeurs par défaut, groupes exclusifs,
-erreurs de validation et l'aide produite avant/après extraction.
+Les corps de `_construire_parser_lidar` et `_appliquer_defauts_cli_lidar`
+rejoignent `_terrain_cli.py`. Le nouveau module ne lit aucun global du script
+principal : une dataclass de onze coutures reçoit argparse, le contrat de zone,
+les trois validateurs numériques, l'ordre des ombrages et les constantes de
+version, workers, élévation et gamma. Les deux façades historiques conservent
+strictement leurs signatures et reconstruisent ces dépendances à chaque appel.
+
+Cinq contrats supplémentaires portent la suite de refonte à **283 tests**. Ils
+verrouillent les signatures, les dépendances tardives, les alias français et
+anglais, les valeurs par défaut, les actions booléennes positives/négatives,
+les groupes exclusifs, les erreurs des validateurs numériques, les sections et
+exemples de l'aide ainsi que les règles particulières maintenance, overwrite,
+source TIFF et ombrage `none`. Quatre gardes d'interaction textuelles ont été
+routées vers leur vrai module propriétaire après avoir correctement signalé le
+déplacement des déclarations argparse.
+
+Compilation et Ruff sont verts. Le profil FAST passe **12/12** en 36,5 s et le
+profil scientifique **5/5** en 78,4 s. `_terrain_cli.py` est ajouté à
+`deploy.MAP`; les filtres CI et la garde de rebuild `_terrain_*.py` le couvrent
+déjà.
+
+Mesure nette par rapport à la source v1.48.2 déployée : `lidar2map.py` 9 023 →
+8 750 lignes (**-273**, soit **1,28 %** du périmètre figé).
+`_terrain_cli.py` contient 418 lignes. Total mesuré sorti : **12 565 lignes,
+58,95 %** ; reste **8 750 lignes, 41,05 %**.
+
+### Prochaine étape proposée : 16b — validation et préparation du run LiDAR
+
+Caractériser le début de `main()` après `parse_args` puis extraire dans un lot
+séparé la validation reproductible et la préparation sans traitement raster :
+contrat provider/zone, zooms, chemins cache/production et options provider.
+L'exécution des téléchargements, ombrages et tuilages restera hors périmètre de
+16b afin de ne pas déplacer simultanément configuration et pipeline métier.

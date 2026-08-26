@@ -105,6 +105,7 @@ MAP = {
     "_osm_policy.py":                "_osm_policy.py",
     "_osm_runtime.py":               "_osm_runtime.py",
     "_terrain_sources.py":           "_terrain_sources.py",
+    "_terrain_cli.py":               "_terrain_cli.py",
     "_terrain_zones.py":              "_terrain_zones.py",
     "_terrain_geocoding.py":          "_terrain_geocoding.py",
     "_terrain_resolution.py":         "_terrain_resolution.py",
