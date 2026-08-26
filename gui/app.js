@@ -87,7 +87,7 @@ const I18N = {
     // l'historique et la file d'attente, même si l'onglet est unique.
     "t.vecteur":"IGN Vectoriel", "t.osm":"OSM Vectoriel",
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
-    "t.fusion":"Fusion vectorielle", "t.decoupe":"Découpage raster",
+    "t.fusion":"Fusion", "t.decoupe":"Découpage raster",
     // Étapes communes
     "split0":"0 — Découpage à priori (grandes zones)",
     "grid":"Grille :", "rows":"lignes", "orradius":"ou côté", "rows_orradius":"lignes  ou côté",
@@ -116,7 +116,7 @@ const I18N = {
     "geojson.raw":".geojson (non compressed)",
     "simplif":"Simplification vecteur",
     "simplif.hint1":"m  (vide = auto : 3 m local → 40 m région)", "simplif.hint2":"m  (vide = auto)",
-    "sec.fusion":"Fichiers GeoJSON à fusionner",
+    "sec.fusion":"Fichiers à fusionner",
     "add":"＋ Ajouter…", "remove":"－ Supprimer", "clear":"✕ Vider",
     "extsel":"Sélection étendue (Shift/Ctrl)", "fmt":"Format :",
     // Découpage raster
@@ -135,7 +135,7 @@ const I18N = {
     "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
     "zoom.inverted":"⚠ Zooms d'historique inversés — corrigés au chargement",
     "update.dispo":"⬆ {tag} disponible : notes de version",
-    "fusion.ignored":"Ignoré(s) : {files}\nSeuls .geojson et .geojson.gz sont acceptés.",
+    "fusion.ignored":"Ignoré(s) : {files}\nSeuls {exts} sont acceptés (une fusion ne mélange pas les types).",
     "req.name":"Le nom du projet est obligatoire.",
     "req.source":"Le fichier source MBTiles est obligatoire.",
     "req.field":"Le champ « {f} » est obligatoire.",
@@ -245,7 +245,7 @@ const I18N = {
     "t.lidar":"LiDAR", "t.raster":"Raster", "t.vect":"Vector",
     "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
-    "t.fusion":"Vector merge", "t.decoupe":"Raster split",
+    "t.fusion":"Merge", "t.decoupe":"Raster split",
     "split0":"0 — A priori split (large areas)",
     "grid":"Grid:", "rows":"rows", "orradius":"or side", "rows_orradius":"rows  or side",
     "clean":"Clean intermediates",
@@ -267,7 +267,7 @@ const I18N = {
     "geojson.raw":".geojson (uncompressed)",
     "simplif":"Vector simplification",
     "simplif.hint1":"m  (empty = auto: 3 m local → 40 m region)", "simplif.hint2":"m  (empty = auto)",
-    "sec.fusion":"GeoJSON files to merge",
+    "sec.fusion":"Files to merge",
     "add":"＋ Add…", "remove":"－ Remove", "clear":"✕ Clear",
     "extsel":"Extended selection (Shift/Ctrl)", "fmt":"Format:",
     "sec.src":"Source file", "sec.split":"Split",
@@ -283,7 +283,7 @@ const I18N = {
     "del.error":"Error while deleting: ", "del.unknown":"unknown",
     "zoom.inverted":"⚠ History zooms inverted — fixed on load",
     "update.dispo":"⬆ {tag} available: release notes",
-    "fusion.ignored":"Ignored: {files}\nOnly .geojson and .geojson.gz are accepted.",
+    "fusion.ignored":"Ignored: {files}\nOnly {exts} are accepted (a merge cannot mix file types).",
     "req.name":"Project name is required.",
     "req.source":"Source MBTiles file is required.",
     "req.field":"The « {f} » field is required.",
@@ -1612,6 +1612,7 @@ function bindAll() {
     });
     document.body.className = 'type-' + cur;
     if (cur === 'vecteur') onVecteurSource();   // repose la classe body + blocs
+    if (cur === 'fusion') applyFusionFamille();
     const secZone = document.querySelector('.sec-zone');
     if (secZone) secZone.classList.toggle('hidden', cur === 'decoupe');
   };
@@ -1965,6 +1966,10 @@ function getConfig() {
     fusion_gz2_raw:g('f-fusion-gz2-raw')?.checked,
     fusion_transparent: g('f-fusion-transparent')?.checked,
     fusion_map:    g('f-fusion-map')?.checked,
+    fusion_mbtiles:  g('f-fusion-mbtiles')?.checked,
+    fusion_rmap:     g('f-fusion-rmap')?.checked,
+    fusion_sqlitedb: g('f-fusion-sqlitedb')?.checked,
+    fusion_ecraser:  g('f-fusion-ecraser')?.checked,
     simplif_v:     parseFloat(g('f-simplif-v')?.value) || null,
     simplif_fusion:parseFloat(g('f-simplif-fusion')?.value) || null,
     // Découpage raster (à posteriori)
@@ -2170,11 +2175,16 @@ function loadConfig(cfg) {
   s('f-fusion-gz2-raw', cfg.fusion_gz2_raw);        // FIX: n'était jamais restauré
   s('f-fusion-transparent', cfg.fusion_transparent);
   s('f-fusion-map',     cfg.fusion_map);             // FIX: n'était jamais restauré
+  s('f-fusion-mbtiles', cfg.fusion_mbtiles !== undefined ? cfg.fusion_mbtiles : true);
+  s('f-fusion-rmap',    cfg.fusion_rmap);
+  s('f-fusion-sqlitedb',cfg.fusion_sqlitedb);
+  s('f-fusion-ecraser', cfg.fusion_ecraser);
   if (cfg.simplif_v     != null) { const el=g('f-simplif-v');     if(el) el.value=cfg.simplif_v; }
   if (cfg.simplif_fusion!= null) { const el=g('f-simplif-fusion');if(el) el.value=cfg.simplif_fusion; }
   if (cfg.fusion_fichiers) {
     fusionFiles = cfg.fusion_fichiers;
     renderFusionList();
+    applyFusionFamille();
   }
 
   // Découpage raster
@@ -2475,22 +2485,53 @@ async function pickFile(fieldId, multiple, exts) {
   const p = await pywebview.api.pick_file(multiple, exts);
   if (p) document.getElementById(fieldId).value = Array.isArray(p) ? p.join(';') : p;
 }
+// Famille de fichiers acceptée par la fusion : verrouillée sur le 1er fichier
+// ajouté (liste vide -> 'geojson' par défaut, écran de départ inchangé).
+// Miroir du choix fait côté CLI (main_fusionner bifurque sur l'extension).
+function familleFichierFusion(f) {
+  return f.toLowerCase().endsWith('.mbtiles') ? 'mbtiles' : 'geojson';
+}
+function familleFusion() {
+  return fusionFiles.length ? familleFichierFusion(fusionFiles[0]) : 'geojson';
+}
+function applyFusionFamille() {
+  const raster = familleFusion() === 'mbtiles';
+  document.getElementById('row-fmt-fusion-vecteur')?.classList.toggle('hidden', raster);
+  document.getElementById('row-fmt-fusion-raster')?.classList.toggle('hidden', !raster);
+  // La simplification vecteur ne s'applique pas au raster, quel que soit
+  // l'état de la case f-fusion-map (qui gouverne son toggle en mode vecteur).
+  if (raster) document.getElementById('row-simplif-fusion')?.classList.add('hidden');
+  else window.applyToggles?.();
+}
 async function fusionAjouter() {
   const files = await pywebview.api.pick_file(true, []);
   if (!files) return;
   const all = Array.isArray(files) ? files : [files];
-  // .geojson.gz strict (pas tout .gz) : aligne le filtre sur le message
-  // d'erreur ci-dessous et sur ce que la fusion sait réellement lire.
-  const valid = all.filter(f => f.endsWith('.geojson') || f.endsWith('.geojson.gz'));
+  // .geojson.gz strict (pas tout .gz), + .mbtiles. Une fusion ne mélange pas
+  // les familles : si la liste est vide, la famille du 1er fichier VALIDE de
+  // ce lot la fixe pour la suite.
+  const estGeojson = f => f.endsWith('.geojson') || f.endsWith('.geojson.gz');
+  const estMbtiles = f => f.toLowerCase().endsWith('.mbtiles');
+  let famille = fusionFiles.length ? familleFusion() : null;
+  if (!famille) {
+    const premier = all.find(f => estGeojson(f) || estMbtiles(f));
+    if (premier) famille = familleFichierFusion(premier);
+  }
+  const valid = famille === 'mbtiles' ? all.filter(estMbtiles)
+    : famille === 'geojson' ? all.filter(estGeojson) : [];
   const invalid = all.filter(f => !valid.includes(f));
-  if (invalid.length) alert(tf('fusion.ignored', {files: invalid.map(f=>f.split(/[\\/]/).pop()).join(', ')}));
+  if (invalid.length) {
+    const exts = famille === 'mbtiles' ? '.mbtiles' : '.geojson, .geojson.gz';
+    alert(tf('fusion.ignored', {files: invalid.map(f=>f.split(/[\\/]/).pop()).join(', '), exts}));
+  }
   valid.forEach(f => { if (!fusionFiles.includes(f)) fusionFiles.push(f); });
   renderFusionList();
+  applyFusionFamille();
 }
 function fusionSupprimer() {
-  if (fusionSel >= 0) { fusionFiles.splice(fusionSel, 1); fusionSel = -1; renderFusionList(); }
+  if (fusionSel >= 0) { fusionFiles.splice(fusionSel, 1); fusionSel = -1; renderFusionList(); applyFusionFamille(); }
 }
-function fusionVider() { fusionFiles = []; fusionSel = -1; renderFusionList(); }
+function fusionVider() { fusionFiles = []; fusionSel = -1; renderFusionList(); applyFusionFamille(); }
 function renderFusionList() {
   const c = document.getElementById('fusion-list');
   c.innerHTML = fusionFiles.map((f,i) =>

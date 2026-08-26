@@ -501,11 +501,17 @@ python lidar2map.py --vector --zone-city Gareoult --zone-width 5 \
 OsmAnd ne lit pas les `.map` Mapsforge : utiliser `transparent-raster` en
 overlay ou sa carte OSM intégrée. Locus et OruxMaps peuvent utiliser Mapsforge.
 
-## Fusionner des sources vectorielles
+## Fusionner des sources
 
-`--merge` combine des sources `.geojson` et `.geojson.gz`, motifs glob compris.
-Il ajoute aux entités fusionnées une propriété `source` identifiant le fichier
-d’origine.
+`--merge` combine plusieurs fichiers du même genre en un seul, motifs glob
+compris : soit des sources `.geojson`/`.geojson.gz`, soit des sources
+`.mbtiles`. Le genre est détecté depuis l'extension des sources ; mélanger
+GeoJSON et MBTiles dans un même run est refusé.
+
+### Sources GeoJSON
+
+Combine des sources `.geojson` et `.geojson.gz`. Ajoute aux entités
+fusionnées une propriété `source` identifiant le fichier d'origine.
 
 ```bash
 python lidar2map.py --merge \
@@ -516,14 +522,14 @@ python lidar2map.py --merge \
 | Option | Défaut / valeurs | Rôle |
 |---|---|---|
 | `--source FICHIER...` | obligatoire | Entrées ; lidar2map développe les motifs glob si le shell ne le fait pas. |
-| `--output-file FICHIER` | dérivé à côté de la première source | Chemin GeoJSON fusionné explicite. |
+| `--output-file FICHIER` | dérivé à côté de la première source | Chemin de sortie fusionné explicite. |
 | `--output-dir CHEMIN` | dossier de la première source | Dossier utilisé uniquement lorsque le nom de sortie est automatique. |
 | `--no-gz` | désactivé | Produit un fichier primaire automatique `.geojson` au lieu de `.geojson.gz`. |
 | `--file-formats FMT...` | `gz` | Demande une sortie secondaire `map` et/ou `transparent-raster` ; `geojson`/`gz` décrivent les formats vectoriels, tandis que `--no-gz` gouverne la compression du fichier primaire automatique. |
 | `--vector-simplify M` | automatique | Tolérance de simplification Mapsforge en mètres. |
 
 Fusionner un ensemble désigné par un glob et créer une carte Mapsforge ainsi
-qu’un overlay OsmAnd :
+qu'un overlay OsmAnd :
 
 ```bash
 python lidar2map.py --merge \
@@ -532,8 +538,33 @@ python lidar2map.py --merge \
   --file-formats gz map transparent-raster
 ```
 
-Une entrée absente ou illisible rend l’échec visible, même si un fichier
+Une entrée absente ou illisible rend l'échec visible, même si un fichier
 fusionné partiel a pu être écrit.
+
+### Sources MBTiles
+
+Combine plusieurs MBTiles en un seul, par exemple deux zones adjacentes
+produites par des runs séparés. Les bounds et la plage de zoom sont l'union
+de toutes les sources ; les sources doivent partager le même format de tuile
+(jpeg/png/webp). Une tuile en collision est tranchée par la dernière source
+listée dans `--source`.
+
+```bash
+python lidar2map.py --merge \
+  --source zone_nord.mbtiles zone_sud.mbtiles \
+  --output-file departement_complet.mbtiles
+```
+
+| Option | Défaut / valeurs | Rôle |
+|---|---|---|
+| `--source FICHIER...` | obligatoire | Fichiers `.mbtiles` en entrée ; lidar2map développe les motifs glob si le shell ne le fait pas. |
+| `--output-file FICHIER` | dérivé à côté de la première source | Chemin MBTiles fusionné explicite. |
+| `--output-dir CHEMIN` | dossier de la première source | Dossier utilisé uniquement lorsque le nom de sortie est automatique. |
+| `--file-formats FMT...` | `mbtiles` | Conserve la fusion en `mbtiles` et/ou la convertit en `rmap` ou `sqlitedb`. |
+| `--tiles-overwrite` | désactivé | Remplace un fichier de sortie fusionné existant. |
+
+Si une conversion vers `rmap`/`sqlitedb` échoue, lidar2map conserve le
+MBTiles intermédiaire au lieu de supprimer les seules données survivantes.
 
 ## Redécouper un raster existant
 
@@ -572,7 +603,7 @@ Le comportement de `--source` dépend de l’extension :
 | `.mbtiles` | aucune zone ; `--file-formats rmap` et/ou `sqlitedb` explicite | Conversion directe puis sortie. |
 | `.tif` / `.tiff` | une zone ; de préférence `--lidar` ; formats explicites sauf si `--lidar` fournit le défaut MBTiles | L’ombrage existant est tuilé directement en EPSG:3857, sinon d’abord reprojeté en Web Mercator. |
 | `.pbf` / `.osm` | `--osm` avec une zone | Filtre et rend les données OSM existantes sans sélection Geofabrik automatique. |
-| plusieurs GeoJSON | `--merge` | Fusion vectorielle. |
+| plusieurs GeoJSON, ou plusieurs MBTiles | `--merge` | Fusion (vectorielle ou raster, voir plus haut). |
 
 Exemples :
 

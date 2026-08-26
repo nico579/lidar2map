@@ -357,6 +357,88 @@ class MergeHistoryFinalizationTests(HistoryFixture):
         self.assertEqual(self._entry()["statut"], "ko")
 
 
+class MergeMbtilesHistoryFinalizationTests(HistoryFixture):
+    """--merge sur des sources .mbtiles : dispatch + finalisation d'historique.
+    Miroir de MergeHistoryFinalizationTests (branche GeoJSON) côté raster."""
+
+    def _argv(self, *sources, output=None, formats=("mbtiles",)):
+        args = ["lidar2map.py", "--merge", "--source", *sources]
+        if output is not None:
+            args += ["--output-file", str(output)]
+        return args + ["--file-formats", *formats]
+
+    def test_merge_mbtiles_success_finalizes_history_with_result_directory(self):
+        a = self.tmp / "a.mbtiles"
+        b = self.tmp / "b.mbtiles"
+        a.touch()
+        b.touch()
+        output = self.tmp / "fusion.mbtiles"
+        self._reset_history(self._argv(str(a), str(b), output=output))
+        with mock.patch.object(
+                L, "fusionner_mbtiles", return_value=output
+        ) as fusion, mock.patch("builtins.print"):
+            L.main_fusionner()
+
+        entry = self._entry()
+        self.assertEqual(entry["statut"], "ok")
+        self.assertEqual(
+            Path(entry["resultat"]).resolve(), output.parent.resolve(),
+        )
+        self.assertEqual(fusion.call_count, 1)
+
+    def test_merge_mbtiles_no_output_finalizes_ko_and_exits_nonzero(self):
+        a = self.tmp / "a.mbtiles"
+        b = self.tmp / "b.mbtiles"
+        a.touch()
+        b.touch()
+        output = self.tmp / "fusion.mbtiles"
+        self._reset_history(self._argv(str(a), str(b), output=output))
+        with mock.patch.object(L, "fusionner_mbtiles", return_value=None), \
+             mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
+
+    def test_merge_mbtiles_conversion_failure_keeps_mbtiles_and_exits_nonzero(self):
+        a = self.tmp / "a.mbtiles"
+        b = self.tmp / "b.mbtiles"
+        a.touch()
+        b.touch()
+        output = self.tmp / "fusion.mbtiles"
+        output.touch()
+        # rmap seul demandé (pas mbtiles) : la conversion échoue, le mbtiles
+        # intermédiaire doit rester (filet R2#6, cf. --split).
+        self._reset_history(self._argv(str(a), str(b), output=output, formats=("rmap",)))
+        with mock.patch.object(L, "fusionner_mbtiles", return_value=output), \
+             mock.patch.object(
+                 L, "generer_rmap_depuis_mbtiles", return_value=None
+             ), mock.patch("builtins.print"), \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(self._entry()["statut"], "ko")
+        self.assertTrue(output.exists())
+
+    def test_merge_mixed_source_types_rejected_before_processing(self):
+        geo = self.tmp / "a.geojson"
+        raster = self.tmp / "b.mbtiles"
+        self._reset_history(self._argv(str(geo), str(raster)))
+        with mock.patch.object(L, "fusionner_mbtiles") as fusion_r, \
+             mock.patch.object(L, "fusionner_geojson") as fusion_v, \
+             mock.patch("builtins.print") as printed, \
+             self.assertRaises(SystemExit) as raised:
+            L.main_fusionner()
+
+        self.assertEqual(raised.exception.code, 1)
+        fusion_r.assert_not_called()
+        fusion_v.assert_not_called()
+        messages = " ".join(str(c.args[0]) for c in printed.call_args_list if c.args)
+        self.assertIn("mixed or unrecognized", messages)
+
+
 class SplitEntryPointHistoryTests(HistoryFixture):
     ZONES = [
         (0, 0, 0.0, 0.0, 1000.0, 1000.0),

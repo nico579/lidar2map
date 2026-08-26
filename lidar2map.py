@@ -1244,7 +1244,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
 # fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
 # ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.47.1"
+VERSION      = "1.48.0"
 VERSION_DATE = "2026-08"
 
 
@@ -5299,6 +5299,32 @@ def decouper_mbtiles(src_mbtiles, cote_km=0.0, n_morceaux=1, n_cols=0, n_rows=0,
     )
 
 
+from _merge_mbtiles import (
+    DependancesFusionMbtiles as _DependancesFusionMbtiles,
+    fusionner_mbtiles as _fusionner_mbtiles_impl,
+)
+
+
+def _dependances_fusion_mbtiles():
+    """Reconstruit les coutures de la fusion MBTiles à chaque appel."""
+    return _DependancesFusionMbtiles(
+        chemin_part=_chemin_part,
+        nettoyer_sqlite_part=_nettoyer_sqlite_part,
+        valider_sqlite_part=_valider_sqlite_part,
+        sqlite_connect=sqlite3.connect,
+    )
+
+
+def fusionner_mbtiles(sources, sortie, ecraser=False):
+    """Façade compatible vers la fusion MBTiles extraite."""
+    return _fusionner_mbtiles_impl(
+        sources,
+        sortie,
+        ecraser,
+        dependances=_dependances_fusion_mbtiles(),
+    )
+
+
 
 
 def _convertir_un_mbtiles(sf, args, mbtiles_neuf=True):
@@ -6569,13 +6595,21 @@ _executer_fusion_cli.__doc__ = _executer_fusion_cli_impl.__doc__
 
 
 def main_fusionner():
-    """Point d'entrée mode --fusionner."""
+    """Point d'entrée mode --fusionner : GeoJSON ou MBTiles selon les sources.
+
+    Un seul flag --merge pour les deux : bifurque en interne sur l'extension
+    des sources résolues (même principe que --raster qui bifurque déjà selon
+    qu'un --source .mbtiles existant est fourni). Évite un second flag/onglet
+    dédié pour une opération que l'utilisateur perçoit comme unique ("fusionner
+    plusieurs fichiers en un seul"), au prix d'une simple garde de cohérence :
+    toutes les sources doivent être du même type.
+    """
     import argparse
 
     t_debut = time.time()
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --merge",
-        description="Merge several GeoJSON files into one.",
+        description="Merge several GeoJSON files, or several MBTiles files, into one.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -6586,22 +6620,31 @@ Examples:
   python lidar2map.py --merge \\
       --source ign_vecteur/gareoult_*.geojson \\
       --output-file gareoult_complet.geojson
+
+  python lidar2map.py --merge \\
+      --source zone_nord.mbtiles zone_sud.mbtiles \\
+      --output-file departement_complet.mbtiles
         """
     )
     parser.add_argument("--merge", "--fusionner", action="store_true", dest="fusionner")
     parser.add_argument("--source", nargs="+", metavar="FILE",
                         required=True,
-                        help="GeoJSON files to merge (glob accepted)")
+                        help="GeoJSON or MBTiles files to merge, all of the same "
+                             "kind (glob accepted)")
     parser.add_argument("--output-file", "--sortie", metavar="FILE", default=None, dest="sortie",
-                        help="Output .geojson file")
+                        help="Output file (default: derived from the first source)")
     parser.add_argument("--output-dir", "--dossier", metavar="PATH", default=None, dest="dossier")
     parser.add_argument("--no-gz", action="store_true",
-                        help="Uncompressed .geojson output (default: .geojson.gz)")
-    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", default=["gz"], dest="formats_fichier",
-                        metavar="FMT", help="gz geojson map transparent-raster")
+                        help="GeoJSON sources only: uncompressed .geojson output (default: .geojson.gz)")
+    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", default=None, dest="formats_fichier",
+                        metavar="FMT",
+                        help="GeoJSON sources: gz geojson map transparent-raster (default: gz). "
+                             "MBTiles sources: mbtiles rmap sqlitedb (default: mbtiles).")
     parser.add_argument("--vector-simplify", "--simplification-vecteur", type=_arg_float_non_negatif, default=None,
                         metavar="M", dest="simplification_vecteur",
-                        help="Douglas-Peucker epsilon in metres (default: auto from area).")
+                        help="GeoJSON sources only: Douglas-Peucker epsilon in metres (default: auto from area).")
+    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
+                        help="MBTiles sources only: overwrite an existing output file.")
     args, _extra = parser.parse_known_args()  # tolère d'éventuels tokens globaux
     # Signaler les options non reconnues (typos) au lieu de les avaler en
     # silence : `--outut-file x` était sinon ignoré et la sortie retombait sur
@@ -6615,11 +6658,26 @@ Examples:
     _historique_debut()
 
     fichiers = _resoudre_sources_fusion(args.source)
-
     if not fichiers:
         print("  ERROR: no source file found")
         sys.exit(1)
 
+    est_mbtiles = all(str(f).lower().endswith(".mbtiles") for f in fichiers)
+    est_geojson = all(str(f).lower().endswith((".geojson", ".geojson.gz")) for f in fichiers)
+    if not est_mbtiles and not est_geojson:
+        print("  ERROR: --merge sources must be all .mbtiles or all "
+              ".geojson/.geojson.gz (mixed or unrecognized types given)")
+        sys.exit(1)
+
+    if est_mbtiles:
+        _main_fusionner_mbtiles(args, fichiers, t_debut)
+    else:
+        _main_fusionner_geojson(args, fichiers, t_debut)
+
+
+def _main_fusionner_geojson(args, fichiers, t_debut):
+    """Branche GeoJSON de --merge (comportement historique, inchangé)."""
+    formats = args.formats_fichier if args.formats_fichier is not None else ["gz"]
     sortie = _determiner_sortie_fusion(
         fichiers,
         sortie=args.sortie,
@@ -6637,7 +6695,7 @@ Examples:
     resultat = _executer_fusion_cli(
         fichiers,
         sortie,
-        formats=args.formats_fichier,
+        formats=formats,
         simplification=args.simplification_vecteur,
         zoom_min=getattr(args, "zoom_min", 8),
         zoom_max=getattr(args, "zoom_max", 18),
@@ -6660,6 +6718,58 @@ Examples:
     )
     if not resultat.complet:
         sys.exit(1)
+
+
+def _main_fusionner_mbtiles(args, fichiers, t_debut):
+    """Branche MBTiles de --merge : miroir de --split (main_decouper) côté
+    fusion. Mêmes livrables dérivés (rmap/sqlitedb), même filet R2#6 (pas de
+    suppression du mbtiles intermédiaire si une conversion demandée échoue)."""
+    fichiers = [Path(f) for f in fichiers]
+    formats = args.formats_fichier if args.formats_fichier is not None else ["mbtiles"]
+    args_mbtiles  = "mbtiles"  in formats
+    args_rmap     = "rmap"     in formats
+    args_sqlitedb = "sqlitedb" in formats
+
+    if args.sortie:
+        sortie = Path(args.sortie)
+    else:
+        dossier_sortie = Path(args.dossier) if args.dossier else fichiers[0].parent
+        sortie = dossier_sortie / f"{fichiers[0].stem}_fusion.mbtiles"
+    dossier_resultat = str(sortie.resolve().parent)
+
+    print("=" * 52)
+    print("  MBTiles merge")
+    print("=" * 52)
+    for f in fichiers:
+        print(f"  + {f}")
+    print(f"  → {sortie}")
+
+    resultat = fusionner_mbtiles(fichiers, sortie, ecraser=args.tuiles_ecraser)
+    if not resultat:
+        print("\n  ERROR: merge produced no output file.")
+        _historique_depuis_argv(int(time.time() - t_debut), dossier_resultat, statut="ko")
+        sys.exit(1)
+
+    _conv_ok = True
+    if args_rmap:
+        _conv_ok = (generer_rmap_depuis_mbtiles(resultat, ecraser=True) is not None) and _conv_ok
+    if args_sqlitedb:
+        _conv_ok = (generer_sqlitedb_depuis_mbtiles(resultat, ecraser=True) is not None) and _conv_ok
+    if not _conv_ok:
+        print(f"  WARNING: conversion(s) failed for {resultat.name}; .mbtiles kept.")
+        print(f"  Done! Folder: {dossier_resultat}")
+        _historique_depuis_argv(int(time.time() - t_debut), dossier_resultat, statut="ko")
+        sys.exit(1)
+    # Miroir de --split (R2#6) : le mbtiles intermédiaire n'est retiré que si
+    # les conversions demandées ont réussi. `resultat not in fichiers` protège
+    # le cas dégénéré 1-seule-source (fusionner_mbtiles retourne alors la
+    # source elle-même, à ne jamais supprimer).
+    if not args_mbtiles and resultat not in fichiers and resultat.exists():
+        resultat.unlink()
+
+    print("\n  Merge done.")
+    print(f"  Done! Folder: {dossier_resultat}")
+    _historique_depuis_argv(int(time.time() - t_debut), dossier_resultat)
 
 
 # ── Persistence d'historique 'crash-safe' ──────────────────────────────────
@@ -7923,26 +8033,42 @@ def lancer_gui():
                 if _carte_v and cfg.get("tuiles_v") and cfg.get("simplif_v"):
                     cmd += ["--vector-simplify", str(cfg["simplif_v"])]
 
-            # ── Fusion ────────────────────────────────────────────────────
+            # ── Fusion (GeoJSON ou MBTiles selon les fichiers choisis) ──────
             elif t == "fusion":
                 cmd.append("--merge")
                 fichiers = cfg.get("fusion_fichiers", [])
                 if fichiers: cmd += ["--source"] + fichiers
                 nom = cfg.get("nom", "fusion") or "fusion"
-                # Extension du GeoJSON intermédiaire
-                ext = ".geojson" if cfg.get("fusion_gz2_raw") and not cfg.get("fusion_gz2", True) else ".geojson.gz"
-                # Dossier de sortie automatique : <Projets>/<nom>/fusion
-                sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion"
-                cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
-                fmts = []
-                if cfg.get("fusion_gz2", True):   fmts.append("gz")
-                if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
-                if cfg.get("fusion_map"):          fmts.append("map")
-                if cfg.get("fusion_transparent"):  fmts.append("transparent-raster")
-                if not fmts: fmts = ["gz"]
-                cmd += ["--file-formats"] + fmts
-                if cfg.get("fusion_map") and cfg.get("simplif_fusion"):
-                    cmd += ["--vector-simplify", str(cfg["simplif_fusion"])]
+                # Aiguillage sur l'extension, comme main_fusionner côté CLI :
+                # un seul onglet/flag « Fusion », deux livrables possibles.
+                _fusion_mbtiles = bool(fichiers) and all(
+                    f.lower().endswith(".mbtiles") for f in fichiers)
+                if _fusion_mbtiles:
+                    # Dossier de sortie automatique : <Projets>/<nom>/fusion_raster
+                    sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion_raster"
+                    cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion.mbtiles")]
+                    fmts = []
+                    if cfg.get("fusion_mbtiles", True): fmts.append("mbtiles")
+                    if cfg.get("fusion_rmap"):            fmts.append("rmap")
+                    if cfg.get("fusion_sqlitedb"):         fmts.append("sqlitedb")
+                    if not fmts: fmts = ["mbtiles"]
+                    cmd += ["--file-formats"] + fmts
+                    if cfg.get("fusion_ecraser"): cmd.append("--tiles-overwrite")
+                else:
+                    # Extension du GeoJSON intermédiaire
+                    ext = ".geojson" if cfg.get("fusion_gz2_raw") and not cfg.get("fusion_gz2", True) else ".geojson.gz"
+                    # Dossier de sortie automatique : <Projets>/<nom>/fusion
+                    sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion"
+                    cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
+                    fmts = []
+                    if cfg.get("fusion_gz2", True):   fmts.append("gz")
+                    if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
+                    if cfg.get("fusion_map"):          fmts.append("map")
+                    if cfg.get("fusion_transparent"):  fmts.append("transparent-raster")
+                    if not fmts: fmts = ["gz"]
+                    cmd += ["--file-formats"] + fmts
+                    if cfg.get("fusion_map") and cfg.get("simplif_fusion"):
+                        cmd += ["--vector-simplify", str(cfg["simplif_fusion"])]
 
             # ── Découpage raster (à posteriori) ──────────────────────────
             elif t == "decoupe":
@@ -8115,6 +8241,13 @@ def lancer_gui():
                 _lidar_subdir_cfg = f"lidar/{_cfg_country}"
                 _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
                              "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
+                # Fusion MBTiles : sous-dossier propre (fusion_raster), aligné sur
+                # celui écrit par _build_cmd (même détection par extension), sinon
+                # "Ouvrir le dossier" pointe vers fusion/ resté vide.
+                _fusion_fichiers_cfg = cfg.get("fusion_fichiers") or []
+                if t == "fusion" and _fusion_fichiers_cfg and all(
+                        str(f).lower().endswith(".mbtiles") for f in _fusion_fichiers_cfg):
+                    _type_dir["fusion"] = "fusion_raster"
                 if t == "decoupe" and cfg.get("source_decoupe"):
                     self._result_dir = str(Path(cfg["source_decoupe"]).parent)
                 elif cfg.get("dossier"):

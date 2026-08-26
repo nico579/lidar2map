@@ -690,7 +690,7 @@ class _FakeGrid:
 _prov0, _dl0, _delai0 = l2m.PROVIDER, l2m._download_to_tmp, l2m.DELAI_RETRY
 try:
     l2m.DELAI_RETRY = 0
-    l2m._download_to_tmp = lambda url, tmp, timeout=60: 0   # simule un 404
+    l2m._download_to_tmp = lambda url, tmp, timeout=60, **_kwargs: 0   # simule un 404
     with tempfile.TemporaryDirectory() as _d:
         _dos = Path(_d)
         l2m.PROVIDER = _FakeExact()

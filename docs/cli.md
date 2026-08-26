@@ -488,10 +488,17 @@ python lidar2map.py --vector --zone-city Gareoult --zone-width 5 \
 OsmAnd does not read Mapsforge `.map`; use `transparent-raster` as an overlay or
 its own built-in OSM map. Locus and OruxMaps can use the Mapsforge result.
 
-## Merge vector sources
+## Merge sources
 
-`--merge` combines `.geojson` and `.geojson.gz` sources, including shell globs.
-It adds a `source` property identifying the input file to merged features.
+`--merge` combines several files of the same kind into one, including shell
+globs: either `.geojson`/`.geojson.gz` sources, or `.mbtiles` sources. The
+kind is detected from the source extensions; mixing GeoJSON and MBTiles in
+one run is rejected.
+
+### GeoJSON sources
+
+Combines `.geojson` and `.geojson.gz` sources. It adds a `source` property
+identifying the input file to merged features.
 
 ```bash
 python lidar2map.py --merge \
@@ -502,7 +509,7 @@ python lidar2map.py --merge \
 | Option | Default / values | Meaning |
 |---|---|---|
 | `--source FILE...` | required | Input files; glob patterns are expanded by lidar2map when the shell does not expand them. |
-| `--output-file FILE` | derived beside first source | Explicit merged GeoJSON path. |
+| `--output-file FILE` | derived beside first source | Explicit merged output path. |
 | `--output-dir PATH` | first source directory | Directory used only when the output filename is automatic. |
 | `--no-gz` | off | Makes the automatic primary output `.geojson` instead of `.geojson.gz`. |
 | `--file-formats FMT...` | `gz` | Requests secondary `map` and/or `transparent-raster` output; `geojson`/`gz` describe vector formats, while `--no-gz` controls compression of the automatic primary file. |
@@ -520,6 +527,30 @@ python lidar2map.py --merge \
 
 A missing or unreadable input makes the run fail visibly even if a partial
 merged file could be written.
+
+### MBTiles sources
+
+Combines several MBTiles into one, for example two adjacent zones produced
+by separate runs. Bounds and the zoom range are the union of all sources;
+sources must share the same tile format (jpeg/png/webp). An overlapping tile
+is resolved by the last source listed in `--source`.
+
+```bash
+python lidar2map.py --merge \
+  --source zone_nord.mbtiles zone_sud.mbtiles \
+  --output-file departement_complet.mbtiles
+```
+
+| Option | Default / values | Meaning |
+|---|---|---|
+| `--source FILE...` | required | Input `.mbtiles` files; glob patterns are expanded by lidar2map when the shell does not expand them. |
+| `--output-file FILE` | derived beside first source | Explicit merged MBTiles path. |
+| `--output-dir PATH` | first source directory | Directory used only when the output filename is automatic. |
+| `--file-formats FMT...` | `mbtiles` | Keep the merge as `mbtiles` and/or convert it to `rmap` or `sqlitedb`. |
+| `--tiles-overwrite` | off | Replaces an existing merged output file. |
+
+If a conversion to `rmap`/`sqlitedb` fails, lidar2map keeps the intermediate
+MBTiles rather than deleting the only surviving data.
 
 ## Split an existing raster
 
@@ -559,7 +590,7 @@ than deleting the only surviving data.
 | `.mbtiles` | no area; explicit `--file-formats rmap` and/or `sqlitedb` | Direct conversion and exit. |
 | `.tif` / `.tiff` | an area; preferably `--lidar`; output formats explicit unless `--lidar` supplies the MBTiles default | Existing shading is tiled directly if EPSG:3857, otherwise warped to Web Mercator first. |
 | `.pbf` / `.osm` | `--osm` plus an area | Existing OSM data is filtered/rendered without automatic Geofabrik selection. |
-| multiple GeoJSON files | `--merge` | Vector merge. |
+| multiple GeoJSON files, or multiple MBTiles | `--merge` | Merge (vector or raster, see above). |
 
 Examples:
 

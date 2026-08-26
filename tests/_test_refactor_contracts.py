@@ -65,6 +65,7 @@ import _split_planning as split_planning  # noqa: E402
 import _split_runner as split_runner  # noqa: E402
 import _split_sliding as split_sliding  # noqa: E402
 import _split_mbtiles as split_mbtiles  # noqa: E402
+import _merge_mbtiles as merge_mbtiles  # noqa: E402
 import _deliverable_lifecycle as deliverable_lifecycle  # noqa: E402
 import _provider_runtime as provider_runtime  # noqa: E402
 import _zone_cli as zone_cli  # noqa: E402
@@ -573,6 +574,211 @@ class SplitMbtilesExtractionContractTests(unittest.TestCase):
                 )
             self.assertEqual(previous.read_bytes(), b"previous-complete-chunk")
             self.assertFalse(list(output_dir.glob("*.part")))
+
+
+class MergeMbtilesExtractionContractTests(unittest.TestCase):
+    """Contrats de la fusion MBTiles postérieure (--merge, GB#1 follow-up)."""
+
+    def _deps(self, **overrides):
+        values = {
+            "chemin_part": L._chemin_part,
+            "nettoyer_sqlite_part": L._nettoyer_sqlite_part,
+            "valider_sqlite_part": L._valider_sqlite_part,
+            "sqlite_connect": sqlite3.connect,
+        }
+        values.update(overrides)
+        return merge_mbtiles.DependancesFusionMbtiles(**values)
+
+    def _create_source(self, path, *, bounds, zoom, tiles, fmt="png",
+                        attribution="test attribution"):
+        connection = sqlite3.connect(str(path))
+        connection.executescript(
+            "CREATE TABLE metadata (name TEXT, value TEXT);"
+            "CREATE TABLE tiles (zoom_level INTEGER, tile_column INTEGER,"
+            " tile_row INTEGER, tile_data BLOB);"
+        )
+        metadata = {
+            "name": path.stem,
+            "format": fmt,
+            "minzoom": str(zoom),
+            "maxzoom": str(zoom),
+            "bounds": bounds,
+            "attribution": attribution,
+        }
+        connection.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
+        connection.executemany(
+            "INSERT INTO tiles VALUES (?, ?, ?, ?)",
+            [(zoom, x, y, data) for x, y, data in tiles],
+        )
+        connection.commit()
+        connection.close()
+
+    def test_facade_keeps_signature_and_rebuilds_dependencies(self):
+        marker = object()
+        stage = mock.Mock()
+        cleanup = mock.Mock()
+        validator = mock.Mock()
+        connect = mock.Mock()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(L, "_chemin_part", stage))
+            stack.enter_context(
+                mock.patch.object(L, "_nettoyer_sqlite_part", cleanup)
+            )
+            stack.enter_context(
+                mock.patch.object(L, "_valider_sqlite_part", validator)
+            )
+            stack.enter_context(mock.patch.object(L.sqlite3, "connect", connect))
+            implementation = stack.enter_context(
+                mock.patch.object(L, "_fusionner_mbtiles_impl", return_value=marker)
+            )
+            result = L.fusionner_mbtiles(
+                [Path("a.mbtiles"), Path("b.mbtiles")], Path("out.mbtiles"), True
+            )
+        self.assertIs(result, marker)
+        dependencies = implementation.call_args.kwargs["dependances"]
+        self.assertIs(dependencies.chemin_part, stage)
+        self.assertIs(dependencies.nettoyer_sqlite_part, cleanup)
+        self.assertIs(dependencies.valider_sqlite_part, validator)
+        self.assertIs(dependencies.sqlite_connect, connect)
+        self.assertEqual(
+            str(inspect.signature(L.fusionner_mbtiles)),
+            "(sources, sortie, ecraser=False)",
+        )
+
+    def test_no_source_is_reported_and_returns_none(self):
+        dependencies = SimpleNamespace()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = merge_mbtiles.fusionner_mbtiles(
+                [], Path("out.mbtiles"), dependances=dependencies
+            )
+        self.assertIsNone(result)
+        self.assertIn("no source", output.getvalue())
+
+    def test_single_source_is_noop_passthrough(self):
+        source = Path("only.mbtiles")  # jamais créé : le passthrough ne le lit pas
+        dependencies = SimpleNamespace()
+        result = merge_mbtiles.fusionner_mbtiles(
+            [source], Path("out.mbtiles"), dependances=dependencies
+        )
+        self.assertIs(result, source)
+
+    def test_missing_source_is_reported_and_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            present = root / "present.mbtiles"
+            self._create_source(present, bounds="-1,-1,1,1", zoom=5,
+                                tiles=[(1, 1, b"x")])
+            missing = root / "missing.mbtiles"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = merge_mbtiles.fusionner_mbtiles(
+                    [present, missing], root / "out.mbtiles",
+                    dependances=self._deps(),
+                )
+            self.assertIsNone(result)
+            self.assertIn("not found", output.getvalue())
+
+    def test_existing_output_without_overwrite_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = root / "a.mbtiles"
+            b = root / "b.mbtiles"
+            self._create_source(a, bounds="-1,-1,0,0", zoom=5, tiles=[(1, 1, b"a")])
+            self._create_source(b, bounds="0,0,1,1", zoom=5, tiles=[(2, 2, b"b")])
+            out = root / "out.mbtiles"
+            out.write_bytes(b"already-there")
+            result = merge_mbtiles.fusionner_mbtiles(
+                [a, b], out, dependances=self._deps()
+            )
+            self.assertEqual(result, out)
+            self.assertEqual(out.read_bytes(), b"already-there")
+
+    def test_merge_unions_bounds_zoom_and_keeps_first_source_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            north = root / "north.mbtiles"
+            south = root / "south.mbtiles"
+            self._create_source(
+                north, bounds="-1,0,1,2", zoom=5, tiles=[(1, 1, b"n")],
+                attribution="north attribution",
+            )
+            self._create_source(
+                south, bounds="-1,-2,1,0", zoom=6, tiles=[(2, 2, b"s")],
+            )
+            out = root / "out.mbtiles"
+            result = merge_mbtiles.fusionner_mbtiles(
+                [north, south], out, ecraser=True, dependances=self._deps()
+            )
+            self.assertEqual(result, out)
+            connection = sqlite3.connect(str(out))
+            metadata = dict(connection.execute("SELECT name, value FROM metadata"))
+            rows = connection.execute(
+                "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
+                " ORDER BY zoom_level"
+            ).fetchall()
+            connection.close()
+            self.assertEqual(metadata["bounds"], "-1.000000,-2.000000,1.000000,2.000000")
+            self.assertEqual(metadata["minzoom"], "5")
+            self.assertEqual(metadata["maxzoom"], "6")
+            self.assertEqual(metadata["attribution"], "north attribution")
+            self.assertEqual(rows, [(5, 1, 1, b"n"), (6, 2, 2, b"s")])
+
+    def test_overlapping_tile_last_source_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.mbtiles"
+            second = root / "second.mbtiles"
+            self._create_source(first, bounds="-1,-1,1,1", zoom=5,
+                                tiles=[(3, 3, b"first")])
+            self._create_source(second, bounds="-1,-1,1,1", zoom=5,
+                                tiles=[(3, 3, b"second")])
+            out = root / "out.mbtiles"
+            merge_mbtiles.fusionner_mbtiles(
+                [first, second], out, ecraser=True, dependances=self._deps()
+            )
+            connection = sqlite3.connect(str(out))
+            data = connection.execute(
+                "SELECT tile_data FROM tiles"
+                " WHERE zoom_level=5 AND tile_column=3 AND tile_row=3"
+            ).fetchone()[0]
+            connection.close()
+            self.assertEqual(data, b"second")
+
+    def test_mixed_formats_are_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = root / "a.mbtiles"
+            b = root / "b.mbtiles"
+            self._create_source(a, fmt="png", bounds="-1,-1,0,0", zoom=5,
+                                tiles=[(1, 1, b"a")])
+            self._create_source(b, fmt="jpeg", bounds="0,0,1,1", zoom=5,
+                                tiles=[(2, 2, b"b")])
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = merge_mbtiles.fusionner_mbtiles(
+                    [a, b], root / "out.mbtiles", dependances=self._deps()
+                )
+            self.assertIsNone(result)
+            self.assertIn("mixed tile formats", output.getvalue())
+
+    def test_validation_failure_cleans_part_and_leaves_no_output(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            a = root / "a.mbtiles"
+            b = root / "b.mbtiles"
+            self._create_source(a, bounds="-1,-1,0,0", zoom=5, tiles=[(1, 1, b"a")])
+            self._create_source(b, bounds="0,0,1,1", zoom=5, tiles=[(2, 2, b"b")])
+            out = root / "out.mbtiles"
+            dependencies = self._deps(
+                valider_sqlite_part=mock.Mock(side_effect=ValueError("invalid"))
+            )
+            with self.assertRaisesRegex(ValueError, "invalid"):
+                merge_mbtiles.fusionner_mbtiles(
+                    [a, b], out, ecraser=True, dependances=dependencies
+                )
+            self.assertFalse(out.exists())
+            self.assertFalse(list(root.glob("*.part")))
 
 
 class DeliverableLifecycleExtractionContractTests(unittest.TestCase):

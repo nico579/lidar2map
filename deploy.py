@@ -73,6 +73,7 @@ MAP = {
     "_split_runner.py":              "_split_runner.py",
     "_split_sliding.py":             "_split_sliding.py",
     "_split_mbtiles.py":             "_split_mbtiles.py",
+    "_merge_mbtiles.py":             "_merge_mbtiles.py",
     "_deliverable_lifecycle.py":     "_deliverable_lifecycle.py",
     "_provider_runtime.py":          "_provider_runtime.py",
     "_zone_cli.py":                  "_zone_cli.py",
@@ -203,6 +204,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_mbtiles_wmts.py"
         or name == "_mbtiles_lidar.py"
         or name == "_mbtiles_wmts_helpers.py"
+        or name == "_merge_mbtiles.py"
         or name == "_ombrages_pures.py"
         or name == "_ombrages_provider.py"
         or name == "_shading_specs.py"

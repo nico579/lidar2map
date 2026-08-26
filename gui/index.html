@@ -276,7 +276,7 @@
      <input type="radio" name="type" id="t-vecteur" value="vecteur">
      <label for="t-vecteur" data-i18n="t.vect">Vectoriel</label>
      <input type="radio" name="type" id="t-fusion"  value="fusion">
-     <label for="t-fusion" data-i18n="t.fusion">Fusion vectorielle</label>
+     <label for="t-fusion" data-i18n="t.fusion">Fusion</label>
      <input type="radio" name="type" id="t-decoupe" value="decoupe">
      <label for="t-decoupe" data-i18n="t.decoupe">Découpage raster</label>
     </div>
@@ -719,9 +719,13 @@
   </div>
 
   <!-- ═══ FUSION ═══ -->
+  <!-- Un seul onglet pour fusionner du GeoJSON ou du MBTiles : la liste se
+       verrouille sur la famille du 1er fichier ajouté (fusionAjouter), et
+       la ligne de formats affichée suit cette famille (cf. applyFusionFamille
+       dans app.js). Miroir du choix fait côté CLI dans main_fusionner. -->
   <div id="sec-fusion" class="hidden">
    <div class="section">
-    <div class="section-hd" data-i18n="sec.fusion">Fichiers GeoJSON à fusionner</div>
+    <div class="section-hd" data-i18n="sec.fusion">Fichiers à fusionner</div>
     <div class="section-body">
      <div id="fusion-list"></div>
      <div class="row" style="margin-top:4px">
@@ -730,7 +734,7 @@
       <button class="btn btn-sm" onclick="fusionVider()" data-i18n="clear">✕ Vider</button>
       <span class="hint" style="margin-left:8px" data-i18n="extsel">Sélection étendue (Shift/Ctrl)</span>
      </div>
-     <div class="row">
+     <div class="row" id="row-fmt-fusion-vecteur">
       <label data-i18n="fmt">Format :</label>
       <div class="cb-group">
        <label><input type="checkbox" id="f-fusion-gz2" checked> .geojson.gz</label>
@@ -738,6 +742,15 @@
        <label title="Tuiles PNG transparentes (.sqlitedb) pour superposer le vecteur fusionné dans OsmAnd par-dessus le LiDAR"><input type="checkbox" id="f-fusion-transparent"> transparent-raster (.sqlitedb OsmAnd)</label>
        <label><input type="checkbox" id="f-fusion-map"> <span data-i18n="fmt.mapsforge">Mapsforge (.map)</span></label>
       </div>
+     </div>
+     <div class="row hidden" id="row-fmt-fusion-raster">
+      <label data-i18n="fmt">Format :</label>
+      <div class="cb-group">
+       <label><input type="checkbox" id="f-fusion-mbtiles" checked> MBTiles (Locus, OsmAnd)</label>
+       <label><input type="checkbox" id="f-fusion-rmap"> RMAP (TwoNav)</label>
+       <label><input type="checkbox" id="f-fusion-sqlitedb"> SQLiteDB (OsmAnd)</label>
+      </div>
+      <label style="min-width:auto;margin-left:16px"><input type="checkbox" id="f-fusion-ecraser"> <span data-i18n="ovr.short">Écraser</span></label>
      </div>
      <!-- `class` était déclaré DEUX fois ici : le second (hidden) était ignoré
           par le navigateur, la ligne était donc visible avant le premier
