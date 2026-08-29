@@ -1721,28 +1721,8 @@ def _departements_de_region(slug):
 ELEVATION_SOLEIL = 25   # degrés — 25° révèle micro-reliefs ; 45° usage général
 
 def _valider_zooms(args, parser):
-    """Vérifie zoom_min ≤ zoom_max avant lancement du pipeline.
-
-    Sans ce check, l'utilisateur qui saisit `--zoom-min 18 --zoom-max 13`
-    voit un calculer_grille_xyz() vide et un MBTiles à 0 tuile sans message
-    d'erreur, ou pire (sur dept-scale) tourne longtemps sur des plages
-    invalides avant de produire un fichier vide. parser.error() affiche un
-    message argparse standard et sort en code 2.
-    """
-    zmin = getattr(args, "zoom_min", None)
-    zmax = getattr(args, "zoom_max", None)
-    if zmin is None or zmax is None:
-        return
-    if zmin > zmax:
-        parser.error(
-            f"--zoom-min ({zmin}) > --zoom-max ({zmax}). "
-            f"Inversez les valeurs ou retirez l'un des deux pour utiliser le défaut."
-        )
-    if zmin < 0 or zmax > 22:
-        parser.error(
-            f"Zoom hors plage : --zoom-min={zmin} --zoom-max={zmax} "
-            f"(valeurs valides : 0 à 22)."
-        )
+    """Façade historique vers la validation extraite des zooms."""
+    return _valider_zooms_impl(args, parser)
 
 
 # Cache des Transformer pyproj : leur création prend ~10 ms (lecture proj.db,
@@ -3386,6 +3366,12 @@ from _terrain_cli import (
     appliquer_defauts_cli_lidar as _appliquer_defauts_cli_lidar_impl,
     construire_parser_lidar as _construire_parser_lidar_impl,
 )
+from _terrain_run import (
+    DependancesPreparationRunLidar as _DependancesPreparationRunLidar,
+    preparer_run_lidar as _preparer_run_lidar_impl,
+    valider_contrat_cli_lidar as _valider_contrat_cli_lidar_impl,
+    valider_zooms as _valider_zooms_impl,
+)
 
 
 def _appliquer_defauts_cli_lidar(args):
@@ -3394,28 +3380,14 @@ def _appliquer_defauts_cli_lidar(args):
 
 
 def _valider_contrat_cli_lidar(args, parser, *, provider_explicit=None):
-    """Valide les paramètres qui rendent un run LiDAR reproductible.
-
-    Le provider ne doit pas dépendre d'un défaut géographique implicite. Une
-    ville ou un point GPS définit un centre, pas une emprise : sa largeur est
-    donc obligatoire. Les zones surfaciques (bbox, département, région) sont
-    déjà entièrement définies et n'ont pas besoin de ``--zone-width``.
-    """
-    if not getattr(args, "ignlidar", False):
-        return
+    """Façade historique vers le contrat CLI LiDAR extrait."""
     if provider_explicit is None:
         provider_explicit = _PROVIDER_CLI_EXPLICIT
-    if not provider_explicit:
-        parser.error(
-            "--provider is required with --lidar "
-            "(for example: --provider fr-ign)"
-        )
-    if ((getattr(args, "zone_ville", None)
-         or getattr(args, "zone_gps", None))
-            and getattr(args, "zone_width", None) is None):
-        parser.error(
-            "--zone-width is required with --zone-city or --zone-gps"
-        )
+    return _valider_contrat_cli_lidar_impl(
+        args,
+        parser,
+        provider_explicit=provider_explicit,
+    )
 
 
 def _construire_parser_lidar():
@@ -3434,6 +3406,33 @@ def _construire_parser_lidar():
             elevation_soleil=ELEVATION_SOLEIL,
             svf_gamma=SVF_GAMMA,
         ),
+    )
+
+
+def _dependances_preparation_run_lidar():
+    """Reconstruit tardivement les coutures de préparation du run."""
+    return _DependancesPreparationRunLidar(
+        zone_cli_presente=_zone_cli_presente,
+        valider_contrat_cli_lidar=_valider_contrat_cli_lidar,
+        appliquer_defauts_cli_lidar=_appliquer_defauts_cli_lidar,
+        valider_zooms=_valider_zooms,
+        appliquer_cache_dir=_appliquer_cache_dir,
+        appliquer_production_dir=_appliquer_production_dir,
+        configurer_cloud_cache=_configurer_cloud_cache,
+        parser_shading_spec=parser_shading_spec,
+        resoudre_preset_shading=_resoudre_preset_shading,
+        resolution_m=RESOLUTION_M,
+        provider=PROVIDER,
+        imprimer=print,
+    )
+
+
+def _preparer_run_lidar(args, parser):
+    """Façade compatible vers la préparation du run LiDAR extraite."""
+    return _preparer_run_lidar_impl(
+        args,
+        parser,
+        dependances=_dependances_preparation_run_lidar(),
     )
 
 
@@ -3465,6 +3464,10 @@ from _terrain_resolution import (
     DependancesResolutionTerrain as _DependancesResolutionTerrain,
     resoudre_zone_lidar as _resoudre_zone_lidar_impl,
 )
+from _terrain_acquisition import (
+    DependancesAcquisitionTerrain as _DependancesAcquisitionTerrain,
+    acquerir_dalles_terrain as _acquerir_dalles_terrain_impl,
+)
 
 
 def _resoudre_zone_lidar(args, _osm_seul):
@@ -3488,6 +3491,131 @@ def _resoudre_zone_lidar(args, _osm_seul):
             parse_block=_parse_block,
             calculer_sous_zones_priori=_calculer_sous_zones_priori,
         ),
+    )
+
+
+def _dependances_acquisition_terrain():
+    """Reconstruit tardivement les coutures de l'acquisition terrain."""
+    return _DependancesAcquisitionTerrain(
+        provider=PROVIDER,
+        dossier_cache=DOSSIER_CACHE,
+        get_transformer=_get_transformer,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        rglob_tif_robuste=_rglob_tif_robuste,
+        seuil_dalle_valide=SEUIL_DALLE_VALIDE,
+        telecharger_dalles_zone=_telecharger_dalles_zone,
+        dalles_zone_hdr_ok=_dalles_zone_hdr_ok,
+        ecrire_dalles_zone=_ecrire_dalles_zone,
+        historique_depuis_argv=_historique_depuis_argv,
+        maintenant=time.time,
+        imprimer=print,
+        quitter=sys.exit,
+    )
+
+
+def _acquerir_dalles_terrain(
+    args,
+    bbox,
+    nom_zone,
+    dossier_dalles,
+    dossier_ville,
+    _osm_seul,
+    t_debut,
+):
+    """Façade compatible vers l'acquisition monolithique extraite."""
+    return _acquerir_dalles_terrain_impl(
+        args,
+        bbox,
+        nom_zone,
+        dossier_dalles,
+        dossier_ville,
+        _osm_seul,
+        t_debut,
+        dependances=_dependances_acquisition_terrain(),
+    )
+
+
+from _terrain_outputs import (
+    DependancesSortiesTerrain as _DependancesSortiesTerrain,
+    produire_sorties_terrain as _produire_sorties_terrain_impl,
+)
+
+
+def _dependances_sorties_terrain():
+    """Reconstruit tardivement les coutures de production terrain."""
+    return _DependancesSortiesTerrain(
+        resoudre_choix_ombrages=_resoudre_choix_ombrages,
+        elevation_soleil=ELEVATION_SOLEIL,
+        generer_ombrages=generer_ombrages,
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        generer_mbtiles_lidar=generer_mbtiles_lidar,
+        tile_workers_defaut=_tile_workers_defaut,
+        convertir_formats=_convertir_formats,
+        lister_tifs_ombrages=_lister_tifs_ombrages,
+        tuiler_tifs_ombrages=_tuiler_tifs_ombrages,
+        charger_rasterio=lambda: __import__("rasterio"),
+        chemin_part=_chemin_part,
+        publier_tif_atomique=_publier_tif_atomique,
+        maintenant=time.time,
+        formater_duree=_hms,
+        imprimer=print,
+    )
+
+
+def _produire_sorties_terrain(
+    args,
+    dalles_ombrages,
+    dossier_ville,
+    nom_zone,
+    bbox,
+    annoncer_etape,
+):
+    """Façade compatible vers la production terrain monolithique extraite."""
+    return _produire_sorties_terrain_impl(
+        args,
+        dalles_ombrages,
+        dossier_ville,
+        nom_zone,
+        bbox,
+        annoncer_etape,
+        dependances=_dependances_sorties_terrain(),
+    )
+
+
+from _osm_acquisition import (
+    DependancesAcquisitionOsm as _DependancesAcquisitionOsm,
+    acquerir_source_osm as _acquerir_source_osm_impl,
+)
+
+
+def _dependances_acquisition_osm():
+    """Reconstruit tardivement les coutures d'acquisition du PBF OSM."""
+    return _DependancesAcquisitionOsm(
+        provider=PROVIDER,
+        geofabrik=_GEOFABRIK,
+        geofabrik_base_url=_GEOFABRIK_BASE_URL,
+        geofabrik_base_url_root=_GEOFABRIK_BASE_URL_ROOT,
+        dossier_cache=DOSSIER_CACHE,
+        lamb93_vers_wgs84=lamb93_to_wgs84_approx,
+        urlopen=_urlopen,
+        charger_json=json.loads,
+        maintenant=time.time,
+        arret_demande=_stop_event.is_set,
+        journaliser_requete=_log_req,
+        formater_duree=_hms,
+        sortie=sys.stdout,
+        ouvrir_fichier=open,
+        imprimer=print,
+    )
+
+
+def _acquerir_source_osm(args, cx, cy):
+    """Façade compatible vers l'acquisition de la source PBF extraite."""
+    return _acquerir_source_osm_impl(
+        args,
+        cx,
+        cy,
+        dependances=_dependances_acquisition_osm(),
     )
 
 
@@ -3518,6 +3646,34 @@ def _produire_sorties_osm(bbox_wgs84, dossier, nom_zone, osm_pbf, *,
 _produire_sorties_osm.__doc__ = _produire_sorties_osm_impl.__doc__
 
 
+from _osm_run import (
+    DependancesRunOsm as _DependancesRunOsm,
+    executer_run_osm as _executer_run_osm_impl,
+)
+
+
+def _dependances_run_osm():
+    """Reconstruit tardivement les coutures du passage OSM post-acquisition."""
+    return _DependancesRunOsm(
+        dossier_travail=DOSSIER_TRAVAIL,
+        bbox_enveloppe_transform=_bbox_enveloppe_transform,
+        natif_vers_wgs84=_natif_vers_wgs84,
+        produire_sorties_osm=_produire_sorties_osm,
+        imprimer=print,
+    )
+
+
+def _executer_run_osm(args, bbox, nom_zone, pbf):
+    """Façade compatible vers l'orchestration OSM finale extraite."""
+    return _executer_run_osm_impl(
+        args,
+        bbox,
+        nom_zone,
+        pbf,
+        dependances=_dependances_run_osm(),
+    )
+
+
 def main():
     t_debut = time.time()
     parser = _construire_parser_lidar()
@@ -3527,73 +3683,7 @@ def main():
         sys.exit(0)
 
     args = parser.parse_args()
-
-    # Contrat CLI utile et minimal : un workflow explicite + une zone suffit.
-    # Les conversions --source constituent leur propre intention et restent
-    # utilisables sans --lidar. --osm est géré dans ce même parser.
-    if not args.ignlidar and not args.osm and not args.source:
-        parser.error("choose a workflow: --lidar or --osm (or pass --source for a conversion)")
-
-    _valider_contrat_cli_lidar(args, parser)
-
-    _source_ext_cli = Path(args.source).suffix.lower() if args.source else ""
-    if (not _zone_cli_presente(args)
-            and _source_ext_cli not in (".mbtiles",)):
-        parser.error(
-            "one geographic area is required: --zone-city, --zone-gps, "
-            "--zone-bbox, --zone-department, or --zone-region"
-        )
-
-    _appliquer_defauts_cli_lidar(args)
-
-    _valider_zooms(args, parser)
-    _appliquer_cache_dir(args)   # avant tout accès au cache (dalles, discover, osm)
-    _appliquer_production_dir(args)   # racine des .tif LAZ (produits)
-    _configurer_cloud_cache(args)     # nuage .laz au cache, .tif en production
-
-    # --shading TYPE:k=v répétable → instances paramétrées. Les types sont
-    # reflétés dans args.ombrages pour que les gates existants (qui testent
-    # la présence d'ombrages demandés) voient ces instances ; au dispatch,
-    # les types couverts par une instance explicite sont RETIRÉS de choix
-    # (sinon ils seraient aussi générés aux params par défaut).
-    args.shading_instances = None
-    if getattr(args, "shading_specs", None):
-        _insts = []
-        for _spec in args.shading_specs:
-            try:
-                _insts.append(parser_shading_spec(_spec))
-            except ValueError as _e_spec:
-                parser.error(f"--shading : {_e_spec}")
-        args.shading_instances = _insts
-        args.ombrages = list(dict.fromkeys(
-            (args.ombrages or []) + [t for t, _ in _insts]))
-
-    # Preset de stack par resolution (opt-in) : ajoute svf/opos/lrm dimensionnes
-    # en metres pour la resolution du provider (+ multi/slope), via le meme
-    # mecanisme d'instances (nommage/cache preserves). Les types couverts par une
-    # instance ne sont pas re-generes aux params par defaut (cf. dispatch).
-    if getattr(args, "shading_preset", None):
-        _pname, _pinsts, _pelev = _resoudre_preset_shading(args.shading_preset, RESOLUTION_M)
-        args.shading_instances = (args.shading_instances or []) + _pinsts
-        args.ombrages = list(dict.fromkeys(
-            (args.ombrages or []) + ["multi", "slope"] + [t for t, _ in _pinsts]))
-        if args.ombrages_elevation is None:
-            args.ombrages_elevation = _pelev
-        _pd = _pinsts[0][1]["dist"]; _ps = _pinsts[2][1]["sigma"]
-        print(f"  Shadings preset '{_pname}' (res {RESOLUTION_M:g} m): "
-              f"svf/opos radius {_pd:g} m, lrm sigma {_ps:g} m, sun "
-              f"{args.ombrages_elevation}°")
-
-    # Propage --apikey au provider actif s'il en utilise une (us-3dep, etc.).
-    if hasattr(PROVIDER, "set_apikey"):
-        PROVIDER.set_apikey(args.apikey)
-
-    # Résolution --formats-fichier → flags booléens
-    _ff = args.formats_fichier
-    args.mbtiles  = "mbtiles"  in _ff
-    args.rmap     = "rmap"     in _ff
-    args.sqlitedb = "sqlitedb" in _ff
-    args.transparent_raster = "transparent-raster" in _ff
+    _preparer_run_lidar(args, parser)
 
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     # Si le pipeline crashe, l'entrée reste → diagnostic facile.
@@ -3814,359 +3904,31 @@ def main():
         else:
             print("  No out-of-zone tile found.")
 
-    # -------------------------------------------------------
-    # Découverte des dalles via le provider — source de vérité unifiée
-    # -------------------------------------------------------
-    # Calculé une fois ici, utilisé par la cache-check ET le download.
-    # Pour FR : TMS + fallback grille → dict {nom: url}.
-    # Pour NL : index JSON kaartbladen → dict {nom: url}.
-    # Provider-agnostique : aucune hypothèse sur la géométrie des tuiles.
-    # OSM-seul : aucune dalle LiDAR nécessaire — NE PAS interroger le provider
-    # (discover_dalles déclenche une requête TMS coûteuse : une région entière =
-    # des milliers de tuiles d'index pour rien). La section OSM recalcule sa
-    # propre bbox WGS84 plus bas, donc bbox_wgs peut rester None ici.
-    if _osm_seul:
-        bbox_wgs = None
-        dalles_dict = {}
-        noms_attendus = set()
-    else:
-        _t_wgs = _get_transformer(PROVIDER.CRS_NATIF, "EPSG:4326")
-        _lo1, _la1, _lo2, _la2 = _bbox_enveloppe_transform(
-            _t_wgs.transform, bbox[0], bbox[1], bbox[2], bbox[3])
-        bbox_wgs = (_lo1 - 0.05, _la1 - 0.05, _lo2 + 0.05, _la2 + 0.05)
-        # Cache per-provider : schemas incompatibles (TMS dict vs GeoJSON, etc.).
-        cache_discover = DOSSIER_CACHE / f"discover_{PROVIDER.CODE}.json"
-        # discover_dalles : None = échec réseau/endpoint, {} = pas de couverture.
-        # On distingue les deux (sinon une panne de portail ressemble à "rien
-        # ici") et on protège l'appel : un provider qui lève ne doit pas casser
-        # tout le run, juste signaler la zone comme indisponible.
-        try:
-            _d = PROVIDER.discover_dalles(bbox_wgs, bbox, cache_discover)
-            if _d is None:
-                print("  ⚠ Tile discovery unavailable (network/endpoint),"
-                      " zone skipped, retry.", flush=True)
-        except Exception as _e_disc:
-            print(f"  ⚠ Tile discovery failed ({type(_e_disc).__name__}:"
-                  f" {_e_disc}), zone skipped, retry.", flush=True)
-            _d = None
-        dalles_dict = _d or {}
-        noms_attendus = set(dalles_dict.keys())
-
-        # Aucune dalle pour cette zone quand --download est demande :
-        #   _d is None  -> echec reseau/endpoint (deja signale "reessayez")
-        #   _d == {}     -> zone hors couverture (resultat legitime, ex. IGN
-        #                   LiDAR HD non publie : le TMS n'indexe rien)
-        # Rien a telecharger ni a assembler : on sort ici plutot que de laisser
-        # le pipeline planter plus loin sur dalles_zone.txt absent.
-        if args.telechargement and not dalles_dict and not args.source:
-            _duree_decouverte = max(0, int(time.time() - t_debut))
-            if _d is None:
-                _historique_depuis_argv(
-                    _duree_decouverte, str(dossier_ville), statut="ko")
-                sys.exit(1)   # echec transitoire : code non-zero (re-tenter)
-            print("  No LiDAR tile for this zone (out of coverage), "
-                  "nothing to download.")
-            print(f"  Done! Folder: {dossier_ville}")
-            _historique_depuis_argv(
-                _duree_decouverte, str(dossier_ville), statut="ok")
-            return
-
-    # -------------------------------------------------------
-    # Détecter si on peut sauter le téléchargement
-    # -------------------------------------------------------
-    sauter_telechargement = False
-
-    # Si seul --osm est demandé (pas --ignlidar, pas d'ombrages, pas de mbtiles LiDAR)
-    # on peut passer directement à la partie OSM sans vérifier les dalles
-    if _osm_seul:
-        sauter_telechargement = True
-
-    # Tuiles seules (pas de téléchargement, pas d'ombrages) : pas besoin des dalles
-    if not args.telechargement and not args.ombrages:
-        sauter_telechargement = True
-
-    if not sauter_telechargement and not args.telechargement:
-        # --source .tif ou .mbtiles : pas besoin des dalles IGN
-        if args.source and Path(args.source).suffix.lower() in (".tif", ".tiff", ".mbtiles"):
-            sauter_telechargement = True
-        else:
-            dalles_existantes = _rglob_tif_robuste(dossier_dalles) if dossier_dalles.exists() else []
-            if not dalles_existantes:
-                print("\n  WARNING: downloads are disabled and no cached tile was found.")
-                print(f"  Tiles folder : {dossier_dalles}")
-                print("  Remove --no-download (normal --lidar default), or add "
-                      "--download to a maintenance command.")
-                sys.exit(1)
-            # Vérification zone-spécifique : parmi les dalles du cache, combien
-            # couvrent réellement la zone demandée ? Le cache peut contenir des
-            # dalles d'autres zones (autres tests précédents). Si aucune dalle
-            # ne couvre la zone, on plante avec un message clair plutôt que de
-            # laisser le pipeline continuer puis échouer plus loin.
-            if noms_attendus:  # discover_dalles a retourné une liste non-vide
-                dalles_zone_cache = [d for d in dalles_existantes
-                                     if d.name in noms_attendus
-                                     and d.stat().st_size > SEUIL_DALLE_VALIDE]
-                if not dalles_zone_cache:
-                    print(f"\n  WARNING: {len(dalles_existantes)} tile(s) in cache,")
-                    print("              but NONE covers the requested zone.")
-                    print(f"  Global cache: {dossier_dalles}")
-                    libelle_zone = args.zone_ville or nom_zone
-                    print(f"  Requested zone: {len(noms_attendus)} tile(s) around "
-                          f"{libelle_zone}")
-                    print("  Remove --no-download (normal --lidar default), or add "
-                          "--download to a maintenance command.")
-                    sys.exit(1)
-                print(f"\n  Download skipped "
-                      f"({len(dalles_zone_cache)}/{len(noms_attendus)} zone tile(s) found in cache)")
-            else:
-                # Provider sans index pour cette bbox (cas dégradé) : juste compter
-                print(f"\n  Download skipped ({len(dalles_existantes)} tile(s) in cache)")
-            sauter_telechargement = True
-
-    # -------------------------------------------------------
-    # Téléchargement + assemblage (pivoté sur PROVIDER.discover_dalles)
-    # -------------------------------------------------------
-    if not sauter_telechargement:
-        # dalles_dict a déjà été calculé plus haut via PROVIDER.discover_dalles.
-        # Orchestration download + persistance via le helper provider-agnostique.
-        _telecharger_dalles_zone(dalles_dict, bbox, dossier_dalles, dossier_ville, args)
-
-    # -------------------------------------------------------
-    # Ombrages
-    # -------------------------------------------------------
-    # Dalles disponibles pour les ombrages :
-    # 1. Seulement les dalles de la zone courante (filtre par nom)
-    # 2. Seulement les fichiers valides (≥ 50 MB)
-    # Le dossier dalles est global — sans filtrage par zone, le VRT couvrirait
-    # tous les départements présents et le hillshade serait énorme ou en erreur.
-    if dossier_dalles.exists() and not _osm_seul:
-        # _osm_seul court-circuité ici : sa bbox vaut le sentinel (0,0,0,0), qui ne
-        # matcherait jamais l'en-tête d'un dalles_zone.txt existant et déclencherait
-        # sa suppression (revue code mort 2026-07-22, #21). L'OSM-seul n'a de toute
-        # façon aucun ombrage LiDAR à assembler → dalles_ombrages = [] (branche else).
-        dalles_zone_txt = dossier_ville / "dalles_zone.txt"
-        noms_zone = set()  # initialisé ici — peut rester vide en mode OSM seul
-        if dalles_zone_txt.exists():
-            # Vérifier que l'en-tête (bbox + provider) correspond au run courant
-            _lignes = dalles_zone_txt.read_text(encoding="utf-8").splitlines()
-            _bbox_courante = f"# bbox:{bbox[0]:.0f},{bbox[1]:.0f},{bbox[2]:.0f},{bbox[3]:.0f}"
-            _bbox_fichier  = _lignes[0].strip() if _lignes else ""
-            if not _dalles_zone_hdr_ok(_lignes, bbox):
-                print(f"  Zone/provider changed - rebuilding {dalles_zone_txt.name} from cache...")
-                print(f"    Ancienne bbox : {_bbox_fichier}")
-                print(f"    Nouvelle bbox : {_bbox_courante}")
-                # Reconstruire depuis le cache disque sans retélécharger.
-                # noms_attendus vient de PROVIDER.discover_dalles (provider-agnostique).
-                toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
-                noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
-                if noms_zone:
-                    _ecrire_dalles_zone(
-                        dalles_zone_txt, bbox, noms_zone
-                    )
-                    print(f"  {dalles_zone_txt.name} rebuilt: {len(noms_zone)} tile(s) in cache")
-                else:
-                    # L'ancien fichier porte un en-tête différent et sera donc
-                    # ignoré, mais on ne le détruit pas tant qu'aucune nouvelle
-                    # liste complète n'a pu être publiée.
-                    print("  No tile in cache for this zone - enable downloads")
-                    noms_zone = set()
-            else:
-                noms_zone = {n.strip() for n in _lignes[1:] if n.strip() and not n.startswith("#")}
-                print(f"  Zone tiles list: {dalles_zone_txt.name} ({len(noms_zone)} tiles)")
-        elif not args.telechargement and noms_attendus:
-            # Si seul --osm demandé, pas besoin des dalles
-            if args.osm and not args.ombrages and not args.mbtiles:
-                pass  # on ne cherche pas les dalles
-            else:
-                # dalles_zone.txt absent mais liste attendue connue → reconstruction
-                # depuis le cache disque (la vérification en amont garantit qu'on
-                # trouvera au moins une dalle).
-                print(f"  Rebuilding {dalles_zone_txt.name} from disk cache...")
-                toutes_dalles_dispo = _rglob_tif_robuste(dossier_dalles)
-                noms_zone = {d.name for d in toutes_dalles_dispo
-                             if d.name in noms_attendus and d.stat().st_size > SEUIL_DALLE_VALIDE}
-                if noms_zone:
-                    _ecrire_dalles_zone(
-                        dalles_zone_txt, bbox, noms_zone
-                    )
-                    print(f"  dalles_zone.txt rebuilt: {len(noms_zone)} tile(s) found on disk")
-                else:
-                    print(f"  ERROR: no tile of the zone found in {dossier_dalles}")
-                    print("  Relaunch without --no-download, or pass --download explicitly.")
-                    sys.exit(1)
-        else:
-            if args.osm and not args.ombrages and not args.mbtiles:
-                pass  # mode OSM seul — pas besoin de dalles
-            else:
-                print(f"\n  ERROR: {dalles_zone_txt.name} not found in {dossier_ville}/")
-                print("  This file is created automatically during download.")
-                print("  Relaunch without --no-download, or pass --download explicitly.")
-                print("  (Tiles already present on disk will be skipped, ~a few seconds)")
-                sys.exit(1)
-        toutes_dalles    = sorted(_rglob_tif_robuste(dossier_dalles))
-        dalles_zone      = [d for d in toutes_dalles if d.name in noms_zone]
-        dalles_ombrages  = [d for d in dalles_zone   if d.stat().st_size > SEUIL_DALLE_VALIDE]
-        nb_hors_zone     = len(toutes_dalles) - len(dalles_zone)
-        nb_invalides     = len(dalles_zone)   - len(dalles_ombrages)
-        if not _osm_seul:
-            if nb_hors_zone:
-                print(f"  {nb_hors_zone} out-of-zone tile(s) skipped (other departments)")
-            if nb_invalides:
-                print(f"  {nb_invalides} invalid tile(s) skipped (< 2 MB - sea or out of coverage)")
-            print(f"  {len(dalles_ombrages)} tile(s) kept for shadings")
-    else:
-        dalles_ombrages = []
-    # -------------------------------------------------------
-    # -------------------------------------------------------
-    # Compression des ombrages existants (rasterio)
-    # -------------------------------------------------------
-    if args.ombrages_compresser:
-        try:
-            import rasterio as _rio_cmp
-        except ImportError:
-            print("  ERROR: rasterio missing, run pip install rasterio")
-        else:
-            tifs_bruts = [
-                t for t in dossier_ville.glob("*.tif")
-                if not t.name.startswith("_")
-                and not re.search(r'_tuilage_z\d+\.tif$', t.name)
-            ]
-            # Filtrer ceux non compresseds (taille > seuil heuristique : >500 MB)
-            tifs_a_compresser = [t for t in tifs_bruts if t.stat().st_size > 500e6]
-            if not tifs_a_compresser:
-                print("  No raw shading found (> 500 MB) to compress.")
-            else:
-                print(f"  {len(tifs_a_compresser)} file(s) to compress:")
-                for chemin_out in sorted(tifs_a_compresser):
-                    taille_brut = chemin_out.stat().st_size / 1e6
-                    chemin_part = _chemin_part(chemin_out)
-                    t0_cmp = time.time()
-                    try:
-                        # L'ancien final reste la source lisible jusqu'au
-                        # remplacement atomique de la copie recompressée.
-                        with _rio_cmp.open(str(chemin_out)) as src:
-                            profile = src.profile.copy()
-                            for _k_cmp in (
-                                "driver", "BIGTIFF", "bigtiff",
-                                "NODATA", "nodata",
-                            ):
-                                profile.pop(_k_cmp, None)
-                            profile.update({
-                                "driver":     "GTiff",
-                                "compress":   "deflate",
-                                "predictor":  2,
-                                "tiled":      True,
-                                "blockxsize": 512,
-                                "blockysize": 512,
-                                "BIGTIFF":    "IF_SAFER",
-                            })
-                            if src.nodata is not None:
-                                profile["nodata"] = src.nodata
-                            with _rio_cmp.open(str(chemin_part), "w", **profile) as dst:
-                                # Copier bande par bande avec windowed reads
-                                # pour borner la RAM (un ombrage 50000×50000 px
-                                # uint8 = 2.5 Go en mémoire — trop gros).
-                                for ji, window in src.block_windows(1):
-                                    for b in range(1, src.count + 1):
-                                        dst.write(src.read(b, window=window),
-                                                  b, window=window)
-                        _publier_tif_atomique(chemin_part, chemin_out)
-                        elap = time.time() - t0_cmp
-                        taille_cmp = chemin_out.stat().st_size / 1e6
-                        gain = int((1 - taille_cmp / taille_brut) * 100)
-                        print("  " + chemin_out.name.ljust(56) +
-                              str(round(taille_brut)).rjust(6) + " MB -> " +
-                              str(round(taille_cmp)).rjust(5) + " MB  (-" +
-                              str(gain) + "%)  " + _hms(elap))
-                    except BaseException as _e_cmp:
-                        chemin_part.unlink(missing_ok=True)
-                        if isinstance(_e_cmp, (KeyboardInterrupt, SystemExit)):
-                            raise
-                        print(f"  ERROR compressing {chemin_out.name}: {_e_cmp}")
-
-    choix_ombrages, spec_insts = _resoudre_choix_ombrages(args)
-    if not dalles_ombrages:
-        choix_ombrages = []  # pas de dalle disponible → rien à calculer
-
-    tifs_run = None   # cibles du run courant (None = pas d'étape shadings)
-    if choix_ombrages or spec_insts:
-        surface_km2 = len(dalles_ombrages)  # ~1 dalle = 1 km²
-        _libelles = choix_ombrages + [
-            t + (":" + ",".join(f"{k}={v:g}" if isinstance(v, float) else f"{k}={v}"
-                                for k, v in p.items()) if p else "")
-            for t, p in spec_insts]
-        print_etape("Shadings " + ", ".join(_libelles))
-        print(f"  Shadings : {', '.join(_libelles)}")
-        elev = args.ombrages_elevation if args.ombrages_elevation is not None else ELEVATION_SOLEIL
-        print(f"  Sun angle : {elev}°")
-        print(f"  Area: ~{surface_km2} km²  |  Estimated duration:"
-              f" {'5-10 min' if surface_km2 < 100 else '15-45 min' if surface_km2 < 500 else '1h+'}"
-              f" (depends on the shading type and machine)", flush=True)
-        tifs_run = generer_ombrages(dalles_ombrages, dossier_ville, choix_ombrages,
-                         elevation_soleil=elev, nom_zone=nom_zone,
-                         ecraser_ombrages=args.ombrages_ecraser,
-                         use_sweep=args.sweep_horizon,
-                         svf_gamma=args.svf_gamma,
-                         svf_conv=args.svf_conv, svf_dist=args.svf_dist,
-                         bbox_natif=tuple(bbox),
-                         instances=spec_insts or None)
-
+    acquisition = _acquerir_dalles_terrain(
+        args,
+        bbox,
+        nom_zone,
+        dossier_dalles,
+        dossier_ville,
+        _osm_seul,
+        t_debut,
+    )
+    if acquisition.termine_sans_couverture:
+        return
+    bbox_wgs = acquisition.bbox_wgs
+    dalles_ombrages = acquisition.dalles_ombrages
     # ── MBTiles + RMAP ─────────────────────────────────────────────────────────
     # Verdict agrégé du chemin monolithique. Les helpers signalent les échecs
     # sans toujours lever (génération à 0 tuile, conversion RMAP/SQLiteDB
     # refusée...) : perdre ce booléen ferait historiser ``ok`` et sortir 0.
-    _livrables_raster_ok = True
-    if args.mbtiles or args.rmap or args.sqlitedb:
-        # Source : --source .tif ou ombrages générés dans dossier_ville
-        if args.source and Path(args.source).suffix.lower() in (".tif", ".tiff"):
-            # --source explicite
-            _tif_src = Path(args.source).resolve()
-            print_etape(f"{'RMAP' if args.rmap and not args.mbtiles else 'MBTiles'} depuis {_tif_src.name}")
-            print(f"  Source : {_tif_src}")
-            print(f"  Zone   : bbox natif {bbox[0]:.0f},{bbox[1]:.0f} → {bbox[2]:.0f},{bbox[3]:.0f}")
-            # Nom basé sur nom_zone + type d'ombrage détecté dans le nom du fichier
-            _SUFFIXES = ("multi_ombrage", "315_ombrage", "045_ombrage",
-                         "135_ombrage", "225_ombrage", "slope_ombrage",
-                         "svf_ombrage", "svf_100m_ombrage", "lrm_ombrage",
-                         "rrim_ombrage")
-            _sfx = next((s for s in _SUFFIXES if s in _tif_src.stem), _tif_src.stem)
-            _nom_base = f"{nom_zone}_{_sfx}"   # sans zoom — ajouté par generer_mbtiles_lidar
-            _nom_mbt  = f"{_nom_base}_z{args.zoom_min}-{args.zoom_max}"
-            # Générer MBTiles si demandé explicitement, ou si nécessaire pour RMAP/SQLiteDB
-            _mbt_path = dossier_ville / f"{_nom_mbt}.mbtiles"
-            _ecraser_l = args.tuiles_ecraser
-            _mbt_requis = _mbtiles_a_regenerer(_mbt_path, _ecraser_l, source=_tif_src)
-            _mbt_out = None
-            if _mbt_requis:
-                _mbt_out = generer_mbtiles_lidar(_tif_src, dossier_ville, _nom_base,
-                                           zoom_min=args.zoom_min, zoom_max=args.zoom_max,
-                                           format_tuiles=args.formats_image,
-                                           jpeg_quality=args.qualite_image,
-                                           bbox_natif=bbox,
-                                           source_already_warped=getattr(args, "_source_already_warped", False),
-                                           ecraser_tuiles=_ecraser_l,
-                                           tile_workers=_tile_workers_defaut())
-            elif _mbt_path.exists():
-                print(f"  Existing MBTiles: {_mbt_path.name}, direct split/conversion")
-                _mbt_out = _mbt_path
-            _livrables_raster_ok = (bool(_convertir_formats(
-                _mbt_out, args, mbtiles_neuf=_mbt_requis))
-                and _livrables_raster_ok)
-        else:
-            # Ombrages présents dans dossier_ville — glob/filtre/tuilage
-            # factorisés avec le site jumeau _traiter_bbox_lidar
-            # (cf. _lister_tifs_ombrages / _tuiler_tifs_ombrages).
-            ombrages_tifs = _lister_tifs_ombrages(dossier_ville, tifs_run)
-            if ombrages_tifs:
-                print_etape("MBTiles")
-                _livrables_raster_ok = (bool(_tuiler_tifs_ombrages(
-                    args, ombrages_tifs, dossier_ville,
-                    nom_zone, bbox, verbose=True))
-                    and _livrables_raster_ok)
-            else:
-                print("  No shading found for MBTiles (generate --shadings first)")
-                _livrables_raster_ok = False
+    _livrables_raster_ok = _produire_sorties_terrain(
+        args,
+        dalles_ombrages,
+        dossier_ville,
+        nom_zone,
+        bbox,
+        print_etape,
+    )
 
     # ── Carte OSM vectorielle de superposition ───────────────────────────────
     dossier_osm = None   # défini si on arrive jusqu'au generer_carte_osm
@@ -4177,221 +3939,13 @@ def main():
         _osm_livrables_ok = False
         print_etape("Carte OSM vectorielle")
 
-        # Table département → URL Geofabrik : voir _GEOFABRIK au niveau module
-
-        # Résoudre le PBF source
-        pbf = None
-        if args.source and Path(args.source).suffix.lower() in (".pbf", ".osm"):
-            pbf = Path(args.source)
-            if not pbf.exists():
-                print(f"  ERROR: PBF file not found: {pbf}")
-                pbf = None
-        elif (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower() != "fr":
-            # ── Garde-fou : le téléchargement auto est FRANCO-CENTRÉ ──────────
-            # Trois maillons français en série : cx/cy convertis par
-            # lamb93_to_wgs84_approx (or ils sont dans PROVIDER.CRS_NATIF), le
-            # géocodage inverse geo.api.gouv.fr, et la table _GEOFABRIK de codes
-            # INSEE — sans compter _GEOFABRIK_BASE_URL qui pointe .../europe/france.
-            # Hors de France les trois échouent en chaîne et le repli
-            # téléchargeait 4 Go de PBF FRANÇAIS pour produire un overlay vide :
-            # échec silencieux et coûteux. On refuse explicitement (pbf reste
-            # None → l'étape OSM est sautée, les sorties LiDAR d'un run combiné
-            # sont préservées, même mécanisme que « --source introuvable »).
-            # Geofabrik publie pourtant bien des sous-régions ailleurs (16 Länder
-            # allemands, régions italiennes…) : généraliser demande une table de
-            # slugs par pays + des bbox par géocodage Nominatim, pas juste de
-            # lever ce garde. En attendant --source reste ouvert à tous les pays.
-            print(f"  OSM auto-download is France-only for now "
-                  f"(provider country: "
-                  f"{(getattr(PROVIDER, 'COUNTRY', 'fr') or 'fr').lower()}).")
-            print("  The department lookup and the Geofabrik URL table are "
-                  "French; the fallback would fetch a 4 GB FRENCH PBF and "
-                  "produce an overlay with no feature in your area.")
-            print("  Workaround: grab the PBF for your area at "
-                  "https://download.geofabrik.de/ then pass it with "
-                  "--source <file>.pbf")
-        else:
-            # Téléchargement automatique — détecter le département depuis le centre
-            _zone_region = getattr(args, "zone_region", None)
-            num_dep = getattr(args, "zone_departement", None)
-
-            if _zone_region:
-                # Region explicite : slug Geofabrik direct, pas de détection
-                # ni de géocodage inverse (on traitera tout le PBF, skip_bbox).
-                region_slug = _zone_region.strip().lower()
-            else:
-                if not num_dep:
-                    # Modes ville/gps/bbox : cx, cy sont en Lambert 93
-                    # → convertir en WGS84 → requête geo.api.gouv.fr reverse
-                    try:
-                        clon, clat = lamb93_to_wgs84_approx(cx, cy)
-                        url_rev = (f"https://geo.api.gouv.fr/communes"
-                                   f"?lon={clon:.5f}&lat={clat:.5f}"
-                                   f"&fields=codeDepartement&format=json")
-                        with _urlopen(url_rev, timeout=10) as resp_rev:
-                            data_rev = json.loads(resp_rev.read())
-                        if data_rev:
-                            num_dep = data_rev[0].get("codeDepartement")
-                            print(f"  Department detected: {num_dep}", flush=True)
-                    except Exception as e_rev:
-                        print(f"  Reverse geocoding failed ({e_rev})")
-
-                region_slug = _GEOFABRIK.get(num_dep) if num_dep else None
-            if not region_slug:
-                print(f"  Department {num_dep} not found in the Geofabrik table.")
-                print("  Falling back to the national France PBF (~4 GB).")
-                url_pbf = f"{_GEOFABRIK_BASE_URL_ROOT}/france-latest.osm.pbf"
-                osm_dir = DOSSIER_CACHE / "osm_vecteur"
-                osm_dir.mkdir(parents=True, exist_ok=True)
-                pbf = osm_dir / "france-latest.osm.pbf"
-            else:
-                url_pbf = f"{_GEOFABRIK_BASE_URL}/{region_slug}-latest.osm.pbf"
-                osm_dir = DOSSIER_CACHE / "osm_vecteur"
-                osm_dir.mkdir(parents=True, exist_ok=True)
-                pbf = osm_dir / f"{region_slug}-latest.osm.pbf"
-
-            # Téléchargement PBF commun (national ou régional)
-            _SEUIL_PBF = 1_000_000  # 1 MB minimum — PBF vide ou tronqué → re-télécharger
-            # R2#30 : le PBF Geofabrik est un extrait « -latest » rafraîchi
-            # QUOTIDIENNEMENT. L'ancien code le réutilisait indéfiniment dès qu'il
-            # dépassait le seuil de taille (données OSM figées à la 1re exécution)
-            # et --download-overwrite ne le refaisait pas. On respecte l'overwrite
-            # (re-download forcé) et on affiche l'âge du cache (pas de re-download
-            # AUTO sur l'âge : un PBF départemental fait 100 Mo-4 Go, ce serait
-            # coûteux et surprenant — on avertit et on laisse l'utilisateur
-            # décider via --download-overwrite).
-            _force_pbf = bool(getattr(args, "telechargement_ecraser", False))
-            _pbf_age_j = ((time.time() - pbf.stat().st_mtime) / 86400.0
-                          if pbf.exists() else 0.0)
-            if pbf.exists() and pbf.stat().st_size >= _SEUIL_PBF and not _force_pbf:
-                print(f"  Existing PBF: {pbf.name}  "
-                      f"({pbf.stat().st_size/1e9:.1f} GB, {_pbf_age_j:.0f} days old)")
-                if _pbf_age_j > 30:
-                    print(f"  Note: Geofabrik '-latest' is refreshed daily; this "
-                          f"cache is {_pbf_age_j:.0f} days old. Pass "
-                          f"--download-overwrite to refresh the OSM data.")
-            else:
-                if pbf.exists() and _force_pbf and pbf.stat().st_size >= _SEUIL_PBF:
-                    print(f"  --download-overwrite: refreshing PBF {pbf.name} "
-                          f"({_pbf_age_j:.0f} days old)")
-                    pbf.unlink()
-                elif pbf.exists():
-                    print(f"  Truncated PBF ({pbf.stat().st_size} bytes) - re-downloading.")
-                    pbf.unlink()
-                _log_req(str(url_pbf), 'Geofabrik')
-                print(f"  Downloading {url_pbf}...")
-                print(f"  Destination : {pbf}", flush=True)
-                # Écriture via .part + rename : un PBF présent est toujours
-                # complet (un kill mi-téléchargement laissait un tronqué
-                # > 1 Mo réutilisé comme "Existing PBF" au run suivant).
-                pbf_part = pbf.parent / (pbf.name + ".part")
-                try:
-                    taille_dl = 0
-                    t0_dl = time.time()
-                    _pct_last = -1
-                    # timeout : sans lui, une connexion Geofabrik figée
-                    # bloque le run indéfiniment (s'applique à chaque read).
-                    with _urlopen(url_pbf, timeout=60) as resp, \
-                         open(pbf_part, "wb") as f_out:
-                        total_size = int(
-                            resp.headers.get("content-length", 0))
-                        chunk = 65536
-                        while True:
-                            if _stop_event.is_set():
-                                # R2#42 : consulter l'event À CHAQUE bloc. Avant, la
-                                # boucle l'ignorait : sur un PBF de 4 Go (France
-                                # entière) le 1er Ctrl+C posait juste l'event puis le
-                                # download continuait ; il fallait un 2e Ctrl+C (sortie
-                                # sèche du handler, .part orphelin). Idiome _stop_event
-                                # des ~30 autres boucles interruptibles.
-                                raise KeyboardInterrupt("PBF Geofabrik download interrupted")
-                            data = resp.read(chunk)
-                            if not data:
-                                break
-                            f_out.write(data)
-                            taille_dl += len(data)
-                            if total_size:
-                                pct = taille_dl * 100 // total_size
-                                mb  = taille_dl / 1e6
-                                tot = total_size / 1e6
-                                # Afficher seulement tous les 5%
-                                if pct >= _pct_last + 5:
-                                    _pct_last = pct
-                                    line = f"  {mb:.0f} / {tot:.0f} MB  {pct}%"
-                                    # \r sur le terminal, nouvelle ligne dans le log
-                                    sys.stdout.write(f"\r{line}")
-                                    sys.stdout.flush()
-                    # Effacer la ligne de progression
-                    sys.stdout.write("\r" + " " * 40 + "\r")
-                    print(f"  Telecharge : {pbf.name}  "
-                          f"({taille_dl/1e6:.0f} MB)  "
-                          f"{_hms(time.time()-t0_dl)}")
-                    # Vérifier que le fichier n'est pas vide/tronqué : sous le
-                    # seuil = PBF vide ; taille annoncée non atteinte = coupure
-                    # TCP silencieuse (même garde que _download_to_tmp).
-                    if (taille_dl < _SEUIL_PBF
-                            or (total_size and taille_dl != total_size)):
-                        print(f"  ERROR: incomplete PBF ({taille_dl} bytes"
-                              + (f" / {total_size} expected" if total_size else "")
-                              + ") : download failed (network? Geofabrik access?).")
-                        pbf_part.unlink(missing_ok=True)
-                        pbf = None
-                    else:
-                        pbf_part.replace(pbf)
-                except KeyboardInterrupt:
-                    # R2#42 : nettoyer le .part partiel puis laisser l'interruption
-                    # remonter (arrêt propre du run, comme la branche OSError). Sans
-                    # ce cleanup, le .part serait laissé et un retry le verrait comme
-                    # une reprise valide (il est < seuil ou != content-length → il est
-                    # de toute façon jeté par la garde de complétude, mais autant ne
-                    # pas laisser de résidu).
-                    pbf_part.unlink(missing_ok=True)
-                    raise
-                except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e_dl:
-                    print(f"\n  ERROR downloading PBF ({type(e_dl).__name__}) : {e_dl}")
-                    pbf_part.unlink(missing_ok=True)
-                    pbf = None
+        pbf = _acquerir_source_osm(args, cx, cy)
 
         if pbf and pbf.exists():
-            _region_mode = bool(getattr(args, "zone_region", None))
-            if _region_mode:
-                # Region : on traite TOUT le PBF régional. bbox "monde" → le .map
-                # ignore la bbox (skip_bbox) et l'export geojson ne découpe rien.
-                bbox_wgs = (-180.0, -90.0, 180.0, 90.0)
-            else:
-                # Bbox WGS84 depuis la bbox dans le CRS NATIF du provider (bords
-                # densifiés : à 2 coins le clip osmosis rognait des features en
-                # bordure). R2#29 : passer par _natif_vers_wgs84 (pyproj, tout
-                # CRS) et non la formule Lambert 93 en dur — sinon un provider
-                # hors métropole (EPSG:2056, UTM ultramarins…) recevait ses
-                # coords via les formules France → emprise OSM fausse, découpage
-                # décalé. Miroir du chemin LiDAR (_get_transformer plus haut).
-                try:
-                    bbox_wgs = _bbox_enveloppe_transform(
-                        _natif_vers_wgs84, bbox[0], bbox[1], bbox[2], bbox[3])
-                except (ValueError, TypeError, ImportError, RuntimeError) as e:
-                    print(f"  ERROR bbox WGS84 conversion ({type(e).__name__}): {e}")
-                    bbox_wgs = None
-            if bbox_wgs:
-                # Dossier dédié OSM — pas le dossier LiDAR
-                dossier_osm = (Path(args.dossier).resolve() if args.dossier
-                               else DOSSIER_TRAVAIL / "Projets" / nom_zone / "osm_vecteur")
-                dossier_osm.mkdir(parents=True, exist_ok=True)
-                # Liste des formats GeoJSON demandés (parmi "gz" et "geojson")
-                # Mode région : traiter tout le PBF régional sans re-clip
-                # (le PBF EST déjà la région — c'est le gain vs boucle départements).
-                _resultat_osm = _produire_sorties_osm(
-                    bbox_wgs, dossier_osm, nom_zone, pbf,
-                    formats=args.formats_fichier,
-                    osm_tags=(args.couche
-                              if getattr(args, 'couche', None)
-                              else getattr(args, 'osm_tags', None)),
-                    ecraser=args.tuiles_ecraser,
-                    skip_bbox=_region_mode,
-                    zoom_min=getattr(args, "zoom_min", 8),
-                    zoom_max=getattr(args, "zoom_max", 18),
-                )
-                _osm_livrables_ok = _resultat_osm.complet
+            _resultat_osm = _executer_run_osm(args, bbox, nom_zone, pbf)
+            bbox_wgs = _resultat_osm.bbox_wgs
+            dossier_osm = _resultat_osm.dossier
+            _osm_livrables_ok = _resultat_osm.complet
         _livrables_raster_ok = _osm_livrables_ok and _livrables_raster_ok
 
     if etape_cur[0] > 0:
@@ -5217,112 +4771,62 @@ def main_decouper():
     _historique_depuis_argv(int(time.time() - t_debut), dossier_resultat)
 
 
+from _raster_cli import (
+    DependancesParserWmts,
+    DependancesPreparationRunWmts,
+    DependancesResolutionCoucheWmts,
+    construire_parser_wmts as _construire_parser_wmts_impl,
+    preparer_run_wmts as _preparer_run_wmts_impl,
+    resoudre_couche_wmts as _resoudre_couche_wmts_impl,
+)
+
+
+def _dependances_parser_wmts():
+    """Reconstruit tardivement les coutures du parser WMTS."""
+    return DependancesParserWmts(
+        argparse=argparse,
+        ajouter_args_zone=_ajouter_args_zone,
+        arg_float_non_negatif=_arg_float_non_negatif,
+        arg_int_positif=_arg_int_positif,
+        version=VERSION,
+        version_date=VERSION_DATE,
+        apikey_defaut=APIKEY_DEFAUT,
+        nb_workers=NB_WORKERS,
+    )
+
+
 def _construire_parser_wmts():
-    """Construit le parser argparse du workflow raster WMTS (--raster)."""
-    parser = argparse.ArgumentParser(
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python lidar2map.py --raster --zone-city gareoult --zoom-min 12 --zoom-max 16 --file-formats mbtiles
-  python lidar2map.py --raster --layer ORTHOIMAGERY.ORTHOPHOTOS --zone-department 83 --zoom-min 14 --zoom-max 17 --file-formats mbtiles
-  python lidar2map.py --raster --layer GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2 --zone-city gareoult --zoom-min 10 --zoom-max 16 --file-formats mbtiles
-  python lidar2map.py --osm --layer "highway=* waterway=* natural=water" --zone-city gareoult
-  python lidar2map.py --raster --source gareoult_scan25_z12-16.mbtiles --file-formats rmap
-        """
+    """Façade compatible vers le parser raster WMTS extrait."""
+    return _construire_parser_wmts_impl(
+        dependances=_dependances_parser_wmts(),
     )
-    parser.add_argument("--version", action="version",
-                        version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
-    parser.add_argument("--raster", "--ignraster", action="store_true", dest="ignraster",
-                        help="IGN raster mode via WMTS. "
-                             "Use --layer for the layer (default: planign). "
-                             "Ex: --raster --layer GEOGRAPHICALGRIDSYSTEMS.MAPS")
-    # Consommé tôt par _load_provider (scan de sys.argv) ; déclaré ici uniquement
-    # pour qu'argparse ne le rejette pas. Le raster US (--layer naip) passe par
-    # --provider us-tnm depuis le GUI comme depuis la CLI.
-    parser.add_argument("--provider", default=None, metavar="CODE",
-                        help="Provider (default: fr-ign). Détermine les couches "
-                             "raster disponibles (fr-ign → IGN ; us-tnm → naip).")
 
-    # ── Découpage à priori (raster uniquement) ──────────────────────────────
-    grp_priori = parser.add_argument_group(
-        "A priori splitting — --raster only",
-        "Sequential chunk processing with automatic resume (manifeste.json).\n"
-        "The same parameters also control the splitting of output files.")
-    grp_priori.add_argument("--split-cols", "--cols-decoupe", type=int, default=0, metavar="N",
-                            dest="cols_decoupe",
-                            help="Number of grid columns (East-West).")
-    grp_priori.add_argument("--split-rows", "--rows-decoupe", type=int, default=0, metavar="N",
-                            dest="rows_decoupe",
-                            help="Number of grid rows (North-South).")
-    grp_priori.add_argument("--split-width", "--split-largeur", type=_arg_float_non_negatif, default=0.0, metavar="KM",
-                            dest="split_width",
-                            help="Alternative: split into ~KM km squares (KM = the side).")
-    grp_priori.add_argument("--cleanup", "--nettoyage", action="store_true", dest="nettoyage",
-                            help="Delete intermediate tiles + TIFs after each chunk. "
-                                 "Essential for large areas (a whole department).")
-    grp_priori.add_argument("--min-free-gb", "--min-disque-go", type=_arg_float_non_negatif, default=0.0, metavar="GB",
-                            dest="min_free_gb",
-                            help="Stop cleanly before a chunk if free disk space drops below GB "
-                                 "(0 = disabled). Set it ABOVE one chunk's peak footprint "
-                                 "(intermediates + tile pyramid). Exits with code 3 so a shell "
-                                 "loop can tell a resumable disk-stop from a real error.")
 
-    # Zone
-    _ajouter_args_zone(
+def _dependances_preparation_run_wmts():
+    """Reconstruit tardivement les coutures de préparation WMTS."""
+    return DependancesPreparationRunWmts(
+        zone_cli_presente=_zone_cli_presente,
+        valider_zooms=_valider_zooms,
+        appliquer_cache_dir=_appliquer_cache_dir,
+    )
+
+
+def _dependances_resolution_couche_wmts():
+    """Reconstruit tardivement les coutures de résolution d'une couche WMTS."""
+    return DependancesResolutionCoucheWmts(
+        couches=COUCHES,
+        lire_zoom_limites_wmts=_lire_zoom_limites_wmts,
+        imprimer=print,
+    )
+
+
+def _preparer_run_wmts(args, parser):
+    """Façade compatible vers la préparation raster WMTS extraite."""
+    return _preparer_run_wmts_impl(
+        args,
         parser,
-        width_default=20.0,
-        bbox_metavar="W,S,E,N",
-        bbox_help="WGS84 bbox: lon_min,lat_min,lon_max,lat_max",
+        dependances=_dependances_preparation_run_wmts(),
     )
-
-    # Couche + clé
-    # Pas de choices=COUCHES.keys() : le résolveur (plus bas) accepte AUSSI un
-    # identifiant WMTS complet (ex. GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2), ce que
-    # la doc annonce ; `choices` transformait cette branche en code mort et
-    # rejetait tout id complet avant le résolveur (R2#18). Un alias/id inconnu
-    # échoue proprement en 404 au fetch.
-    parser.add_argument("--layer", "--couche",  default="planign", dest="couche",
-                        metavar="LAYER",
-                        help="WMTS layer alias (planign, ortho, scan25…) or full "
-                             "id (GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2). Default: "
-                             "planign (public, no key). Restricted pro layers: "
-                             "scan25 scan25tour scan100 scanoaci.")
-    parser.add_argument("--api-key", "--apikey",  default=APIKEY_DEFAUT, metavar="KEY", dest="apikey",
-                        help="IGN API key for restricted layers (scan25, scan100…). "
-                             "⚠ Professional access only (cartes.gouv.fr account + SIRET). "
-                             "Individuals must use the public layers (planign, ortho…). "
-                             "Can also be set via the IGN_APIKEY env variable.")
-
-    # Zooms
-    parser.add_argument("--zoom-min", type=int, default=10, metavar="N")
-    parser.add_argument("--zoom-max", type=int, default=16, metavar="N")
-
-    # Sorties. Mode raster uniquement : pas de map/geojson/transparent-raster
-    # (sorties vecteur) — spécialisation intentionnelle, cf. parser principal (l.~8699).
-    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
-                        choices=["mbtiles","rmap","sqlitedb"],
-                        default=[], metavar="FMT",
-                        help="Output file formats: mbtiles rmap sqlitedb (multi-value).")
-    parser.add_argument("--source",   metavar="PATH", default=None,
-                        help="Existing .mbtiles file → RMAP conversion "
-                             "(standalone mode, no zone required). Requires rmap format. "
-                             "Ex: --source gareoult_scan25_z12-16.mbtiles --file-formats rmap")
-    parser.add_argument("--output-dir", "--dossier",  metavar="PATH", default=None, dest="dossier",
-                        help="Output folder (default: Projets/<name>/raster/)")
-
-    # Comportement
-    parser.add_argument("--workers",       type=_arg_int_positif, default=NB_WORKERS, metavar="N")
-    parser.add_argument("--image-format", "--formats-image", choices=["auto","jpeg","png"], default="auto",
-                        metavar="FMT", dest="formats_image",
-                        help="Format of tile images: auto, jpeg or png (default: auto).")
-    parser.add_argument("--image-quality", "--qualite-image", type=int, default=85, metavar="Q",
-                        dest="qualite_image",
-                        help="JPEG quality of tile images (default: 85).")
-    parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Overwrite cached tiles (force re-download)")
-    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
-                        help="Overwrite existing MBTiles")
-    return parser
 
 
 def _traiter_source_wmts(args):
@@ -5334,73 +4838,66 @@ def _traiter_source_wmts(args):
 
 
 def _resoudre_couche_wmts(args):
-    """Résout la couche WMTS demandée (alias court ou identifiant complet)
-    et plafonne les zooms selon les capacités réelles de la couche
-    (GetCapabilities IGN ou table XYZ). Mute `args.zoom_min`/`args.zoom_max`
-    (pour que `_traiter_bbox_wmts` hérite des bornes capées côté split) et
-    retourne (layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max)
-    pour le reste de `main_wmts()`."""
-    # ── Résolution de la couche ───────────────────────────────────────────────
-    # --couche peut être un alias court (planign) ou un identifiant complet
-    # (GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2). Si absent → planign par défaut.
-    if not args.couche:
-        args.couche = "planign"
-    # Résoudre alias court → identifiant complet si besoin
-    if args.couche in COUCHES:
-        layer, style, img_fmt, apikey_requis = COUCHES[args.couche]
-    else:
-        # Identifiant complet passé directement — détection format/clé
-        layer = args.couche
-        style = "normal"
-        img_fmt = "image/jpeg" if any(x in layer for x in
-                  ["MAPS", "ORTHOIMAGERY", "ETATMAJOR"]) else "image/png"
-        apikey_requis = any(x in layer for x in ["MAPS", "SCAN"])
-        print(f"  Layer: {layer} (direct id)")
-    # img_fmt = format DEMANDÉ AU SERVEUR (URL WMTS). DOIT rester sur le
-    # format natif que l'IGN sert pour cette couche — sinon : HTTP 400
-    # "Format image/X unknown" (planign ne sert PAS en JPEG, ortho ne sert
-    # PAS en PNG, etc.).
-    # L'argument --formats-image contrôle UNIQUEMENT le format de sortie
-    # dans le MBTiles via re-encodage côté client (cf. _jpeg_q ci-dessous).
-    fmt_ext = "jpg" if "jpeg" in img_fmt else "png"
+    """Façade compatible vers la résolution de couche WMTS extraite."""
+    return _resoudre_couche_wmts_impl(
+        args,
+        dependances=_dependances_resolution_couche_wmts(),
+    )
 
-    # --image-format png sur une couche nativement JPEG (ortho, scan*, étatmajor) :
-    # convertir JPEG→PNG ne restaure aucune qualité (PNG lossless d'une image
-    # lossy = fichier bien plus lourd, zéro gain). On garde le JPEG en le
-    # SIGNALANT, au lieu d'ignorer le flag en silence (R2#14). Le sens inverse
-    # (PNG natif → jpeg) fonctionne, lui, via _jpeg_q.
-    if "jpeg" in img_fmt and args.formats_image == "png":
-        print(f"  Note: layer '{args.couche}' is served as JPEG; --image-format "
-              f"png ignored (PNG would only bloat the file, no quality gain). "
-              f"Keeping JPEG.")
 
-    # ── Plafonnement zoom selon capacités réelles de la couche ───────────────
-    # IGN : GetCapabilities WMTS. XYZ (naip…) : table _XYZ_ZOOM_LIMITS.
-    # AVANT le bloc de découpage a-priori (qui `return`) : le capping vivait
-    # après, donc les runs chunkés demandaient des zooms hors couche →
-    # avalanche de 204 → chunks marqués « hors couverture » et sautés à tort
-    # alors qu'ils avaient de la couverture aux zooms valides. Réécrit dans
-    # args pour que _traiter_bbox_wmts hérite des bornes capées.
-    zoom_min = min(args.zoom_min, args.zoom_max)
-    zoom_max = max(args.zoom_min, args.zoom_max)
-    _limites_reel = _lire_zoom_limites_wmts(
-        layer, apikey_requis, apikey=getattr(args, "apikey", ""))
-    if _limites_reel:
-        _src_caps = "service" if layer.startswith("XYZ:") else "IGN"
-        _zmin_reel, _zmax_reel = _limites_reel
-        if zoom_max > _zmax_reel:
-            print(f"  ⚠ Layer {args.couche}: {_src_caps} max zoom = {_zmax_reel}, "
-                  f"zoom_max lowered from {zoom_max} to {_zmax_reel}.")
-            zoom_max = _zmax_reel
-            zoom_min = min(zoom_min, zoom_max)
-        if zoom_min < _zmin_reel:
-            print(f"  ⚠ Layer {args.couche}: {_src_caps} min zoom = {_zmin_reel}, "
-                  f"zoom_min raised from {zoom_min} to {_zmin_reel}.")
-            zoom_min = _zmin_reel
-            zoom_max = max(zoom_max, zoom_min)
-    args.zoom_min, args.zoom_max = zoom_min, zoom_max
+from _raster_run import (
+    DependancesRunWmts,
+    executer_run_wmts_monolithique as _executer_run_wmts_monolithique_impl,
+)
 
-    return layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max
+
+def _dependances_run_wmts():
+    """Reconstruit tardivement les coutures du passage WMTS monolithique."""
+    return DependancesRunWmts(
+        dossier_travail=DOSSIER_TRAVAIL,
+        dossier_cache=DOSSIER_CACHE,
+        garde_disque=_garde_disque,
+        calculer_grille_xyz=calculer_grille_xyz,
+        compter_tuiles_xyz=compter_tuiles_xyz,
+        estimer_taille=estimer_taille,
+        jpeg_quality_sortie=_jpeg_quality_sortie,
+        nom_mbtiles_wmts=_nom_mbtiles_wmts,
+        mbtiles_a_regenerer=_mbtiles_a_regenerer,
+        generer_mbtiles_wmts=generer_mbtiles_wmts,
+        convertir_formats=_convertir_formats,
+        planche_depuis_dossier=_planche_depuis_dossier,
+        maintenant=time.time,
+        formater_duree=_hms,
+        historique_depuis_argv=_historique_depuis_argv,
+        imprimer=print,
+    )
+
+
+def _executer_run_wmts_monolithique(
+    args,
+    t_debut,
+    *,
+    layer,
+    style,
+    img_fmt,
+    apikey_requis,
+    fmt_ext,
+    bbox_wgs84,
+    nom_zone,
+):
+    """Façade compatible vers le passage WMTS monolithique extrait."""
+    return _executer_run_wmts_monolithique_impl(
+        args,
+        t_debut,
+        layer=layer,
+        style=style,
+        img_fmt=img_fmt,
+        apikey_requis=apikey_requis,
+        fmt_ext=fmt_ext,
+        bbox_wgs84=bbox_wgs84,
+        nom_zone=nom_zone,
+        dependances=_dependances_run_wmts(),
+    )
 
 
 def main_wmts():
@@ -5412,19 +4909,7 @@ def main_wmts():
         sys.exit(0)
 
     args = parser.parse_args()
-    if not args.source and not _zone_cli_presente(args):
-        parser.error(
-            "one geographic area is required: --zone-city, --zone-gps, "
-            "--zone-bbox, --zone-department, or --zone-region"
-        )
-    _valider_zooms(args, parser)
-    _appliquer_cache_dir(args)   # avant le cache WMTS ign_raster
-    # Résolution --formats-fichier → flags booléens
-    _ff = args.formats_fichier
-    args.mbtiles  = "mbtiles"  in _ff
-    args.rmap     = "rmap"     in _ff
-    args.sqlitedb = "sqlitedb" in _ff
-    args.transparent_raster = "transparent-raster" in _ff
+    _preparer_run_wmts(args, parser)
 
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
@@ -5436,7 +4921,7 @@ def main_wmts():
     if not args.mbtiles and not args.rmap and not args.sqlitedb:
         args.mbtiles = True
 
-    layer, style, img_fmt, apikey_requis, fmt_ext, zoom_min, zoom_max = (
+    layer, style, img_fmt, apikey_requis, fmt_ext, _zoom_min, _zoom_max = (
         _resoudre_couche_wmts(args))
 
     # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
@@ -5475,123 +4960,17 @@ def main_wmts():
             return
         print("  A-priori splitting: zone too small -> single pass")
 
-    # R2#38 : --min-free-gb garde aussi le mode MONOLITHIQUE WMTS (jumeau du
-    # garde LiDAR) : sans split, _run_split_priori / _garde_disque ne tournent
-    # pas → seuil ignoré en silence. Vérif avant de démarrer le tuilage.
-    _garde_disque(Path(args.dossier).resolve() if args.dossier else DOSSIER_TRAVAIL,
-                  getattr(args, "min_free_gb", 0.0) or 0.0, "single-pass", 0, 1)
-
-    # ── Calcul de la grille ───────────────────────────────────────────────────
-    # (zooms déjà normalisés ET capés plus haut, avant le bloc split)
-    zoom_min = args.zoom_min
-    zoom_max = args.zoom_max
-
-    tuiles = calculer_grille_xyz(lat_min, lon_min, lat_max, lon_max,
-                                 zoom_min, zoom_max)
-    total  = compter_tuiles_xyz(lat_min, lon_min, lat_max, lon_max,
-                                zoom_min, zoom_max)
-    taille_est = estimer_taille(total, fmt_ext)
-
-    # Couches XYZ (USGS Imagery…) : source non-IGN → libellé neutre + vrai template.
-    _src = layer[4:] if layer.startswith("XYZ:") else layer
-    _lbl = "Raster map" if layer.startswith("XYZ:") else "IGN map"
-    print("=" * 55)
-    print(f"  {_lbl} - {args.couche} ({_src})")
-    print("=" * 55)
-    print(f"  Zone    : {nom_zone}")
-    print(f"  BBox    : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
-    print(f"  Zooms   : {zoom_min}–{zoom_max}")
-    print(f"  Tiles: {total:,}  (~{taille_est} MB estimated)")
-    print(f"  Workers : {args.workers}")
-
-    # ── Dossier de sortie ─────────────────────────────────────────────────────
-    racine  = Path(args.dossier).resolve() if args.dossier \
-              else DOSSIER_TRAVAIL / "Projets" / nom_zone / "raster"
-    dossier = racine
-    dossier.mkdir(parents=True, exist_ok=True)
-
-    # Cache tuiles : cache/ign_raster/<z>/<x>/<y>.<ext>. Le dossier de SORTIE est
-    # provider-neutre (raster/), mais le cache garde le nom legacy "ign_raster"
-    # pour ne pas orpheliner les tuiles WMTS déjà téléchargées des users FR.
-    # naip (US) et IGN (FR) y cohabitent sans collision (x/y disjoints).
-    dossier_cache = DOSSIER_CACHE / "ign_raster"
-    dossier_cache.mkdir(parents=True, exist_ok=True)
-    print(f"  Tiles cache: {dossier_cache}")
-
-    # ── Génération MBTiles ────────────────────────────────────────────────────
-    # _jpeg_q : quand non-None, déclenche un re-encodage PNG → JPEG côté
-    # client dans generer_mbtiles_wmts. Sémantique :
-    #   - JPEG natif (ortho, scan*, etc.) : _jpeg_q = None (déjà JPEG)
-    #   - PNG natif + --formats-image png  : _jpeg_q = None (l'utilisateur
-    #     refuse explicitement la conversion → on garde le PNG natif)
-    #   - PNG natif + --formats-image jpeg/auto : _jpeg_q = qualité demandée
-    #     → conversion PNG → JPEG (gain ~3-5× sur la taille MBTiles)
-    # Source de vérité UNIQUE partagée avec le split _traiter_bbox_wmts (R2#14).
-    _jpeg_q = _jpeg_quality_sortie(img_fmt, args.formats_image, args.qualite_image)
-
-    # Nom encodant la qualité (R2#18) : même helper que le split, pour que
-    # changer --image-quality/--image-format régénère au lieu de réutiliser un
-    # MBTiles obsolète de même nom.
-    nom_fichier = _nom_mbtiles_wmts(nom_zone, args.couche, zoom_min, zoom_max, _jpeg_q)
-    chemin_mbtiles = dossier / f"{nom_fichier}.mbtiles"
-
-    # Le MBTiles source doit être (re)généré si :
-    #   - il n'existe pas encore
-    #   - OU écraser est demandé explicitement
-    # Dans tous les autres cas (fichier existant, pas d'écraser) on l'utilise tel quel
-    # pour la conversion / le découpage.
-    _ecraser   = args.tuiles_ecraser
-    _mbtiles_requis = _mbtiles_a_regenerer(chemin_mbtiles, _ecraser)
-
-    if not _mbtiles_requis and chemin_mbtiles.exists():
-        print(f"  Existing MBTiles: {chemin_mbtiles.name}, direct split/conversion")
-
-    if _mbtiles_requis:
-        # ── Génération d'un seul MBTiles complet ──────────────────────────────
-        # Le découpage éventuel est délégué à _convertir_formats via decouper_mbtiles
-        generer_mbtiles_wmts(
-            chemin        = chemin_mbtiles,
-            tuiles_iter   = tuiles,
-            total         = total,
-            nom_zone      = nom_zone,
-            fmt_ext       = fmt_ext,
-            zoom_min      = zoom_min,
-            zoom_max      = zoom_max,
-            layer         = layer,
-            style         = style,
-            img_fmt       = img_fmt,
-            apikey        = args.apikey,
-            apikey_requis = apikey_requis,
-            workers       = args.workers,
-            bbox_wgs84    = (lon_min, lat_min, lon_max, lat_max),
-            jpeg_quality   = _jpeg_q,
-            dossier_cache  = dossier_cache,
-            ecraser_tuiles = args.tuiles_ecraser,
-            ecraser_dalles = args.telechargement_ecraser,
-        )
-
-    # ── Découpage + RMAP + SQLiteDB ───────────────────────────────────────────
-    _livrables_raster_ok = False
-    if chemin_mbtiles.exists():
-        _livrables_raster_ok = bool(_convertir_formats(
-            chemin_mbtiles, args, mbtiles_neuf=_mbtiles_requis))
-    else:
-        print(f"  ERROR: expected MBTiles not produced: {chemin_mbtiles.name}")
-
-    # ── Résumé ────────────────────────────────────────────────────────────────
-    # Planche d'assemblage : balaie les livrables du dossier (best-effort).
-    _planche_depuis_dossier(dossier, args, nom_zone,
-                            zone_bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
-    elapsed = int(time.time() - t_debut)
-    print(f"\n  Done in {_hms(elapsed)}")
-    print(f"  Done! Folder: {dossier}")
-    _historique_depuis_argv(
-        elapsed, str(dossier),
-        statut=("ok" if _livrables_raster_ok else "ko"))
-    if not _livrables_raster_ok:
-        raise RuntimeError(
-            "raster generation/conversion incomplete - partial outputs kept; "
-            "rerun to retry failed deliverables")
+    _executer_run_wmts_monolithique(
+        args,
+        t_debut,
+        layer=layer,
+        style=style,
+        img_fmt=img_fmt,
+        apikey_requis=apikey_requis,
+        fmt_ext=fmt_ext,
+        bbox_wgs84=(lon_min, lat_min, lon_max, lat_max),
+        nom_zone=nom_zone,
+    )
 
 
 # ============================================================
@@ -6047,154 +5426,93 @@ def _produire_sorties_vecteur(sorties, dossier, nom_zone, bbox_wgs84, *,
 _produire_sorties_vecteur.__doc__ = _produire_sorties_vecteur_impl.__doc__
 
 
+from _vector_cli import (
+    DependancesParserWfs,
+    DependancesPreparationRunWfs,
+    construire_parser_wfs as _construire_parser_wfs_impl,
+    preparer_run_wfs as _preparer_run_wfs_impl,
+)
+
+
+def _dependances_parser_wfs():
+    """Reconstruit tardivement les coutures du parser WFS."""
+    return DependancesParserWfs(
+        argparse=argparse,
+        ajouter_args_zone=_ajouter_args_zone,
+        arg_int_positif=_arg_int_positif,
+        arg_float_non_negatif=_arg_float_non_negatif,
+        couches_wfs=COUCHES_WFS,
+        version=VERSION,
+        version_date=VERSION_DATE,
+    )
+
+
+def _construire_parser_wfs():
+    """Façade compatible vers le parser vectoriel WFS extrait."""
+    return _construire_parser_wfs_impl(
+        dependances=_dependances_parser_wfs(),
+    )
+
+
+def _dependances_preparation_run_wfs():
+    """Reconstruit tardivement les coutures de préparation WFS."""
+    return DependancesPreparationRunWfs(
+        zone_cli_presente=_zone_cli_presente,
+        appliquer_cache_dir=_appliquer_cache_dir,
+    )
+
+
+def _preparer_run_wfs(args, parser):
+    """Façade compatible vers la préparation vectorielle WFS extraite."""
+    return _preparer_run_wfs_impl(
+        args,
+        parser,
+        dependances=_dependances_preparation_run_wfs(),
+    )
+
+
+from _vector_run import (
+    DependancesRunWfs,
+    executer_run_wfs as _executer_run_wfs_impl,
+)
+
+
+def _dependances_run_wfs():
+    """Reconstruit tardivement les coutures d'exécution WFS."""
+    return DependancesRunWfs(
+        couches_wfs=COUCHES_WFS,
+        dossier_travail=DOSSIER_TRAVAIL,
+        resoudre_zone_wgs84=_resoudre_zone_wgs84,
+        acquerir_couches_vecteur=_acquerir_couches_vecteur,
+        produire_sorties_vecteur=_produire_sorties_vecteur,
+        planche_depuis_dossier=_planche_depuis_dossier,
+        maintenant=time.time,
+        formater_duree=_hms,
+        historique_depuis_argv=_historique_depuis_argv,
+        imprimer=print,
+    )
+
+
+def _executer_run_wfs(args, formats_geojson, t_debut):
+    """Façade compatible vers l'orchestration WFS extraite."""
+    return _executer_run_wfs_impl(
+        args,
+        formats_geojson,
+        t_debut,
+        dependances=_dependances_run_wfs(),
+    )
+
+
 def main_wfs():
     """Point d'entrée mode --ignvecteur."""
-    import argparse
-
     t_debut = time.time()
 
-    parser = argparse.ArgumentParser(
-        prog="lidar2map.py --vector",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="\n".join(
-            ["Available layers:"] +
-            [f"  {k:<16} {v[2]}" for k, v in COUCHES_WFS.items()] +
-            ["",
-             "Examples:",
-             "  python lidar2map.py --vector --zone-city gareoult --zone-width 10",
-             "  python lidar2map.py --vector --layer batiments routes --zone-city gareoult",
-             "  python lidar2map.py --vector --layer cadastre --zone-department 83",
-            ]
-        )
-    )
-    parser.add_argument("--version", action="version",
-                        version=f"lidar2map {VERSION} ({VERSION_DATE}), multi-provider")
-    parser.add_argument("--vector", "--ignvecteur", action="store_true", dest="ignvecteur")
-    parser.add_argument("--layer", "--couche", metavar="NAME", nargs="+", default=["cadastre"], dest="couche",
-                        help="WFS layer(s) to download (default: cadastre). "
-                             "Short alias or full typename. "
-                             "Multiple layers separated by spaces.")
-
-    # Zone — même logique que --ignraster
-    _ajouter_args_zone(
-        parser,
-        width_default=20.0,
-        bbox_metavar="W,S,E,N",
-    )
-    parser.add_argument("--output-dir", "--dossier",     metavar="PATH", default=None, dest="dossier",
-                        help="Output folder (default: ./ign_vecteur/)")
-    parser.add_argument("--workers",  type=_arg_int_positif, default=4, metavar="N",
-                        help="Parallel WFS connections (default: 4)")
-    parser.add_argument("--download-overwrite", "--telechargement-ecraser", action="store_true", dest="telechargement_ecraser",
-                        help="Overwrite existing GeoJSON (force re-download)")
-    parser.add_argument("--file-formats", "--formats-fichier", nargs="+", dest="formats_fichier",
-                        choices=["geojson","gz","map","transparent-raster"],
-                        default=["gz"], metavar="FMT",
-                        help="Output formats: geojson gz map transparent-raster (default: gz). "
-                             "map generates a Mapsforge map via osmosis ; transparent-raster "
-                             "rasterizes the vector into transparent PNG tiles (.sqlitedb) "
-                             "for OsmAnd overlay over the LiDAR.")
-    parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
-                        help="Overwrite existing .map")
-    parser.add_argument("--vector-simplify", "--simplification-vecteur", type=_arg_float_non_negatif, default=None,
-                        metavar="M", dest="simplification_vecteur",
-                        help="Douglas-Peucker simplification epsilon in metres. "
-                             "Without it, computed automatically from the area "
-                             "(<200 km²→3 m, <1000→8 m, <15000→15 m, <100000→25 m, else→40 m).")
+    parser = _construire_parser_wfs()
     args = parser.parse_args()
-    if not _zone_cli_presente(args):
-        parser.error(
-            "one geographic area is required: --zone-city, --zone-gps, "
-            "--zone-bbox, --zone-department, or --zone-region"
-        )
-    _appliquer_cache_dir(args)   # avant le cache bdtopo/discover
-    _ff = getattr(args, "formats_fichier", ["gz"])
-    # Formats GeoJSON à produire (filtre "map" qui est traité plus loin)
-    _gj_formats = [f for f in _ff if f in ("gz", "geojson")] or ["gz"]
-
+    _gj_formats = _preparer_run_wfs(args, parser)
     # Crash-safe : sauver l'entrée 'en cours' AVANT toute opération longue.
     _historique_debut()
-
-    # ── Résolution des couches ────────────────────────────────────────────────
-    couches_resolues = []
-    for c in args.couche:
-        if c in COUCHES_WFS:
-            # (typename, label FR) — desc runtime/logs en FR ; [2]=EN réservé au --help
-            couches_resolues.append((COUCHES_WFS[c][0], COUCHES_WFS[c][1]))
-        else:
-            # typename complet passé directement
-            couches_resolues.append((c, c))
-
-    # ── Résolution de la zone → bbox WGS84 ───────────────────────────────────
-    lon_min, lat_min, lon_max, lat_max, nom_zone = _resoudre_zone_wgs84(args)
-
-    racine  = (Path(args.dossier).resolve() if args.dossier
-               else DOSSIER_TRAVAIL / "Projets" / nom_zone / "ign_vecteur")
-    dossier = racine
-    dossier.mkdir(parents=True, exist_ok=True)
-
-    # ── Résumé ────────────────────────────────────────────────────────────────
-    print("=" * 56)
-    print("  Vecteur IGN WFS → GeoJSON")
-    print("=" * 56)
-    print(f"  Zone     : {nom_zone}")
-    print(f"  BBox     : {lon_min:.4f},{lat_min:.4f} → {lon_max:.4f},{lat_max:.4f}")
-    print(f"  Layer(s): {', '.join(c[1] for c in couches_resolues)}")
-    print(f"  Output   : {dossier}")
-
-    # ── Téléchargement ────────────────────────────────────────────────────────
-    sorties = _acquerir_couches_vecteur(
-        couches_resolues,
-        (lon_min, lat_min, lon_max, lat_max),
-        nom_zone,
-        dossier,
-        num_dep=getattr(args, "zone_departement", None),
-        ecraser=args.telechargement_ecraser,
-        formats=_gj_formats,
-        workers=args.workers,
-    )
-
-    # Fusion et livrables derives demandes.
-    _resultat_vecteur = _produire_sorties_vecteur(
-        sorties,
-        dossier,
-        nom_zone,
-        (lon_min, lat_min, lon_max, lat_max),
-        formats=getattr(args, "formats_fichier", ["gz"]),
-        ecraser=args.tuiles_ecraser,
-        simplification=getattr(args, "simplification_vecteur", None),
-        zoom_min=getattr(args, "zoom_min", 8),
-        zoom_max=getattr(args, "zoom_max", 18),
-    )
-    _livrables_ok = _resultat_vecteur.complet
-
-    # Bilan
-    # Planche d'assemblage : balaie les livrables du dossier (best-effort).
-    _planche_depuis_dossier(dossier, args, nom_zone,
-                            zone_bbox_wgs84=(lon_min, lat_min, lon_max, lat_max))
-    elapsed = int(time.time() - t_debut)
-    print(f"\n  Done in {_hms(elapsed)}: {len(sorties)}/{len(couches_resolues)} layers")
-    print(f"  Done! Folder: {dossier}")
-    for s in sorties:
-        print(f"  → {s}")
-    # Échec partiel (couches manquantes) = échec visible : les livrables
-    # produits restent, mais GUI/scripts/CI doivent le voir. On finalise
-    # l'historique avec le statut RÉEL (ko si partiel) AVANT de lever, sinon
-    # l'entrée resterait marquée 'ok' pour un run incomplet (R2#50).
-    _wfs_partiel = len(sorties) < len(couches_resolues)
-    _traitement_ko = _wfs_partiel or not _livrables_ok
-    _historique_depuis_argv(elapsed, str(dossier),
-                            statut=("ko" if _traitement_ko else "ok"))
-    # RuntimeError et PAS sys.exit(1) : SystemExit traverserait la boucle
-    # multi-départements (qui ne rattrape que Exception, exprès) et tuerait les
-    # départements suivants ; l'Exception y est rattrapée → dept marqué KO, on
-    # continue, et le code global non-zéro vient du bilan _deps_ko. En
-    # mono-département elle remonte au top-level → code non-zéro aussi.
-    if _wfs_partiel:
-        raise RuntimeError(f"{len(couches_resolues) - len(sorties)} WFS "
-                           f"layer(s) failed - rerun to retry them")
-    if not _livrables_ok:
-        raise RuntimeError("Requested vector deliverable generation failed")
+    _executer_run_wfs(args, _gj_formats, t_debut)
 
 
 # ============================================================

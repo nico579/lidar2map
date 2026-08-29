@@ -77,6 +77,8 @@ MAP = {
     "_deliverable_lifecycle.py":     "_deliverable_lifecycle.py",
     "_provider_runtime.py":          "_provider_runtime.py",
     "_zone_cli.py":                  "_zone_cli.py",
+    "_raster_cli.py":                "_raster_cli.py",
+    "_raster_run.py":                "_raster_run.py",
     "_raster_formats.py":            "_raster_formats.py",
     "_mbtiles_wmts.py":              "_mbtiles_wmts.py",
     "_mbtiles_lidar.py":             "_mbtiles_lidar.py",
@@ -98,14 +100,21 @@ MAP = {
     "_wfs_pipeline.py":              "_wfs_pipeline.py",
     "_bdtopo_bulk.py":               "_bdtopo_bulk.py",
     "_bdtopo_layers.py":             "_bdtopo_layers.py",
+    "_vector_cli.py":                 "_vector_cli.py",
+    "_vector_run.py":                 "_vector_run.py",
     "_vector_acquisition.py":        "_vector_acquisition.py",
     "_vector_outputs.py":            "_vector_outputs.py",
+    "_osm_acquisition.py":           "_osm_acquisition.py",
+    "_osm_run.py":                   "_osm_run.py",
     "_osm_outputs.py":               "_osm_outputs.py",
     "_osm_map_pipeline.py":          "_osm_map_pipeline.py",
     "_osm_policy.py":                "_osm_policy.py",
     "_osm_runtime.py":               "_osm_runtime.py",
     "_terrain_sources.py":           "_terrain_sources.py",
     "_terrain_cli.py":               "_terrain_cli.py",
+    "_terrain_run.py":               "_terrain_run.py",
+    "_terrain_acquisition.py":       "_terrain_acquisition.py",
+    "_terrain_outputs.py":           "_terrain_outputs.py",
     "_terrain_zones.py":              "_terrain_zones.py",
     "_terrain_geocoding.py":          "_terrain_geocoding.py",
     "_terrain_resolution.py":         "_terrain_resolution.py",
@@ -201,7 +210,7 @@ def is_rebuild_file(name: str) -> bool:
         or (name.startswith("_deliverable_") and name.endswith(".py"))
         or (name.startswith("_provider_") and name.endswith(".py"))
         or (name.startswith("_zone_") and name.endswith(".py"))
-        or name == "_raster_formats.py"
+        or (name.startswith("_raster_") and name.endswith(".py"))
         or name == "_mbtiles_wmts.py"
         or name == "_mbtiles_lidar.py"
         or name == "_mbtiles_wmts_helpers.py"
@@ -221,8 +230,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_wfs_pipeline.py"
         or name == "_bdtopo_bulk.py"
         or name == "_bdtopo_layers.py"
-        or name == "_vector_acquisition.py"
-        or name == "_vector_outputs.py"
+        or (name.startswith("_vector_") and name.endswith(".py"))
         or (name.startswith("_osm_") and name.endswith(".py"))
         or (name.startswith("_terrain_") and name.endswith(".py"))
         or (name.startswith("_geojson_") and name.endswith(".py"))

@@ -363,6 +363,42 @@ class AtomicDownloadTests(unittest.TestCase):
         self.assertEqual(final.read_bytes(), b"VALID")
         self._assert_no_part()
 
+    def test_direct_rate_limit_code_gets_escalated_backoff(self):
+        """403/429/503 (throttle serveur, ex. EA gb-england) : backoff plus
+        large que le linéaire standard, pas le flat delai_retry d'avant."""
+        import _terrain_download
+
+        final = self.tmp / "tile.tif"
+        attempts = []
+
+        def download(_url, path, timeout=60, **_kwargs):
+            attempts.append(Path(path))
+            if len(attempts) < 3:
+                erreur = OSError("HTTP 403")
+                erreur.http_code = 403
+                raise erreur
+            Path(path).write_bytes(b"VALID")
+            return L.SEUIL_DALLE_VALIDE + 1
+
+        L.PROVIDER = SimpleNamespace(subdir_from_name=lambda _nom: "")
+        with mock.patch.object(L, "_download_to_tmp", side_effect=download), \
+             mock.patch.object(L, "_post_fetch_si_besoin"), \
+             mock.patch.object(L, "_valider_tif_dalle", return_value=True), \
+             mock.patch.object(L, "_creer_fichier"), \
+             mock.patch.object(L.time, "sleep") as sleep, \
+             mock.patch.object(L, "MAX_TENTATIVES", 3):
+            result = L.telecharger_dalle_directe(
+                "tile.tif", "https://example.invalid/tile", self.tmp
+            )
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(attempts), 3)
+        sleep.assert_has_calls([
+            mock.call(_terrain_download.DELAI_RATE_LIMIT_S * 1),
+            mock.call(_terrain_download.DELAI_RATE_LIMIT_S * 2),
+        ])
+        self.assertEqual(final.read_bytes(), b"VALID")
+        self._assert_no_part()
+
     def test_direct_cloud_cache_is_linked_for_hook_without_republication(self):
         final = self.tmp / "tile.tif"
         cloud = final.with_suffix(".laz")

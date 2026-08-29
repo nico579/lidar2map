@@ -1,10 +1,12 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot déployé : 26 août 2026, **v1.48.2**. La modularisation publiée va
-jusqu'à 15y ; les versions 1.48.x ajoutent les correctifs fonctionnels livrés
-depuis ce jalon. La phase 16a est terminée localement et attend un prochain
-rebuild. Les quatre bundles Windows, Linux, macOS Intel et macOS Apple Silicon
-de la dernière release ont été reconstruits par `release.yml`.
+Dernier lot de bundles déployé : 26 août 2026, **v1.48.2**. La modularisation
+incluse dans ces bundles va jusqu'à 15y ; les versions 1.48.x ajoutent les
+correctifs fonctionnels livrés depuis ce jalon. Les sources de la phase 16a ont
+été poussées sur `main` au commit `f713b18` par `deploy.py --push-only`, sans
+rebuild. Les phases 16b à 16k sont terminées localement. Les quatre bundles Windows,
+Linux, macOS Intel et macOS Apple Silicon de la dernière release avaient été
+reconstruits par `release.yml`.
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -46,8 +48,12 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _wfs_pipeline.py        pagination WFS et publication GeoJSON atomique
 ├── _bdtopo_bulk.py         découverte, téléchargement et extraction GPKG bulk
 ├── _bdtopo_layers.py       conversion GPKG et publication GeoJSON multi-format
+├── _vector_cli.py          parser et préparation initiale du workflow WFS
+├── _vector_run.py          orchestration et finalisation du workflow WFS
 ├── _vector_acquisition.py  sélection bulk/WFS et acquisition des couches
 ├── _vector_outputs.py      fusion et livrables dérivés du mode vecteur
+├── _osm_acquisition.py     résolution, cache et téléchargement du PBF OSM
+├── _osm_run.py             orchestration finale d'un PBF OSM déjà acquis
 ├── _osm_outputs.py         sélection et statut all-of des livrables OSM
 ├── _osm_map_pipeline.py    génération Mapsforge en trois passes Osmosis
 ├── _osm_policy.py          filtres, validation et signatures OSM
@@ -55,6 +61,11 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_sources.py     sources autonomes LiDAR/OSM et raster WMTS
 ├── _terrain_zones.py       primitives pures de résolution des zones terrain
 ├── _terrain_cli.py         parser LiDAR/OSM et politique de défauts CLI
+├── _terrain_run.py         validation et préparation d'un run LiDAR/OSM
+├── _terrain_acquisition.py découverte, cache et sélection des dalles terrain
+├── _terrain_outputs.py     compression, ombrages et livrables raster du passage terrain
+├── _raster_cli.py          parser et préparation initiale du workflow WMTS
+├── _raster_run.py          orchestration du passage monolithique WMTS
 ├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
 ├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
 ├── _terrain_chunks.py      découverte et téléchargement par morceau glissant
@@ -94,9 +105,11 @@ domaine (`_raster_formats`, `_mbtiles_wmts`, `_mbtiles_lidar`,
 `_geojson_mapsforge`, `_bootstrap_policy`, `_bootstrap_runtime`,
 `_bootstrap_tls`, `_atomic_files`, `_http_helpers`, `_runtime_paths`,
 `_disk_guard`, `_wfs_pipeline`, `_bdtopo_bulk`, `_bdtopo_layers`,
-`_vector_acquisition`, `_vector_outputs`, `_geojson_merge`,
-`_geojson_merge_cli`, `_geojson_osm_export`, `_osm_outputs`,
-`_osm_map_pipeline`, `_osm_policy`, `_osm_runtime`).
+`_vector_cli`, `_vector_run`, `_vector_acquisition`, `_vector_outputs`,
+`_geojson_merge`,
+`_geojson_merge_cli`, `_geojson_osm_export`, `_osm_acquisition`, `_osm_run`,
+`_osm_outputs`, `_osm_map_pipeline`, `_osm_policy`, `_osm_runtime`, `_raster_cli`,
+`_raster_run`, `_terrain_acquisition`, `_terrain_outputs`).
 Le domaine terrain commence avec `_terrain_sources`.
 
 ## Volume déjà transféré
@@ -198,8 +211,18 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Contrat de zone CLI partagé (15y, mesuré) | 126 | 0,59 % |
 | Évolutions fonctionnelles v1.48.x réintroduites dans le monolithe | -135 | -0,63 % |
 | Parser et défauts CLI terrain (16a, mesuré) | 273 | 1,28 % |
-| **Total sorti du monolithe (mesuré)** | **12 565** | **58,95 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **8 750** | **41,05 %** |
+| Validation et préparation du run LiDAR (16b, mesuré) | 67 | 0,31 % |
+| Parser et préparation raster WMTS (16c, mesuré) | 73 | 0,34 % |
+| Parser et préparation vectoriels WFS (16d, mesuré) | 13 | 0,06 % |
+| Orchestration restante du workflow WFS (16e, mesuré) | 48 | 0,23 % |
+| Passage monolithique du workflow WMTS (16f, mesuré) | 51 | 0,24 % |
+| Acquisition monolithique des dalles terrain (16g, mesuré) | 145 | 0,68 % |
+| Acquisition de la source OSM Geofabrik (16h, mesuré) | 136 | 0,64 % |
+| Production monolithique des sorties terrain (16i, mesuré) | 28 | 0,13 % |
+| Orchestration finale OSM post-acquisition (16j, mesuré) | 7 | 0,03 % |
+| Compression des ombrages existants (16k, mesuré) | 63 | 0,30 % |
+| **Total sorti du monolithe (mesuré)** | **13 196** | **61,91 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **8 119** | **38,09 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -270,8 +293,8 @@ post-15s-b est de 9 871 lignes (46,31 %) : il reste donc à sortir **2 411 à 3 
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
-la lisibilité. Après 16a, le script principal compte **8 750 lignes (41,05 %)** :
-il reste donc à sortir **1 290 à 2 355 lignes nettes** pour atteindre la zone
+la lisibilité. Après 16k, le script principal compte **8 119 lignes (38,09 %)** :
+il reste donc à sortir **659 à 1 724 lignes nettes** pour atteindre la zone
 6 395–7 460. Sous 30 %, il faudrait probablement déplacer la façade publique,
 le dispatch ou des adaptateurs de compatibilité dont la présence dans le point
 d'entrée reste utile. Toute poursuite sous ce seuil demandera une décision
@@ -329,7 +352,8 @@ rester dans le script principal.
 | 12. Infrastructure partagée | **Terminée localement** | Helpers, logger, activation, primitives atomiques, HTTP, chemins et garde disque extraits (12a-g) | secrets, concurrence, publication SQLite, réseau, plateforme, frozen/source, disque et hooks |
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 | 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
-| 15. Orchestration terrain restante | **En cours** | Sources autonomes, primitives, géocodage, transformations CRS, résolveur de zone, ordonnanceur, inventaire, moteurs direct/COPC/COG, chemins, cache, préchargement, découverte, ombrage, tuilages commun/glissant, transactions WMTS/LiDAR autonome, planification des instances et orchestrateur d'ombrage extraits (15a–15s-b) | contrats de sortie, historique, cache atomique, réseau simulé, repli France borné, 24 branches de résolution, routage direct/COG/COPC, preuve de zone, voisinage 3×3, halos `--block`, suffixes/collisions d'ombrage, VRT temporaire, publication atomique, cache WMTS, agrégation multi-TIFF et concurrence profondeur un |
+| 15. Orchestration terrain restante | **Terminée** | Sources, zones, géocodage, résolution, téléchargement, chunks, ombrage, planches, cycle de vie, catalogue provider et contrat de zone extraits (15a–15y) | contrats de sortie, historique, cache atomique, réseau simulé, routage direct/COG/COPC, voisinage 3×3, publications et coutures tardives |
+| 16. CLI et points d'entrée | **En cours** | Parsers et préparation LiDAR/WMTS/WFS (16a-d), runners WFS et WMTS monolithiques (16e-f), acquisitions terrain et OSM (16g-h), sorties terrain et orchestration OSM finale (16i-j), compression des ombrages existants (16k) | surface CLI, ordre des effets, historique, acquisitions, caches, statuts all-of, sorties raster/OSM, compression atomique et coutures tardives |
 
 ## Travail déjà sécurisé
 
@@ -3027,7 +3051,7 @@ Déploiement du lot 15t–15y : bump `VERSION` 1.46.0 → **1.47.0**, commit
 des quatre cibles (Windows, Linux, macOS Intel et Apple Silicon). La release
 publique contient les quatre artefacts attendus.
 
-### Sous-phase 16a — parser et défauts CLI terrain (terminée localement)
+### Sous-phase 16a — parser et défauts CLI terrain (terminée, sources poussées)
 
 Les corps de `_construire_parser_lidar` et `_appliquer_defauts_cli_lidar`
 rejoignent `_terrain_cli.py`. Le nouveau module ne lit aucun global du script
@@ -3055,10 +3079,403 @@ Mesure nette par rapport à la source v1.48.2 déployée : `lidar2map.py` 9 023 
 `_terrain_cli.py` contient 418 lignes. Total mesuré sorti : **12 565 lignes,
 58,95 %** ; reste **8 750 lignes, 41,05 %**.
 
-### Prochaine étape proposée : 16b — validation et préparation du run LiDAR
+Les sources de 16a ont été poussées sur `main` au commit `f713b18` avec
+`deploy.py --push-only`. Aucun bundle n'a été reconstruit à ce palier.
 
-Caractériser le début de `main()` après `parse_args` puis extraire dans un lot
-séparé la validation reproductible et la préparation sans traitement raster :
-contrat provider/zone, zooms, chemins cache/production et options provider.
-L'exécution des téléchargements, ombrages et tuilages restera hors périmètre de
-16b afin de ne pas déplacer simultanément configuration et pipeline métier.
+### Sous-phase 16b — validation et préparation du run LiDAR (terminée localement)
+
+Le bloc situé après `parse_args()` et avant `_historique_debut()` rejoint
+`_terrain_run.py`. La frontière est volontairement stricte : le nouveau module
+ne démarre ni historique, ni résolution effective de zone, ni téléchargement,
+ni traitement raster. Il valide le workflow, le provider explicite, la largeur
+des zones ponctuelles, la présence d'une zone et les zooms, puis applique dans
+l'ordre les défauts, le cache, la production et le cache nuage. Il normalise
+ensuite les instances/presets d'ombrage, propage la clé API au provider actif et
+calcule les quatre indicateurs de formats attendus par le pipeline.
+
+`_valider_contrat_cli_lidar` et `_valider_zooms` restent disponibles sous leurs
+signatures historiques par des façades. Une dataclass de douze coutures reçoit
+les services applicatifs à chaque appel ; `_PROVIDER_CLI_EXPLICIT`, `PROVIDER`
+et `RESOLUTION_M` restent donc relus tardivement. En particulier, le cache nuage
+est configuré après le repointage du cache principal et ne capture jamais une
+ancienne valeur de `DOSSIER_CACHE`.
+
+Sept contrats supplémentaires portent la suite de refonte à **290 tests**. Ils
+verrouillent les signatures, les dépendances tardives, la priorité des erreurs,
+l'exemption `.mbtiles` sans zone, les bornes de zoom 0–22, l'ordre exact des
+effets, les specs et presets d'ombrage, la conservation d'une élévation
+explicite, la clé API facultative, les quatre formats et la création/no-op des
+racines cache et production. Les gardes textuelles cache/cloud ont été routées
+vers `_terrain_run.py` et les scénarios historiques de `main()` continuent de
+monkeypatcher les coutures individuelles.
+
+Compilation et Ruff sont verts. Le profil FAST passe **12/12** en 37,8 s et le
+profil scientifique **5/5** en 78,4 s. `_terrain_run.py` est ajouté à
+`deploy.MAP`; les filtres CI et la garde de rebuild `_terrain_*.py` le couvrent
+déjà. Aucun push ni rebuild n'a été effectué pour 16b.
+
+Mesure nette depuis 16a : `lidar2map.py` 8 750 → 8 683 lignes (**-67**, soit
+**0,31 %** du périmètre figé). `_terrain_run.py` contient 144 lignes. Total
+mesuré sorti : **12 632 lignes, 59,26 %** ; reste **8 683 lignes, 40,74 %**.
+
+### Sous-phase 16c — parser et préparation raster WMTS (terminée localement)
+
+Le corps de `_construire_parser_wmts` et le bloc immédiatement placé après
+`parse_args()` rejoignent `_raster_cli.py`. La frontière reste volontairement
+étroite : le module extrait construit argparse, exige une zone sauf lorsqu'une
+source autonome est fournie, valide les zooms, applique le cache puis calcule
+les quatre indicateurs de formats. Il ne démarre ni historique, ni conversion
+de source, ni résolution de couche ou de zone, ni téléchargement WMTS.
+
+Deux dataclasses séparent la construction du parser de la préparation du run.
+Les façades `_construire_parser_wmts()` et `_preparer_run_wmts(args, parser)`
+conservent leurs signatures et reconstruisent leurs coutures à chaque appel.
+Le monkeypatch historique de `_appliquer_cache_dir` reste ainsi observable par
+`main_wmts()` ; un scénario d'historique l'affirme désormais explicitement.
+
+Six contrats supplémentaires portent la suite de refonte à **296 tests**. Ils
+verrouillent les signatures, les dépendances tardives, les valeurs par défaut,
+les alias français, l'aide, l'exclusion mutuelle des zones, les validateurs
+numériques, l'acceptation des identifiants WMTS complets, le refus des formats
+vectoriels, la sémantique historique de `source`, l'ordre zone/zooms/cache et
+les indicateurs de formats. Les gardes textuelles largeur, bbox et cache lisent
+maintenant `_raster_cli.py`, leur module propriétaire, au lieu de passer par un
+faux positif restant dans le monolithe.
+
+Ruff complet est vert. Le profil FAST passe **12/12** en 46,6 s et le profil
+scientifique **5/5** en 94,1 s, avec les interactions CLI, l'historique WMTS et
+les producteurs raster réels. `_raster_cli.py` est ajouté à `deploy.MAP` ; la
+garde de rebuild et les deux filtres CI couvrent désormais `_raster_*.py`.
+Le dry-run de `deploy.py` reconnaît le module et le lot cumulatif 16b–16c.
+Aucun push ni rebuild n'a été effectué pour 16b–16c.
+
+Mesure nette depuis 16b : `lidar2map.py` 8 683 → 8 610 lignes (**-73**, soit
+**0,34 %** du périmètre figé). `_raster_cli.py` contient 264 lignes. Total
+mesuré sorti : **12 705 lignes, 59,61 %** ; reste **8 610 lignes, 40,39 %**.
+
+### Sous-phase 16d — parser et préparation du workflow WFS (terminée localement)
+
+La construction argparse de `main_wfs()` et le petit bloc placé après
+`parse_args()` rejoignent `_vector_cli.py` (156 lignes). La frontière reste
+volontairement étroite : le module exige une zone, applique le cache, filtre les
+formats d'acquisition GeoJSON et conserve le repli historique sur `gz`. Il ne
+résout ni les couches, ni la zone WGS84, et ne démarre ni l'historique, ni
+l'acquisition bulk/WFS, ni la génération des livrables.
+
+Deux dataclasses séparent la construction du parser de la préparation du run.
+Les façades `_construire_parser_wfs()` et `_preparer_run_wfs(args, parser)`
+reconstruisent leurs dépendances à chaque appel : les monkeypatchs historiques
+de `_appliquer_cache_dir`, des validateurs numériques et du catalogue
+`COUCHES_WFS` restent donc visibles. Un scénario réel de `main_wfs()` vérifie
+explicitement l'appel tardif du cache.
+
+Six contrats supplémentaires portent la suite de refonte à **302 tests**. Ils
+verrouillent les signatures, les valeurs par défaut et alias français, le
+catalogue d'aide, les typenames complets, l'exclusivité et la validation des
+zones, l'ordre zone/cache, ainsi que l'ordre, les doublons et le repli des
+formats GeoJSON. Les gardes textuelles bbox/cache lisent désormais les trois
+modules propriétaires `_terrain_run.py`, `_raster_cli.py` et `_vector_cli.py`.
+
+Ruff complet est vert. Le profil FAST passe **12/12** en 56,1 s et le profil
+scientifique **5/5** en 95,2 s. `_vector_cli.py` est ajouté à `deploy.MAP` ; la
+garde de rebuild et les deux filtres CI couvrent désormais `_vector_*.py`.
+Le dry-run de `deploy.py` reconnaît le module et l'ensemble du lot cumulatif
+16b–16d. Aucun push ni rebuild n'a été effectué pour 16b–16d.
+
+Mesure nette depuis 16c : `lidar2map.py` 8 610 → 8 597 lignes (**-13**, soit
+**0,06 %** du périmètre figé). Cette petite baisse est attendue pour un parser :
+les 156 lignes du module explicite remplacent un bloc compact par des
+dataclasses et des façades injectables. Total mesuré sorti : **12 718 lignes,
+59,67 %** ; reste **8 597 lignes, 40,33 %**.
+
+### Sous-phase 16e — orchestration restante du workflow WFS (terminée localement)
+
+Les 80 lignes linéaires de `main_wfs()` placées après `_historique_debut()`
+rejoignent `_vector_run.py` (115 lignes) : résolution des couches et de la zone,
+création du dossier, acquisition, livrables, planche, bilan et finalisation.
+`main_wfs()` conserve le démarrage crash-safe de l'historique avant la façade et
+son retour implicite `None`. Les exceptions inattendues restent prises en charge
+par le mécanisme global, sans nouveau `try/finally` local.
+
+`DependancesRunWfs` expose dix coutures reconstruites à chaque appel : catalogue,
+dossier de travail, résolution de zone, acquisition, production, planche,
+horloge, formatage de durée, historique et affichage. L'ordre et les doublons des
+couches sont conservés ; les typenames inconnus restent transmis directement.
+Le dossier explicite est toujours résolu, le dossier par défaut garde son chemin,
+et tous les `getattr` historiques ainsi que la priorité de l'erreur WFS partielle
+sur l'échec des livrables sont inchangés.
+
+Six contrats supplémentaires portent la suite de refonte à **308 tests**. Ils
+verrouillent la façade et toutes les identités tardives, l'ordre
+`_historique_debut()`/run, le succès complet, les dossiers explicite/par défaut,
+les arguments et valeurs de repli, le statut `ko`, les messages exacts et la
+priorité des erreurs. Les cinq scénarios WFS réels de `_test_split_history.py`
+restent verts sans adaptation. Une revue indépendante ligne à ligne n'a relevé
+aucune dérive et confirme la compatibilité de grammaire Python 3.8.
+
+Ruff complet est vert. Le profil FAST passe **12/12** en 54,5 s et le profil
+scientifique **5/5** en 97,7 s. `_vector_run.py` est ajouté à `deploy.MAP` ; les
+gardes de rebuild et les filtres CI `_vector_*.py` le couvrent déjà. Aucun push
+ni rebuild n'a été effectué pour 16b–16e.
+
+Mesure nette depuis 16d : `lidar2map.py` 8 597 → 8 549 lignes (**-48**, soit
+**0,23 %** du périmètre figé), proche des 50 lignes estimées avant extraction.
+Total mesuré sorti : **12 766 lignes, 59,89 %** ; reste **8 549 lignes,
+40,11 %**.
+
+### Sous-phase 16f — passage monolithique du workflow WMTS (terminée localement)
+
+Le bloc monolithique de `main_wmts()` placé après le dispatch de découpage a
+priori rejoint `_raster_run.py` (184 lignes) : garde disque, grille et
+estimation, dossiers de sortie/cache, décision de fraîcheur, génération
+MBTiles, conversions, planche, bilan et historique. Le point d'entrée conserve
+le parser, le traitement `--source`, la résolution couche/zone,
+`_historique_debut()` et toute la branche de split ; un split terminé retourne
+donc toujours avant la façade monolithique.
+
+`DependancesRunWmts` expose seize coutures applicatives, sous le seuil d'alerte
+de vingt fixé par le plan : racines travail/cache, garde disque, grille,
+comptage, estimation, qualité et nom WMTS, fraîcheur, producteur MBTiles,
+conversions, planche, horloge, durée, historique et affichage. La façade les
+reconstruit à chaque appel afin de préserver les monkeypatchs historiques. La
+politique XYZ, le cache historique `ign_raster`, les chemins explicites, la
+réutilisation d'un MBTiles frais et l'ordre des échecs restent inchangés.
+
+Six contrats supplémentaires portent la suite de refonte à **314 tests**. Ils
+verrouillent la façade et les seize identités tardives, le démarrage préalable
+de l'historique, le contournement du runner par le split, la génération et ses
+arguments exacts, la réutilisation d'un MBTiles frais, l'absence de sortie et
+l'échec de conversion. Les **72 scénarios** de `_test_split_history.py`, dont
+les chemins WMTS réels, restent verts sans adaptation. Une revue indépendante
+n'a relevé aucune dérive et confirme la compatibilité de grammaire Python 3.8.
+
+Ruff complet est vert. Le profil FAST passe **12/12** en 64,2 s et le profil
+scientifique **5/5** en 102,9 s. `_raster_run.py` est ajouté à `deploy.MAP` ; la
+garde de rebuild et les filtres CI `_raster_*.py` le couvrent déjà. Le dry-run
+de `deploy.py` reconnaît le module et l'ensemble du lot cumulatif 16b–16f.
+Aucun push ni rebuild n'a été effectué pour 16b–16f.
+
+Mesure nette depuis 16e : `lidar2map.py` 8 549 → 8 498 lignes (**-51**, soit
+**0,24 %** du périmètre figé). Total mesuré sorti : **12 817 lignes, 60,13 %** ;
+reste **8 498 lignes, 39,87 %**.
+
+### Sous-phase 16g — acquisition monolithique des dalles terrain (terminée localement)
+
+Le segment de 192 lignes de `main()` chargé de l'acquisition rejoint
+`_terrain_acquisition.py` (332 lignes). Il convertit l'emprise en WGS84,
+découvre les dalles du provider, valide le cache lorsque le téléchargement est
+désactivé, télécharge si nécessaire, relit ou reconstruit `dalles_zone.txt`,
+puis filtre les TIFF utilisables par les ombrages. Il s'arrête avant la
+compression, les ombrages et toute production raster. La façade ne récupère que
+`bbox_wgs`, les dalles d'ombrage et le signal explicite de fin hors couverture.
+
+`DependancesAcquisitionTerrain` expose les treize coutures auditées : provider,
+cache, seuil de validité, transformeur et enveloppe d'emprise, listing TIFF,
+téléchargement, validation et écriture du manifeste, historique, horloge,
+affichage et sortie contrôlée. Elles sont reconstruites à chaque appel. La
+distinction critique est conservée : `None` ou une exception de découverte
+signifie un service indisponible (`ko`, code 1), tandis que `{}` signifie une
+absence de couverture légitime (`ok`, retour normal).
+
+Onze contrats supplémentaires portent la suite de refonte à **325 tests**. Ils
+verrouillent les treize identités tardives et la façade, la bbox WGS84 avec sa
+marge et son cache par provider, le mode OSM seul sans découverte ni accès au
+manifeste, la matrice `None`/exception/`{}`, les sources TIFF et MBTiles, les
+caches absents ou hors zone, le seuil strict des dalles, les manifestes valides,
+absents ou obsolètes, l'appel exact du téléchargeur et le filtrage final. Un
+contrat dédié affirme qu'une erreur réelle du téléchargement, notamment HTTP
+500, remonte inchangée et n'est jamais convertie en absence de couverture.
+
+L'ancienne garde textuelle OSM de `_test_interactions.py` vise désormais le
+module propriétaire et est doublée par le contrat comportemental avec un ancien
+manifeste réellement présent. Les **72 scénarios** historiques, la robustesse du
+téléchargement et les **30 tests** de téléchargements atomiques restent verts.
+
+Ruff complet est vert. Le profil FAST passe **12/12** en 66,4 s et le profil
+scientifique **5/5** en 111,9 s. `_terrain_acquisition.py` est ajouté à
+`deploy.MAP` ; la garde de rebuild et les filtres CI `_terrain_*.py` le couvrent
+déjà. Le dry-run de `deploy.py` reconnaît le module et l'ensemble du lot
+cumulatif 16b–16g. Aucun push ni rebuild n'a été effectué pour 16b–16g.
+
+Mesure nette depuis 16f : `lidar2map.py` 8 498 → 8 353 lignes (**-145**, soit
+**0,68 %** du périmètre figé), exactement au bas de la fourchette auditée.
+Total mesuré sorti : **12 962 lignes, 60,81 %** ; reste **8 353 lignes,
+39,19 %**.
+
+### Sous-phase 16h — acquisition de la source OSM Geofabrik (terminée localement)
+
+Le bloc de 173 lignes de `main()` qui choisissait et téléchargeait le PBF rejoint
+`_osm_acquisition.py` (198 lignes). La frontière s'arrête strictement avant le
+calcul de l'emprise OSM, la création du dossier de restitution et la génération
+des livrables. Elle traite la source `.pbf`/`.osm` explicite, le refus de
+l'automatisme hors de France, la région ou le département Geofabrik, le
+reverse-geocoding du centre, le repli national, la fraîcheur du cache et la
+publication du téléchargement par fichier `.part`.
+
+`DependancesAcquisitionOsm` expose quinze coutures reconstruites à chaque appel :
+provider, table et deux bases URL Geofabrik, cache, conversion du centre,
+ouverture HTTP, JSON, horloge, annulation, journal de requête, formatage de
+durée, flux de progression, ouverture de fichier et affichage. La façade
+`_acquerir_source_osm(args, cx, cy)` conserve le point d'appel historique ; les
+monkeypatchs installés avant l'appel restent visibles.
+
+Douze contrats supplémentaires portent la suite de refonte à **337 tests**. Ils
+verrouillent la façade et les quinze identités tardives, les sources explicites,
+le refus étranger sans accès réseau ni cache, les chemins région, département,
+reverse et national, le seuil exact de 1 000 000 octets, l'avertissement d'âge,
+le cache forcé ou tronqué, le streaming complet, `Content-Length`, les deux
+formes d'incomplétude, le nettoyage du `.part`, les erreurs URL/HTTP/disque et
+la propagation de `KeyboardInterrupt`. Le garde textuel hors France de
+`_test_interactions.py` lit désormais le module propriétaire et le contrat
+comportemental affirme réellement l'absence d'effets en pays étranger.
+
+Une revue indépendante ligne à ligne n'a trouvé aucune dérive et confirme la
+compatibilité de grammaire Python 3.8. Les risques historiques ont été laissés
+inchangés et sont explicitement différés : un échec du reverse peut choisir le
+PBF national d'environ 4 Go ; un rafraîchissement forcé supprime l'ancien cache
+valide avant de valider le nouveau ; un ancien `.part` peut rester lors d'une
+simple réutilisation ; le message de fin précède encore le contrôle final de
+complétude. Les corriger dans cette extraction aurait mélangé refonte et
+évolution métier.
+
+Ruff est vert. Le profil FAST passe **12/12** en 68,2 s et le profil
+scientifique **5/5** en 109,7 s. `_osm_acquisition.py` est ajouté à `deploy.MAP` ;
+la garde de rebuild et les filtres CI `_osm_*.py` le couvrent déjà. Le dry-run de
+`deploy.py` reconnaît le module et l'ensemble du lot cumulatif 16b–16h. Aucun
+push ni rebuild n'a été effectué pour 16b–16h.
+
+Mesure nette depuis 16g : `lidar2map.py` 8 353 → 8 217 lignes (**-136**, soit
+**0,64 %** du périmètre figé). Total mesuré sorti : **13 098 lignes, 61,45 %** ;
+reste **8 217 lignes, 38,55 %**.
+
+### Sous-phase 16i — production monolithique des sorties terrain (terminée localement)
+
+Le bloc de production placé après l'acquisition et la compression rejoint
+`_terrain_outputs.py` (197 lignes). Il résout les ombrages, lance leur génération,
+puis produit ou réutilise les MBTiles avant les conversions RMAP/SQLiteDB. Il
+traite également une source TIFF explicite et le tuilage des ombrages générés
+pendant le run. La frontière s'arrête avant l'orchestration OSM, les planches,
+le bilan et la finalisation de l'historique.
+
+`DependancesSortiesTerrain` expose dix coutures reconstruites à chaque appel :
+résolution des ombrages, élévation par défaut, génération des ombrages,
+fraîcheur et production MBTiles, workers de tuilage, conversions, inventaire et
+tuilage des TIFF, ainsi que l'affichage. La façade
+`_produire_sorties_terrain(...)` conserve sa signature et les monkeypatchs
+historiques restent visibles.
+
+Huit contrats supplémentaires portent la suite de refonte à **345 tests**. Ils
+verrouillent la façade et les dix dépendances tardives, le no-op sans sortie,
+les libellés et arguments exacts des ombrages, la conservation d'une élévation
+explicite égale à zéro, la distinction entre aucune génération (`None`) et une
+génération vide (`[]`), la source TIFF et son nommage, la régénération ou la
+réutilisation d'un MBTiles, l'agrégation des conversions et l'échec lorsqu'aucun
+ombrage demandé n'est disponible.
+
+Une revue indépendante ligne à ligne n'a trouvé aucune dérive. Elle confirme
+notamment les arguments exacts des générateurs, l'ordre des suffixes TIFF, la
+distinction `None`/`[]`, le statut all-of et la reconstruction tardive des dix
+coutures. La seule différence neutre est la normalisation de `dossier_ville` en
+`Path`, alors que l'intégration lui fournissait déjà toujours un `Path`.
+
+Ruff complet et la grammaire Python 3.8 sont verts. Le profil FAST passe
+**12/12** en 42,3 s et le profil scientifique **5/5** en 177,0 s.
+`_terrain_outputs.py` est ajouté à `deploy.MAP` ; la garde de rebuild et les
+filtres CI `_terrain_*.py` le couvrent déjà. Le dry-run de `deploy.py` reconnaît
+le module et le lot cumulatif 16b–16i. Aucun push ni rebuild n'a été effectué
+pour 16b–16i.
+
+Mesure nette depuis 16h : `lidar2map.py` 8 217 → 8 189 lignes (**-28**, soit
+**0,13 %** du périmètre figé). `_terrain_outputs.py` contient 197 lignes
+physiques ; les 169 lignes d'écart correspondent au module explicite, à la
+structure de ses dix dépendances et à la façade conservée. Total mesuré sorti :
+**13 126 lignes, 61,58 %** ; reste **8 189 lignes, 38,42 %**.
+
+### Sous-phase 16j — orchestration finale OSM (terminée localement)
+
+Le corps de 40 lignes exécuté après validation du PBF rejoint `_osm_run.py`
+(80 lignes). Il choisit l'emprise mondiale d'une région ou transforme l'emprise
+native avec ses bords densifiés, crée le dossier OSM, transmet exactement les
+formats, tags, zooms et options à `_produire_sorties_osm`, puis rend l'emprise,
+le dossier et le statut complet au postlude commun.
+
+La frontière laisse volontairement dans `main()` l'acquisition et le test
+`pbf and pbf.exists()`. C'est un invariant fonctionnel : dans un run combiné
+sans PBF, l'emprise issue de l'acquisition terrain doit rester disponible pour
+la planche, même si le statut OSM rend finalement le run incomplet. À l'inverse,
+une erreur de conversion d'un PBF présent remet bien l'emprise à `None`, comme
+avant. L'historique, la planche, le bilan et l'exception finale restent aussi
+dans la façade.
+
+`DependancesRunOsm` expose cinq coutures reconstruites à chaque appel : racine de
+travail, transformation d'enveloppe, conversion native vers WGS84, production
+des sorties et affichage. `ResultatRunOsm` rend explicites les trois valeurs qui
+étaient auparavant mutées dans la branche de `main()`.
+
+Sept contrats directs portent la suite de refonte à **352 tests**. Ils couvrent
+la façade et ses cinq dépendances tardives, le garde PBF, le mode région sans
+transformation, la conversion provider-aware, les dossiers explicite et par
+défaut, la priorité des tags, les zooms par défaut, les quatre exceptions CRS
+historiquement absorbées, la propagation des autres erreurs et le statut sans
+coercition. Un test d'intégration supplémentaire vérifie réellement le run
+LiDAR+OSM sans PBF jusqu'à la planche, l'historique `ko` et l'exception finale.
+
+Une revue indépendante n'a trouvé aucune dérive : la portée du `try`, les
+arguments, le garde PBF, la distinction région/hors région, le dossier et
+l'agrégation du statut restent identiques. Ruff et la grammaire Python 3.8 sont
+verts. Le profil FAST passe **12/12** en 69,1 s et le profil scientifique
+**5/5** en 111,4 s. `_osm_run.py` est ajouté à `deploy.MAP` ; la garde de rebuild
+et les deux filtres CI `_osm_*.py` le couvrent déjà. Le dry-run de `deploy.py`
+reconnaît le module et le lot cumulatif 16b–16j. Aucun push ni rebuild n'a été
+effectué pour 16b–16j.
+
+Mesure nette depuis 16i : `lidar2map.py` 8 189 → 8 182 lignes (**-7**, soit
+**0,03 %** du périmètre figé). Le faible gain est affiché sans l'amplifier : les
+73 lignes d'écart avec le module physique correspondent aux deux dataclasses,
+aux dépendances tardives et à la façade. L'intérêt de 16j est la fermeture de la
+responsabilité OSM, pas son volume. Total mesuré sorti : **13 133 lignes,
+61,61 %** ; reste **8 182 lignes, 38,39 %**.
+
+### Sous-phase 16k — compression des ombrages existants (terminée localement)
+
+Le bloc historique de 67 lignes, en comptant son en-tête, placé entre
+l'acquisition terrain et la production des sorties rejoint le début de
+`_terrain_outputs.py`. Sa branche exécutable occupait exactement 63 lignes ; la
+façade de production existante étant réutilisée sans appel supplémentaire dans
+`main()`, ces 63 lignes disparaissent nettes du monolithe.
+
+La compression conserve strictement sa position avant la résolution et la
+génération des ombrages, son import paresseux de rasterio, le glob `*.tif`, les
+deux exclusions historiques, le seuil décimal strict `> 500e6` et l'ordre trié.
+Le profil GTiff/DEFLATE, la conservation conditionnelle du nodata et la copie
+fenêtrée sur toutes les bandes sont inchangés. La copie est fermée puis publiée
+atomiquement ; toute erreur survenue dans la transaction nettoie le `.part`, les
+interruptions sont propagées et les autres `BaseException` restent absorbées et
+journalisées comme auparavant. Les opérations historiquement situées avant le
+`try` par fichier gardent aussi cette frontière.
+
+`DependancesSortiesTerrain` passe de dix à quinze coutures tardives avec le
+chargeur rasterio, le chemin de staging, la publication TIFF atomique, l'horloge
+et le formatage de durée. `_terrain_outputs.py` passe de 197 à **298 lignes
+physiques** : ce surcoût explicite documente la transaction et ses dépendances,
+mais n'affecte pas la mesure nette fondée sur le seul monolithe.
+
+Dix contrats supplémentaires portent la suite de refonte à **362 tests**. Ils
+verrouillent notamment l'import uniquement au besoin, la seule absorption de
+`ImportError`, le seuil réel et ses trois lectures de taille, les filtres et le
+tri, le profil avec ou sans nodata sans mutation de la source, l'ordre exact
+fenêtres/bandes et la fermeture avant publication, le nettoyage et la poursuite
+après erreur, la propagation de `KeyboardInterrupt`/`SystemExit`, l'absorption
+historique des autres `BaseException`, puis l'ordre compression avant sorties.
+
+La revue indépendante conclut **GO** et ne relève aucune dérive par rapport au
+bloc post-16j. Ruff, la grammaire Python 3.8, les interactions et l'historique
+sont verts. Le profil FAST passe **12/12** en 68,6 s et le profil scientifique
+**5/5** en 107,1 s. Le module reste couvert par `deploy.MAP`, la garde de rebuild
+`_terrain_*.py` et les filtres CI correspondants. Aucun push ni rebuild n'a été
+effectué pour 16k.
+
+Mesure nette depuis 16j : `lidar2map.py` 8 182 → 8 119 lignes (**-63**, soit
+**0,30 %** du périmètre figé). Total mesuré sorti : **13 196 lignes, 61,91 %** ;
+reste **8 119 lignes, 38,09 %**. Il manque désormais 659 lignes nettes pour
+atteindre le bord supérieur de la cible structurelle à 35 %.

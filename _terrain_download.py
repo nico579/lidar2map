@@ -15,6 +15,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Codes HTTP typiques d'un throttle/WAF serveur (ex. EA gb-england sous forte
+# concurrence) plutôt que d'une erreur définitive : méritent un backoff plus
+# large que le linéaire standard pour laisser le temps au serveur de retomber.
+CODES_RATE_LIMIT = frozenset({403, 429, 503})
+DELAI_RATE_LIMIT_S = 30  # secondes, multiplié par le numéro de tentative
+
+
+def _delai_avant_retry(erreur, tentative, delai_retry):
+    """Backoff avant la prochaine tentative : escaladé, plus large si le
+    serveur a répondu un code de throttle (403/429/503)."""
+    if getattr(erreur, "http_code", None) in CODES_RATE_LIMIT:
+        return DELAI_RATE_LIMIT_S * tentative
+    return delai_retry * tentative
+
+
 def nom_dalle_sur(nom):
     """Retourne ``True`` pour un basename sans traversée de chemin."""
     if not nom or nom in (".", ".."):
@@ -501,7 +516,7 @@ def telecharger_dalle_directe(
                 raise
             except Exception as erreur:
                 if tentative < d.max_tentatives:
-                    d.time.sleep(d.delai_retry)
+                    d.time.sleep(_delai_avant_retry(erreur, tentative, d.delai_retry))
                 else:
                     print(
                         f"\n  ERROR {nom} ({type(erreur).__name__}, "
@@ -835,7 +850,7 @@ def telecharger_cog_fenetre(
                 raise
             except Exception as erreur:
                 if tentative < d.max_tentatives:
-                    d.time.sleep(d.delai_retry)
+                    d.time.sleep(_delai_avant_retry(erreur, tentative, d.delai_retry))
                 else:
                     print(
                         f"\n  ERROR window {nom} "

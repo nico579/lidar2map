@@ -36,7 +36,9 @@ def telecharger_vers_tmp(url, chemin_tmp, timeout=60, *, ouvrir_url,
     except urllib.error.HTTPError as erreur:
         if erreur.code in codes_absence:
             return 0
-        raise IOError(f"HTTP {erreur.code}") from erreur
+        erreur_io = IOError(f"HTTP {erreur.code}")
+        erreur_io.http_code = erreur.code
+        raise erreur_io from erreur
 
     with reponse:
         content_type = reponse.headers.get("content-type", "").lower()

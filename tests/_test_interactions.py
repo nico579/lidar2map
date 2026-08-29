@@ -937,11 +937,13 @@ check("mode LAZ : backend de décompression LAZ (lazrs) vérifié AVANT le downl
       "LazBackend.detect_available()" in _comsrc)
 # Garde-fou #21 (revue code mort 2026-07-22) : en OSM-seul région, la bbox vaut le
 # sentinel (0,0,0,0). Le bloc de maintenance dalles_zone.txt DOIT être court-circuité
-# (`and not _osm_seul`), sinon l'en-tête stocké ne matche jamais et le manifeste de
-# zone est supprimé en silence (unlink).
+# (`and not osm_seul`), sinon l'en-tête stocké ne matche jamais et le manifeste de
+# zone serait pris pour celui d'une autre emprise. Le contrat comportemental 16g
+# complète cette garde structurelle avec un ancien manifeste réellement présent.
+_acqsrc = (_ROOT / "_terrain_acquisition.py").read_text(encoding="utf-8")
 check("OSM-seul : maintenance dalles_zone.txt court-circuitée (pas de suppression du "
       "manifeste sur bbox sentinelle 0,0,0,0)",
-      "dossier_dalles.exists() and not _osm_seul" in _APP.read_text(encoding="utf-8"))
+      "dossier_dalles.exists() and not osm_seul" in _acqsrc)
 # Garde-fou point 5 (revue code mort 2026-07-22) : le cœur ne dépend plus de
 # l'ancien point d'interface grille PROVIDER.dalles_pour_bbox ; le compte de
 # dalles vient de discover_dalles (uniforme grille+dynamique). dalles_pour_bbox
@@ -1012,7 +1014,10 @@ check("app.js : applyProviderLaz + payloads laz_hmin/laz_ground/dfm_csf_*",
       "applyProviderLaz" in _appjs and "laz_hmin" in _appjs
       and "laz_ground" in _appjs and "laz_csf_threshold" in _appjs)
 _src = (_ROOT / "lidar2map.py").read_text(encoding="utf-8")
+_raster_cli_src = (_ROOT / "_raster_cli.py").read_text(encoding="utf-8")
 _terrain_cli_src = (_ROOT / "_terrain_cli.py").read_text(encoding="utf-8")
+_terrain_run_src = (_ROOT / "_terrain_run.py").read_text(encoding="utf-8")
+_vector_cli_src = (_ROOT / "_vector_cli.py").read_text(encoding="utf-8")
 _zone_cli_src = (_ROOT / "_zone_cli.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
@@ -1021,6 +1026,9 @@ _terrain_resolution_src = (_ROOT / "_terrain_resolution.py").read_text(
 )
 _terrain_chunks_src = (_ROOT / "_terrain_chunks.py").read_text(encoding="utf-8")
 _terrain_download_src = (_ROOT / "_terrain_download.py").read_text(
+    encoding="utf-8"
+)
+_osm_acquisition_src = (_ROOT / "_osm_acquisition.py").read_text(
     encoding="utf-8"
 )
 check("_build_cmd traduit --laz/--laz-hmin/--laz-ground/--laz-csf-threshold",
@@ -1035,7 +1043,11 @@ import sys as _sys
 check("CLI : flags largeur présents, noms 'radius/rayon' supprimés (pas d'alias)",
       "--zone-width" in _src and "--zone-largeur" in _src
       and "--split-width" in _src and "--split-largeur" in _src
+      and "--split-width" in _raster_cli_src
+      and "--split-largeur" in _raster_cli_src
       and "--zone-radius" not in _src and "--zone-rayon" not in _src
+      and "--split-radius" not in _raster_cli_src
+      and "--rayon-decoupe" not in _raster_cli_src
       and "--split-radius" not in _src and "--rayon-decoupe" not in _src)
 check("cœur : la largeur zone est un CÔTÉ → calculer_grille reçoit largeur/2",
       "d.calculer_grille(cx, cy, (args.zone_width or 20.0) / 2.0)"
@@ -1429,9 +1441,9 @@ check("les régions restent une notion française (aucune donnée étrangère)",
 # Vérifié à l'exécution (provider ch → refus sans download) ; ici on ancre que
 # le garde est bien conditionné au pays et laisse --source passer.
 check("OSM auto-download refusé hors de France (--source épargné)",
-      'elif (getattr(PROVIDER, "COUNTRY", "fr") or "fr").lower() != "fr":' in _src
-      and "OSM auto-download is France-only" in _src
-      and "--source <file>.pbf" in _src)
+      'getattr(d.provider, "COUNTRY", "fr") or "fr"' in _osm_acquisition_src
+      and "OSM auto-download is France-only" in _osm_acquisition_src
+      and "--source <file>.pbf" in _osm_acquisition_src)
 # --zone-bbox est WGS84 (W,S,E,N) sur TOUS les modes. main() (lidar/osm) le lisait
 # comme du Lambert 93 en mètres — franco-centré et cassé pour la GUI (champ unique
 # en degrés) et hors de France. Conversion WGS84→CRS natif au parse, comme le mode
@@ -1457,10 +1469,14 @@ check("les sites de zone routés sur les helpers (plus de try/except dupliqués)
       and "_lamb93_to_wgs84_safe" not in _src
       and "_lamb93_to_merc" not in _src)
 check("--zone-bbox : metavar/help WGS84 sur tous les modes (plus de X1,Y1)",
-      'bbox_metavar="W,S,E,N"' in _src
+      'bbox_metavar="W,S,E,N"' in _raster_cli_src
       and 'bbox_metavar="W,S,E,N"' in _terrain_cli_src
+      and 'bbox_metavar="W,S,E,N"' in _vector_cli_src
       and 'bbox_metavar="X1,Y1,X2,Y2"' not in _src
+      and 'bbox_metavar="X1,Y1,X2,Y2"' not in _raster_cli_src
       and 'bbox_metavar="X1,Y1,X2,Y2"' not in _terrain_cli_src
+      and 'bbox_metavar="X1,Y1,X2,Y2"' not in _vector_cli_src
+      and "WGS84 bbox:" in _raster_cli_src
       and "WGS84 bbox in degrees" in _terrain_cli_src)
 check("--zone-bbox : centre natif calculé (détection dept OSM en mode bbox)",
       "cx, cy = (bx1 + bx2) / 2, (by1 + by2) / 2"
@@ -1476,7 +1492,10 @@ check("--cache-dir : racine de cache unique et déplaçable",
       and "def _appliquer_cache_dir(args):" in _src
       and '"--cache-dir", "--dossier-cache"' in _zone_cli_src)
 check("--cache-dir : appliqué au début des 3 mains zone-based",
-      _src.count("_appliquer_cache_dir(args)") >= 3)
+      "d.appliquer_cache_dir(args)" in _raster_cli_src
+      and "d.appliquer_cache_dir(args)" in _terrain_run_src
+      and "d.appliquer_cache_dir(args)" in _vector_cli_src
+      and _src.count("appliquer_cache_dir=_appliquer_cache_dir") >= 3)
 # GUI : le champ cache est global (Projet, à côté de « Dossier sortie »), plus
 # dans le cadre Télécharger. « Compresser » reste LiDAR-only. --tiles-dir n'a
 # plus de champ GUI (réglage fin CLI).
@@ -1657,7 +1676,8 @@ check("nuage .laz : reste au cache indépendamment du .tif produit",
 check("cœur : cloud_cache_dir posé (cache) sauf --dossier-dalles OU provider "
       "fenêtré (le nuage suit le .tif en projet)",
       "def _configurer_cloud_cache" in _src
-      and "_configurer_cloud_cache(args)" in _src
+      and "configurer_cloud_cache=_configurer_cloud_cache" in _src
+      and "d.configurer_cloud_cache(args)" in _terrain_run_src
       and "def configurer_cloud_cache" in _terrain_download_src
       and "if args.dossier_dalles or windowed" in _terrain_download_src)
 # #1 (revue 2026-07-22) : un provider FENÊTRÉ (COPC/COG) range son .tif EN PROJET

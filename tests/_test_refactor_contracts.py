@@ -44,9 +44,14 @@ import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
 import _geojson_raster as geojson_raster  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
+import _osm_acquisition as osm_acquisition  # noqa: E402
+import _osm_run as osm_run  # noqa: E402
 import _osm_runtime as osm_runtime  # noqa: E402
 import _terrain_sources as terrain_sources  # noqa: E402
 import _terrain_cli as terrain_cli  # noqa: E402
+import _terrain_run as terrain_run  # noqa: E402
+import _terrain_acquisition as terrain_acquisition  # noqa: E402
+import _terrain_outputs as terrain_outputs  # noqa: E402
 import _terrain_zones as terrain_zones  # noqa: E402
 import _terrain_geocoding as terrain_geocoding  # noqa: E402
 import _terrain_resolution as terrain_resolution  # noqa: E402
@@ -59,6 +64,8 @@ import _mbtiles_wmts_helpers as mbtiles_wmts_helpers  # noqa: E402
 import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
 import _ombrages_pures as ombrages_pures  # noqa: E402
+import _raster_cli as raster_cli  # noqa: E402
+import _raster_run as raster_run  # noqa: E402
 import _raster_formats as raster_formats  # noqa: E402
 import _split_deliverables as split_deliverables  # noqa: E402
 import _split_manifest as split_manifest  # noqa: E402
@@ -74,6 +81,8 @@ import _wfs_pipeline as wfs_pipeline  # noqa: E402
 import _bdtopo_bulk as bdtopo_bulk  # noqa: E402
 import _bdtopo_layers as bdtopo_layers  # noqa: E402
 import _vector_acquisition as vector_acquisition  # noqa: E402
+import _vector_cli as vector_cli  # noqa: E402
+import _vector_run as vector_run  # noqa: E402
 import _vector_outputs as vector_outputs  # noqa: E402
 import _osm_outputs as osm_outputs  # noqa: E402
 import _osm_map_pipeline as osm_map_pipeline  # noqa: E402
@@ -1627,6 +1636,2436 @@ class LidarCliExtractionContractTests(unittest.TestCase):
         self.assertEqual(disabled.formats_fichier, [])
 
 
+class LidarRunPreparationContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16b de la préparation d'un run LiDAR."""
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            ignlidar=True,
+            osm=False,
+            source=None,
+            ombrages=None,
+            shading_specs=None,
+            shading_preset=None,
+            ombrages_elevation=None,
+            apikey="",
+            formats_fichier=[],
+            zoom_min=13,
+            zoom_max=18,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _parser_qui_leve():
+        parser = mock.Mock()
+
+        def erreur(message):
+            raise ValueError(message)
+
+        parser.error.side_effect = erreur
+        return parser
+
+    @staticmethod
+    def _dependances(**overrides):
+        values = dict(
+            zone_cli_presente=mock.Mock(return_value=True),
+            valider_contrat_cli_lidar=mock.Mock(),
+            appliquer_defauts_cli_lidar=mock.Mock(),
+            valider_zooms=mock.Mock(),
+            appliquer_cache_dir=mock.Mock(),
+            appliquer_production_dir=mock.Mock(),
+            configurer_cloud_cache=mock.Mock(),
+            parser_shading_spec=mock.Mock(),
+            resoudre_preset_shading=mock.Mock(),
+            resolution_m=1.0,
+            provider=object(),
+            imprimer=mock.Mock(),
+        )
+        values.update(overrides)
+        return terrain_run.DependancesPreparationRunLidar(**values)
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._valider_contrat_cli_lidar)),
+            "(args, parser, *, provider_explicit=None)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._preparer_run_lidar)), "(args, parser)",
+        )
+
+        marker = object()
+        args = object()
+        parser = object()
+        with mock.patch.object(L, "_PROVIDER_CLI_EXPLICIT", True), \
+             mock.patch.object(
+                 L, "_valider_contrat_cli_lidar_impl", return_value=marker,
+             ) as implementation:
+            self.assertIs(L._valider_contrat_cli_lidar(args, parser), marker)
+        implementation.assert_called_once_with(
+            args, parser, provider_explicit=True,
+        )
+
+        provider = object()
+        seams = {
+            "_zone_cli_presente": mock.Mock(),
+            "_valider_contrat_cli_lidar": mock.Mock(),
+            "_appliquer_defauts_cli_lidar": mock.Mock(),
+            "_valider_zooms": mock.Mock(),
+            "_appliquer_cache_dir": mock.Mock(),
+            "_appliquer_production_dir": mock.Mock(),
+            "_configurer_cloud_cache": mock.Mock(),
+            "parser_shading_spec": mock.Mock(),
+            "_resoudre_preset_shading": mock.Mock(),
+            "RESOLUTION_M": 2.5,
+            "PROVIDER": provider,
+        }
+        with mock.patch.multiple(L, **seams):
+            dependencies = L._dependances_preparation_run_lidar()
+
+        self.assertIsInstance(
+            dependencies, terrain_run.DependancesPreparationRunLidar,
+        )
+        self.assertIs(
+            dependencies.valider_contrat_cli_lidar,
+            seams["_valider_contrat_cli_lidar"],
+        )
+        self.assertIs(
+            dependencies.appliquer_cache_dir, seams["_appliquer_cache_dir"],
+        )
+        self.assertIs(
+            dependencies.configurer_cloud_cache,
+            seams["_configurer_cloud_cache"],
+        )
+        self.assertIs(
+            dependencies.parser_shading_spec, seams["parser_shading_spec"],
+        )
+        self.assertEqual(dependencies.resolution_m, 2.5)
+        self.assertIs(dependencies.provider, provider)
+
+        with mock.patch.object(
+            L, "_dependances_preparation_run_lidar", return_value=dependencies,
+        ), mock.patch.object(
+            L, "_preparer_run_lidar_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._preparer_run_lidar(args, parser), marker)
+        implementation.assert_called_once_with(
+            args, parser, dependances=dependencies,
+        )
+
+    def test_provider_and_width_contract_is_explicit_and_late(self):
+        parser = self._parser_qui_leve()
+        self.assertIsNone(terrain_run.valider_contrat_cli_lidar(
+            self._args(ignlidar=False), parser, provider_explicit=False,
+        ))
+        self.assertIsNone(terrain_run.valider_contrat_cli_lidar(
+            self._args(zone_ville="X", zone_width=5),
+            parser,
+            provider_explicit=True,
+        ))
+
+        with self.assertRaisesRegex(ValueError, "--provider is required"):
+            terrain_run.valider_contrat_cli_lidar(
+                self._args(), parser, provider_explicit=False,
+            )
+        with self.assertRaisesRegex(ValueError, "--zone-width is required"):
+            terrain_run.valider_contrat_cli_lidar(
+                self._args(zone_gps="43,6", zone_width=None),
+                parser,
+                provider_explicit=True,
+            )
+        self.assertIsNone(terrain_run.valider_contrat_cli_lidar(
+            self._args(zone_bbox="6,43,7,44", zone_width=None),
+            parser,
+            provider_explicit=True,
+        ))
+
+    def test_workflow_zone_and_mbtiles_exemption_precede_side_effects(self):
+        parser = self._parser_qui_leve()
+        dependencies = self._dependances()
+        with self.assertRaisesRegex(ValueError, "choose a workflow"):
+            terrain_run.preparer_run_lidar(
+                self._args(ignlidar=False),
+                parser,
+                dependances=dependencies,
+            )
+        dependencies.valider_contrat_cli_lidar.assert_not_called()
+        dependencies.appliquer_cache_dir.assert_not_called()
+
+        no_zone = self._dependances(
+            zone_cli_presente=mock.Mock(return_value=False),
+        )
+        with self.assertRaisesRegex(ValueError, "one geographic area"):
+            terrain_run.preparer_run_lidar(
+                self._args(source="source.tif"),
+                parser,
+                dependances=no_zone,
+            )
+        no_zone.appliquer_defauts_cli_lidar.assert_not_called()
+        no_zone.appliquer_cache_dir.assert_not_called()
+
+        mbtiles = self._args(
+            ignlidar=False,
+            source="source.MBTILES",
+            formats_fichier=["rmap"],
+        )
+        self.assertIs(
+            terrain_run.preparer_run_lidar(
+                mbtiles, parser, dependances=no_zone,
+            ),
+            mbtiles,
+        )
+        self.assertTrue(mbtiles.rmap)
+        self.assertFalse(mbtiles.mbtiles)
+
+    def test_zooms_keep_none_bounds_and_historical_errors(self):
+        parser = self._parser_qui_leve()
+        for zoom_min, zoom_max in ((None, 18), (13, None), (0, 22)):
+            with self.subTest(zoom_min=zoom_min, zoom_max=zoom_max):
+                self.assertIsNone(terrain_run.valider_zooms(
+                    SimpleNamespace(zoom_min=zoom_min, zoom_max=zoom_max),
+                    parser,
+                ))
+
+        invalid = (
+            (19, 18, r"--zoom-min \(19\) > --zoom-max \(18\)"),
+            (-1, 18, "Zoom hors plage"),
+            (13, 23, "Zoom hors plage"),
+        )
+        for zoom_min, zoom_max, message in invalid:
+            with self.subTest(zoom_min=zoom_min, zoom_max=zoom_max), \
+                 self.assertRaisesRegex(ValueError, message):
+                terrain_run.valider_zooms(
+                    SimpleNamespace(zoom_min=zoom_min, zoom_max=zoom_max),
+                    parser,
+                )
+
+    def test_preparation_order_shadings_provider_and_formats(self):
+        events = []
+
+        def record(name, result=None):
+            def callback(*_args, **_kwargs):
+                events.append(name)
+                return result
+            return callback
+
+        specifications = {
+            "svf:dist=20": ("svf", {"dist": 20.0}),
+            "oneg": ("oneg", {}),
+        }
+
+        def parse_spec(spec):
+            events.append(f"spec:{spec}")
+            return specifications[spec]
+
+        preset_instances = [
+            ("svf", {"dist": 40.0}),
+            ("opos", {"dist": 40.0}),
+            ("lrm", {"sigma": 10.0}),
+        ]
+
+        def resolve_preset(name, resolution):
+            events.append(f"preset:{name}:{resolution}")
+            return "standard", preset_instances, 25
+
+        provider = SimpleNamespace(
+            set_apikey=record("apikey"),
+        )
+        output = mock.Mock()
+        dependencies = self._dependances(
+            zone_cli_presente=record("zone", True),
+            valider_contrat_cli_lidar=record("contract"),
+            appliquer_defauts_cli_lidar=record("defaults"),
+            valider_zooms=record("zooms"),
+            appliquer_cache_dir=record("cache"),
+            appliquer_production_dir=record("production"),
+            configurer_cloud_cache=record("cloud"),
+            parser_shading_spec=parse_spec,
+            resoudre_preset_shading=resolve_preset,
+            resolution_m=2.0,
+            provider=provider,
+            imprimer=output,
+        )
+        args = self._args(
+            ombrages=["multi"],
+            shading_specs=["svf:dist=20", "oneg"],
+            shading_preset="standard",
+            formats_fichier=["mbtiles", "sqlitedb", "transparent-raster"],
+            apikey="secret",
+        )
+
+        self.assertIs(
+            terrain_run.preparer_run_lidar(
+                args, self._parser_qui_leve(), dependances=dependencies,
+            ),
+            args,
+        )
+        self.assertEqual(events, [
+            "contract", "zone", "defaults", "zooms", "cache",
+            "production", "cloud", "spec:svf:dist=20", "spec:oneg",
+            "preset:standard:2.0", "apikey",
+        ])
+        self.assertEqual(args.shading_instances, [
+            ("svf", {"dist": 20.0}),
+            ("oneg", {}),
+            *preset_instances,
+        ])
+        self.assertEqual(
+            args.ombrages, ["multi", "svf", "oneg", "slope", "opos", "lrm"],
+        )
+        self.assertEqual(args.ombrages_elevation, 25)
+        self.assertTrue(args.mbtiles)
+        self.assertFalse(args.rmap)
+        self.assertTrue(args.sqlitedb)
+        self.assertTrue(args.transparent_raster)
+        output.assert_called_once_with(
+            "  Shadings preset 'standard' (res 2 m): svf/opos radius "
+            "40 m, lrm sigma 10 m, sun 25°"
+        )
+
+        explicit_elevation = self._args(
+            shading_preset="standard",
+            ombrages_elevation=33,
+        )
+        terrain_run.preparer_run_lidar(
+            explicit_elevation,
+            self._parser_qui_leve(),
+            dependances=dependencies,
+        )
+        self.assertEqual(explicit_elevation.ombrages_elevation, 33)
+
+    def test_invalid_shading_uses_parser_error_before_provider_options(self):
+        provider = SimpleNamespace(set_apikey=mock.Mock())
+        dependencies = self._dependances(
+            parser_shading_spec=mock.Mock(
+                side_effect=ValueError("unknown parameter"),
+            ),
+            provider=provider,
+        )
+        with self.assertRaisesRegex(
+            ValueError, "--shading : unknown parameter",
+        ):
+            terrain_run.preparer_run_lidar(
+                self._args(shading_specs=["bad:value=1"]),
+                self._parser_qui_leve(),
+                dependances=dependencies,
+            )
+        provider.set_apikey.assert_not_called()
+
+    def test_cache_and_production_roots_resolve_create_and_no_op(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            initial_cache = root / "initial-cache"
+            initial_production = root / "initial-production"
+            requested_cache = root / "nested" / "cache"
+            requested_production = root / "nested" / "production"
+            with mock.patch.object(L, "DOSSIER_CACHE", initial_cache), \
+                 mock.patch.object(L, "DOSSIER_PRODUCTION", initial_production):
+                L._appliquer_cache_dir(
+                    SimpleNamespace(cache_dir=str(requested_cache)),
+                )
+                L._appliquer_production_dir(
+                    SimpleNamespace(production_dir=str(requested_production)),
+                )
+                self.assertEqual(L.DOSSIER_CACHE, requested_cache.resolve())
+                self.assertEqual(
+                    L.DOSSIER_PRODUCTION, requested_production.resolve(),
+                )
+                self.assertTrue(requested_cache.is_dir())
+                self.assertTrue(requested_production.is_dir())
+
+                L._appliquer_cache_dir(SimpleNamespace(cache_dir=None))
+                L._appliquer_production_dir(
+                    SimpleNamespace(production_dir=None),
+                )
+                self.assertEqual(L.DOSSIER_CACHE, requested_cache.resolve())
+                self.assertEqual(
+                    L.DOSSIER_PRODUCTION, requested_production.resolve(),
+                )
+
+
+class TerrainAcquisitionExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16g de l'acquisition terrain monolithique."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            telechargement=False,
+            ombrages=["multi"],
+            source=None,
+            osm=False,
+            mbtiles=False,
+            zone_ville="Testville",
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(root, *, discovery=None, **overrides):
+        root = Path(root)
+        provider = SimpleNamespace(
+            CRS_NATIF="EPSG:2154",
+            CODE="test-provider",
+            discover_dalles=mock.Mock(return_value=(
+                {"zone.tif": "https://example.test/zone.tif"}
+                if discovery is None else discovery
+            )),
+        )
+        transformer = SimpleNamespace(transform=mock.Mock(name="transform"))
+
+        def stop(code):
+            raise SystemExit(code)
+
+        seams = {
+            "provider": provider,
+            "transformer": transformer,
+            "get_transformer": mock.Mock(return_value=transformer),
+            "bbox": mock.Mock(return_value=(1.0, 2.0, 3.0, 4.0)),
+            "scan": mock.Mock(
+                side_effect=lambda folder: sorted(Path(folder).rglob("*.tif"))
+            ),
+            "download": mock.Mock(),
+            "header": mock.Mock(return_value=True),
+            "write": mock.Mock(),
+            "history": mock.Mock(),
+            "now": mock.Mock(return_value=115.9),
+            "print": mock.Mock(),
+            "exit": mock.Mock(side_effect=stop),
+        }
+        values = dict(
+            provider=provider,
+            dossier_cache=root / "cache",
+            get_transformer=seams["get_transformer"],
+            bbox_enveloppe_transform=seams["bbox"],
+            rglob_tif_robuste=seams["scan"],
+            seuil_dalle_valide=10,
+            telecharger_dalles_zone=seams["download"],
+            dalles_zone_hdr_ok=seams["header"],
+            ecrire_dalles_zone=seams["write"],
+            historique_depuis_argv=seams["history"],
+            maintenant=seams["now"],
+            imprimer=seams["print"],
+            quitter=seams["exit"],
+        )
+        values.update(overrides)
+        dependencies = terrain_acquisition.DependancesAcquisitionTerrain(
+            **values
+        )
+        return dependencies, seams
+
+    def _run(self, args, dependencies, *, tiles=None, zone=None, osm=False):
+        return terrain_acquisition.acquerir_dalles_terrain(
+            args,
+            (100.0, 200.0, 300.0, 400.0),
+            "zone-test",
+            tiles or self.tmp / "tiles",
+            zone or self.tmp / "zone",
+            osm,
+            100.0,
+            dependances=dependencies,
+        )
+
+    def test_facade_keeps_signature_and_rebuilds_thirteen_late_dependencies(self):
+        self.assertIs(
+            L._acquerir_dalles_terrain_impl,
+            terrain_acquisition.acquerir_dalles_terrain,
+        )
+        self.assertEqual(
+            str(inspect.signature(L._acquerir_dalles_terrain)),
+            "(args, bbox, nom_zone, dossier_dalles, dossier_ville, "
+            "_osm_seul, t_debut)",
+        )
+
+        provider = object()
+        cache = Path("late-cache")
+        seams = {
+            "PROVIDER": provider,
+            "DOSSIER_CACHE": cache,
+            "_get_transformer": mock.Mock(name="transformer"),
+            "_bbox_enveloppe_transform": mock.Mock(name="bbox"),
+            "_rglob_tif_robuste": mock.Mock(name="scan"),
+            "SEUIL_DALLE_VALIDE": 123,
+            "_telecharger_dalles_zone": mock.Mock(name="download"),
+            "_dalles_zone_hdr_ok": mock.Mock(name="header"),
+            "_ecrire_dalles_zone": mock.Mock(name="write"),
+            "_historique_depuis_argv": mock.Mock(name="history"),
+        }
+        clock = mock.Mock(name="clock")
+        stop = mock.Mock(name="exit")
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            stack.enter_context(mock.patch.object(L.time, "time", clock))
+            stack.enter_context(mock.patch.object(L.sys, "exit", stop))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_acquisition_terrain()
+
+        self.assertIsInstance(
+            dependencies,
+            terrain_acquisition.DependancesAcquisitionTerrain,
+        )
+        self.assertIs(dependencies.provider, provider)
+        self.assertIs(dependencies.dossier_cache, cache)
+        expected = {
+            "get_transformer": "_get_transformer",
+            "bbox_enveloppe_transform": "_bbox_enveloppe_transform",
+            "rglob_tif_robuste": "_rglob_tif_robuste",
+            "telecharger_dalles_zone": "_telecharger_dalles_zone",
+            "dalles_zone_hdr_ok": "_dalles_zone_hdr_ok",
+            "ecrire_dalles_zone": "_ecrire_dalles_zone",
+            "historique_depuis_argv": "_historique_depuis_argv",
+        }
+        for field, seam in expected.items():
+            with self.subTest(field=field):
+                self.assertIs(getattr(dependencies, field), seams[seam])
+        self.assertEqual(dependencies.seuil_dalle_valide, 123)
+        self.assertIs(dependencies.maintenant, clock)
+        self.assertIs(dependencies.imprimer, printer)
+        self.assertIs(dependencies.quitter, stop)
+
+        marker = object()
+        arguments = (
+            object(),
+            (1, 2, 3, 4),
+            "zone",
+            Path("tiles"),
+            Path("output"),
+            False,
+            12.0,
+        )
+        with mock.patch.object(
+            L,
+            "_dependances_acquisition_terrain",
+            return_value=dependencies,
+        ), mock.patch.object(
+            L,
+            "_acquerir_dalles_terrain_impl",
+            return_value=marker,
+        ) as implementation:
+            self.assertIs(L._acquerir_dalles_terrain(*arguments), marker)
+        implementation.assert_called_once_with(
+            *arguments,
+            dependances=dependencies,
+        )
+
+    def test_osm_only_never_discovers_scans_or_touches_manifest(self):
+        tiles = self.tmp / "tiles"
+        zone = self.tmp / "zone"
+        tiles.mkdir()
+        zone.mkdir()
+        manifest = zone / "dalles_zone.txt"
+        manifest.write_text("stale sentinel manifest\n", encoding="utf-8")
+        dependencies, seams = self._dependencies(self.tmp)
+
+        result = self._run(
+            self._args(
+                telechargement=False,
+                ombrages=None,
+                osm=True,
+                mbtiles=False,
+            ),
+            dependencies,
+            tiles=tiles,
+            zone=zone,
+            osm=True,
+        )
+
+        self.assertIsNone(result.bbox_wgs)
+        self.assertEqual(result.dalles_ombrages, [])
+        self.assertFalse(result.termine_sans_couverture)
+        seams["provider"].discover_dalles.assert_not_called()
+        seams["get_transformer"].assert_not_called()
+        seams["scan"].assert_not_called()
+        seams["header"].assert_not_called()
+        seams["write"].assert_not_called()
+        seams["download"].assert_not_called()
+        self.assertEqual(
+            manifest.read_text(encoding="utf-8"),
+            "stale sentinel manifest\n",
+        )
+
+    def test_unavailable_or_failed_discovery_marks_ko_and_exits_one(self):
+        for label, side_effect in (
+            ("none", None),
+            ("exception", OSError("portal down")),
+        ):
+            with self.subTest(label=label):
+                dependencies, seams = self._dependencies(
+                    self.tmp / label,
+                    discovery={},
+                )
+                if label == "none":
+                    seams["provider"].discover_dalles.return_value = None
+                else:
+                    seams["provider"].discover_dalles.side_effect = side_effect
+
+                with self.assertRaises(SystemExit) as raised:
+                    self._run(
+                        self._args(telechargement=True),
+                        dependencies,
+                        zone=self.tmp / label / "zone",
+                    )
+
+                self.assertEqual(raised.exception.code, 1)
+                seams["history"].assert_called_once_with(
+                    15,
+                    str(self.tmp / label / "zone"),
+                    statut="ko",
+                )
+                seams["download"].assert_not_called()
+                seams["exit"].assert_called_once_with(1)
+
+    def test_empty_discovery_is_successful_out_of_coverage(self):
+        zone = self.tmp / "outside"
+        dependencies, seams = self._dependencies(
+            self.tmp,
+            discovery={},
+        )
+
+        result = self._run(
+            self._args(telechargement=True),
+            dependencies,
+            zone=zone,
+        )
+
+        self.assertTrue(result.termine_sans_couverture)
+        self.assertEqual(result.dalles_ombrages, [])
+        seams["get_transformer"].assert_called_once_with(
+            "EPSG:2154",
+            "EPSG:4326",
+        )
+        seams["bbox"].assert_called_once_with(
+            seams["transformer"].transform,
+            100.0,
+            200.0,
+            300.0,
+            400.0,
+        )
+        seams["provider"].discover_dalles.assert_called_once_with(
+            (0.95, 1.95, 3.05, 4.05),
+            (100.0, 200.0, 300.0, 400.0),
+            self.tmp / "cache" / "discover_test-provider.json",
+        )
+        seams["history"].assert_called_once_with(
+            15,
+            str(zone),
+            statut="ok",
+        )
+        seams["download"].assert_not_called()
+        seams["exit"].assert_not_called()
+
+    def test_tif_and_mbtiles_sources_bypass_missing_cache_without_download(self):
+        for suffix in (".tif", ".tiff", ".mbtiles"):
+            with self.subTest(suffix=suffix):
+                root = self.tmp / suffix.lstrip(".")
+                dependencies, seams = self._dependencies(root)
+                result = self._run(
+                    self._args(
+                        telechargement=False,
+                        ombrages=["lrm"],
+                        source=str(root / f"source{suffix}"),
+                    ),
+                    dependencies,
+                    tiles=root / "absent-cache",
+                    zone=root / "zone",
+                )
+                self.assertEqual(result.dalles_ombrages, [])
+                seams["download"].assert_not_called()
+                seams["scan"].assert_not_called()
+                seams["exit"].assert_not_called()
+
+    def test_no_download_rejects_absent_or_unrelated_cache(self):
+        for label, create_unrelated in (
+            ("absent", False),
+            ("unrelated", True),
+        ):
+            with self.subTest(label=label):
+                root = self.tmp / label
+                tiles = root / "tiles"
+                if create_unrelated:
+                    tiles.mkdir(parents=True)
+                    (tiles / "other.tif").write_bytes(b"x" * 11)
+                dependencies, seams = self._dependencies(root)
+
+                with self.assertRaises(SystemExit) as raised:
+                    self._run(
+                        self._args(),
+                        dependencies,
+                        tiles=tiles,
+                        zone=root / "zone",
+                    )
+
+                self.assertEqual(raised.exception.code, 1)
+                seams["download"].assert_not_called()
+                seams["exit"].assert_called_once_with(1)
+
+    def test_valid_manifest_filters_other_zone_and_strictly_invalid_tiles(self):
+        tiles = self.tmp / "tiles"
+        zone = self.tmp / "zone"
+        tiles.mkdir()
+        zone.mkdir()
+        valid = tiles / "zone.tif"
+        invalid = tiles / "invalid.tif"
+        other = tiles / "other.tif"
+        valid.write_bytes(b"v" * 11)
+        invalid.write_bytes(b"i" * 10)
+        other.write_bytes(b"o" * 11)
+        (zone / "dalles_zone.txt").write_text(
+            "# header\nzone.tif\ninvalid.tif\n",
+            encoding="utf-8",
+        )
+        dependencies, seams = self._dependencies(
+            self.tmp,
+            discovery={
+                "zone.tif": "u1",
+                "invalid.tif": "u2",
+            },
+        )
+
+        result = self._run(
+            self._args(),
+            dependencies,
+            tiles=tiles,
+            zone=zone,
+        )
+
+        self.assertEqual(result.dalles_ombrages, [valid])
+        seams["header"].assert_called_once()
+        seams["write"].assert_not_called()
+        seams["download"].assert_not_called()
+        messages = [call.args[0] for call in seams["print"].call_args_list]
+        self.assertTrue(any("1 out-of-zone" in message for message in messages))
+        self.assertTrue(any("1 invalid" in message for message in messages))
+
+    def test_missing_manifest_is_rebuilt_or_fails_without_publishable_tiles(self):
+        valid_root = self.tmp / "valid"
+        valid_tiles = valid_root / "tiles"
+        valid_zone = valid_root / "zone"
+        valid_tiles.mkdir(parents=True)
+        valid_zone.mkdir()
+        valid = valid_tiles / "zone.tif"
+        valid.write_bytes(b"v" * 11)
+        dependencies, seams = self._dependencies(valid_root)
+
+        result = self._run(
+            self._args(),
+            dependencies,
+            tiles=valid_tiles,
+            zone=valid_zone,
+        )
+
+        self.assertEqual(result.dalles_ombrages, [valid])
+        seams["write"].assert_called_once_with(
+            valid_zone / "dalles_zone.txt",
+            (100.0, 200.0, 300.0, 400.0),
+            {"zone.tif"},
+        )
+
+        empty_root = self.tmp / "empty"
+        empty_tiles = empty_root / "tiles"
+        empty_zone = empty_root / "zone"
+        empty_tiles.mkdir(parents=True)
+        empty_zone.mkdir()
+        (empty_tiles / "other.tif").write_bytes(b"o" * 11)
+        dependencies, seams = self._dependencies(empty_root)
+        with self.assertRaises(SystemExit) as raised:
+            self._run(
+                self._args(source=str(empty_root / "source.tif")),
+                dependencies,
+                tiles=empty_tiles,
+                zone=empty_zone,
+            )
+        self.assertEqual(raised.exception.code, 1)
+        seams["write"].assert_not_called()
+
+    def test_stale_manifest_rebuilds_from_cache_without_destroying_old_file(self):
+        tiles = self.tmp / "tiles"
+        zone = self.tmp / "zone"
+        tiles.mkdir()
+        zone.mkdir()
+        valid = tiles / "zone.tif"
+        valid.write_bytes(b"v" * 11)
+        manifest = zone / "dalles_zone.txt"
+        old = "# bbox:0,0,1,1\nold.tif\n"
+        manifest.write_text(old, encoding="utf-8")
+        dependencies, seams = self._dependencies(
+            self.tmp,
+            dalles_zone_hdr_ok=mock.Mock(return_value=False),
+        )
+
+        result = self._run(
+            self._args(source=str(self.tmp / "source.tif")),
+            dependencies,
+            tiles=tiles,
+            zone=zone,
+        )
+
+        self.assertEqual(result.dalles_ombrages, [valid])
+        dependencies.dalles_zone_hdr_ok.assert_called_once()
+        seams["write"].assert_called_once_with(
+            manifest,
+            (100.0, 200.0, 300.0, 400.0),
+            {"zone.tif"},
+        )
+        self.assertEqual(manifest.read_text(encoding="utf-8"), old)
+
+    def test_download_receives_exact_discovery_then_final_filter_is_applied(self):
+        tiles = self.tmp / "tiles"
+        zone = self.tmp / "zone"
+        tiles.mkdir()
+        zone.mkdir()
+        valid = tiles / "zone.tif"
+        valid.write_bytes(b"v" * 11)
+        (zone / "dalles_zone.txt").write_text(
+            "# header\nzone.tif\n",
+            encoding="utf-8",
+        )
+        discovered = {"zone.tif": "https://example.test/zone.tif"}
+        dependencies, seams = self._dependencies(
+            self.tmp,
+            discovery=discovered,
+        )
+        args = self._args(telechargement=True)
+
+        result = self._run(args, dependencies, tiles=tiles, zone=zone)
+
+        seams["download"].assert_called_once_with(
+            discovered,
+            (100.0, 200.0, 300.0, 400.0),
+            tiles,
+            zone,
+            args,
+        )
+        self.assertEqual(result.dalles_ombrages, [valid])
+
+    def test_download_error_propagates_without_becoming_no_coverage(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        failure = RuntimeError("HTTP 500")
+        seams["download"].side_effect = failure
+
+        with self.assertRaises(RuntimeError) as raised:
+            self._run(
+                self._args(telechargement=True),
+                dependencies,
+            )
+
+        self.assertIs(raised.exception, failure)
+        seams["download"].assert_called_once()
+        seams["history"].assert_not_called()
+        seams["exit"].assert_not_called()
+
+
+class TerrainOutputsExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16i des sorties terrain monolithiques."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            ombrages_compresser=False,
+            ombrages_elevation=None,
+            ombrages_ecraser=True,
+            sweep_horizon=True,
+            svf_gamma=0.8,
+            svf_conv=2,
+            svf_dist=30.0,
+            mbtiles=False,
+            rmap=False,
+            sqlitedb=False,
+            source=None,
+            zoom_min=10,
+            zoom_max=18,
+            formats_image="jpeg",
+            qualite_image=85,
+            tuiles_ecraser=False,
+            _source_already_warped=False,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(**overrides):
+        seams = {
+            "resolve": mock.Mock(return_value=([], [])),
+            "shadings": mock.Mock(return_value=[]),
+            "stale": mock.Mock(return_value=True),
+            "mbtiles": mock.Mock(return_value=Path("generated.mbtiles")),
+            "workers": mock.Mock(return_value=3),
+            "convert": mock.Mock(return_value=True),
+            "list": mock.Mock(return_value=[]),
+            "tile": mock.Mock(return_value=True),
+            "rasterio": mock.Mock(name="load_rasterio"),
+            "part": mock.Mock(
+                side_effect=lambda path: Path(str(path) + ".part")
+            ),
+            "publish": mock.Mock(),
+            "clock": mock.Mock(return_value=0.0),
+            "hms": mock.Mock(return_value="0s"),
+            "print": mock.Mock(),
+        }
+        values = dict(
+            resoudre_choix_ombrages=seams["resolve"],
+            elevation_soleil=25.0,
+            generer_ombrages=seams["shadings"],
+            mbtiles_a_regenerer=seams["stale"],
+            generer_mbtiles_lidar=seams["mbtiles"],
+            tile_workers_defaut=seams["workers"],
+            convertir_formats=seams["convert"],
+            lister_tifs_ombrages=seams["list"],
+            tuiler_tifs_ombrages=seams["tile"],
+            charger_rasterio=seams["rasterio"],
+            chemin_part=seams["part"],
+            publier_tif_atomique=seams["publish"],
+            maintenant=seams["clock"],
+            formater_duree=seams["hms"],
+            imprimer=seams["print"],
+        )
+        values.update(overrides)
+        dependencies = terrain_outputs.DependancesSortiesTerrain(**values)
+        return dependencies, seams
+
+    @staticmethod
+    def _fake_rasterio(events, source_errors=None, *, nodata=-9999.0):
+        source_errors = source_errors or {}
+        profiles = []
+        writes = []
+        sources = []
+
+        class Source:
+            count = 2
+
+            def __init__(self, name):
+                self.name = name
+                self.nodata = nodata
+                self.profile = {
+                    "driver": "COG",
+                    "BIGTIFF": "YES",
+                    "bigtiff": "YES",
+                    "NODATA": 0,
+                    "nodata": 0,
+                    "compress": "lzw",
+                    "dtype": "uint8",
+                }
+
+            def __enter__(self):
+                events.append(("source-enter", self.name))
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                events.append(("source-exit", self.name))
+                return False
+
+            def block_windows(self, band):
+                events.append(("windows", self.name, band))
+                return [((0, 0), "window-0"), ((0, 1), "window-1")]
+
+            def read(self, band, *, window):
+                events.append(("read", self.name, band, window))
+                return (self.name, band, window)
+
+        class Destination:
+            def __init__(self, path, profile):
+                self.path = Path(path)
+                self.profile = profile
+
+            def __enter__(self):
+                self.path.write_bytes(b"part")
+                events.append(("destination-enter", self.path.name))
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                events.append(("destination-exit", self.path.name))
+                return False
+
+            def write(self, data, band, *, window):
+                writes.append((self.path.name, data, band, window))
+
+        def open_dataset(path, mode=None, **profile):
+            path = Path(path)
+            if mode == "w":
+                profiles.append(profile)
+                return Destination(path, profile)
+            error = source_errors.get(path.name)
+            if error is not None:
+                raise error
+            source = Source(path.name)
+            sources.append(source)
+            return source
+
+        return SimpleNamespace(
+            open=mock.Mock(side_effect=open_dataset),
+            profiles=profiles,
+            writes=writes,
+            sources=sources,
+        )
+
+    def _run(self, args, dependencies, *, tiles=None, announce=None):
+        callback = announce or mock.Mock()
+        result = terrain_outputs.produire_sorties_terrain(
+            args,
+            [] if tiles is None else tiles,
+            self.tmp / "output",
+            "zone-test",
+            (1.0, 2.0, 3.0, 4.0),
+            callback,
+            dependances=dependencies,
+        )
+        return result, callback
+
+    def test_facade_rebuilds_fifteen_late_dependencies_and_forwards_exactly(self):
+        self.assertIs(
+            L._produire_sorties_terrain_impl,
+            terrain_outputs.produire_sorties_terrain,
+        )
+        self.assertEqual(
+            str(inspect.signature(L._produire_sorties_terrain)),
+            "(args, dalles_ombrages, dossier_ville, nom_zone, bbox, "
+            "annoncer_etape)",
+        )
+        seams = {
+            "_resoudre_choix_ombrages": mock.Mock(name="resolve"),
+            "ELEVATION_SOLEIL": 31.0,
+            "generer_ombrages": mock.Mock(name="shadings"),
+            "_mbtiles_a_regenerer": mock.Mock(name="stale"),
+            "generer_mbtiles_lidar": mock.Mock(name="mbtiles"),
+            "_tile_workers_defaut": mock.Mock(name="workers"),
+            "_convertir_formats": mock.Mock(name="convert"),
+            "_lister_tifs_ombrages": mock.Mock(name="list"),
+            "_tuiler_tifs_ombrages": mock.Mock(name="tile"),
+            "_chemin_part": mock.Mock(name="part"),
+            "_publier_tif_atomique": mock.Mock(name="publish"),
+            "_hms": mock.Mock(name="hms"),
+            "time": SimpleNamespace(time=mock.Mock(name="clock")),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_sorties_terrain()
+
+        expected = {
+            "resoudre_choix_ombrages": "_resoudre_choix_ombrages",
+            "generer_ombrages": "generer_ombrages",
+            "mbtiles_a_regenerer": "_mbtiles_a_regenerer",
+            "generer_mbtiles_lidar": "generer_mbtiles_lidar",
+            "tile_workers_defaut": "_tile_workers_defaut",
+            "convertir_formats": "_convertir_formats",
+            "lister_tifs_ombrages": "_lister_tifs_ombrages",
+            "tuiler_tifs_ombrages": "_tuiler_tifs_ombrages",
+            "chemin_part": "_chemin_part",
+            "publier_tif_atomique": "_publier_tif_atomique",
+            "formater_duree": "_hms",
+        }
+        for field, seam in expected.items():
+            with self.subTest(field=field):
+                self.assertIs(getattr(dependencies, field), seams[seam])
+        self.assertEqual(dependencies.elevation_soleil, 31.0)
+        self.assertIs(dependencies.maintenant, seams["time"].time)
+        self.assertIs(dependencies.imprimer, printer)
+        rasterio_marker = object()
+        with mock.patch("builtins.__import__", return_value=rasterio_marker) as importer:
+            self.assertIs(dependencies.charger_rasterio(), rasterio_marker)
+        importer.assert_called_once_with("rasterio")
+
+        marker = object()
+        arguments = (
+            object(),
+            [Path("tile.tif")],
+            Path("output"),
+            "zone",
+            (1, 2, 3, 4),
+            mock.Mock(name="announce"),
+        )
+        with mock.patch.object(
+            L,
+            "_dependances_sorties_terrain",
+            return_value=dependencies,
+        ), mock.patch.object(
+            L,
+            "_produire_sorties_terrain_impl",
+            return_value=marker,
+        ) as implementation:
+            self.assertIs(L._produire_sorties_terrain(*arguments), marker)
+        implementation.assert_called_once_with(
+            *arguments,
+            dependances=dependencies,
+        )
+
+    def test_no_shading_or_raster_format_is_a_successful_noop(self):
+        dependencies, seams = self._dependencies()
+
+        result, announce = self._run(self._args(), dependencies)
+
+        self.assertTrue(result)
+        seams["resolve"].assert_called_once()
+        announce.assert_not_called()
+        for name in (
+            "shadings",
+            "stale",
+            "mbtiles",
+            "workers",
+            "convert",
+            "list",
+            "tile",
+            "rasterio",
+            "part",
+            "publish",
+            "clock",
+            "hms",
+        ):
+            with self.subTest(seam=name):
+                seams[name].assert_not_called()
+
+    def test_compression_import_is_lazy_and_import_failure_is_best_effort(self):
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].side_effect = ImportError("missing")
+
+        result, _announce = self._run(
+            self._args(ombrages_compresser=True),
+            dependencies,
+        )
+
+        self.assertTrue(result)
+        seams["rasterio"].assert_called_once_with()
+        seams["resolve"].assert_called_once()
+        seams["print"].assert_any_call(
+            "  ERROR: rasterio missing, run pip install rasterio"
+        )
+        seams["part"].assert_not_called()
+        seams["publish"].assert_not_called()
+
+    def test_compression_loader_only_absorbs_import_error(self):
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].side_effect = RuntimeError("loader failed")
+
+        with self.assertRaisesRegex(RuntimeError, "loader failed"):
+            self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        seams["resolve"].assert_not_called()
+        seams["part"].assert_not_called()
+        seams["publish"].assert_not_called()
+
+    def test_compression_without_large_tiff_reports_a_successful_noop(self):
+        output = self.tmp / "output"
+        output.mkdir()
+        (output / "threshold.tif").write_bytes(b"x" * 10)
+        (output / "_hidden.tif").write_bytes(b"x" * 20)
+        (output / "shade_tuilage_z18.tif").write_bytes(b"x" * 20)
+        events = []
+        fake_rasterio = self._fake_rasterio(events)
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        fake_rasterio.open.assert_not_called()
+        seams["print"].assert_any_call(
+            "  No raw shading found (> 500 MB) to compress."
+        )
+
+    def test_compression_filters_orders_and_copies_every_band_by_window(self):
+        output = self.tmp / "output"
+        output.mkdir()
+        for name, size in (
+            ("z.tif", 11),
+            ("a.tif", 12),
+            ("threshold.tif", 10),
+            ("_hidden.tif", 20),
+            ("shade_tuilage_z18.tif", 20),
+            ("ignored.tiff", 20),
+        ):
+            (output / name).write_bytes(b"x" * size)
+        events = []
+        fake_rasterio = self._fake_rasterio(events)
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+        seams["clock"].side_effect = [0.0, 2.0, 3.0, 6.0]
+        seams["hms"].side_effect = lambda duration: f"{duration:g}s"
+        seams["resolve"].side_effect = lambda _args: (
+            events.append(("resolve",)) or ([], [])
+        )
+
+        def publish(part, final):
+            events.append(("publish", Path(final).name))
+            Path(part).replace(final)
+
+        seams["publish"].side_effect = publish
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        source_names = [source.name for source in fake_rasterio.sources]
+        self.assertEqual(source_names, ["a.tif", "z.tif"])
+        self.assertEqual(len(fake_rasterio.profiles), 2)
+        for profile in fake_rasterio.profiles:
+            self.assertEqual(
+                profile,
+                {
+                    "dtype": "uint8",
+                    "driver": "GTiff",
+                    "compress": "deflate",
+                    "predictor": 2,
+                    "tiled": True,
+                    "blockxsize": 512,
+                    "blockysize": 512,
+                    "BIGTIFF": "IF_SAFER",
+                    "nodata": -9999.0,
+                },
+            )
+        self.assertEqual(len(fake_rasterio.writes), 8)
+        self.assertEqual(
+            fake_rasterio.writes,
+            [
+                (
+                    f"{name}.part",
+                    (name, band, window),
+                    band,
+                    window,
+                )
+                for name in ("a.tif", "z.tif")
+                for window in ("window-0", "window-1")
+                for band in (1, 2)
+            ],
+        )
+        self.assertEqual(
+            [(event[1], event[2]) for event in events if event[0] == "windows"],
+            [("a.tif", 1), ("z.tif", 1)],
+        )
+        self.assertEqual(
+            [event for event in events if event[0] == "publish"],
+            [("publish", "a.tif"), ("publish", "z.tif")],
+        )
+        self.assertEqual(events[-1], ("resolve",))
+        self.assertEqual(
+            [call.args[0].name for call in seams["part"].call_args_list],
+            ["a.tif", "z.tif"],
+        )
+        self.assertEqual(
+            [call.args[0] for call in seams["hms"].call_args_list],
+            [2.0, 3.0],
+        )
+        self.assertEqual(
+            [call.args for call in fake_rasterio.open.call_args_list],
+            [
+                (str(output / "a.tif"),),
+                (str(output / "a.tif.part"), "w"),
+                (str(output / "z.tif"),),
+                (str(output / "z.tif.part"), "w"),
+            ],
+        )
+        for name in ("a.tif", "z.tif"):
+            self.assertLess(
+                events.index(("destination-exit", f"{name}.part")),
+                events.index(("source-exit", name)),
+            )
+            self.assertLess(
+                events.index(("source-exit", name)),
+                events.index(("publish", name)),
+            )
+        for source in fake_rasterio.sources:
+            self.assertEqual(
+                source.profile,
+                {
+                    "driver": "COG",
+                    "BIGTIFF": "YES",
+                    "bigtiff": "YES",
+                    "NODATA": 0,
+                    "nodata": 0,
+                    "compress": "lzw",
+                    "dtype": "uint8",
+                },
+            )
+
+    def test_compression_omits_nodata_when_source_has_none(self):
+        output = self.tmp / "output"
+        output.mkdir()
+        source = output / "source.tif"
+        source.write_bytes(b"x" * 11)
+        fake_rasterio = self._fake_rasterio([], nodata=None)
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+        seams["publish"].side_effect = lambda part, final: Path(part).replace(final)
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        self.assertNotIn("nodata", fake_rasterio.profiles[0])
+        self.assertNotIn("NODATA", fake_rasterio.profiles[0])
+        self.assertEqual(fake_rasterio.sources[0].profile["nodata"], 0)
+
+    def test_compression_keeps_real_threshold_and_stat_try_boundary(self):
+        self.assertEqual(
+            terrain_outputs._SEUIL_COMPRESSION_OCTETS,
+            500_000_000,
+        )
+        output = self.tmp / "output"
+        output.mkdir()
+        source = output / "source.tif"
+        source.write_bytes(b"x")
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = self._fake_rasterio([])
+        seams["clock"].side_effect = [10.0, 15.0]
+        seams["hms"].side_effect = lambda duration: f"{duration:g}s"
+        seams["publish"].side_effect = lambda part, final: Path(part).replace(final)
+        original_stat = Path.stat
+        sizes = iter((500_000_001, 600_000_000, 300_000_000))
+        stat_calls = []
+
+        def sequenced_stat(path, *args, **kwargs):
+            if path == source:
+                stat_calls.append(path)
+                return SimpleNamespace(st_size=next(sizes))
+            return original_stat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "stat", sequenced_stat):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(stat_calls, [source, source, source])
+        seams["print"].assert_any_call(
+            "  "
+            + source.name.ljust(56)
+            + str(600).rjust(6)
+            + " MB -> "
+            + str(300).rjust(5)
+            + " MB  (-50%)  5s"
+        )
+
+        boundary = output / "boundary.tif"
+        boundary.write_bytes(b"x")
+        boundary_dependencies, boundary_seams = self._dependencies()
+        boundary_seams["rasterio"].return_value = self._fake_rasterio([])
+        boundary_calls = 0
+
+        def failing_second_stat(path, *args, **kwargs):
+            nonlocal boundary_calls
+            if path == boundary:
+                boundary_calls += 1
+                if boundary_calls == 1:
+                    return SimpleNamespace(st_size=500_000_001)
+                raise OSError("raw stat failed")
+            return original_stat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "stat", failing_second_stat):
+            with self.assertRaisesRegex(OSError, "raw stat failed"):
+                self._run(
+                    self._args(ombrages_compresser=True),
+                    boundary_dependencies,
+                )
+
+        boundary_seams["part"].assert_not_called()
+        boundary_seams["clock"].assert_not_called()
+        boundary_seams["resolve"].assert_not_called()
+
+    def test_compression_error_cleans_staging_and_continues(self):
+        output = self.tmp / "output"
+        output.mkdir()
+        failed = output / "a_failed.tif"
+        succeeded = output / "b_succeeded.tif"
+        failed.write_bytes(b"x" * 11)
+        succeeded.write_bytes(b"x" * 11)
+        failed_part = Path(str(failed) + ".part")
+        failed_part.write_bytes(b"orphan")
+        events = []
+        fake_rasterio = self._fake_rasterio(
+            events,
+            {"a_failed.tif": OSError("broken source")},
+        )
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+        seams["clock"].side_effect = [0.0, 1.0, 2.0]
+
+        def publish(part, final):
+            Path(part).replace(final)
+
+        seams["publish"].side_effect = publish
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        self.assertFalse(failed_part.exists())
+        self.assertEqual(seams["publish"].call_count, 1)
+        self.assertEqual(seams["publish"].call_args.args[1], succeeded)
+        seams["print"].assert_any_call(
+            "  ERROR compressing a_failed.tif: broken source"
+        )
+        seams["resolve"].assert_called_once()
+
+    def test_compression_publication_failure_cleans_part_then_continues(self):
+        output = self.tmp / "output"
+        output.mkdir()
+        first = output / "a_first.tif"
+        second = output / "b_second.tif"
+        first.write_bytes(b"x" * 11)
+        second.write_bytes(b"x" * 11)
+        events = []
+        fake_rasterio = self._fake_rasterio(events)
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+        seams["clock"].side_effect = [0.0, 1.0, 2.0]
+
+        def publish(part, final):
+            if Path(final) == first:
+                raise OSError("publish failed")
+            Path(part).replace(final)
+
+        seams["publish"].side_effect = publish
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(first.read_bytes(), b"x" * 11)
+        self.assertFalse(Path(str(first) + ".part").exists())
+        self.assertEqual(second.read_bytes(), b"part")
+        self.assertEqual(seams["publish"].call_count, 2)
+        seams["print"].assert_any_call(
+            "  ERROR compressing a_first.tif: publish failed"
+        )
+
+    def test_compression_interruptions_clean_part_and_propagate(self):
+        for error in (KeyboardInterrupt("stop"), SystemExit(3)):
+            with self.subTest(error=type(error).__name__):
+                root = self.tmp / type(error).__name__
+                output = root / "output"
+                output.mkdir(parents=True)
+                source = output / "source.tif"
+                source.write_bytes(b"x" * 11)
+                part = Path(str(source) + ".part")
+                part.write_bytes(b"orphan")
+                fake_rasterio = self._fake_rasterio(
+                    [],
+                    {"source.tif": error},
+                )
+                dependencies, seams = self._dependencies()
+                seams["rasterio"].return_value = fake_rasterio
+
+                with mock.patch.object(
+                    terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+                ), self.assertRaises(type(error)):
+                    terrain_outputs.produire_sorties_terrain(
+                        self._args(ombrages_compresser=True),
+                        [],
+                        output,
+                        "zone-test",
+                        (1.0, 2.0, 3.0, 4.0),
+                        mock.Mock(),
+                        dependances=dependencies,
+                    )
+
+                self.assertFalse(part.exists())
+                seams["resolve"].assert_not_called()
+                seams["publish"].assert_not_called()
+
+    def test_compression_swallows_other_base_exceptions_after_cleanup(self):
+        class ExoticFailure(BaseException):
+            pass
+
+        output = self.tmp / "output"
+        output.mkdir()
+        source = output / "source.tif"
+        source.write_bytes(b"x" * 11)
+        part = Path(str(source) + ".part")
+        part.write_bytes(b"orphan")
+        fake_rasterio = self._fake_rasterio(
+            [],
+            {"source.tif": ExoticFailure("exotic failure")},
+        )
+        dependencies, seams = self._dependencies()
+        seams["rasterio"].return_value = fake_rasterio
+
+        with mock.patch.object(
+            terrain_outputs, "_SEUIL_COMPRESSION_OCTETS", 10
+        ):
+            result, _announce = self._run(
+                self._args(ombrages_compresser=True),
+                dependencies,
+            )
+
+        self.assertTrue(result)
+        self.assertFalse(part.exists())
+        seams["print"].assert_any_call(
+            "  ERROR compressing source.tif: exotic failure"
+        )
+        seams["resolve"].assert_called_once()
+        seams["publish"].assert_not_called()
+
+    def test_shadings_keep_labels_defaults_and_exact_generator_arguments(self):
+        dependencies, seams = self._dependencies()
+        instances = [("lrm", {"sigma": 5.0, "passes": 2})]
+        seams["resolve"].return_value = (["multi"], instances)
+        tiles = [Path("a.tif"), Path("b.tif")]
+        args = self._args()
+
+        result, announce = self._run(
+            args,
+            dependencies,
+            tiles=tiles,
+        )
+
+        self.assertTrue(result)
+        announce.assert_called_once_with(
+            "Shadings multi, lrm:sigma=5,passes=2"
+        )
+        seams["shadings"].assert_called_once_with(
+            tiles,
+            self.tmp / "output",
+            ["multi"],
+            elevation_soleil=25.0,
+            nom_zone="zone-test",
+            ecraser_ombrages=True,
+            use_sweep=True,
+            svf_gamma=0.8,
+            svf_conv=2,
+            svf_dist=30.0,
+            bbox_natif=(1.0, 2.0, 3.0, 4.0),
+            instances=instances,
+        )
+        messages = "\n".join(
+            str(call.args[0]) for call in seams["print"].call_args_list
+        )
+        self.assertIn("Sun angle : 25.0°", messages)
+        self.assertIn("Area: ~2 km²", messages)
+        self.assertIn("5-10 min", messages)
+
+    def test_empty_tiles_clear_presets_but_keep_parameterized_instances(self):
+        dependencies, seams = self._dependencies()
+        instances = [("svf", {"dist": 20.0})]
+        seams["resolve"].return_value = (["multi"], instances)
+
+        result, announce = self._run(
+            self._args(ombrages_elevation=0),
+            dependencies,
+        )
+
+        self.assertTrue(result)
+        announce.assert_called_once_with("Shadings svf:dist=20")
+        call = seams["shadings"].call_args
+        self.assertEqual(call.args[:3], ([], self.tmp / "output", []))
+        self.assertEqual(call.kwargs["instances"], instances)
+        self.assertEqual(call.kwargs["elevation_soleil"], 0)
+
+    def test_tiff_source_regenerates_named_mbtiles_and_aggregates_conversion(self):
+        for conversion_ok in (True, False):
+            with self.subTest(conversion_ok=conversion_ok):
+                root = self.tmp / str(conversion_ok)
+                root.mkdir()
+                source = root / "survey_multi_ombrage.tif"
+                source.write_bytes(b"tif")
+                dependencies, seams = self._dependencies()
+                generated = root / "generated.mbtiles"
+                seams["mbtiles"].return_value = generated
+                seams["convert"].return_value = conversion_ok
+                args = self._args(
+                    mbtiles=True,
+                    source=str(source),
+                    _source_already_warped=True,
+                )
+                announce = mock.Mock()
+
+                result = terrain_outputs.produire_sorties_terrain(
+                    args,
+                    [],
+                    root,
+                    "zone",
+                    (1.0, 2.0, 3.0, 4.0),
+                    announce,
+                    dependances=dependencies,
+                )
+
+                self.assertIs(result, conversion_ok)
+                expected_store = root / "zone_multi_ombrage_z10-18.mbtiles"
+                seams["stale"].assert_called_once_with(
+                    expected_store,
+                    False,
+                    source=source.resolve(),
+                )
+                seams["mbtiles"].assert_called_once_with(
+                    source.resolve(),
+                    root,
+                    "zone_multi_ombrage",
+                    zoom_min=10,
+                    zoom_max=18,
+                    format_tuiles="jpeg",
+                    jpeg_quality=85,
+                    bbox_natif=(1.0, 2.0, 3.0, 4.0),
+                    source_already_warped=True,
+                    ecraser_tuiles=False,
+                    tile_workers=3,
+                )
+                seams["convert"].assert_called_once_with(
+                    generated,
+                    args,
+                    mbtiles_neuf=True,
+                )
+                announce.assert_called_once_with(
+                    "MBTiles depuis survey_multi_ombrage.tif"
+                )
+
+    def test_fresh_tiff_mbtiles_is_reused_for_direct_rmap_conversion(self):
+        source = self.tmp / "plain.tiff"
+        source.write_bytes(b"tif")
+        store = self.tmp / "output" / "zone-test_plain_z10-18.mbtiles"
+        store.parent.mkdir()
+        store.write_bytes(b"mbtiles")
+        dependencies, seams = self._dependencies()
+        seams["stale"].return_value = False
+        args = self._args(rmap=True, source=str(source))
+
+        result, announce = self._run(args, dependencies)
+
+        self.assertTrue(result)
+        seams["mbtiles"].assert_not_called()
+        seams["workers"].assert_not_called()
+        seams["convert"].assert_called_once_with(
+            store,
+            args,
+            mbtiles_neuf=False,
+        )
+        announce.assert_called_once_with("RMAP depuis plain.tiff")
+
+    def test_current_shadings_are_tiled_or_missing_outputs_fail_explicitly(self):
+        for label, listed, tile_ok, expected in (
+            ("success", [Path("shade.tif")], True, True),
+            ("tiler-failure", [Path("shade.tif")], False, False),
+            ("missing", [], True, False),
+        ):
+            with self.subTest(label=label):
+                dependencies, seams = self._dependencies()
+                current = [Path("current.tif")]
+                seams["resolve"].return_value = (["multi"], [])
+                seams["shadings"].return_value = current
+                seams["list"].return_value = listed
+                seams["tile"].return_value = tile_ok
+                args = self._args(mbtiles=True)
+
+                result, announce = self._run(
+                    args,
+                    dependencies,
+                    tiles=[Path("tile.tif")],
+                )
+
+                self.assertIs(result, expected)
+                seams["list"].assert_called_once_with(
+                    self.tmp / "output",
+                    current,
+                )
+                if listed:
+                    seams["tile"].assert_called_once_with(
+                        args,
+                        listed,
+                        self.tmp / "output",
+                        "zone-test",
+                        (1.0, 2.0, 3.0, 4.0),
+                        verbose=True,
+                    )
+                    self.assertEqual(
+                        announce.call_args_list[-1],
+                        mock.call("MBTiles"),
+                    )
+                else:
+                    seams["tile"].assert_not_called()
+                    messages = [
+                        call.args[0]
+                        for call in seams["print"].call_args_list
+                    ]
+                    self.assertIn(
+                        "  No shading found for MBTiles "
+                        "(generate --shadings first)",
+                        messages,
+                    )
+
+    def test_shading_listing_distinguishes_no_run_from_an_empty_run(self):
+        for label, choices, generated, expected_run in (
+            ("no-run", [], None, None),
+            ("empty-run", ["multi"], [], []),
+        ):
+            with self.subTest(label=label):
+                dependencies, seams = self._dependencies()
+                seams["resolve"].return_value = (choices, [])
+                if generated is not None:
+                    seams["shadings"].return_value = generated
+
+                result, _announce = self._run(
+                    self._args(mbtiles=True),
+                    dependencies,
+                    tiles=[Path("tile.tif")],
+                )
+
+                self.assertFalse(result)
+                seams["list"].assert_called_once_with(
+                    self.tmp / "output",
+                    expected_run,
+                )
+                if generated is None:
+                    seams["shadings"].assert_not_called()
+                else:
+                    seams["shadings"].assert_called_once()
+
+
+class OsmAcquisitionExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16h de l'acquisition du PBF OSM."""
+
+    class _Response:
+        def __init__(self, payload, content_length=None):
+            self._stream = io.BytesIO(payload)
+            self.headers = {}
+            if content_length is not None:
+                self.headers["content-length"] = str(content_length)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self, size=-1):
+            return self._stream.read(size)
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            source=None,
+            zone_region="provence-alpes-cote-d-azur",
+            zone_departement=None,
+            telechargement_ecraser=False,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(root, **overrides):
+        provider = SimpleNamespace(COUNTRY="fr")
+        seams = {
+            "provider": provider,
+            "transform": mock.Mock(return_value=(6.123456, 43.654321)),
+            "urlopen": mock.Mock(name="urlopen"),
+            "json": mock.Mock(side_effect=json.loads),
+            "clock": mock.Mock(return_value=4_000_000.0),
+            "stop": mock.Mock(return_value=False),
+            "log": mock.Mock(),
+            "hms": mock.Mock(return_value="1s"),
+            "stdout": io.StringIO(),
+            "print": mock.Mock(),
+        }
+        values = dict(
+            provider=provider,
+            geofabrik={"83": "provence-alpes-cote-d-azur"},
+            geofabrik_base_url="https://example.test/europe/france",
+            geofabrik_base_url_root="https://example.test/europe",
+            dossier_cache=Path(root) / "cache",
+            lamb93_vers_wgs84=seams["transform"],
+            urlopen=seams["urlopen"],
+            charger_json=seams["json"],
+            maintenant=seams["clock"],
+            arret_demande=seams["stop"],
+            journaliser_requete=seams["log"],
+            formater_duree=seams["hms"],
+            sortie=seams["stdout"],
+            ouvrir_fichier=open,
+            imprimer=seams["print"],
+        )
+        values.update(overrides)
+        dependencies = osm_acquisition.DependancesAcquisitionOsm(**values)
+        return dependencies, seams
+
+    @staticmethod
+    def _cached_pbf(dependencies, name, size=1_000_000):
+        path = dependencies.dossier_cache / "osm_vecteur" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"c" * size)
+        return path
+
+    def _run(self, args, dependencies):
+        return osm_acquisition.acquerir_source_osm(
+            args,
+            900_000.0,
+            6_200_000.0,
+            dependances=dependencies,
+        )
+
+    def test_facade_rebuilds_fifteen_late_dependencies_and_precedes_outputs(self):
+        self.assertIs(
+            L._acquerir_source_osm_impl,
+            osm_acquisition.acquerir_source_osm,
+        )
+        self.assertEqual(
+            str(inspect.signature(L._acquerir_source_osm)),
+            "(args, cx, cy)",
+        )
+
+        stop = mock.Mock(name="stop")
+        stop_event = SimpleNamespace(is_set=stop)
+        seams = {
+            "PROVIDER": object(),
+            "_GEOFABRIK": {"01": "region"},
+            "_GEOFABRIK_BASE_URL": "regional-url",
+            "_GEOFABRIK_BASE_URL_ROOT": "root-url",
+            "DOSSIER_CACHE": Path("late-cache"),
+            "lamb93_to_wgs84_approx": mock.Mock(name="transform"),
+            "_urlopen": mock.Mock(name="urlopen"),
+            "_stop_event": stop_event,
+            "_log_req": mock.Mock(name="log"),
+            "_hms": mock.Mock(name="hms"),
+        }
+        json_loader = mock.Mock(name="json_loader")
+        clock = mock.Mock(name="clock")
+        stdout = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            stack.enter_context(mock.patch.object(L.json, "loads", json_loader))
+            stack.enter_context(mock.patch.object(L.time, "time", clock))
+            stack.enter_context(mock.patch.object(L.sys, "stdout", stdout))
+            opener = stack.enter_context(mock.patch("builtins.open"))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_acquisition_osm()
+
+        self.assertIsInstance(
+            dependencies,
+            osm_acquisition.DependancesAcquisitionOsm,
+        )
+        expected = {
+            "provider": "PROVIDER",
+            "geofabrik": "_GEOFABRIK",
+            "geofabrik_base_url": "_GEOFABRIK_BASE_URL",
+            "geofabrik_base_url_root": "_GEOFABRIK_BASE_URL_ROOT",
+            "dossier_cache": "DOSSIER_CACHE",
+            "lamb93_vers_wgs84": "lamb93_to_wgs84_approx",
+            "urlopen": "_urlopen",
+            "journaliser_requete": "_log_req",
+            "formater_duree": "_hms",
+        }
+        for field, seam in expected.items():
+            with self.subTest(field=field):
+                self.assertIs(getattr(dependencies, field), seams[seam])
+        self.assertIs(dependencies.charger_json, json_loader)
+        self.assertIs(dependencies.maintenant, clock)
+        self.assertIs(dependencies.arret_demande, stop)
+        self.assertIs(dependencies.sortie, stdout)
+        self.assertIs(dependencies.ouvrir_fichier, opener)
+        self.assertIs(dependencies.imprimer, printer)
+
+        marker = object()
+        args = object()
+        with mock.patch.object(
+            L,
+            "_dependances_acquisition_osm",
+            return_value=dependencies,
+        ), mock.patch.object(
+            L,
+            "_acquerir_source_osm_impl",
+            return_value=marker,
+        ) as implementation:
+            self.assertIs(L._acquerir_source_osm(args, 1.0, 2.0), marker)
+        implementation.assert_called_once_with(
+            args,
+            1.0,
+            2.0,
+            dependances=dependencies,
+        )
+
+        source = APP.read_text(encoding="utf-8")
+        main_start = source.index("def main():")
+        acquisition_call = source.index(
+            "pbf = _acquerir_source_osm(args, cx, cy)",
+            main_start,
+        )
+        run_call = source.index("_executer_run_osm(", acquisition_call)
+        self.assertLess(acquisition_call, run_call)
+
+    def test_explicit_source_is_returned_or_rejected_without_auto_fallback(self):
+        for suffix in (".pbf", ".osm"):
+            with self.subTest(suffix=suffix):
+                root = self.tmp / suffix.lstrip(".")
+                root.mkdir()
+                source = root / f"manual{suffix}"
+                source.write_bytes(b"manual")
+                dependencies, seams = self._dependencies(
+                    root,
+                    provider=SimpleNamespace(COUNTRY="gb"),
+                )
+                result = self._run(
+                    self._args(source=str(source), zone_region=None),
+                    dependencies,
+                )
+                self.assertEqual(result, source)
+                seams["transform"].assert_not_called()
+                seams["urlopen"].assert_not_called()
+                self.assertFalse(dependencies.dossier_cache.exists())
+
+        missing = self.tmp / "missing.pbf"
+        dependencies, seams = self._dependencies(self.tmp / "missing")
+        result = self._run(self._args(source=str(missing)), dependencies)
+        self.assertIsNone(result)
+        seams["urlopen"].assert_not_called()
+        self.assertFalse(dependencies.dossier_cache.exists())
+        self.assertIn(
+            f"  ERROR: PBF file not found: {missing}",
+            [call.args[0] for call in seams["print"].call_args_list],
+        )
+
+    def test_foreign_auto_download_is_refused_before_conversion_or_cache(self):
+        dependencies, seams = self._dependencies(
+            self.tmp,
+            provider=SimpleNamespace(COUNTRY="gb"),
+        )
+
+        result = self._run(
+            self._args(source=None, zone_region=None),
+            dependencies,
+        )
+
+        self.assertIsNone(result)
+        seams["transform"].assert_not_called()
+        seams["urlopen"].assert_not_called()
+        seams["log"].assert_not_called()
+        self.assertFalse(dependencies.dossier_cache.exists())
+        messages = "\n".join(
+            call.args[0] for call in seams["print"].call_args_list
+        )
+        self.assertIn("OSM auto-download is France-only", messages)
+        self.assertIn("--source <file>.pbf", messages)
+
+    def test_region_slug_selects_exact_fresh_cache_without_reverse_lookup(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        cached = self._cached_pbf(
+            dependencies,
+            "normandie-latest.osm.pbf",
+        )
+
+        result = self._run(
+            self._args(zone_region="  Normandie  "),
+            dependencies,
+        )
+
+        self.assertEqual(result, cached)
+        seams["transform"].assert_not_called()
+        seams["urlopen"].assert_not_called()
+        seams["log"].assert_not_called()
+
+    def test_department_direct_and_reverse_select_same_regional_cache(self):
+        for label, department, reverse_payload in (
+            ("direct", "83", None),
+            ("reverse", None, [{"codeDepartement": "83"}]),
+        ):
+            with self.subTest(label=label):
+                root = self.tmp / label
+                dependencies, seams = self._dependencies(root)
+                cached = self._cached_pbf(
+                    dependencies,
+                    "provence-alpes-cote-d-azur-latest.osm.pbf",
+                )
+                if reverse_payload is not None:
+                    payload = json.dumps(reverse_payload).encode("utf-8")
+                    seams["urlopen"].return_value = self._Response(payload)
+
+                result = self._run(
+                    self._args(
+                        zone_region=None,
+                        zone_departement=department,
+                    ),
+                    dependencies,
+                )
+
+                self.assertEqual(result, cached)
+                if reverse_payload is None:
+                    seams["transform"].assert_not_called()
+                    seams["urlopen"].assert_not_called()
+                else:
+                    seams["transform"].assert_called_once_with(
+                        900_000.0,
+                        6_200_000.0,
+                    )
+                    seams["urlopen"].assert_called_once_with(
+                        "https://geo.api.gouv.fr/communes"
+                        "?lon=6.12346&lat=43.65432"
+                        "&fields=codeDepartement&format=json",
+                        timeout=10,
+                    )
+                    seams["json"].assert_called_once_with(payload)
+                seams["log"].assert_not_called()
+
+    def test_unknown_or_empty_reverse_falls_back_to_national_cache(self):
+        for label, department, reverse_payload in (
+            ("unknown", "99", None),
+            ("empty-reverse", None, []),
+        ):
+            with self.subTest(label=label):
+                root = self.tmp / label
+                dependencies, seams = self._dependencies(root)
+                cached = self._cached_pbf(
+                    dependencies,
+                    "france-latest.osm.pbf",
+                )
+                if reverse_payload is not None:
+                    seams["urlopen"].return_value = self._Response(b"[]")
+
+                result = self._run(
+                    self._args(
+                        zone_region=None,
+                        zone_departement=department,
+                    ),
+                    dependencies,
+                )
+
+                self.assertEqual(result, cached)
+                messages = "\n".join(
+                    call.args[0] for call in seams["print"].call_args_list
+                )
+                self.assertIn("Falling back to the national France PBF", messages)
+                seams["log"].assert_not_called()
+
+    def test_exact_threshold_old_cache_is_reused_with_age_warning(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        cached = self._cached_pbf(
+            dependencies,
+            "provence-alpes-cote-d-azur-latest.osm.pbf",
+            size=1_000_000,
+        )
+        os.utime(cached, (0, 0))
+        seams["clock"].return_value = 31 * 86400.0
+
+        result = self._run(self._args(), dependencies)
+
+        self.assertEqual(result, cached)
+        seams["urlopen"].assert_not_called()
+        seams["log"].assert_not_called()
+        messages = "\n".join(
+            call.args[0] for call in seams["print"].call_args_list
+        )
+        self.assertIn("31 days old", messages)
+        self.assertIn("--download-overwrite", messages)
+
+    def test_forced_and_truncated_caches_are_replaced_by_complete_download(self):
+        payload = b"n" * 1_000_001
+        for label, old_size, force, expected_message in (
+            ("forced", 1_000_000, True, "refreshing PBF"),
+            ("truncated", 999_999, False, "Truncated PBF"),
+        ):
+            with self.subTest(label=label):
+                root = self.tmp / label
+                dependencies, seams = self._dependencies(root)
+                cached = self._cached_pbf(
+                    dependencies,
+                    "provence-alpes-cote-d-azur-latest.osm.pbf",
+                    size=old_size,
+                )
+                seams["urlopen"].return_value = self._Response(
+                    payload,
+                    len(payload),
+                )
+
+                result = self._run(
+                    self._args(telechargement_ecraser=force),
+                    dependencies,
+                )
+
+                self.assertEqual(result, cached)
+                self.assertEqual(cached.read_bytes(), payload)
+                self.assertFalse(Path(str(cached) + ".part").exists())
+                messages = "\n".join(
+                    call.args[0] for call in seams["print"].call_args_list
+                )
+                self.assertIn(expected_message, messages)
+
+    def test_complete_download_is_streamed_then_published_atomically(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        payload = b"p" * 1_000_001
+        seams["clock"].side_effect = [100.0, 101.5]
+        seams["urlopen"].return_value = self._Response(payload, len(payload))
+
+        result = self._run(self._args(), dependencies)
+
+        expected = (
+            dependencies.dossier_cache
+            / "osm_vecteur"
+            / "provence-alpes-cote-d-azur-latest.osm.pbf"
+        )
+        self.assertEqual(result, expected)
+        self.assertEqual(expected.read_bytes(), payload)
+        self.assertFalse(Path(str(expected) + ".part").exists())
+        url = (
+            "https://example.test/europe/france/"
+            "provence-alpes-cote-d-azur-latest.osm.pbf"
+        )
+        seams["urlopen"].assert_called_once_with(url, timeout=60)
+        seams["log"].assert_called_once_with(url, "Geofabrik")
+        seams["hms"].assert_called_once_with(1.5)
+        self.assertIn("%", seams["stdout"].getvalue())
+
+    def test_incomplete_download_is_rejected_and_part_is_removed(self):
+        cases = (
+            ("below-threshold", b"x" * 999_999, None),
+            ("length-mismatch", b"x" * 1_000_001, 1_000_002),
+        )
+        for label, payload, content_length in cases:
+            with self.subTest(label=label):
+                root = self.tmp / label
+                dependencies, seams = self._dependencies(root)
+                seams["urlopen"].return_value = self._Response(
+                    payload,
+                    content_length,
+                )
+
+                result = self._run(self._args(), dependencies)
+
+                final = (
+                    dependencies.dossier_cache
+                    / "osm_vecteur"
+                    / "provence-alpes-cote-d-azur-latest.osm.pbf"
+                )
+                self.assertIsNone(result)
+                self.assertFalse(final.exists())
+                self.assertFalse(Path(str(final) + ".part").exists())
+                messages = "\n".join(
+                    call.args[0] for call in seams["print"].call_args_list
+                )
+                self.assertIn("ERROR: incomplete PBF", messages)
+
+    def test_network_errors_return_none_and_clean_partial_file(self):
+        errors = (
+            osm_acquisition.urllib.error.URLError("offline"),
+            osm_acquisition.urllib.error.HTTPError(
+                "https://example.test/pbf",
+                500,
+                "server error",
+                {},
+                None,
+            ),
+            OSError("disk full"),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                root = self.tmp / type(error).__name__
+                dependencies, seams = self._dependencies(root)
+                seams["urlopen"].side_effect = error
+
+                result = self._run(self._args(), dependencies)
+
+                final = (
+                    dependencies.dossier_cache
+                    / "osm_vecteur"
+                    / "provence-alpes-cote-d-azur-latest.osm.pbf"
+                )
+                self.assertIsNone(result)
+                self.assertFalse(final.exists())
+                self.assertFalse(Path(str(final) + ".part").exists())
+                messages = "\n".join(
+                    call.args[0] for call in seams["print"].call_args_list
+                )
+                self.assertIn(type(error).__name__, messages)
+
+    def test_interruption_propagates_and_cleans_partial_file(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        payload = b"i" * 1_000_001
+        seams["urlopen"].return_value = self._Response(payload, len(payload))
+        seams["stop"].side_effect = [False, True]
+
+        with self.assertRaises(KeyboardInterrupt):
+            self._run(self._args(), dependencies)
+
+        final = (
+            dependencies.dossier_cache
+            / "osm_vecteur"
+            / "provence-alpes-cote-d-azur-latest.osm.pbf"
+        )
+        self.assertFalse(final.exists())
+        self.assertFalse(Path(str(final) + ".part").exists())
+
+
+class OsmRunExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16j du passage OSM post-acquisition."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            zone_region=None,
+            dossier=None,
+            formats_fichier=["map", "geojson"],
+            couche=None,
+            osm_tags=["highway=*"],
+            tuiles_ecraser=True,
+            zoom_min=9,
+            zoom_max=17,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(root, **overrides):
+        seams = {
+            "transform": mock.Mock(return_value=(6.0, 43.0, 6.1, 43.1)),
+            "native": mock.Mock(name="native_to_wgs84"),
+            "outputs": mock.Mock(return_value=SimpleNamespace(complet=True)),
+            "print": mock.Mock(),
+        }
+        values = dict(
+            dossier_travail=Path(root),
+            bbox_enveloppe_transform=seams["transform"],
+            natif_vers_wgs84=seams["native"],
+            produire_sorties_osm=seams["outputs"],
+            imprimer=seams["print"],
+        )
+        values.update(overrides)
+        return osm_run.DependancesRunOsm(**values), seams
+
+    def _run(self, args, dependencies, *, pbf=None):
+        return osm_run.executer_run_osm(
+            args,
+            (1.0, 2.0, 3.0, 4.0),
+            "zone-test",
+            pbf or self.tmp / "source.pbf",
+            dependances=dependencies,
+        )
+
+    def test_facade_rebuilds_five_late_dependencies_and_forwards_exactly(self):
+        self.assertIs(L._executer_run_osm_impl, osm_run.executer_run_osm)
+        self.assertEqual(
+            str(inspect.signature(L._executer_run_osm)),
+            "(args, bbox, nom_zone, pbf)",
+        )
+        seams = {
+            "DOSSIER_TRAVAIL": Path("work-test"),
+            "_bbox_enveloppe_transform": mock.Mock(name="bbox"),
+            "_natif_vers_wgs84": mock.Mock(name="native"),
+            "_produire_sorties_osm": mock.Mock(name="outputs"),
+        }
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_run_osm()
+
+        self.assertEqual(dependencies.dossier_travail, Path("work-test"))
+        self.assertIs(
+            dependencies.bbox_enveloppe_transform,
+            seams["_bbox_enveloppe_transform"],
+        )
+        self.assertIs(
+            dependencies.natif_vers_wgs84,
+            seams["_natif_vers_wgs84"],
+        )
+        self.assertIs(
+            dependencies.produire_sorties_osm,
+            seams["_produire_sorties_osm"],
+        )
+        self.assertIs(dependencies.imprimer, printer)
+
+        marker = object()
+        arguments = (object(), (1, 2, 3, 4), "zone", Path("source.pbf"))
+        with mock.patch.object(
+            L, "_dependances_run_osm", return_value=dependencies
+        ), mock.patch.object(
+            L, "_executer_run_osm_impl", return_value=marker
+        ) as implementation:
+            self.assertIs(L._executer_run_osm(*arguments), marker)
+        implementation.assert_called_once_with(
+            *arguments,
+            dependances=dependencies,
+        )
+
+    def test_main_keeps_pbf_guard_and_terrain_bbox_before_the_runner(self):
+        source = APP.read_text(encoding="utf-8")
+        main_start = source.index("def main():")
+        terrain_bbox = source.index("bbox_wgs = acquisition.bbox_wgs", main_start)
+        acquisition = source.index(
+            "pbf = _acquerir_source_osm(args, cx, cy)",
+            terrain_bbox,
+        )
+        guard = source.index("if pbf and pbf.exists():", acquisition)
+        runner = source.index("_executer_run_osm(", guard)
+        aggregate = source.index(
+            "_livrables_raster_ok = _osm_livrables_ok",
+            runner,
+        )
+        self.assertLess(terrain_bbox, acquisition)
+        self.assertLess(acquisition, guard)
+        self.assertLess(guard, runner)
+        self.assertLess(runner, aggregate)
+        guarded_body = source[guard:aggregate]
+        self.assertIn("bbox_wgs = _resultat_osm.bbox_wgs", guarded_body)
+
+    def test_region_uses_world_bbox_without_transform_and_propagates_status(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        marker = object()
+        seams["outputs"].return_value = SimpleNamespace(complet=marker)
+        args = self._args(zone_region="paca")
+        pbf = self.tmp / "region.pbf"
+
+        result = self._run(args, dependencies, pbf=pbf)
+
+        expected_bbox = (-180.0, -90.0, 180.0, 90.0)
+        expected_dir = self.tmp / "Projets" / "zone-test" / "osm_vecteur"
+        self.assertEqual(result.bbox_wgs, expected_bbox)
+        self.assertEqual(result.dossier, expected_dir)
+        self.assertIs(result.complet, marker)
+        self.assertTrue(expected_dir.is_dir())
+        seams["transform"].assert_not_called()
+        seams["outputs"].assert_called_once_with(
+            expected_bbox,
+            expected_dir,
+            "zone-test",
+            pbf,
+            formats=args.formats_fichier,
+            osm_tags=args.osm_tags,
+            ecraser=True,
+            skip_bbox=True,
+            zoom_min=9,
+            zoom_max=17,
+        )
+
+    def test_native_bbox_explicit_folder_and_layer_tags_are_forwarded_exactly(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        explicit = self.tmp / "explicit"
+        args = self._args(dossier=str(explicit), couche=["natural=water"])
+        pbf = self.tmp / "local.pbf"
+
+        result = self._run(args, dependencies, pbf=pbf)
+
+        expected_bbox = (6.0, 43.0, 6.1, 43.1)
+        seams["transform"].assert_called_once_with(
+            seams["native"],
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+        )
+        self.assertEqual(result.dossier, explicit.resolve())
+        seams["outputs"].assert_called_once_with(
+            expected_bbox,
+            explicit.resolve(),
+            "zone-test",
+            pbf,
+            formats=args.formats_fichier,
+            osm_tags=["natural=water"],
+            ecraser=True,
+            skip_bbox=False,
+            zoom_min=9,
+            zoom_max=17,
+        )
+
+    def test_default_zoom_and_osm_tags_fallback_are_preserved(self):
+        dependencies, seams = self._dependencies(self.tmp)
+        args = SimpleNamespace(
+            zone_region=None,
+            dossier=None,
+            formats_fichier=["map"],
+            couche=[],
+            osm_tags=["building=*"],
+            tuiles_ecraser=False,
+        )
+
+        result = self._run(args, dependencies)
+
+        self.assertTrue(result.complet)
+        call = seams["outputs"].call_args
+        self.assertEqual(call.kwargs["osm_tags"], ["building=*"])
+        self.assertEqual(call.kwargs["zoom_min"], 8)
+        self.assertEqual(call.kwargs["zoom_max"], 18)
+        self.assertFalse(call.kwargs["ecraser"])
+
+    def test_expected_crs_errors_return_an_incomplete_empty_result(self):
+        for error_type in (ValueError, TypeError, ImportError, RuntimeError):
+            with self.subTest(error=error_type.__name__):
+                root = self.tmp / error_type.__name__
+                dependencies, seams = self._dependencies(root)
+                seams["transform"].side_effect = error_type("bad bbox")
+
+                result = self._run(self._args(), dependencies)
+
+                self.assertIsNone(result.bbox_wgs)
+                self.assertIsNone(result.dossier)
+                self.assertFalse(result.complet)
+                self.assertFalse(root.exists())
+                seams["outputs"].assert_not_called()
+                seams["print"].assert_called_once_with(
+                    "  ERROR bbox WGS84 conversion "
+                    f"({error_type.__name__}): bad bbox"
+                )
+
+    def test_false_bbox_and_unexpected_errors_do_not_publish_outputs(self):
+        dependencies, seams = self._dependencies(self.tmp / "false")
+        seams["transform"].return_value = None
+
+        result = self._run(self._args(), dependencies)
+
+        self.assertIsNone(result.bbox_wgs)
+        self.assertIsNone(result.dossier)
+        self.assertFalse(result.complet)
+        seams["outputs"].assert_not_called()
+
+        for error in (OSError("disk"), KeyboardInterrupt("stop")):
+            with self.subTest(error=type(error).__name__):
+                dependencies, seams = self._dependencies(self.tmp / "raise")
+                seams["transform"].side_effect = error
+                with self.assertRaises(type(error)):
+                    self._run(self._args(), dependencies)
+                seams["outputs"].assert_not_called()
+
+        dependencies, seams = self._dependencies(self.tmp / "output-error")
+        seams["outputs"].side_effect = RuntimeError("output failed")
+        with self.assertRaisesRegex(RuntimeError, "output failed"):
+            self._run(self._args(), dependencies)
+        seams["outputs"].assert_called_once()
+
+
 class SourceAutonomeContractTests(unittest.TestCase):
     """Caractérise `_traiter_source_autonome`, extraite de `main()` en 8b.
 
@@ -1779,6 +4218,714 @@ class SourceAutonomeContractTests(unittest.TestCase):
         self.assertFalse(args._source_already_warped)
 
 
+class RasterCliExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16c du parser et du pré-run WMTS."""
+
+    @staticmethod
+    def _parser_qui_leve():
+        parser = mock.Mock()
+
+        def erreur(message):
+            raise ValueError(message)
+
+        parser.error.side_effect = erreur
+        return parser
+
+    @staticmethod
+    def _dependances_preparation(**overrides):
+        values = dict(
+            zone_cli_presente=mock.Mock(return_value=True),
+            valider_zooms=mock.Mock(),
+            appliquer_cache_dir=mock.Mock(),
+        )
+        values.update(overrides)
+        return raster_cli.DependancesPreparationRunWmts(**values)
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._construire_parser_wmts)), "()",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._preparer_run_wmts)), "(args, parser)",
+        )
+
+        parser_seams = {
+            "_ajouter_args_zone": mock.Mock(),
+            "_arg_float_non_negatif": mock.Mock(),
+            "_arg_int_positif": mock.Mock(),
+            "VERSION": "16c-test",
+            "VERSION_DATE": "2026-08-27",
+            "APIKEY_DEFAUT": "test-key",
+            "NB_WORKERS": 17,
+        }
+        with mock.patch.multiple(L, **parser_seams):
+            parser_dependencies = L._dependances_parser_wmts()
+
+        self.assertIsInstance(
+            parser_dependencies, raster_cli.DependancesParserWmts,
+        )
+        self.assertIs(parser_dependencies.argparse, L.argparse)
+        self.assertIs(
+            parser_dependencies.ajouter_args_zone,
+            parser_seams["_ajouter_args_zone"],
+        )
+        self.assertIs(
+            parser_dependencies.arg_float_non_negatif,
+            parser_seams["_arg_float_non_negatif"],
+        )
+        self.assertIs(
+            parser_dependencies.arg_int_positif,
+            parser_seams["_arg_int_positif"],
+        )
+        self.assertEqual(parser_dependencies.version, "16c-test")
+        self.assertEqual(parser_dependencies.version_date, "2026-08-27")
+        self.assertEqual(parser_dependencies.apikey_defaut, "test-key")
+        self.assertEqual(parser_dependencies.nb_workers, 17)
+
+        marker = object()
+        with mock.patch.object(
+            L, "_dependances_parser_wmts", return_value=parser_dependencies,
+        ), mock.patch.object(
+            L, "_construire_parser_wmts_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._construire_parser_wmts(), marker)
+        implementation.assert_called_once_with(
+            dependances=parser_dependencies,
+        )
+
+        preparation_seams = {
+            "_zone_cli_presente": mock.Mock(),
+            "_valider_zooms": mock.Mock(),
+            "_appliquer_cache_dir": mock.Mock(),
+        }
+        with mock.patch.multiple(L, **preparation_seams):
+            preparation_dependencies = (
+                L._dependances_preparation_run_wmts()
+            )
+        self.assertIsInstance(
+            preparation_dependencies,
+            raster_cli.DependancesPreparationRunWmts,
+        )
+        self.assertIs(
+            preparation_dependencies.zone_cli_presente,
+            preparation_seams["_zone_cli_presente"],
+        )
+        self.assertIs(
+            preparation_dependencies.valider_zooms,
+            preparation_seams["_valider_zooms"],
+        )
+        self.assertIs(
+            preparation_dependencies.appliquer_cache_dir,
+            preparation_seams["_appliquer_cache_dir"],
+        )
+
+        args = object()
+        parser = object()
+        with mock.patch.object(
+            L,
+            "_dependances_preparation_run_wmts",
+            return_value=preparation_dependencies,
+        ), mock.patch.object(
+            L, "_preparer_run_wmts_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._preparer_run_wmts(args, parser), marker)
+        implementation.assert_called_once_with(
+            args,
+            parser,
+            dependances=preparation_dependencies,
+        )
+
+    def test_parser_keeps_defaults_and_french_aliases(self):
+        parser = L._construire_parser_wmts()
+        defaults = parser.parse_args([])
+        self.assertFalse(defaults.ignraster)
+        self.assertIsNone(defaults.provider)
+        self.assertEqual(
+            (defaults.cols_decoupe, defaults.rows_decoupe), (0, 0),
+        )
+        self.assertEqual(defaults.split_width, 0.0)
+        self.assertFalse(defaults.nettoyage)
+        self.assertEqual(defaults.min_free_gb, 0.0)
+        self.assertEqual(defaults.zone_width, 20.0)
+        self.assertEqual(defaults.couche, "planign")
+        self.assertEqual(defaults.apikey, L.APIKEY_DEFAUT)
+        self.assertEqual((defaults.zoom_min, defaults.zoom_max), (10, 16))
+        self.assertEqual(defaults.formats_fichier, [])
+        self.assertEqual(defaults.workers, L.NB_WORKERS)
+        self.assertEqual((defaults.formats_image, defaults.qualite_image),
+                         ("auto", 85))
+        self.assertFalse(defaults.telechargement_ecraser)
+        self.assertFalse(defaults.tuiles_ecraser)
+
+        args = parser.parse_args([
+            "--ignraster",
+            "--provider", "us-tnm",
+            "--zone-ville", "Garéoult",
+            "--zone-largeur", "5",
+            "--zone-nom", "test",
+            "--cols-decoupe", "2",
+            "--rows-decoupe", "3",
+            "--split-largeur", "4.5",
+            "--nettoyage",
+            "--min-disque-go", "7",
+            "--couche", "ortho",
+            "--apikey", "secret",
+            "--formats-fichier", "mbtiles", "rmap",
+            "--dossier", "out",
+            "--dossier-cache", "cache",
+            "--dossier-production", "production",
+            "--formats-image", "jpeg",
+            "--qualite-image", "80",
+            "--telechargement-ecraser",
+            "--tuiles-ecraser",
+        ])
+        self.assertTrue(args.ignraster)
+        self.assertEqual(args.provider, "us-tnm")
+        self.assertEqual(args.zone_ville, "Garéoult")
+        self.assertEqual(args.zone_width, 5.0)
+        self.assertEqual(args.zone_nom, "test")
+        self.assertEqual(
+            (args.cols_decoupe, args.rows_decoupe, args.split_width),
+            (2, 3, 4.5),
+        )
+        self.assertTrue(args.nettoyage)
+        self.assertEqual(args.min_free_gb, 7.0)
+        self.assertEqual((args.couche, args.apikey), ("ortho", "secret"))
+        self.assertEqual(args.formats_fichier, ["mbtiles", "rmap"])
+        self.assertEqual(
+            (args.dossier, args.cache_dir, args.production_dir),
+            ("out", "cache", "production"),
+        )
+        self.assertEqual((args.formats_image, args.qualite_image),
+                         ("jpeg", 80))
+        self.assertTrue(args.telechargement_ecraser)
+        self.assertTrue(args.tuiles_ecraser)
+
+    def test_parser_keeps_help_exclusivity_and_numeric_contracts(self):
+        parser = L._construire_parser_wmts()
+        invalid_commands = (
+            ["--zone-city", "A", "--zone-gps", "43,6"],
+            ["--split-width", "-1"],
+            ["--min-free-gb", "nan"],
+            ["--workers", "0"],
+            ["--file-formats", "transparent-raster"],
+        )
+        for command in invalid_commands:
+            with self.subTest(command=command), \
+                 contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as ctx:
+                parser.parse_args(command)
+            self.assertEqual(ctx.exception.code, 2)
+
+        # Les compteurs de lignes/colonnes utilisaient historiquement `int` :
+        # l'extraction ne transforme pas cette politique au passage.
+        negatives = parser.parse_args([
+            "--split-cols", "-2", "--split-rows", "-3",
+        ])
+        self.assertEqual((negatives.cols_decoupe, negatives.rows_decoupe),
+                         (-2, -3))
+        direct = parser.parse_args([
+            "--layer", "GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2",
+        ])
+        self.assertEqual(
+            direct.couche, "GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2",
+        )
+
+        help_text = parser.format_help()
+        for fragment in (
+            "A priori splitting — --raster only",
+            "--zone-bbox W,S,E,N",
+            "--file-formats FMT",
+            "python lidar2map.py --raster --zone-city gareoult",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, help_text)
+
+    def test_preparation_requires_zone_but_any_truthy_source_bypasses_it(self):
+        parser = self._parser_qui_leve()
+        no_zone = self._dependances_preparation(
+            zone_cli_presente=mock.Mock(return_value=False),
+        )
+        args = SimpleNamespace(source=None, formats_fichier=[])
+        with self.assertRaisesRegex(ValueError, "one geographic area"):
+            raster_cli.preparer_run_wmts(
+                args, parser, dependances=no_zone,
+            )
+        no_zone.valider_zooms.assert_not_called()
+        no_zone.appliquer_cache_dir.assert_not_called()
+
+        source = SimpleNamespace(
+            source="historical-nonempty-value", formats_fichier=["rmap"],
+        )
+        self.assertIs(
+            raster_cli.preparer_run_wmts(
+                source, parser, dependances=no_zone,
+            ),
+            source,
+        )
+        no_zone.zone_cli_presente.assert_called_once_with(args)
+        self.assertTrue(source.rmap)
+
+    def test_preparation_order_and_format_flags_are_preserved(self):
+        events = []
+
+        def zone(_args):
+            events.append("zone")
+            return True
+
+        def zooms(_args, _parser):
+            events.append("zooms")
+
+        def cache(_args):
+            events.append("cache")
+
+        dependencies = raster_cli.DependancesPreparationRunWmts(
+            zone_cli_presente=zone,
+            valider_zooms=zooms,
+            appliquer_cache_dir=cache,
+        )
+        args = SimpleNamespace(
+            source=None,
+            formats_fichier=[
+                "mbtiles", "rmap", "sqlitedb", "transparent-raster",
+            ],
+        )
+        parser = mock.Mock()
+        self.assertIs(
+            raster_cli.preparer_run_wmts(
+                args, parser, dependances=dependencies,
+            ),
+            args,
+        )
+        self.assertEqual(events, ["zone", "zooms", "cache"])
+        self.assertTrue(args.mbtiles)
+        self.assertTrue(args.rmap)
+        self.assertTrue(args.sqlitedb)
+        self.assertTrue(args.transparent_raster)
+        parser.error.assert_not_called()
+
+    def test_zoom_failure_precedes_cache_and_flag_mutation(self):
+        dependencies = self._dependances_preparation(
+            valider_zooms=mock.Mock(side_effect=RuntimeError("bad zoom")),
+        )
+        args = SimpleNamespace(source=None, formats_fichier=["mbtiles"])
+        with self.assertRaisesRegex(RuntimeError, "bad zoom"):
+            raster_cli.preparer_run_wmts(
+                args, mock.Mock(), dependances=dependencies,
+            )
+        dependencies.zone_cli_presente.assert_called_once_with(args)
+        dependencies.appliquer_cache_dir.assert_not_called()
+        self.assertFalse(hasattr(args, "mbtiles"))
+
+
+class RasterRunExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16f du passage WMTS monolithique."""
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            dossier=None,
+            min_free_gb=7.5,
+            zoom_min=10,
+            zoom_max=16,
+            couche="planign",
+            workers=3,
+            formats_image="jpeg",
+            qualite_image=80,
+            apikey="test-key",
+            tuiles_ecraser=True,
+            telechargement_ecraser=True,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(root, *, regenerate=True, convert=True, create=True):
+        root = Path(root)
+
+        def generate(**kwargs):
+            if create:
+                kwargs["chemin"].write_bytes(b"mbtiles")
+            return kwargs["chemin"]
+
+        seams = {
+            "guard": mock.Mock(),
+            "grid": mock.Mock(return_value=["tile-a", "tile-b"]),
+            "count": mock.Mock(return_value=1234),
+            "estimate": mock.Mock(return_value=56),
+            "quality": mock.Mock(return_value=80),
+            "name": mock.Mock(return_value="zone_planign_z10-16_q80"),
+            "freshness": mock.Mock(return_value=regenerate),
+            "generate": mock.Mock(side_effect=generate),
+            "convert": mock.Mock(return_value=convert),
+            "sheet": mock.Mock(),
+            "now": mock.Mock(return_value=112.9),
+            "duration": mock.Mock(side_effect=lambda seconds: f"{seconds}s"),
+            "history": mock.Mock(),
+            "print": mock.Mock(),
+        }
+        dependencies = raster_run.DependancesRunWmts(
+            dossier_travail=root / "work",
+            dossier_cache=root / "cache",
+            garde_disque=seams["guard"],
+            calculer_grille_xyz=seams["grid"],
+            compter_tuiles_xyz=seams["count"],
+            estimer_taille=seams["estimate"],
+            jpeg_quality_sortie=seams["quality"],
+            nom_mbtiles_wmts=seams["name"],
+            mbtiles_a_regenerer=seams["freshness"],
+            generer_mbtiles_wmts=seams["generate"],
+            convertir_formats=seams["convert"],
+            planche_depuis_dossier=seams["sheet"],
+            maintenant=seams["now"],
+            formater_duree=seams["duration"],
+            historique_depuis_argv=seams["history"],
+            imprimer=seams["print"],
+        )
+        return dependencies, seams
+
+    def test_facade_keeps_signature_and_rebuilds_sixteen_late_dependencies(self):
+        self.assertIs(
+            L._executer_run_wmts_monolithique_impl,
+            raster_run.executer_run_wmts_monolithique,
+        )
+        self.assertEqual(
+            str(inspect.signature(L._executer_run_wmts_monolithique)),
+            "(args, t_debut, *, layer, style, img_fmt, apikey_requis, "
+            "fmt_ext, bbox_wgs84, nom_zone)",
+        )
+
+        workdir = Path("late-work")
+        cache = Path("late-cache")
+        seams = {
+            "DOSSIER_TRAVAIL": workdir,
+            "DOSSIER_CACHE": cache,
+            "_garde_disque": mock.Mock(name="guard"),
+            "calculer_grille_xyz": mock.Mock(name="grid"),
+            "compter_tuiles_xyz": mock.Mock(name="count"),
+            "estimer_taille": mock.Mock(name="estimate"),
+            "_jpeg_quality_sortie": mock.Mock(name="quality"),
+            "_nom_mbtiles_wmts": mock.Mock(name="name"),
+            "_mbtiles_a_regenerer": mock.Mock(name="freshness"),
+            "generer_mbtiles_wmts": mock.Mock(name="generate"),
+            "_convertir_formats": mock.Mock(name="convert"),
+            "_planche_depuis_dossier": mock.Mock(name="sheet"),
+            "_hms": mock.Mock(name="duration"),
+            "_historique_depuis_argv": mock.Mock(name="history"),
+        }
+        clock = mock.Mock(name="clock")
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            stack.enter_context(mock.patch.object(L.time, "time", clock))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_run_wmts()
+
+        self.assertIsInstance(dependencies, raster_run.DependancesRunWmts)
+        self.assertIs(dependencies.dossier_travail, workdir)
+        self.assertIs(dependencies.dossier_cache, cache)
+        expected = {
+            "garde_disque": "_garde_disque",
+            "calculer_grille_xyz": "calculer_grille_xyz",
+            "compter_tuiles_xyz": "compter_tuiles_xyz",
+            "estimer_taille": "estimer_taille",
+            "jpeg_quality_sortie": "_jpeg_quality_sortie",
+            "nom_mbtiles_wmts": "_nom_mbtiles_wmts",
+            "mbtiles_a_regenerer": "_mbtiles_a_regenerer",
+            "generer_mbtiles_wmts": "generer_mbtiles_wmts",
+            "convertir_formats": "_convertir_formats",
+            "planche_depuis_dossier": "_planche_depuis_dossier",
+            "formater_duree": "_hms",
+            "historique_depuis_argv": "_historique_depuis_argv",
+        }
+        for field, seam in expected.items():
+            with self.subTest(field=field):
+                self.assertIs(getattr(dependencies, field), seams[seam])
+        self.assertIs(dependencies.maintenant, clock)
+        self.assertIs(dependencies.imprimer, printer)
+
+        args = object()
+        marker = object()
+        call_kwargs = dict(
+            layer="layer",
+            style="style",
+            img_fmt="image/png",
+            apikey_requis=False,
+            fmt_ext="png",
+            bbox_wgs84=(1, 2, 3, 4),
+            nom_zone="zone",
+        )
+        with mock.patch.object(
+            L, "_dependances_run_wmts", return_value=dependencies,
+        ), mock.patch.object(
+            L, "_executer_run_wmts_monolithique_impl", return_value=marker,
+        ) as implementation:
+            result = L._executer_run_wmts_monolithique(
+                args,
+                10.0,
+                **call_kwargs,
+            )
+        self.assertIs(result, marker)
+        implementation.assert_called_once_with(
+            args,
+            10.0,
+            **call_kwargs,
+            dependances=dependencies,
+        )
+
+    def test_main_starts_history_and_bypasses_split_before_monolithic_run(self):
+        args = SimpleNamespace(
+            mbtiles=False,
+            rmap=False,
+            sqlitedb=False,
+            cols_decoupe=0,
+            rows_decoupe=0,
+            split_width=0.0,
+        )
+        parser = mock.Mock()
+        parser.parse_args.return_value = args
+        events = []
+        layer_result = (
+            "LAYER",
+            "normal",
+            "image/png",
+            False,
+            "png",
+            10,
+            16,
+        )
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(L.sys, "argv", ["l2m", "--raster"]))
+            stack.enter_context(
+                mock.patch.object(L.time, "time", return_value=42.5)
+            )
+            stack.enter_context(
+                mock.patch.object(L, "_construire_parser_wmts", return_value=parser)
+            )
+            stack.enter_context(mock.patch.object(L, "_preparer_run_wmts"))
+            stack.enter_context(
+                mock.patch.object(
+                    L,
+                    "_historique_debut",
+                    side_effect=lambda: events.append("history"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    L,
+                    "_traiter_source_wmts",
+                    side_effect=lambda _args: events.append("source"),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    L,
+                    "_resoudre_couche_wmts",
+                    side_effect=lambda _args: events.append("layer")
+                    or layer_result,
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    L,
+                    "_resoudre_zone_wgs84",
+                    side_effect=lambda _args: events.append("zone")
+                    or (1, 2, 3, 4, "zone"),
+                )
+            )
+            runner = stack.enter_context(
+                mock.patch.object(
+                    L,
+                    "_executer_run_wmts_monolithique",
+                    side_effect=lambda *_args, **_kwargs: events.append("run"),
+                )
+            )
+            self.assertIsNone(L.main_wmts())
+
+        self.assertTrue(args.mbtiles)
+        self.assertEqual(events, ["history", "source", "layer", "zone", "run"])
+        runner.assert_called_once_with(
+            args,
+            42.5,
+            layer="LAYER",
+            style="normal",
+            img_fmt="image/png",
+            apikey_requis=False,
+            fmt_ext="png",
+            bbox_wgs84=(1, 2, 3, 4),
+            nom_zone="zone",
+        )
+
+    def test_generation_success_preserves_grid_paths_arguments_and_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dependencies, seams = self._dependencies(root)
+            args = self._args()
+            bbox = (1.0, 2.0, 3.0, 4.0)
+
+            result = raster_run.executer_run_wmts_monolithique(
+                args,
+                100.5,
+                layer="XYZ:https://tiles/{z}/{x}/{y}.png",
+                style="normal",
+                img_fmt="image/png",
+                apikey_requis=False,
+                fmt_ext="png",
+                bbox_wgs84=bbox,
+                nom_zone="zone",
+                dependances=dependencies,
+            )
+
+            output_dir = root / "work" / "Projets" / "zone" / "raster"
+            cache_dir = root / "cache" / "ign_raster"
+            mbtiles = output_dir / "zone_planign_z10-16_q80.mbtiles"
+            self.assertIsNone(result)
+            self.assertTrue(mbtiles.exists())
+            self.assertTrue(cache_dir.is_dir())
+            seams["guard"].assert_called_once_with(
+                root / "work", 7.5, "single-pass", 0, 1,
+            )
+            seams["grid"].assert_called_once_with(2.0, 1.0, 4.0, 3.0, 10, 16)
+            seams["count"].assert_called_once_with(2.0, 1.0, 4.0, 3.0, 10, 16)
+            seams["estimate"].assert_called_once_with(1234, "png")
+            seams["quality"].assert_called_once_with("image/png", "jpeg", 80)
+            seams["name"].assert_called_once_with(
+                "zone", "planign", 10, 16, 80,
+            )
+            seams["freshness"].assert_called_once_with(mbtiles, True)
+            generation = seams["generate"].call_args.kwargs
+            self.assertEqual(generation["chemin"], mbtiles)
+            self.assertEqual(generation["tuiles_iter"], ["tile-a", "tile-b"])
+            self.assertEqual(generation["total"], 1234)
+            self.assertEqual(generation["bbox_wgs84"], bbox)
+            self.assertEqual(generation["dossier_cache"], cache_dir)
+            self.assertEqual(generation["jpeg_quality"], 80)
+            self.assertEqual(generation["apikey"], "test-key")
+            self.assertTrue(generation["ecraser_tuiles"])
+            self.assertTrue(generation["ecraser_dalles"])
+            seams["convert"].assert_called_once_with(
+                mbtiles,
+                args,
+                mbtiles_neuf=True,
+            )
+            seams["sheet"].assert_called_once_with(
+                output_dir,
+                args,
+                "zone",
+                zone_bbox_wgs84=bbox,
+            )
+            seams["duration"].assert_called_once_with(12)
+            seams["history"].assert_called_once_with(
+                12,
+                str(output_dir),
+                statut="ok",
+            )
+            printed = [call.args[0] for call in seams["print"].call_args_list]
+            self.assertIn(
+                "  Raster map - planign (https://tiles/{z}/{x}/{y}.png)",
+                printed,
+            )
+
+    def test_fresh_explicit_mbtiles_skips_generation_and_still_converts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            explicit = root / "parent" / ".." / "explicit"
+            dependencies, seams = self._dependencies(root, regenerate=False)
+            args = self._args(
+                dossier=str(explicit),
+                tuiles_ecraser=False,
+                telechargement_ecraser=False,
+            )
+            output_dir = explicit.resolve()
+            output_dir.mkdir(parents=True)
+            mbtiles = output_dir / "zone_planign_z10-16_q80.mbtiles"
+            mbtiles.write_bytes(b"cached")
+
+            raster_run.executer_run_wmts_monolithique(
+                args,
+                100.5,
+                layer="LAYER",
+                style="normal",
+                img_fmt="image/png",
+                apikey_requis=False,
+                fmt_ext="png",
+                bbox_wgs84=(1, 2, 3, 4),
+                nom_zone="zone",
+                dependances=dependencies,
+            )
+
+            seams["guard"].assert_called_once_with(
+                output_dir, 7.5, "single-pass", 0, 1,
+            )
+            seams["generate"].assert_not_called()
+            seams["convert"].assert_called_once_with(
+                mbtiles,
+                args,
+                mbtiles_neuf=False,
+            )
+            printed = [call.args[0] for call in seams["print"].call_args_list]
+            self.assertIn(
+                f"  Existing MBTiles: {mbtiles.name}, direct split/conversion",
+                printed,
+            )
+
+    def test_missing_generated_mbtiles_records_ko_without_conversion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dependencies, seams = self._dependencies(root, create=False)
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "raster generation/conversion incomplete",
+            ):
+                raster_run.executer_run_wmts_monolithique(
+                    self._args(),
+                    100.5,
+                    layer="LAYER",
+                    style="normal",
+                    img_fmt="image/png",
+                    apikey_requis=False,
+                    fmt_ext="png",
+                    bbox_wgs84=(1, 2, 3, 4),
+                    nom_zone="zone",
+                    dependances=dependencies,
+                )
+
+            seams["convert"].assert_not_called()
+            self.assertEqual(seams["history"].call_args.kwargs["statut"], "ko")
+            self.assertEqual(seams["sheet"].call_count, 1)
+
+    def test_conversion_failure_records_ko_before_exact_runtime_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dependencies, seams = self._dependencies(root, convert=False)
+            events = []
+            seams["history"].side_effect = lambda *_args, **_kwargs: (
+                events.append("history")
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "partial outputs kept; rerun to retry failed deliverables",
+            ):
+                raster_run.executer_run_wmts_monolithique(
+                    self._args(),
+                    100.5,
+                    layer="LAYER",
+                    style="normal",
+                    img_fmt="image/png",
+                    apikey_requis=False,
+                    fmt_ext="png",
+                    bbox_wgs84=(1, 2, 3, 4),
+                    nom_zone="zone",
+                    dependances=dependencies,
+                )
+            events.append("raised")
+
+            self.assertEqual(events, ["history", "raised"])
+            self.assertEqual(seams["history"].call_args.kwargs["statut"], "ko")
+
+
 class SourceEtCoucheWmtsContractTests(unittest.TestCase):
     """Caractérise `_traiter_source_wmts` et `_resoudre_couche_wmts`, extraites
     de `main_wmts()` (jumeau de 8b/8c pour le point d'entrée `--raster`)."""
@@ -1852,6 +4999,70 @@ class SourceEtCoucheWmtsContractTests(unittest.TestCase):
         base.update(kw)
         return SimpleNamespace(**base)
 
+    def test_layer_resolver_facade_rebuilds_three_late_dependencies(self):
+        self.assertIs(
+            L._resoudre_couche_wmts_impl,
+            raster_cli.resoudre_couche_wmts,
+        )
+        self.assertEqual(
+            str(inspect.signature(L._resoudre_couche_wmts)),
+            "(args)",
+        )
+        catalog = {"test": ("LAYER", "normal", "image/png", False)}
+        capabilities = mock.Mock(name="capabilities")
+        with mock.patch.object(L, "COUCHES", catalog), mock.patch.object(
+            L,
+            "_lire_zoom_limites_wmts",
+            capabilities,
+        ), mock.patch("builtins.print") as printer:
+            dependencies = L._dependances_resolution_couche_wmts()
+
+        self.assertIsInstance(
+            dependencies,
+            raster_cli.DependancesResolutionCoucheWmts,
+        )
+        self.assertIs(dependencies.couches, catalog)
+        self.assertIs(dependencies.lire_zoom_limites_wmts, capabilities)
+        self.assertIs(dependencies.imprimer, printer)
+
+        direct_args = SimpleNamespace(
+            couche="test",
+            formats_image="auto",
+            zoom_min=9,
+            zoom_max=12,
+        )
+        capabilities.return_value = None
+        self.assertEqual(
+            raster_cli.resoudre_couche_wmts(
+                direct_args,
+                dependances=dependencies,
+            ),
+            ("LAYER", "normal", "image/png", False, "png", 9, 12),
+        )
+        capabilities.assert_called_once_with(
+            "LAYER",
+            False,
+            apikey="",
+        )
+
+        args = object()
+        marker = object()
+        with mock.patch.object(
+            L,
+            "_dependances_resolution_couche_wmts",
+            return_value=dependencies,
+        ), mock.patch.object(
+            L,
+            "_resoudre_couche_wmts_impl",
+            return_value=marker,
+        ) as implementation:
+            self.assertIs(L._resoudre_couche_wmts(args), marker)
+
+        implementation.assert_called_once_with(
+            args,
+            dependances=dependencies,
+        )
+
     def test_default_couche_resolves_to_planign(self):
         args = self._args_couche()
         with mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None):
@@ -1878,6 +5089,145 @@ class SourceEtCoucheWmtsContractTests(unittest.TestCase):
         self.assertEqual(layer, "GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN100")
         self.assertTrue(apikey_requis)   # "MAPS" déclenche apikey_requis
         self.assertEqual(fmt_ext, "jpg")  # "MAPS" déclenche aussi le format JPEG
+
+    def test_direct_layer_inference_remains_case_sensitive(self):
+        cases = (
+            ("ORTHOIMAGERY.TEST", "image/jpeg", False, "jpg"),
+            ("ETATMAJOR.TEST", "image/jpeg", False, "jpg"),
+            ("SCAN.TEST", "image/png", True, "png"),
+            ("maps.scan", "image/png", False, "png"),
+        )
+        for layer, image_format, api_key, extension in cases:
+            with self.subTest(layer=layer):
+                args = self._args_couche(couche=layer)
+                with mock.patch.object(
+                    L, "_lire_zoom_limites_wmts", return_value=None,
+                ) as capabilities, mock.patch("builtins.print") as printer:
+                    result = L._resoudre_couche_wmts(args)
+
+                self.assertEqual(
+                    result,
+                    (
+                        layer,
+                        "normal",
+                        image_format,
+                        api_key,
+                        extension,
+                        10,
+                        15,
+                    ),
+                )
+                capabilities.assert_called_once_with(
+                    layer,
+                    api_key,
+                    apikey="",
+                )
+                printer.assert_called_once_with(
+                    f"  Layer: {layer} (direct id)"
+                )
+
+    def test_alias_keeps_native_format_caps_order_and_exact_messages(self):
+        args = self._args_couche(
+            couche="jpeg-test",
+            formats_image="png",
+            zoom_min=20,
+            zoom_max=5,
+            apikey="secret",
+        )
+        catalog = {
+            "jpeg-test": ("LAYER.TEST", "style-x", "image/jpeg", True),
+        }
+        with mock.patch.object(L, "COUCHES", catalog), mock.patch.object(
+            L,
+            "_lire_zoom_limites_wmts",
+            return_value=(8, 18),
+        ) as capabilities, mock.patch("builtins.print") as printer:
+            result = L._resoudre_couche_wmts(args)
+
+        self.assertEqual(
+            result,
+            ("LAYER.TEST", "style-x", "image/jpeg", True, "jpg", 8, 18),
+        )
+        self.assertEqual((args.zoom_min, args.zoom_max), (8, 18))
+        capabilities.assert_called_once_with(
+            "LAYER.TEST",
+            True,
+            apikey="secret",
+        )
+        self.assertEqual(
+            printer.call_args_list,
+            [
+                mock.call(
+                    "  Note: layer 'jpeg-test' is served as JPEG; "
+                    "--image-format png ignored (PNG would only bloat the "
+                    "file, no quality gain). Keeping JPEG."
+                ),
+                mock.call(
+                    "  ⚠ Layer jpeg-test: IGN max zoom = 18, "
+                    "zoom_max lowered from 20 to 18."
+                ),
+                mock.call(
+                    "  ⚠ Layer jpeg-test: IGN min zoom = 8, "
+                    "zoom_min raised from 5 to 8."
+                ),
+            ],
+        )
+
+    def test_xyz_caps_use_service_label_and_inverted_caps_collapse(self):
+        args = self._args_couche(
+            couche="XYZ:https://tiles.test/{z}/{x}/{y}.png",
+            zoom_min=10,
+            zoom_max=15,
+        )
+        with mock.patch.object(
+            L,
+            "_lire_zoom_limites_wmts",
+            return_value=(18, 8),
+        ), mock.patch("builtins.print") as printer:
+            *_, zoom_min, zoom_max = L._resoudre_couche_wmts(args)
+
+        self.assertEqual((zoom_min, zoom_max), (18, 18))
+        self.assertEqual((args.zoom_min, args.zoom_max), (18, 18))
+        self.assertEqual(
+            printer.call_args_list,
+            [
+                mock.call(
+                    "  Layer: XYZ:https://tiles.test/{z}/{x}/{y}.png "
+                    "(direct id)"
+                ),
+                mock.call(
+                    "  ⚠ Layer XYZ:https://tiles.test/{z}/{x}/{y}.png: "
+                    "service max zoom = 8, zoom_max lowered from 15 to 8."
+                ),
+                mock.call(
+                    "  ⚠ Layer XYZ:https://tiles.test/{z}/{x}/{y}.png: "
+                    "service min zoom = 18, zoom_min raised from 8 to 18."
+                ),
+            ],
+        )
+
+    def test_capabilities_error_propagates_before_zoom_mutation(self):
+        args = self._args_couche(
+            couche=None,
+            zoom_min=15,
+            zoom_max=10,
+        )
+        del args.apikey
+        with mock.patch.object(
+            L,
+            "_lire_zoom_limites_wmts",
+            side_effect=RuntimeError("capabilities failed"),
+        ) as capabilities:
+            with self.assertRaisesRegex(RuntimeError, "capabilities failed"):
+                L._resoudre_couche_wmts(args)
+
+        self.assertEqual(args.couche, "planign")
+        self.assertEqual((args.zoom_min, args.zoom_max), (15, 10))
+        capabilities.assert_called_once_with(
+            "GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2",
+            False,
+            apikey="",
+        )
 
     def test_zoom_capping_narrows_to_layer_capabilities(self):
         args = self._args_couche(couche="planign", zoom_min=5, zoom_max=20)
@@ -3184,6 +6534,582 @@ class ManifestContractTests(unittest.TestCase):
             [("before.tif", "outer"), ("after.tif", "outer")],
         )
         self.assertEqual(inner.calls, [("inside.tif", "inner")])
+
+
+class VectorCliExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16d du parser et du pré-run WFS."""
+
+    @staticmethod
+    def _parser_qui_leve():
+        parser = mock.Mock()
+
+        def erreur(message):
+            raise ValueError(message)
+
+        parser.error.side_effect = erreur
+        return parser
+
+    @staticmethod
+    def _dependances_preparation(**overrides):
+        values = dict(
+            zone_cli_presente=mock.Mock(return_value=True),
+            appliquer_cache_dir=mock.Mock(),
+        )
+        values.update(overrides)
+        return vector_cli.DependancesPreparationRunWfs(**values)
+
+    def test_facades_keep_signatures_and_rebuild_late_dependencies(self):
+        self.assertEqual(
+            str(inspect.signature(L._construire_parser_wfs)), "()",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._preparer_run_wfs)), "(args, parser)",
+        )
+
+        catalog = {"test": ("NS:test", "Test", "Test layer")}
+        parser_seams = {
+            "_ajouter_args_zone": mock.Mock(),
+            "_arg_int_positif": mock.Mock(),
+            "_arg_float_non_negatif": mock.Mock(),
+            "COUCHES_WFS": catalog,
+            "VERSION": "16d-test",
+            "VERSION_DATE": "2026-08-27",
+        }
+        with mock.patch.multiple(L, **parser_seams):
+            parser_dependencies = L._dependances_parser_wfs()
+
+        self.assertIsInstance(
+            parser_dependencies, vector_cli.DependancesParserWfs,
+        )
+        self.assertIs(parser_dependencies.argparse, L.argparse)
+        self.assertIs(
+            parser_dependencies.ajouter_args_zone,
+            parser_seams["_ajouter_args_zone"],
+        )
+        self.assertIs(
+            parser_dependencies.arg_int_positif,
+            parser_seams["_arg_int_positif"],
+        )
+        self.assertIs(
+            parser_dependencies.arg_float_non_negatif,
+            parser_seams["_arg_float_non_negatif"],
+        )
+        self.assertIs(parser_dependencies.couches_wfs, catalog)
+        self.assertEqual(parser_dependencies.version, "16d-test")
+        self.assertEqual(parser_dependencies.version_date, "2026-08-27")
+
+        marker = object()
+        with mock.patch.object(
+            L, "_dependances_parser_wfs", return_value=parser_dependencies,
+        ), mock.patch.object(
+            L, "_construire_parser_wfs_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._construire_parser_wfs(), marker)
+        implementation.assert_called_once_with(
+            dependances=parser_dependencies,
+        )
+
+        preparation_seams = {
+            "_zone_cli_presente": mock.Mock(),
+            "_appliquer_cache_dir": mock.Mock(),
+        }
+        with mock.patch.multiple(L, **preparation_seams):
+            preparation_dependencies = L._dependances_preparation_run_wfs()
+        self.assertIsInstance(
+            preparation_dependencies,
+            vector_cli.DependancesPreparationRunWfs,
+        )
+        self.assertIs(
+            preparation_dependencies.zone_cli_presente,
+            preparation_seams["_zone_cli_presente"],
+        )
+        self.assertIs(
+            preparation_dependencies.appliquer_cache_dir,
+            preparation_seams["_appliquer_cache_dir"],
+        )
+
+        args = object()
+        parser = object()
+        with mock.patch.object(
+            L,
+            "_dependances_preparation_run_wfs",
+            return_value=preparation_dependencies,
+        ), mock.patch.object(
+            L, "_preparer_run_wfs_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._preparer_run_wfs(args, parser), marker)
+        implementation.assert_called_once_with(
+            args,
+            parser,
+            dependances=preparation_dependencies,
+        )
+
+    def test_parser_keeps_defaults_and_french_aliases(self):
+        parser = L._construire_parser_wfs()
+        defaults = parser.parse_args([])
+        self.assertFalse(defaults.ignvecteur)
+        self.assertEqual(defaults.couche, ["cadastre"])
+        self.assertEqual(defaults.zone_width, 20.0)
+        self.assertIsNone(defaults.dossier)
+        self.assertEqual(defaults.workers, 4)
+        self.assertFalse(defaults.telechargement_ecraser)
+        self.assertEqual(defaults.formats_fichier, ["gz"])
+        self.assertFalse(defaults.tuiles_ecraser)
+        self.assertIsNone(defaults.simplification_vecteur)
+
+        args = parser.parse_args([
+            "--ignvecteur",
+            "--couche", "cadastre", "routes",
+            "--zone-ville", "Garéoult",
+            "--zone-largeur", "5",
+            "--zone-nom", "test",
+            "--dossier", "out",
+            "--dossier-cache", "cache",
+            "--dossier-production", "production",
+            "--workers", "3",
+            "--telechargement-ecraser",
+            "--formats-fichier", "geojson", "map", "transparent-raster",
+            "--tuiles-ecraser",
+            "--simplification-vecteur", "12.5",
+        ])
+        self.assertTrue(args.ignvecteur)
+        self.assertEqual(args.couche, ["cadastre", "routes"])
+        self.assertEqual(args.zone_ville, "Garéoult")
+        self.assertEqual(args.zone_width, 5.0)
+        self.assertEqual(args.zone_nom, "test")
+        self.assertEqual(
+            (args.dossier, args.cache_dir, args.production_dir),
+            ("out", "cache", "production"),
+        )
+        self.assertEqual(args.workers, 3)
+        self.assertTrue(args.telechargement_ecraser)
+        self.assertEqual(
+            args.formats_fichier,
+            ["geojson", "map", "transparent-raster"],
+        )
+        self.assertTrue(args.tuiles_ecraser)
+        self.assertEqual(args.simplification_vecteur, 12.5)
+
+    def test_parser_keeps_help_catalog_version_and_full_typenames(self):
+        parser = L._construire_parser_wfs()
+        direct = parser.parse_args(["--layer", "BDTOPO_V3:batiment"])
+        self.assertEqual(direct.couche, ["BDTOPO_V3:batiment"])
+
+        help_text = parser.format_help()
+        for fragment in (
+            "Available layers:",
+            "--layer NAME [NAME ...], --couche NAME [NAME ...]",
+            "A priori",
+            "python lidar2map.py --vector --zone-city gareoult",
+        ):
+            with self.subTest(fragment=fragment):
+                if fragment == "A priori":
+                    self.assertNotIn(fragment, help_text)
+                else:
+                    self.assertIn(fragment, help_text)
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), \
+             self.assertRaises(SystemExit) as ctx:
+            parser.parse_args(["--version"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn(
+            f"lidar2map {L.VERSION} ({L.VERSION_DATE}), multi-provider",
+            stdout.getvalue(),
+        )
+
+    def test_parser_keeps_zone_exclusivity_and_numeric_validation(self):
+        parser = L._construire_parser_wfs()
+        invalid_commands = (
+            ["--zone-city", "A", "--zone-gps", "43,6"],
+            ["--workers", "0"],
+            ["--vector-simplify", "-1"],
+            ["--vector-simplify", "nan"],
+            ["--file-formats", "mbtiles"],
+        )
+        for command in invalid_commands:
+            with self.subTest(command=command), \
+                 contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as ctx:
+                parser.parse_args(command)
+            self.assertEqual(ctx.exception.code, 2)
+
+    def test_preparation_requires_zone_before_cache(self):
+        parser = self._parser_qui_leve()
+        dependencies = self._dependances_preparation(
+            zone_cli_presente=mock.Mock(return_value=False),
+        )
+        args = SimpleNamespace(formats_fichier=["gz"])
+        with self.assertRaisesRegex(ValueError, "one geographic area"):
+            vector_cli.preparer_run_wfs(
+                args, parser, dependances=dependencies,
+            )
+        dependencies.zone_cli_presente.assert_called_once_with(args)
+        dependencies.appliquer_cache_dir.assert_not_called()
+
+    def test_preparation_applies_cache_then_filters_geojson_formats(self):
+        events = []
+
+        def zone(_args):
+            events.append("zone")
+            return True
+
+        def cache(_args):
+            events.append("cache")
+
+        dependencies = vector_cli.DependancesPreparationRunWfs(
+            zone_cli_presente=zone,
+            appliquer_cache_dir=cache,
+        )
+        args = SimpleNamespace(
+            formats_fichier=["geojson", "map", "gz", "transparent-raster"],
+        )
+        result = vector_cli.preparer_run_wfs(
+            args, mock.Mock(), dependances=dependencies,
+        )
+        self.assertEqual(events, ["zone", "cache"])
+        self.assertEqual(result, ["geojson", "gz"])
+
+        map_only = SimpleNamespace(formats_fichier=["map"])
+        self.assertEqual(
+            vector_cli.preparer_run_wfs(
+                map_only, mock.Mock(), dependances=dependencies,
+            ),
+            ["gz"],
+        )
+        empty = SimpleNamespace(formats_fichier=[])
+        self.assertEqual(
+            vector_cli.preparer_run_wfs(
+                empty, mock.Mock(), dependances=dependencies,
+            ),
+            ["gz"],
+        )
+        duplicates = SimpleNamespace(
+            formats_fichier=["gz", "map", "gz", "geojson"],
+        )
+        self.assertEqual(
+            vector_cli.preparer_run_wfs(
+                duplicates, mock.Mock(), dependances=dependencies,
+            ),
+            ["gz", "gz", "geojson"],
+        )
+        missing = SimpleNamespace()
+        self.assertEqual(
+            vector_cli.preparer_run_wfs(
+                missing, mock.Mock(), dependances=dependencies,
+            ),
+            ["gz"],
+        )
+
+
+class VectorRunExtractionContractTests(unittest.TestCase):
+    """Verrouille l'extraction 16e de l'orchestrateur WFS restant."""
+
+    @staticmethod
+    def _args(**overrides):
+        values = dict(
+            couche=["cadastre"],
+            dossier=None,
+            zone_departement="83",
+            telechargement_ecraser=True,
+            workers=3,
+            formats_fichier=["gz", "map"],
+            tuiles_ecraser=True,
+            simplification_vecteur=12.5,
+            zoom_min=9,
+            zoom_max=17,
+        )
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    @staticmethod
+    def _dependencies(root, *, outputs, complete=True, catalog=None, now=112.9):
+        seams = {
+            "catalog": catalog if catalog is not None else {
+                "cadastre": ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle",
+                              "Parcelles", "Parcels"),
+            },
+            "resolve": mock.Mock(
+                return_value=(6.0, 43.0, 6.1, 43.1, "zone"),
+            ),
+            "acquire": mock.Mock(return_value=outputs),
+            "produce": mock.Mock(return_value=SimpleNamespace(complet=complete)),
+            "sheet": mock.Mock(),
+            "now": mock.Mock(return_value=now),
+            "duration": mock.Mock(side_effect=lambda seconds: f"{seconds}s"),
+            "history": mock.Mock(),
+            "print": mock.Mock(),
+        }
+        dependencies = vector_run.DependancesRunWfs(
+            couches_wfs=seams["catalog"],
+            dossier_travail=Path(root),
+            resoudre_zone_wgs84=seams["resolve"],
+            acquerir_couches_vecteur=seams["acquire"],
+            produire_sorties_vecteur=seams["produce"],
+            planche_depuis_dossier=seams["sheet"],
+            maintenant=seams["now"],
+            formater_duree=seams["duration"],
+            historique_depuis_argv=seams["history"],
+            imprimer=seams["print"],
+        )
+        return dependencies, seams
+
+    def test_facade_keeps_signature_and_rebuilds_all_late_dependencies(self):
+        self.assertIs(L._executer_run_wfs_impl, vector_run.executer_run_wfs)
+        self.assertEqual(
+            str(inspect.signature(L._executer_run_wfs)),
+            "(args, formats_geojson, t_debut)",
+        )
+
+        catalog = {"test": ("NS:test", "Test", "Test layer")}
+        workdir = Path("late-workdir")
+        seams = {
+            "COUCHES_WFS": catalog,
+            "DOSSIER_TRAVAIL": workdir,
+            "_resoudre_zone_wgs84": mock.Mock(name="resolve"),
+            "_acquerir_couches_vecteur": mock.Mock(name="acquire"),
+            "_produire_sorties_vecteur": mock.Mock(name="produce"),
+            "_planche_depuis_dossier": mock.Mock(name="sheet"),
+            "_hms": mock.Mock(name="duration"),
+            "_historique_depuis_argv": mock.Mock(name="history"),
+        }
+        clock = mock.Mock(name="clock")
+        with contextlib.ExitStack() as stack:
+            for name, value in seams.items():
+                stack.enter_context(mock.patch.object(L, name, value))
+            stack.enter_context(mock.patch.object(L.time, "time", clock))
+            printer = stack.enter_context(mock.patch("builtins.print"))
+            dependencies = L._dependances_run_wfs()
+
+        self.assertIsInstance(dependencies, vector_run.DependancesRunWfs)
+        self.assertIs(dependencies.couches_wfs, catalog)
+        self.assertIs(dependencies.dossier_travail, workdir)
+        self.assertIs(
+            dependencies.resoudre_zone_wgs84,
+            seams["_resoudre_zone_wgs84"],
+        )
+        self.assertIs(
+            dependencies.acquerir_couches_vecteur,
+            seams["_acquerir_couches_vecteur"],
+        )
+        self.assertIs(
+            dependencies.produire_sorties_vecteur,
+            seams["_produire_sorties_vecteur"],
+        )
+        self.assertIs(
+            dependencies.planche_depuis_dossier,
+            seams["_planche_depuis_dossier"],
+        )
+        self.assertIs(dependencies.maintenant, clock)
+        self.assertIs(dependencies.formater_duree, seams["_hms"])
+        self.assertIs(
+            dependencies.historique_depuis_argv,
+            seams["_historique_depuis_argv"],
+        )
+        self.assertIs(dependencies.imprimer, printer)
+
+        args = object()
+        formats = object()
+        marker = object()
+        with mock.patch.object(
+            L, "_dependances_run_wfs", return_value=dependencies,
+        ), mock.patch.object(
+            L, "_executer_run_wfs_impl", return_value=marker,
+        ) as implementation:
+            self.assertIs(L._executer_run_wfs(args, formats, 10.0), marker)
+        implementation.assert_called_once_with(
+            args,
+            formats,
+            10.0,
+            dependances=dependencies,
+        )
+
+    def test_main_starts_history_before_delegating_the_run(self):
+        args = object()
+        formats = object()
+        parser = mock.Mock()
+        parser.parse_args.return_value = args
+        events = []
+        with mock.patch.object(
+            L, "_construire_parser_wfs", return_value=parser,
+        ), mock.patch.object(
+            L, "_preparer_run_wfs", return_value=formats,
+        ), mock.patch.object(
+            L, "_historique_debut", side_effect=lambda: events.append("history"),
+        ), mock.patch.object(
+            L,
+            "_executer_run_wfs",
+            side_effect=lambda *_args: events.append("run"),
+        ) as runner, mock.patch.object(L.time, "time", return_value=42.5):
+            self.assertIsNone(L.main_wfs())
+
+        self.assertEqual(events, ["history", "run"])
+        runner.assert_called_once_with(args, formats, 42.5)
+
+    def test_success_preserves_layer_order_arguments_outputs_and_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outputs = [root / f"source-{index}.geojson.gz" for index in range(3)]
+            catalog = {"roads": ("NS:roads", "Routes", "Roads")}
+            dependencies, seams = self._dependencies(
+                root,
+                outputs=outputs,
+                catalog=catalog,
+            )
+            args = self._args(
+                couche=["roads", "NS:custom", "roads"],
+            )
+            formats_geojson = ["geojson", "gz"]
+
+            result = vector_run.executer_run_wfs(
+                args,
+                formats_geojson,
+                100.5,
+                dependances=dependencies,
+            )
+
+            expected_dir = root / "Projets" / "zone" / "ign_vecteur"
+            self.assertIsNone(result)
+            self.assertTrue(expected_dir.is_dir())
+            seams["resolve"].assert_called_once_with(args)
+            acquisition_args = seams["acquire"].call_args
+            self.assertEqual(
+                acquisition_args.args,
+                (
+                    [("NS:roads", "Routes"),
+                     ("NS:custom", "NS:custom"),
+                     ("NS:roads", "Routes")],
+                    (6.0, 43.0, 6.1, 43.1),
+                    "zone",
+                    expected_dir,
+                ),
+            )
+            self.assertEqual(acquisition_args.kwargs["num_dep"], "83")
+            self.assertTrue(acquisition_args.kwargs["ecraser"])
+            self.assertIs(acquisition_args.kwargs["formats"], formats_geojson)
+            self.assertEqual(acquisition_args.kwargs["workers"], 3)
+
+            production_args = seams["produce"].call_args
+            self.assertEqual(
+                production_args.args,
+                (outputs, expected_dir, "zone", (6.0, 43.0, 6.1, 43.1)),
+            )
+            self.assertEqual(production_args.kwargs["formats"], ["gz", "map"])
+            self.assertTrue(production_args.kwargs["ecraser"])
+            self.assertEqual(production_args.kwargs["simplification"], 12.5)
+            self.assertEqual(production_args.kwargs["zoom_min"], 9)
+            self.assertEqual(production_args.kwargs["zoom_max"], 17)
+            seams["sheet"].assert_called_once_with(
+                expected_dir,
+                args,
+                "zone",
+                zone_bbox_wgs84=(6.0, 43.0, 6.1, 43.1),
+            )
+            seams["duration"].assert_called_once_with(12)
+            seams["history"].assert_called_once_with(
+                12,
+                str(expected_dir),
+                statut="ok",
+            )
+            printed = [call.args[0] for call in seams["print"].call_args_list]
+            self.assertIn("  Layer(s): Routes, NS:custom, Routes", printed)
+            for output in outputs:
+                self.assertIn(f"  → {output}", printed)
+
+    def test_explicit_output_and_missing_optional_attributes_keep_defaults(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            explicit = root / "parent" / ".." / "explicit"
+            output = root / "source.geojson.gz"
+            dependencies, seams = self._dependencies(root, outputs=[output])
+            args = SimpleNamespace(
+                couche=["RAW:layer"],
+                dossier=str(explicit),
+                telechargement_ecraser=False,
+                workers=1,
+                tuiles_ecraser=False,
+            )
+
+            vector_run.executer_run_wfs(
+                args,
+                ["gz"],
+                100.5,
+                dependances=dependencies,
+            )
+
+            expected_dir = explicit.resolve()
+            self.assertTrue(expected_dir.is_dir())
+            acquisition = seams["acquire"].call_args
+            self.assertEqual(
+                acquisition.args[0], [("RAW:layer", "RAW:layer")],
+            )
+            self.assertEqual(acquisition.args[3], expected_dir)
+            self.assertIsNone(acquisition.kwargs["num_dep"])
+            production = seams["produce"].call_args
+            self.assertEqual(production.args[1], expected_dir)
+            self.assertEqual(production.kwargs["formats"], ["gz"])
+            self.assertIsNone(production.kwargs["simplification"])
+            self.assertEqual(production.kwargs["zoom_min"], 8)
+            self.assertEqual(production.kwargs["zoom_max"], 18)
+
+    def test_partial_result_records_ko_and_keeps_partial_error_priority(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dependencies, seams = self._dependencies(
+                root,
+                outputs=[root / "one.geojson.gz"],
+                complete=False,
+                catalog={
+                    "one": ("NS:one", "One", "One"),
+                    "two": ("NS:two", "Two", "Two"),
+                },
+            )
+            args = self._args(couche=["one", "two"])
+            events = []
+            seams["sheet"].side_effect = lambda *_args, **_kwargs: (
+                events.append("sheet")
+            )
+            seams["history"].side_effect = lambda *_args, **_kwargs: (
+                events.append("history")
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"1 WFS layer\(s\) failed - rerun to retry them",
+            ):
+                vector_run.executer_run_wfs(
+                    args,
+                    ["gz"],
+                    100.5,
+                    dependances=dependencies,
+                )
+            events.append("raised")
+
+            self.assertEqual(events, ["sheet", "history", "raised"])
+            self.assertEqual(seams["history"].call_args.kwargs["statut"], "ko")
+
+    def test_incomplete_deliverables_record_ko_before_exact_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dependencies, seams = self._dependencies(
+                root,
+                outputs=[root / "source.geojson.gz"],
+                complete=False,
+            )
+            args = self._args()
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Requested vector deliverable generation failed",
+            ):
+                vector_run.executer_run_wfs(
+                    args,
+                    ["gz"],
+                    100.5,
+                    dependances=dependencies,
+                )
+
+            self.assertEqual(seams["history"].call_args.kwargs["statut"], "ko")
 
 
 class WfsPipelineContractTests(unittest.TestCase):

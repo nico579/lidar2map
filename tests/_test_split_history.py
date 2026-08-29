@@ -159,13 +159,14 @@ class VectorHistoryFinalizationTests(HistoryFixture):
         with mock.patch.object(
                 L, "_resoudre_zone_wgs84",
                 return_value=(6.0, 43.0, 6.1, 43.1, "zone")), \
-             mock.patch.object(L, "_appliquer_cache_dir"), \
+             mock.patch.object(L, "_appliquer_cache_dir") as cache, \
              mock.patch.object(
                  L, "_acquerir_couches_vecteur", return_value=outputs
              ) as acquisition, \
              mock.patch.object(L, "_planche_depuis_dossier"), \
              mock.patch("builtins.print"):
             L.main_wfs()
+        cache.assert_called_once()
         return output, acquisition
 
     def test_vector_success_finalizes_history_with_result_directory(self):
@@ -530,7 +531,7 @@ class SplitEntryPointHistoryTests(HistoryFixture):
             "--file-formats", "mbtiles",
         ]
         self._reset_history(argv)
-        with mock.patch.object(L, "_appliquer_cache_dir"), \
+        with mock.patch.object(L, "_appliquer_cache_dir") as cache, \
              mock.patch.object(L, "_lire_zoom_limites_wmts", return_value=None), \
              mock.patch.object(
                  L, "_resoudre_zone_wgs84",
@@ -541,6 +542,7 @@ class SplitEntryPointHistoryTests(HistoryFixture):
              mock.patch.object(L, "_run_split_priori", return_value=True) as runner:
             L.main_wmts()
 
+        cache.assert_called_once()
         runner.assert_called_once()
         self.assertFalse(
             runner.call_args.kwargs["vide_sans_couverture_ok"])
@@ -859,6 +861,65 @@ class OsmOutputHistoryTests(HistoryFixture):
         output, outputs, entry = self._run(True)
         outputs.assert_called_once()
         self.assertEqual(entry["statut"], "ok")
+        self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
+
+    def test_combined_run_without_pbf_keeps_terrain_bbox_for_the_planche(self):
+        output = self.tmp / "combined-no-pbf"
+        argv = [
+            "lidar2map.py", "--lidar", "--osm", "--provider", "fr-ign",
+            "--zone-bbox", "6.0,43.0,6.01,43.01",
+            "--zone-name", "zone", "--output-dir", str(output),
+            "--no-download", "--shadings", "multi",
+            "--file-formats", "mbtiles",
+        ]
+        self._reset_history(argv)
+        native_bbox = (1.0, 2.0, 3.0, 4.0)
+        terrain_bbox = (5.95, 42.95, 6.06, 43.06)
+        acquisition = SimpleNamespace(
+            termine_sans_couverture=False,
+            bbox_wgs=terrain_bbox,
+            dalles_ombrages=[],
+        )
+
+        def prepare(args, _parser):
+            args.telechargement = False
+            args.ombrages = ["multi"]
+            args.mbtiles = True
+            args.rmap = False
+            args.sqlitedb = False
+
+        with mock.patch.object(L, "_preparer_run_lidar", side_effect=prepare), \
+             mock.patch.object(L, "_traiter_source_autonome"), \
+             mock.patch.object(
+                 L, "_resoudre_zone_lidar",
+                 return_value=(native_bbox, "zone", 2.0, 3.0, None),
+             ), \
+             mock.patch.object(L, "_garde_disque"), \
+             mock.patch.object(
+                 L, "_dossier_dalles_actif", return_value=self.tmp / "tiles"
+             ), \
+             mock.patch.object(
+                 L, "_acquerir_dalles_terrain", return_value=acquisition
+             ), \
+             mock.patch.object(
+                 L, "_produire_sorties_terrain", return_value=True
+             ), \
+             mock.patch.object(L, "_acquerir_source_osm", return_value=None), \
+             mock.patch.object(L, "_executer_run_osm") as runner, \
+             mock.patch.object(L, "_planche_depuis_dossier") as planche, \
+             self.assertRaisesRegex(RuntimeError, "requested deliverable"):
+            L.main()
+
+        runner.assert_not_called()
+        planche.assert_called_once()
+        self.assertEqual(planche.call_args.args[0], output.resolve())
+        self.assertEqual(planche.call_args.args[2], "zone")
+        self.assertEqual(
+            planche.call_args.kwargs["zone_bbox_wgs84"],
+            terrain_bbox,
+        )
+        entry = self._entry()
+        self.assertEqual(entry["statut"], "ko")
         self.assertEqual(Path(entry["resultat"]).resolve(), output.resolve())
 
 
