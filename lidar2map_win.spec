@@ -17,7 +17,7 @@ Le plugin mapsforge-map-writer est copié dans osmosis/lib/ et osmosis.bat
 est patché pour l'inclure dans son CLASSPATH.
 """
 
-import os, shutil, sys
+import os, re, shutil, sys
 from pathlib import Path
 from PyInstaller.utils.hooks import (
     collect_data_files,
@@ -57,6 +57,52 @@ def _find_dir(local_rel, home_glob, label):
 
 JRE_SRC     = _find_dir("bin/jre/jdk-*",       "jre/jdk-*",       "JRE")
 OSMOSIS_SRC = _find_dir("bin/osmosis/osmosis-*","osmosis/osmosis-*","osmosis")
+
+
+# Ressource VERSIONINFO du binaire Windows (ignoree sans effet sous Linux).
+# Un PE PyInstaller sans editeur, description ni copyright renseignes
+# ressemble statistiquement aux echantillons malveillants des jeux
+# d'entrainement de plusieurs moteurs antivirus a heuristique ML : confirme
+# directement sur ce projet (VirusTotal, 6/71, meme verdict "trojan" que
+# blink2video malgre un comportement totalement different).
+def _version_info(version: str) -> str:
+    parties = (version.split(".") + ["0", "0", "0"])[:3]
+    tuple_version = tuple(int(p) for p in parties) + (0,)
+    chemin = SRC / ".version_info.txt"
+    chemin.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={tuple_version},
+    prodvers={tuple_version},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [StringTable(
+        u'040904B0',
+        [StringStruct(u'CompanyName', u'nico579'),
+         StringStruct(u'FileDescription', u'lidar2map - cartographie a partir de releves LIDAR'),
+         StringStruct(u'FileVersion', u'{version}'),
+         StringStruct(u'InternalName', u'lidar2map'),
+         StringStruct(u'LegalCopyright', u'GPLv3 - nico579'),
+         StringStruct(u'OriginalFilename', u'lidar2map.exe'),
+         StringStruct(u'ProductName', u'lidar2map'),
+         StringStruct(u'ProductVersion', u'{version}')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
+""", encoding="utf-8")
+    return str(chemin)
+
+
+_texte_version = (SRC / "lidar2map.py").read_text(encoding="utf-8")
+_m_version = re.search(r'^VERSION\s*=\s*"([^"]+)"', _texte_version, re.M)
+VERSION = _m_version.group(1) if _m_version else "0.0.0"
 
 
 def _prepare_osmosis_staging():
@@ -404,6 +450,7 @@ if ONEFILE:
         disable_windowed_traceback=False, argv_emulation=False,
         target_arch=None, codesign_identity=None, entitlements_file=None,
         icon=str(APP_ICON),
+        version=_version_info(VERSION),
     )
 else:
     exe = EXE(
@@ -413,6 +460,7 @@ else:
         console=CONSOLE, disable_windowed_traceback=False,
         argv_emulation=False, target_arch=None,
         codesign_identity=None, entitlements_file=None, icon=str(APP_ICON),
+        version=_version_info(VERSION),
     )
     coll = COLLECT(
         exe, a.binaries, a.datas,

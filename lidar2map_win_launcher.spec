@@ -20,10 +20,13 @@ Prérequis (orchestré par lidar2map_win_build.ps1) :
   4. copie  lidar2map_bundle.zip         -> dist/  (à côté du .exe)
 """
 
+import re
 from pathlib import Path
 
-BUNDLE_ZIP = Path(SPECPATH) / "build" / "lidar2map_bundle.zip"
-APP_ICON = Path(SPECPATH) / "lidar2map_icon.png"
+SRC = Path(SPECPATH)
+
+BUNDLE_ZIP = SRC / "build" / "lidar2map_bundle.zip"
+APP_ICON = SRC / "lidar2map_icon.png"
 if not BUNDLE_ZIP.exists():
     raise SystemExit(
         f"[lidar2map_win_launcher.spec] Bundle introuvable : {BUNDLE_ZIP}\n"
@@ -60,6 +63,53 @@ excludes = [
     "test", "unittest", "pydoc_data", "IPython", "jupyter",
 ]
 
+# Ressource VERSIONINFO du binaire Windows. Un PE PyInstaller sans editeur,
+# description ni copyright renseignes ressemble statistiquement aux
+# echantillons malveillants des jeux d'entrainement de plusieurs moteurs
+# antivirus a heuristique ML : confirme directement sur ce projet, VirusTotal
+# donne le meme verdict "trojan"/"compte-gouttes" que blink2video (6/71,
+# Wacatac.C!ml, SentinelOne ML statique) malgre un comportement totalement
+# different (pas d'autostart, pas de fenetre cachee). C'est ce launcher qui
+# est le binaire reellement distribue aux utilisateurs.
+def _version_info(version: str) -> str:
+    parties = (version.split(".") + ["0", "0", "0"])[:3]
+    tuple_version = tuple(int(p) for p in parties) + (0,)
+    chemin = SRC / ".version_info.txt"
+    chemin.write_text(f"""VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers={tuple_version},
+    prodvers={tuple_version},
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [StringTable(
+        u'040904B0',
+        [StringStruct(u'CompanyName', u'nico579'),
+         StringStruct(u'FileDescription', u'lidar2map - cartographie a partir de releves LIDAR'),
+         StringStruct(u'FileVersion', u'{version}'),
+         StringStruct(u'InternalName', u'lidar2map'),
+         StringStruct(u'LegalCopyright', u'GPLv3 - nico579'),
+         StringStruct(u'OriginalFilename', u'lidar2map.exe'),
+         StringStruct(u'ProductName', u'lidar2map'),
+         StringStruct(u'ProductVersion', u'{version}')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
+""", encoding="utf-8")
+    return str(chemin)
+
+
+_texte_version = (SRC / "lidar2map.py").read_text(encoding="utf-8")
+_m_version = re.search(r'^VERSION\s*=\s*"([^"]+)"', _texte_version, re.M)
+VERSION = _m_version.group(1) if _m_version else "0.0.0"
+
 a = Analysis(
     ["lidar2map.py"],
     pathex=[],
@@ -92,4 +142,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(APP_ICON),
+    version=_version_info(VERSION),
 )
