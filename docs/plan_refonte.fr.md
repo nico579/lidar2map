@@ -4,7 +4,7 @@ Dernier lot de bundles déployé : 26 août 2026, **v1.48.2**. La modularisation
 incluse dans ces bundles va jusqu'à 15y ; les versions 1.48.x ajoutent les
 correctifs fonctionnels livrés depuis ce jalon. Les sources de la phase 16a ont
 été poussées sur `main` au commit `f713b18` par `deploy.py --push-only`, sans
-rebuild. Les phases 16b à 16k sont terminées localement. Les quatre bundles Windows,
+rebuild. Les phases 16b à 16l sont terminées localement. Les quatre bundles Windows,
 Linux, macOS Intel et macOS Apple Silicon de la dernière release avaient été
 reconstruits par `release.yml`.
 
@@ -64,7 +64,7 @@ lidar2map.py                 façade, CLI et intégration des modes
 ├── _terrain_run.py         validation et préparation d'un run LiDAR/OSM
 ├── _terrain_acquisition.py découverte, cache et sélection des dalles terrain
 ├── _terrain_outputs.py     compression, ombrages et livrables raster du passage terrain
-├── _raster_cli.py          parser et préparation initiale du workflow WMTS
+├── _raster_cli.py          parser, préparation et résolution de couche du workflow WMTS
 ├── _raster_run.py          orchestration du passage monolithique WMTS
 ├── _terrain_geocoding.py   géocodage de zone injecté et testable hors réseau
 ├── _terrain_resolution.py  orchestration des cinq modes de zone et sharding
@@ -221,8 +221,9 @@ réintroduits dans le monolithe après coup, invisibles pour une somme.
 | Production monolithique des sorties terrain (16i, mesuré) | 28 | 0,13 % |
 | Orchestration finale OSM post-acquisition (16j, mesuré) | 7 | 0,03 % |
 | Compression des ombrages existants (16k, mesuré) | 63 | 0,30 % |
-| **Total sorti du monolithe (mesuré)** | **13 196** | **61,91 %** |
-| **Reste dans `lidar2map.py` (mesuré)** | **8 119** | **38,09 %** |
+| Résolution de la couche WMTS et de ses capacités (16l, mesuré) | 51 | 0,24 % |
+| **Total sorti du monolithe (mesuré)** | **13 247** | **62,15 %** |
+| **Reste dans `lidar2map.py` (mesuré)** | **8 068** | **37,85 %** |
 
 `_split_sliding.py` contient 421 lignes physiques, mais seulement 219 lignes ont
 disparu de `lidar2map.py` : le reste correspond à ses imports, sa documentation,
@@ -293,8 +294,8 @@ post-15s-b est de 9 871 lignes (46,31 %) : il reste donc à sortir **2 411 à 3 
 lignes nettes** pour atteindre cette zone.
 
 Cette cible est un intervalle d'arrêt, pas un quota à atteindre au détriment de
-la lisibilité. Après 16k, le script principal compte **8 119 lignes (38,09 %)** :
-il reste donc à sortir **659 à 1 724 lignes nettes** pour atteindre la zone
+la lisibilité. Après 16l, le script principal compte **8 068 lignes (37,85 %)** :
+il reste donc à sortir **608 à 1 673 lignes nettes** pour atteindre la zone
 6 395–7 460. Sous 30 %, il faudrait probablement déplacer la façade publique,
 le dispatch ou des adaptateurs de compatibilité dont la présence dans le point
 d'entrée reste utile. Toute poursuite sous ce seuil demandera une décision
@@ -353,7 +354,7 @@ rester dans le script principal.
 | 13. Pipelines vectoriels restants | **Terminée** | WFS, bulk, acquisition, livrables, fusion, export OSM, statuts all-of, pipeline Mapsforge et politiques OSM extraits (13a-l) | pagination, streaming, sécurité des filtres, signatures, statuts réels, Osmosis et publication atomique |
 | 14. Runtime Java/Osmosis | **Terminée** | Options JVM, découverte, installations transactionnelles, mapwriter, commande outils, exécution streamée et nettoyage extraits (14a-d) | archives locales, rollback, priorités de cache, buffer stderr borné, coutures tardives et garde de livraison |
 | 15. Orchestration terrain restante | **Terminée** | Sources, zones, géocodage, résolution, téléchargement, chunks, ombrage, planches, cycle de vie, catalogue provider et contrat de zone extraits (15a–15y) | contrats de sortie, historique, cache atomique, réseau simulé, routage direct/COG/COPC, voisinage 3×3, publications et coutures tardives |
-| 16. CLI et points d'entrée | **En cours** | Parsers et préparation LiDAR/WMTS/WFS (16a-d), runners WFS et WMTS monolithiques (16e-f), acquisitions terrain et OSM (16g-h), sorties terrain et orchestration OSM finale (16i-j), compression des ombrages existants (16k) | surface CLI, ordre des effets, historique, acquisitions, caches, statuts all-of, sorties raster/OSM, compression atomique et coutures tardives |
+| 16. CLI et points d'entrée | **En cours** | Parsers et préparation LiDAR/WMTS/WFS (16a-d), runners WFS et WMTS monolithiques (16e-f), acquisitions terrain et OSM (16g-h), sorties terrain et orchestration OSM finale (16i-j), compression des ombrages existants (16k), résolution de couche WMTS et capacités (16l) | surface CLI, ordre des effets, historique, acquisitions, caches, statuts all-of, sorties raster/OSM, compression atomique, capacités de service et coutures tardives |
 
 ## Travail déjà sécurisé
 
@@ -3478,4 +3479,38 @@ effectué pour 16k.
 Mesure nette depuis 16j : `lidar2map.py` 8 182 → 8 119 lignes (**-63**, soit
 **0,30 %** du périmètre figé). Total mesuré sorti : **13 196 lignes, 61,91 %** ;
 reste **8 119 lignes, 38,09 %**. Il manque désormais 659 lignes nettes pour
+atteindre le bord supérieur de la cible structurelle à 35 %.
+
+### Sous-phase 16l — résolution de la couche WMTS et de ses capacités (terminée localement)
+
+Le bloc historique de 68 lignes de `main_wmts()` qui choisissait la couche,
+déduisait son format et bornait les zooms aux capacités du service rejoint
+`_raster_cli.py`. La façade `_resoudre_couche_wmts(args)` conserve sa signature
+et son emplacement exact entre la résolution de la source et celle de la zone.
+
+L'extraction préserve le défaut `planign`, les alias et identifiants directs
+sensibles à la casse, les formats JPEG/PNG, la clé API vide par défaut et les
+messages existants. La normalisation locale précède toujours la lecture des
+capacités ; le plafond maximal reste appliqué avant le plancher minimal et les
+zooms de `args` ne sont mutés qu'à la fin. Une erreur de capacité continue donc
+de se propager sans cette mutation finale. Le libellé `service` des couches
+`XYZ:` et le tuple de sept valeurs retourné restent identiques.
+
+`DependancesResolutionCoucheWmts` expose trois coutures reconstruites à chaque
+appel : le catalogue de couches, le lecteur des limites WMTS et l'affichage.
+`_raster_cli.py` contient désormais **340 lignes physiques**. Cinq contrats
+supplémentaires portent la suite de refonte à **367 tests** et verrouillent les
+alias, les identifiants directs, les formats, les bornes inversées, les erreurs
+de capacités, l'ordre des mutations, la façade et les trois dépendances tardives.
+
+La revue indépendante conclut **GO** et ne relève aucune dérive par rapport à
+la baseline 16k. Ruff, la grammaire Python 3.8, les interactions et la livraison
+patch sont verts. Le profil FAST passe **12/12** en 99,6 s et le profil
+scientifique **5/5** en 172,6 s. `_raster_cli.py` reste couvert par `deploy.MAP`,
+la garde de rebuild et les filtres CI `_raster_*.py`. Aucun push ni rebuild n'a
+été effectué pour 16l.
+
+Mesure nette depuis 16k : `lidar2map.py` 8 119 → 8 068 lignes (**-51**, soit
+**0,24 %** du périmètre figé). Total mesuré sorti : **13 247 lignes, 62,15 %** ;
+reste **8 068 lignes, 37,85 %**. Il manque désormais 608 lignes nettes pour
 atteindre le bord supérieur de la cible structurelle à 35 %.

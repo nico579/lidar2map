@@ -31,6 +31,7 @@ const I18N = {
     "btn.share":"Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Télécharge le fichier. Dans Locus : Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers. « Ouvrir avec » peut aussi fonctionner selon Android.", "share.close":"Fermer",
     "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
     "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
+    "browse.title.dir":"📁 Choisir un dossier", "browse.title.file":"📄 Choisir un fichier", "browse.choose":"Choisir ce dossier", "browse.select":"Valider la sélection", "browse.empty":"(dossier vide)", "browse.selected":"sélectionné(s) :",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
     "proj.pick":"↻ projet existant…",
     // Projet
@@ -194,6 +195,7 @@ const I18N = {
     "btn.share":"Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Download the file. In Locus: Map Manager → Import map → system file manager. ‘Open with’ may also work, depending on Android.", "share.close":"Close",
     "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
     "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
+    "browse.title.dir":"📁 Choose a folder", "browse.title.file":"📄 Choose a file", "browse.choose":"Choose this folder", "browse.select":"Confirm selection", "browse.empty":"(empty folder)", "browse.selected":"selected:",
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
     "sec.projet":"Project", "f.name":"Name *", "f.outdir":"Output folder",
@@ -2465,14 +2467,124 @@ window.addEventListener('keydown', e => {
   else if (e.key === '0')             { e.preventDefault(); applyUiZoom(1.0, true); }
 });
 
-// ── Dialogs ───────────────────────────────────────────────────────────────────
-// Bouton « … » d'un champ dossier : sélecteur, positionné sur le dossier courant
-// du champ ou, si « (auto) »/vide, sur la racine par défaut du tier (kind). Le
-// dossier choisi remplace la valeur du champ.
+// ── Navigateur de dossiers/fichiers côté serveur ───────────────────────────
+// Remplace le sélecteur natif pywebview (retiré) : un navigateur ne peut pas
+// parcourir le disque du SERVEUR lui-même, donc /api/browse-dir liste et
+// cette UI navigue dedans (clic sur un dossier = descendre, ⬆ = remonter).
+let _browseState = null;   // {mode:'dir'|'file', multiple, exts, kind, path, selection, resolve}
+
+function _browseCheminEnfant(base, nom) {
+  const sep = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+  return base.endsWith(sep) ? base + nom : base + sep + nom;
+}
+
+function _browseMajSelection() {
+  const n = _browseState.selection.size;
+  document.getElementById('browse-selection').textContent = n ? `${n} ${t('browse.selected')}` : '';
+}
+
+function _browseRender(data) {
+  _browseState.path = data.path;
+  document.getElementById('browse-path').textContent = data.path;
+  document.getElementById('browse-up').disabled = !data.parent;
+  const liste = document.getElementById('browse-list');
+  liste.innerHTML = '';
+  if (!data.dirs.length && !data.files.length) {
+    const vide = document.createElement('div');
+    vide.style.cssText = 'color:var(--dim);padding:4px';
+    vide.textContent = t('browse.empty');
+    liste.appendChild(vide);
+  }
+  data.dirs.forEach(nom => {
+    const ligne = document.createElement('div');
+    ligne.textContent = '📁 ' + nom;
+    ligne.style.cssText = 'padding:4px 6px;cursor:pointer;border-radius:4px';
+    ligne.onmouseenter = () => { ligne.style.background = 'var(--bg3)'; };
+    ligne.onmouseleave = () => { ligne.style.background = ''; };
+    ligne.onclick = () => _browseCharger(_browseCheminEnfant(data.path, nom));
+    liste.appendChild(ligne);
+  });
+  data.files.forEach(nom => {
+    const chemin = _browseCheminEnfant(data.path, nom);
+    const ligne = document.createElement('div');
+    const choisi = _browseState.selection.has(chemin);
+    ligne.textContent = (choisi ? '☑ ' : '☐ ') + '📄 ' + nom;
+    ligne.style.cssText = 'padding:4px 6px;cursor:pointer;border-radius:4px';
+    ligne.onclick = () => {
+      if (_browseState.multiple) {
+        if (_browseState.selection.has(chemin)) _browseState.selection.delete(chemin);
+        else _browseState.selection.add(chemin);
+        _browseRender(data);
+        _browseMajSelection();
+      } else {
+        _browseState.selection = new Set([chemin]);
+        browseConfirmer();
+      }
+    };
+    liste.appendChild(ligne);
+  });
+}
+
+async function _browseCharger(path) {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  else if (_browseState.kind) params.set('kind', _browseState.kind);
+  if (_browseState.exts && _browseState.exts.length) params.set('exts', _browseState.exts.join(','));
+  if (_browseState.mode) params.set('mode', _browseState.mode);
+  const reponse = await fetch('/api/browse-dir?' + params.toString());
+  _browseRender(await reponse.json());
+}
+
+function browseMonter() {
+  if (!_browseState) return;
+  fetch('/api/browse-dir?path=' + encodeURIComponent(_browseState.path)).then(r => r.json()).then(data => {
+    if (data.parent) _browseCharger(data.parent);
+  });
+}
+
+function browseConfirmer() {
+  if (!_browseState) return;
+  document.getElementById('browse-modal').style.display = 'none';
+  const { mode, multiple, path, selection, resolve } = _browseState;
+  _browseState = null;
+  if (mode === 'dir') { resolve(path); return; }
+  const choix = Array.from(selection);
+  resolve(multiple ? choix : (choix[0] || null));
+}
+
+function fermerBrowse() {
+  document.getElementById('browse-modal').style.display = 'none';
+  if (_browseState) {
+    const resolve = _browseState.resolve;
+    _browseState = null;
+    resolve(null);
+  }
+}
+
+// mode 'dir' : navigue puis "Choisir ce dossier" renvoie le dossier affiché.
+// mode 'file' : clic sur un fichier renvoie direct (multiple=false) ou coche
+// pour une sélection multiple validée par "Valider la sélection".
+function browseOuvrir({ mode, multiple = false, exts = [], kind = '', start = '' }) {
+  return new Promise(resolve => {
+    _browseState = { mode, multiple, exts, kind, path: '', selection: new Set(), resolve };
+    document.getElementById('browse-title').textContent =
+      t(mode === 'dir' ? 'browse.title.dir' : 'browse.title.file');
+    const bouton = document.getElementById('browse-confirm');
+    bouton.textContent = t(mode === 'dir' ? 'browse.choose' : 'browse.select');
+    bouton.style.display = (mode === 'file' && !multiple) ? 'none' : '';
+    document.getElementById('browse-selection').textContent = '';
+    document.getElementById('browse-modal').style.display = 'flex';
+    _browseCharger(start);
+  });
+}
+
+// Bouton « … » d'un champ dossier : navigateur positionné sur le dossier
+// courant du champ ou, si « (auto) »/vide, sur la racine par défaut du tier
+// (kind). Le dossier choisi remplace la valeur du champ.
 async function pickDir(fieldId, kind) {
   const cur = (document.getElementById(fieldId)?.value || '').trim();
   const start = (cur && cur !== '(auto)') ? cur : '';
-  const p = await pywebview.api.pick_dir(start, kind || '');
+  const p = await browseOuvrir({ mode: 'dir', kind: kind || '', start });
   if (p) {
     const el = document.getElementById(fieldId);
     el.value = p;
@@ -2482,7 +2594,7 @@ async function pickDir(fieldId, kind) {
   }
 }
 async function pickFile(fieldId, multiple, exts) {
-  const p = await pywebview.api.pick_file(multiple, exts);
+  const p = await browseOuvrir({ mode: 'file', multiple, exts: exts || [] });
   if (p) document.getElementById(fieldId).value = Array.isArray(p) ? p.join(';') : p;
 }
 // Famille de fichiers acceptée par la fusion : verrouillée sur le 1er fichier
@@ -2504,8 +2616,11 @@ function applyFusionFamille() {
   else window.applyToggles?.();
 }
 async function fusionAjouter() {
-  const files = await pywebview.api.pick_file(true, []);
-  if (!files) return;
+  const files = await browseOuvrir({
+    mode: 'file', multiple: true,
+    exts: ['.geojson', '.geojson.gz', '.mbtiles'],
+  });
+  if (!files || !files.length) return;
   const all = Array.isArray(files) ? files : [files];
   // .geojson.gz strict (pas tout .gz), + .mbtiles. Une fusion ne mélange pas
   // les familles : si la liste est vide, la famille du 1er fichier VALIDE de

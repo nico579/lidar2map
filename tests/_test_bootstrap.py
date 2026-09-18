@@ -772,20 +772,13 @@ class BootstrapRelaunchTests(unittest.TestCase):
 
 class BootstrapDependencyTests(unittest.TestCase):
     def test_gui_dependencies_for_each_platform(self):
+        # GUI servi en HTTP (main_serve_gui, pywebview retiré) : aucun
+        # backend graphique dédié n'est plus requis, sur aucun OS.
         expected = {
-            "Darwin": (
-                [
-                    "pyobjc-framework-WebKit",
-                    "pyobjc-framework-Cocoa",
-                    "PyQt6",
-                    "PyQt6-WebEngine",
-                    "qtpy",
-                ],
-                [],
-            ),
-            "Linux": (["PyQt6", "PyQt6-WebEngine", "qtpy"], []),
-            "Windows": (["PyQt6", "PyQt6-WebEngine", "qtpy"], []),
-            "Plan9": (["PyQt6", "PyQt6-WebEngine", "qtpy"], []),
+            "Darwin":  ([], []),
+            "Linux":   ([], []),
+            "Windows": ([], []),
+            "Plan9":   ([], []),
         }
         for system_name, dependencies in expected.items():
             with self.subTest(system=system_name), mock.patch.object(
@@ -809,7 +802,7 @@ class BootstrapDependencyTests(unittest.TestCase):
         first[0].append("local-only")
         self.assertEqual(
             bootstrap_policy.dependances_gui_plateforme("Linux"),
-            (["PyQt6", "PyQt6-WebEngine", "qtpy"], []),
+            ([], []),
         )
         with mock.patch.object(
             L.platform,
@@ -826,7 +819,12 @@ class BootstrapDependencyTests(unittest.TestCase):
             f"spec = importlib.util.spec_from_file_location('isolated_lidar2map', {app_literal})\n"
             "module = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(module)\n"
-            "assert module._gui_deps_plateforme()[0]\n"
+            # Sonde de fumée : exercer un appel qui traverse vers
+            # _bootstrap_policy (module frère) confirme que l'auto-fixup de
+            # sys.path a fonctionne depuis ce cwd isole, meme si la reponse
+            # elle-meme (plus de backend GUI dedie, pywebview retire) est
+            # desormais vide sur toute plateforme.
+            "assert module._gui_deps_plateforme() == ([], [])\n"
         )
         with self.subTest(mode="spec_from_file_location"):
             with tempfile.TemporaryDirectory() as directory:
@@ -1123,18 +1121,21 @@ class BootstrapDependencyTests(unittest.TestCase):
         self.assertIn("Pillow", retry_user)
         self.assertIn("--user", retry_user)
 
-    def test_post_install_validates_pywebview_module_name(self):
+    def test_post_install_validates_a_package_name_different_from_its_module(self):
+        # Pillow -> PIL est la paire pip-name != module-name qui reste dans
+        # MODULE_PAR_PAQUET une fois pywebview -> webview retiree (GUI
+        # servi en HTTP, plus de backend graphique dedie a installer).
         def find_spec(name):
-            return None if name == "webview" else object()
+            return None if name == "PIL" else object()
 
         real_import = builtins.__import__
         imported = []
 
         def importing(name, *args, **kwargs):
-            if name == "webview":
+            if name == "PIL":
                 imported.append(name)
                 return object()
-            if name == "pywebview":
+            if name == "Pillow":
                 raise ImportError(name)
             return real_import(name, *args, **kwargs)
 
@@ -1151,7 +1152,7 @@ class BootstrapDependencyTests(unittest.TestCase):
              ) as run, contextlib.redirect_stdout(io.StringIO()):
             L._installer_deps()
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(imported, ["webview"])
+        self.assertEqual(imported, ["PIL"])
 
     def test_darwin_post_install_validates_pyobjc_module_names(self):
         packages = ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa"]

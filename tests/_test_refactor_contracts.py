@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import gzip
+import hashlib
 import inspect
 import io
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -42,6 +44,7 @@ import _geojson_osm_export as geojson_osm_export  # noqa: E402
 import _geojson_mapsforge as geojson_mapsforge  # noqa: E402
 import _geojson_osm_xml as geojson_osm_xml  # noqa: E402
 import _geojson_raster as geojson_raster  # noqa: E402
+import _history_cli as history_cli  # noqa: E402
 import _mbtiles_lidar as mbtiles_lidar  # noqa: E402
 import _mbtiles_wmts as mbtiles_wmts  # noqa: E402
 import _osm_acquisition as osm_acquisition  # noqa: E402
@@ -65,6 +68,7 @@ import _ombrages_provider as ombrages_provider  # noqa: E402
 import _shading_specs as shading_specs  # noqa: E402
 import _ombrages_pures as ombrages_pures  # noqa: E402
 import _raster_cli as raster_cli  # noqa: E402
+import _raster_policy as raster_policy  # noqa: E402
 import _raster_run as raster_run  # noqa: E402
 import _raster_formats as raster_formats  # noqa: E402
 import _split_deliverables as split_deliverables  # noqa: E402
@@ -113,7 +117,7 @@ class PublicFacadeContractTests(unittest.TestCase):
             "generer_rmap_depuis_mbtiles",
             "generer_sqlitedb_depuis_mbtiles",
             "main",
-            "lancer_gui",
+            "main_serve_gui",
         )
         for name in expected_callables:
             with self.subTest(name=name):
@@ -1014,6 +1018,106 @@ class DeliverableLifecycleExtractionContractTests(unittest.TestCase):
         self.assertTrue(any("older than source.tif" in line for line in messages))
         self.assertTrue(any("empty (0 tiles)" in line for line in messages))
         self.assertTrue(any("SQLite unreadable" in line for line in messages))
+
+
+class RasterPolicyCharacterizationTests(unittest.TestCase):
+    """Fige la politique WMTS avant son extraction hors du monolithe."""
+
+    EXPECTED_ALIASES = (
+        "planign", "etatmajor40", "etatmajor10", "pentes", "ortho",
+        "ortho_1950", "ortho_1965", "ortho_1980", "ortho_irc",
+        "pleiades", "spot", "edugeo_marseille_1969",
+        "edugeo_marseille_1980", "edugeo_marseille_1987",
+        "edugeo_marseille_1988", "edugeo_marseille_2010",
+        "edugeo_toulon_1972", "cadastre", "ombrage", "naip", "scan25",
+        "scan25tour", "scan100", "scanoaci",
+    )
+
+    def test_constants_headers_catalog_order_and_fingerprint_are_exact(self):
+        payload = json.dumps(
+            list(L.COUCHES.items()),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        self.assertEqual(L.SEUIL_ERR_CONSEC, 30)
+        self.assertEqual(L.SEUIL_HORS_COUVERTURE, 300)
+        self.assertEqual(L.BATCH_MBTILES_INSERT, 2000)
+        self.assertEqual(L.WMTS_URL, "https://data.geopf.fr/private/wmts")
+        self.assertEqual(L.WMTS_URL_PUB, "https://data.geopf.fr/wmts")
+        self.assertEqual(
+            L.WMTS_HEADERS,
+            {"User-Agent": "Mozilla/5.0 Gecko/20100101 Firefox/49.0"},
+        )
+        self.assertEqual(tuple(L.COUCHES), self.EXPECTED_ALIASES)
+        self.assertEqual(len(L.COUCHES), 24)
+        self.assertTrue(all(len(value) == 4 for value in L.COUCHES.values()))
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            "79c0acaeac464db3c134d3f90d2560df9ae5f93946f765082024dea504c621ff",
+        )
+
+    def test_sensitive_public_xyz_historical_and_private_layers_are_exact(self):
+        self.assertEqual(
+            L.COUCHES["ortho_1950"],
+            ("ORTHOIMAGERY.ORTHOPHOTOS.1950-1965", "normal", "image/png", False),
+        )
+        self.assertEqual(
+            L.COUCHES["naip"],
+            (
+                "XYZ:https://basemap.nationalmap.gov/arcgis/rest/services/"
+                "USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
+                "normal",
+                "image/jpeg",
+                False,
+            ),
+        )
+        self.assertEqual(
+            L.COUCHES["scan25"],
+            ("GEOGRAPHICALGRIDSYSTEMS.MAPS", "normal", "image/jpeg", True),
+        )
+
+    def test_output_policy_helpers_keep_signatures_and_exact_matrix(self):
+        self.assertEqual(
+            str(inspect.signature(L._jpeg_quality_sortie)),
+            "(img_fmt, formats_image, qualite_image)",
+        )
+        self.assertEqual(
+            str(inspect.signature(L._nom_mbtiles_wmts)),
+            "(nom, couche, zoom_min, zoom_max, jpeg_q)",
+        )
+        matrix = (
+            ("image/png", "auto", 85, 85),
+            ("PNG", "jpeg", 72.5, 72.5),
+            ("image/png", "png", 91, None),
+            ("image/jpeg", "auto", 80, None),
+            ("JPEG", "png", 80, None),
+        )
+        for img_fmt, image_format, quality, expected in matrix:
+            with self.subTest(img_fmt=img_fmt, image_format=image_format):
+                self.assertEqual(
+                    L._jpeg_quality_sortie(img_fmt, image_format, quality),
+                    expected,
+                )
+
+        self.assertEqual(
+            L._nom_mbtiles_wmts("zone", "ortho", 8, 17, None),
+            "zone_ortho_z8-17",
+        )
+        self.assertEqual(
+            L._nom_mbtiles_wmts("zone", "planign", 8, 17, 84.9),
+            "zone_planign_z8-17_q84",
+        )
+
+    def test_wmts_coverage_exception_stays_owned_by_the_facade(self):
+        self.assertEqual(L.ZoneHorsCouvertureWMTS.__module__, "lidar2map")
+        self.assertTrue(issubclass(L.ZoneHorsCouvertureWMTS, RuntimeError))
+
+    def test_facade_reexports_raster_policy_objects_and_helpers_by_identity(self):
+        self.assertIs(L.COUCHES, raster_policy.COUCHES)
+        self.assertIs(L.WMTS_HEADERS, raster_policy.WMTS_HEADERS)
+        self.assertIs(L._jpeg_quality_sortie, raster_policy.jpeg_quality_sortie)
+        self.assertIs(L._nom_mbtiles_wmts, raster_policy.nom_mbtiles_wmts)
 
 
 class MbtilesWmtsFacadeContractTests(unittest.TestCase):
@@ -3347,6 +3451,68 @@ class TerrainOutputsExtractionContractTests(unittest.TestCase):
                     seams["shadings"].assert_not_called()
                 else:
                     seams["shadings"].assert_called_once()
+
+
+class GeofabrikCatalogCharacterizationTests(unittest.TestCase):
+    """Empreinte et coutures du catalogue statique avant l'extraction 16n."""
+
+    def test_catalog_order_values_urls_and_sensitive_departments_are_exact(self):
+        payload = json.dumps(
+            list(L._GEOFABRIK.items()),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        self.assertEqual(len(L._GEOFABRIK), 101)
+        self.assertEqual(len(set(L._GEOFABRIK.values())), 27)
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            "cc9975748ce80446409183a14adafc0eb6a54594e11062147d835884f280ee1b",
+        )
+        self.assertEqual(L._GEOFABRIK["2A"], "corse")
+        self.assertEqual(L._GEOFABRIK["2B"], "corse")
+        self.assertEqual(
+            {code: L._GEOFABRIK[code] for code in ("971", "972", "973", "974", "976")},
+            {
+                "971": "guadeloupe",
+                "972": "martinique",
+                "973": "guyane",
+                "974": "reunion",
+                "976": "mayotte",
+            },
+        )
+        self.assertEqual(
+            L._GEOFABRIK_BASE_URL,
+            "https://download.geofabrik.de/europe/france",
+        )
+        self.assertEqual(
+            L._GEOFABRIK_BASE_URL_ROOT,
+            "https://download.geofabrik.de/europe",
+        )
+
+    def test_helpers_and_acquisition_builder_read_facade_catalog_late(self):
+        catalog = {"01": "one", "02": "two", "03": "one"}
+        with mock.patch.object(L, "_GEOFABRIK", catalog), \
+                mock.patch.object(L, "_GEOFABRIK_BASE_URL", "regional"), \
+                mock.patch.object(L, "_GEOFABRIK_BASE_URL_ROOT", "root"):
+            self.assertEqual(L._regions_disponibles(), ["one", "two"])
+            self.assertEqual(L._departements_de_region("one"), ["01", "03"])
+            dependencies = L._dependances_acquisition_osm()
+
+        self.assertIs(dependencies.geofabrik, catalog)
+        self.assertEqual(dependencies.geofabrik_base_url, "regional")
+        self.assertEqual(dependencies.geofabrik_base_url_root, "root")
+
+    def test_facade_reexports_the_catalog_and_urls_by_direct_identity(self):
+        self.assertIs(L._GEOFABRIK, osm_acquisition.GEOFABRIK)
+        self.assertIs(
+            L._GEOFABRIK_BASE_URL,
+            osm_acquisition.GEOFABRIK_BASE_URL,
+        )
+        self.assertIs(
+            L._GEOFABRIK_BASE_URL_ROOT,
+            osm_acquisition.GEOFABRIK_BASE_URL_ROOT,
+        )
 
 
 class OsmAcquisitionExtractionContractTests(unittest.TestCase):
@@ -5789,6 +5955,578 @@ class RasterFormatFacadeContractTests(unittest.TestCase):
         self.assertIs(kwargs["convertir_un"], L._convertir_un_mbtiles)
 
 
+class HistoryConfigArgvCharacterizationTests(unittest.TestCase):
+    """Contrats historiques de ``_cfg_depuis_argv`` avant son extraction."""
+
+    EXPECTED_KEYS = (
+        "provider",
+        "type",
+        "mode",
+        "nom",
+        "dossier",
+        "cache_dir",
+        "production_dir",
+        "dep",
+        "region",
+        "ville",
+        "gps",
+        "bbox",
+        "zone_width",
+        "tel",
+        "comp",
+        "ecraser_tel",
+        "workers_l",
+        "laz_parallel",
+        "dossier_dalles",
+        "no_omb",
+        "ombrages",
+        "shading_specs",
+        "elevation",
+        "svf_conv",
+        "svf_dist",
+        "svf_gamma",
+        "sweep_horizon",
+        "ecraser_omb",
+        "mbtiles_l",
+        "rmap",
+        "sqlitedb",
+        "zoom_min_l",
+        "zoom_max_l",
+        "qualite_l",
+        "ecraser_mbt",
+        "cols_decoupe",
+        "rows_decoupe",
+        "split_width_l",
+        "nettoyage",
+        "couche",
+        "zoom_min_s",
+        "zoom_max_s",
+        "mbtiles_s",
+        "rmap_s",
+        "sqlitedb_s",
+        "qualite_s",
+        "workers_s",
+        "osm_tags_sel",
+        "workers_osm",
+        "wfs_couches_sel",
+        "workers_v",
+        "argv",
+    )
+
+    @staticmethod
+    def _cfg(*arguments, provider_code="provider-test", svf_gamma=1.75):
+        argv = ["lidar2map.py"] + list(arguments)
+        provider = SimpleNamespace(CODE=provider_code)
+        with mock.patch.object(L.sys, "argv", argv), \
+                mock.patch.object(L, "PROVIDER", provider), \
+                mock.patch.object(L, "SVF_GAMMA", svf_gamma), \
+                mock.patch.object(
+                    L, "_rediger_secrets", side_effect=lambda texte: texte
+                ):
+            config = L._cfg_depuis_argv()
+        return config
+
+    def test_exact_52_key_dictionary_and_implicit_lidar_defaults(self):
+        config = self._cfg()
+
+        self.assertEqual(len(self.EXPECTED_KEYS), 52)
+        self.assertEqual(tuple(config), self.EXPECTED_KEYS)
+        self.assertEqual(
+            config,
+            {
+                "provider": "provider-test",
+                "type": "lidar",
+                "mode": "ville",
+                "nom": "",
+                "dossier": "",
+                "cache_dir": "",
+                "production_dir": "",
+                "dep": "",
+                "region": "",
+                "ville": "",
+                "gps": "",
+                "bbox": "",
+                "zone_width": 20.0,
+                "tel": True,
+                "comp": True,
+                "ecraser_tel": False,
+                "workers_l": 8,
+                "laz_parallel": 1,
+                "dossier_dalles": "",
+                "no_omb": True,
+                "ombrages": ["lrm"],
+                "shading_specs": [],
+                "elevation": 25,
+                "svf_conv": "flux",
+                "svf_dist": 20.0,
+                "svf_gamma": 1.75,
+                "sweep_horizon": True,
+                "ecraser_omb": False,
+                "mbtiles_l": True,
+                "rmap": False,
+                "sqlitedb": False,
+                "zoom_min_l": 8,
+                "zoom_max_l": 18,
+                "qualite_l": 85,
+                "ecraser_mbt": False,
+                "cols_decoupe": 1,
+                "rows_decoupe": 1,
+                "split_width_l": 0.0,
+                "nettoyage": False,
+                "couche": "",
+                "zoom_min_s": 12,
+                "zoom_max_s": 16,
+                "mbtiles_s": True,
+                "rmap_s": False,
+                "sqlitedb_s": False,
+                "qualite_s": 85,
+                "workers_s": 8,
+                "osm_tags_sel": [],
+                "workers_osm": 4,
+                "wfs_couches_sel": [],
+                "workers_v": 4,
+                "argv": "",
+            },
+        )
+
+    def test_mode_aliases_and_precedence_are_independent_of_argv_order(self):
+        cases = (
+            (("--lidar",), "lidar"),
+            (("--ignlidar",), "lidar"),
+            (("--raster",), "scan"),
+            (("--ignraster",), "scan"),
+            (("--vector",), "vecteur"),
+            (("--ignvecteur",), "vecteur"),
+            (("--osm",), "osm"),
+            (("--merge",), "fusion"),
+            (("--fusionner",), "fusion"),
+            (("--split",), "decoupe"),
+            (("--decouper",), "decoupe"),
+            ((), "lidar"),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self._cfg(*arguments)["type"], expected)
+
+        all_modes_reversed = self._cfg(
+            "--decouper",
+            "--fusionner",
+            "--osm",
+            "--ignvecteur",
+            "--ignraster",
+            "--ignlidar",
+        )
+        self.assertEqual(all_modes_reversed["type"], "lidar")
+
+    def test_source_maintenance_and_no_download_default_policy(self):
+        source = self._cfg("--source", "custom")
+        self.assertFalse(source["tel"])
+        self.assertFalse(source["no_omb"])
+        self.assertEqual(source["ombrages"], [])
+        self.assertFalse(source["mbtiles_l"])
+
+        maintenance_flags = (
+            "--tiles-purge-invalid",
+            "--dalles-purger-invalides",
+            "--tiles-purge-out-of-zone",
+            "--dalles-purger-hors-zone",
+            "--shadings-compress",
+            "--ombrages-compresser",
+        )
+        for flag in maintenance_flags:
+            with self.subTest(flag=flag):
+                config = self._cfg(flag)
+                self.assertFalse(config["tel"])
+                self.assertFalse(config["no_omb"])
+                self.assertEqual(config["ombrages"], [])
+                self.assertFalse(config["mbtiles_l"])
+
+        product_maintenance = self._cfg(
+            "--tiles-purge-invalid", "--shading", "multi:elevation=30"
+        )
+        self.assertTrue(product_maintenance["tel"])
+        self.assertTrue(product_maintenance["no_omb"])
+        self.assertEqual(product_maintenance["ombrages"], [])
+        self.assertEqual(
+            product_maintenance["shading_specs"], ["multi:elevation=30"]
+        )
+        self.assertTrue(product_maintenance["mbtiles_l"])
+
+        for flag in ("--no-download", "--no-telechargement"):
+            with self.subTest(flag=flag):
+                config = self._cfg(flag)
+                self.assertFalse(config["tel"])
+                self.assertEqual(config["ombrages"], ["lrm"])
+                self.assertTrue(config["mbtiles_l"])
+
+        self.assertTrue(self._cfg("--no-download", "--download")["tel"])
+        explicit_source = self._cfg("--source", "custom", "--download")
+        self.assertTrue(explicit_source["tel"])
+        self.assertEqual(explicit_source["ombrages"], [])
+        self.assertFalse(explicit_source["mbtiles_l"])
+
+    def test_layer_values_are_routed_only_to_osm_or_vector_source(self):
+        osm = self._cfg(
+            "--osm", "--layer", "roads", "water", "--couche", "ignored"
+        )
+        self.assertEqual(osm["couche"], "roads")
+        self.assertEqual(osm["osm_tags_sel"], ["roads", "water"])
+        self.assertEqual(osm["wfs_couches_sel"], [])
+        self.assertEqual(osm["ombrages"], [])
+        self.assertFalse(osm["mbtiles_l"])
+
+        vector = self._cfg(
+            "--ignvecteur", "--couche", "hydro", "buildings"
+        )
+        self.assertEqual(vector["couche"], "hydro")
+        self.assertEqual(vector["osm_tags_sel"], [])
+        self.assertEqual(
+            vector["wfs_couches_sel"], ["hydro", "buildings"]
+        )
+
+        raster = self._cfg("--raster", "--layer", "orthophoto", "ignored")
+        self.assertEqual(raster["couche"], "orthophoto")
+        self.assertEqual(raster["osm_tags_sel"], [])
+        self.assertEqual(raster["wfs_couches_sel"], [])
+
+    def test_zone_mode_priority_values_and_alias_priority(self):
+        cases = (
+            (("--zone-city", "City"), "ville"),
+            (("--zone-bbox", "1,2,3,4"), "bbox"),
+            (("--zone-bbox", "1,2,3,4", "--zone-gps", "5,6"), "gps"),
+            (("--zone-gps", "5,6", "--zone-department", "83"), "dep"),
+            (("--zone-departement", "83"), "dep"),
+            (("--zone-department", "83", "--zone-region", "paca"), "region"),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                self.assertEqual(self._cfg(*arguments)["mode"], expected)
+
+        config = self._cfg(
+            "--zone-ville", "Ville FR",
+            "--zone-city", "City EN",
+            "--zone-departement", "13",
+            "--zone-department", "83",
+            "--zone-region", "paca",
+            "--zone-gps", "43,6",
+            "--zone-bbox", "5,42,7,44",
+        )
+        self.assertEqual(config["mode"], "region")
+        self.assertEqual(config["ville"], "City EN")
+        self.assertEqual(config["dep"], "83")
+        self.assertEqual(config["region"], "paca")
+        self.assertEqual(config["gps"], "43,6")
+        self.assertEqual(config["bbox"], "5,42,7,44")
+
+    def test_french_and_english_value_aliases_produce_the_same_config(self):
+        english = self._cfg(
+            "--lidar",
+            "--zone-department", "83",
+            "--zone-name", "Zone",
+            "--output-dir", "output",
+            "--cache-dir", "cache",
+            "--production-dir", "production",
+            "--zone-width", "12.5",
+            "--download",
+            "--no-download-compress",
+            "--download-overwrite",
+            "--workers", "7",
+            "--laz-parallel", "3",
+            "--tiles-dir", "tiles",
+            "--shadings", "multi", "lrm",
+            "--shading-elevation", "30",
+            "--shadings-overwrite",
+            "--file-formats", "mbtiles", "rmap", "sqlitedb",
+            "--image-quality", "70",
+            "--tiles-overwrite",
+            "--split-cols", "2",
+            "--split-rows", "3",
+            "--split-width", "4.5",
+            "--cleanup",
+            "--layer", "layer-id",
+        )
+        french = self._cfg(
+            "--ignlidar",
+            "--zone-departement", "83",
+            "--zone-nom", "Zone",
+            "--dossier", "output",
+            "--dossier-cache", "cache",
+            "--dossier-production", "production",
+            "--zone-largeur", "12.5",
+            "--telechargement",
+            "--no-telechargement-compresser",
+            "--telechargement-ecraser",
+            "--workers", "7",
+            "--laz-parallel", "3",
+            "--dossier-dalles", "tiles",
+            "--ombrages", "multi", "lrm",
+            "--ombrages-elevation", "30",
+            "--ombrages-ecraser",
+            "--formats-fichier", "mbtiles", "rmap", "sqlitedb",
+            "--qualite-image", "70",
+            "--tuiles-ecraser",
+            "--cols-decoupe", "2",
+            "--rows-decoupe", "3",
+            "--split-largeur", "4.5",
+            "--nettoyage",
+            "--couche", "layer-id",
+        )
+        english.pop("argv")
+        french.pop("argv")
+        self.assertEqual(french, english)
+
+    def test_repeated_formats_plural_shadings_and_singular_specs(self):
+        config = self._cfg(
+            "--file-formats", "mbtiles", "rmap", "mbtiles",
+            "--file-formats", "sqlitedb",
+            "--shadings", "multi", "lrm", "multi",
+            "--shadings", "slope",
+            "--shading", "lrm:radius=5",
+            "--shading", "multi:elevation=35",
+            "--shading",
+        )
+        self.assertTrue(config["mbtiles_l"])
+        self.assertTrue(config["rmap"])
+        self.assertFalse(config["sqlitedb"])
+        self.assertEqual(config["ombrages"], ["multi", "lrm", "multi"])
+        self.assertEqual(
+            config["shading_specs"],
+            ["lrm:radius=5", "multi:elevation=35"],
+        )
+
+        canonical_wins = self._cfg(
+            "--formats-fichier", "rmap",
+            "--file-formats", "sqlitedb",
+            "--ombrages", "lrm",
+            "--shadings", "slope",
+        )
+        self.assertFalse(canonical_wins["rmap"])
+        self.assertTrue(canonical_wins["sqlitedb"])
+        self.assertEqual(canonical_wins["ombrages"], ["slope"])
+
+        preset = self._cfg("--shading-preset", "archaeology")
+        self.assertEqual(preset["ombrages"], [])
+        self.assertEqual(preset["shading_specs"], [])
+        self.assertFalse(preset["no_omb"])
+        self.assertTrue(preset["mbtiles_l"])
+
+    def test_workers_only_populate_active_mode_and_vector_is_upper_capped(self):
+        cases = (
+            (("--lidar", "--workers", "12"), (12, 8, 4, 4)),
+            (("--raster", "--workers", "12"), (8, 12, 4, 4)),
+            (("--osm", "--workers", "12"), (8, 8, 12, 4)),
+            (("--vector", "--workers", "12"), (8, 8, 4, 4)),
+            (("--vector", "--workers", "-3"), (8, 8, 4, -3)),
+            (("--merge", "--workers", "12"), (8, 8, 4, 4)),
+        )
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                config = self._cfg(*arguments)
+                actual = (
+                    config["workers_l"],
+                    config["workers_s"],
+                    config["workers_osm"],
+                    config["workers_v"],
+                )
+                self.assertEqual(actual, expected)
+
+        first_wins = self._cfg(
+            "--osm", "--workers", "6", "--workers", "2"
+        )
+        self.assertEqual(first_wins["workers_osm"], 6)
+
+    def test_invalid_numeric_values_fall_back_but_non_finite_values_survive(self):
+        config = self._cfg(
+            "--zone-width", "invalid",
+            "--workers", "invalid",
+            "--laz-parallel", "invalid",
+            "--shading-elevation", "invalid",
+            "--svf-dist", "invalid",
+            "--svf-gamma", "invalid",
+            "--zoom-min", "invalid",
+            "--zoom-max", "invalid",
+            "--image-quality", "invalid",
+            "--split-cols", "invalid",
+            "--split-rows", "invalid",
+            "--split-width", "invalid",
+        )
+        self.assertEqual(config["zone_width"], 20.0)
+        self.assertEqual(config["workers_l"], 8)
+        self.assertEqual(config["laz_parallel"], 1)
+        self.assertEqual(config["elevation"], 25)
+        self.assertEqual(config["svf_dist"], 20.0)
+        self.assertEqual(config["svf_gamma"], 1.75)
+        self.assertEqual(config["zoom_min_l"], 8)
+        self.assertEqual(config["zoom_min_s"], 12)
+        self.assertEqual(config["zoom_max_l"], 18)
+        self.assertEqual(config["zoom_max_s"], 16)
+        self.assertEqual(config["qualite_l"], 85)
+        self.assertEqual(config["qualite_s"], 85)
+        self.assertEqual(config["cols_decoupe"], 1)
+        self.assertEqual(config["rows_decoupe"], 1)
+        self.assertEqual(config["split_width_l"], 0.0)
+
+        raw_float = self._cfg(
+            "--zone-width", "nan",
+            "--svf-dist", "inf",
+            "--split-width", "-2.5",
+        )
+        self.assertTrue(math.isnan(raw_float["zone_width"]))
+        self.assertEqual(raw_float["svf_dist"], math.inf)
+        self.assertEqual(raw_float["split_width_l"], -2.5)
+
+    def test_provider_svf_default_and_redactor_are_resolved_at_each_call(self):
+        argv = ["lidar2map.py", "--apikey", "secret", "--svf-gamma", "bad"]
+        provider_one = SimpleNamespace(CODE="provider-one")
+        provider_two = SimpleNamespace(CODE="provider-two")
+        redact_one = mock.Mock(return_value="redacted-one")
+        redact_two = mock.Mock(return_value="redacted-two")
+        with mock.patch.object(L.sys, "argv", argv), \
+                mock.patch.object(L, "PROVIDER", provider_one), \
+                mock.patch.object(L, "SVF_GAMMA", 1.25), \
+                mock.patch.object(L, "_rediger_secrets", redact_one):
+            first = L._cfg_depuis_argv()
+        with mock.patch.object(L.sys, "argv", argv), \
+                mock.patch.object(L, "PROVIDER", provider_two), \
+                mock.patch.object(L, "SVF_GAMMA", 2.5), \
+                mock.patch.object(L, "_rediger_secrets", redact_two):
+            second = L._cfg_depuis_argv()
+
+        self.assertEqual(first["provider"], "provider-one")
+        self.assertEqual(first["svf_gamma"], 1.25)
+        self.assertEqual(first["argv"], "redacted-one")
+        self.assertEqual(second["provider"], "provider-two")
+        self.assertEqual(second["svf_gamma"], 2.5)
+        self.assertEqual(second["argv"], "redacted-two")
+        redact_one.assert_called_once_with("--apikey secret --svf-gamma bad")
+        redact_two.assert_called_once_with("--apikey secret --svf-gamma bad")
+
+    def test_equals_syntax_is_historically_ignored_by_all_local_helpers(self):
+        packed = (
+            "--raster=true",
+            "--source=custom",
+            "--zone-region=paca",
+            "--zone-width=99",
+            "--download=true",
+            "--no-download=true",
+            "--no-download-compress=true",
+            "--workers=99",
+            "--file-formats=sqlitedb",
+            "--shadings=multi",
+            "--shading=lrm:radius=5",
+            "--svf-gamma=4",
+            "--cleanup=true",
+            "--provider=other",
+        )
+        config = self._cfg(*packed, provider_code="provider-live")
+        default = self._cfg(provider_code="provider-live")
+        config.pop("argv")
+        default.pop("argv")
+        self.assertEqual(config, default)
+
+    def test_call_does_not_mutate_argv_provider_or_reuse_returned_containers(self):
+        argv = [
+            "lidar2map.py",
+            "--shadings", "multi", "lrm",
+            "--shading", "slope",
+        ]
+        original_argv = list(argv)
+        provider = SimpleNamespace(CODE="immutable-provider", marker=[])
+        original_provider_state = dict(vars(provider))
+        redactor = mock.Mock(side_effect=lambda texte: texte)
+        with mock.patch.object(L.sys, "argv", argv), \
+                mock.patch.object(L, "PROVIDER", provider), \
+                mock.patch.object(L, "SVF_GAMMA", 1.5), \
+                mock.patch.object(L, "_rediger_secrets", redactor):
+            first = L._cfg_depuis_argv()
+            self.assertIs(L.sys.argv, argv)
+            first["ombrages"].append("mutated")
+            first["shading_specs"].append("mutated")
+            second = L._cfg_depuis_argv()
+
+        self.assertEqual(argv, original_argv)
+        self.assertEqual(vars(provider), original_provider_state)
+        self.assertEqual(second["ombrages"], ["multi", "lrm"])
+        self.assertEqual(second["shading_specs"], ["slope"])
+        self.assertIsNot(first, second)
+        self.assertIsNot(first["ombrages"], second["ombrages"])
+        self.assertIsNot(first["shading_specs"], second["shading_specs"])
+        self.assertEqual(redactor.call_count, 2)
+        self.assertEqual(str(inspect.signature(L._cfg_depuis_argv)), "() -> dict")
+
+
+class HistoryConfigExtractionTests(unittest.TestCase):
+    """Contrats de façade et de dépendances de l'extraction 16m."""
+
+    def test_facade_keeps_signature_and_direct_module_identities(self):
+        self.assertEqual(str(inspect.signature(L._cfg_depuis_argv)), "() -> dict")
+        self.assertIs(
+            L._cfg_depuis_argv_impl,
+            history_cli.cfg_depuis_argv,
+        )
+        self.assertIs(
+            L._DependancesCfgDepuisArgv,
+            history_cli.DependancesCfgDepuisArgv,
+        )
+
+    def test_facade_snapshots_argv_and_rebuilds_late_dependencies(self):
+        argv = ["lidar2map.py", "--osm", "--workers", "6"]
+        provider = SimpleNamespace(CODE="late-provider")
+        redactor = mock.Mock(name="late-redactor")
+        expected = object()
+        with mock.patch.object(L.sys, "argv", argv), \
+                mock.patch.object(L, "PROVIDER", provider), \
+                mock.patch.object(L, "SVF_GAMMA", 2.75), \
+                mock.patch.object(L, "_rediger_secrets", redactor), \
+                mock.patch.object(
+                    L, "_cfg_depuis_argv_impl", return_value=expected
+                ) as implementation:
+            result = L._cfg_depuis_argv()
+
+        self.assertIs(result, expected)
+        arguments, keywords = implementation.call_args
+        self.assertEqual(arguments, (["--osm", "--workers", "6"],))
+        self.assertIsNot(arguments[0], argv)
+        dependencies = keywords["dependances"]
+        self.assertIsInstance(
+            dependencies,
+            history_cli.DependancesCfgDepuisArgv,
+        )
+        self.assertIs(dependencies.provider, provider)
+        self.assertEqual(dependencies.svf_gamma, 2.75)
+        self.assertIs(dependencies.rediger_secrets, redactor)
+
+    def test_module_is_directly_callable_and_propagates_redactor_errors(self):
+        provider = SimpleNamespace(CODE="direct-provider")
+        redactor = mock.Mock(return_value="redacted")
+        dependencies = history_cli.DependancesCfgDepuisArgv(
+            provider=provider,
+            svf_gamma=1.5,
+            rediger_secrets=redactor,
+        )
+        result = history_cli.cfg_depuis_argv(
+            ["--raster", "--workers", "3", "--apikey", "secret"],
+            dependances=dependencies,
+        )
+
+        self.assertEqual(result["provider"], "direct-provider")
+        self.assertEqual(result["type"], "scan")
+        self.assertEqual(result["workers_s"], 3)
+        self.assertEqual(result["argv"], "redacted")
+        redactor.assert_called_once_with(
+            "--raster --workers 3 --apikey secret"
+        )
+
+        failure = RuntimeError("redaction failed")
+        broken = history_cli.DependancesCfgDepuisArgv(
+            provider=provider,
+            svf_gamma=1.5,
+            rediger_secrets=mock.Mock(side_effect=failure),
+        )
+        with self.assertRaisesRegex(RuntimeError, "redaction failed"):
+            history_cli.cfg_depuis_argv([], dependances=broken)
+
+
 class ProviderContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -6534,6 +7272,59 @@ class ManifestContractTests(unittest.TestCase):
             [("before.tif", "outer"), ("after.tif", "outer")],
         )
         self.assertEqual(inner.calls, [("inside.tif", "inner")])
+
+
+class WfsCatalogCharacterizationTests(unittest.TestCase):
+    """Ordre, contenu et coutures du catalogue WFS avant l'extraction 16o."""
+
+    EXPECTED_ALIASES = (
+        "cadastre", "cours_eau", "troncons_eau", "plans_eau",
+        "detail_hydro", "batiments", "constructions", "cimetieres",
+        "routes", "chemins", "lignes_orog", "detail_orog", "forets",
+        "reserves", "lieux_dits", "communes", "rpg",
+    )
+
+    def test_catalog_order_triplets_and_fingerprint_are_exact(self):
+        payload = json.dumps(
+            list(L.COUCHES_WFS.items()),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        self.assertEqual(tuple(L.COUCHES_WFS), self.EXPECTED_ALIASES)
+        self.assertEqual(len(L.COUCHES_WFS), 17)
+        self.assertTrue(all(len(value) == 3 for value in L.COUCHES_WFS.values()))
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            "238bc69648cc2b63d769aee1d7fbaa0686500b5d95b09c5c58cf4ced61a9b485",
+        )
+        self.assertEqual(L.WFS_PAGE, 1000)
+
+    def test_parser_runner_and_gui_read_the_facade_catalog(self):
+        catalog = {
+            "late": ("NS:late", "Libellé tardif", "Late label"),
+        }
+        with mock.patch.object(L, "COUCHES_WFS", catalog):
+            parser_dependencies = L._dependances_parser_wfs()
+            run_dependencies = L._dependances_run_wfs()
+            gui_wfs = L._api_get_init_data()["wfs"]
+
+        self.assertIs(parser_dependencies.couches_wfs, catalog)
+        self.assertIs(run_dependencies.couches_wfs, catalog)
+        # _api_get_init_data() (extraite de lancer_gui() pour être réutilisée
+        # par --serve-gui, sans pywebview) doit continuer à relire la façade
+        # à l'appel, pas une copie figée à l'import : vérifié ici en
+        # comportement (avant, seul inspect.getsource(L.lancer_gui) pouvait
+        # le vérifier, la donnée étant construite dans une closure sans
+        # valeur de retour observable de l'extérieur).
+        self.assertEqual(gui_wfs, [{"alias": "late", "label": "Libellé tardif"}])
+        self.assertIn(
+            "for k, v in COUCHES_WFS.items()",
+            inspect.getsource(L._api_get_init_data),
+        )
+
+    def test_facade_reexports_the_vector_cli_catalog_by_identity(self):
+        self.assertIs(L.COUCHES_WFS, vector_cli.COUCHES_WFS)
 
 
 class VectorCliExtractionContractTests(unittest.TestCase):

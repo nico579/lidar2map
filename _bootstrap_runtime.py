@@ -250,8 +250,8 @@ def bootstrap_venv_si_besoin(
             print(f"  Missing Python modules: {', '.join(manquantes)}")
             print()
             print("  Install them yourself with your preferred method:")
-            print(f"    pip install {' '.join(pkgs_pip)} pywebview")
-            print(f"    # ou : conda install -c conda-forge {' '.join(pkgs_pip)} pywebview")
+            print(f"    pip install {' '.join(pkgs_pip)}")
+            print(f"    # ou : conda install -c conda-forge {' '.join(pkgs_pip)}")
             print()
             sys.exit(1)
         return
@@ -362,7 +362,7 @@ def bootstrap_venv_si_besoin(
     # Cocoa/WebKit en plus sur macOS).
     _gui_crit, _gui_opt = gui_deps_plateforme()
     deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                       "rasterio", "fiona", "pywebview", "certifi"] + _gui_crit
+                       "rasterio", "fiona", "certifi"] + _gui_crit
     deps_optionnelles = ["osmium", "numba"] + _gui_opt
     deps_pip = deps_critiques + deps_optionnelles
     print("  Installing dependencies in the venv (3-5 min)...")
@@ -498,7 +498,7 @@ def installer_deps(*, gui_deps_plateforme):
     deps = []
     for pkg in [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "pywebview", "osmium", "numba",
+        "fiona", "certifi", "osmium", "numba",
     ]:
         mod = MODULE_PAR_PAQUET[pkg]
         if not _module_present(mod):
@@ -694,7 +694,7 @@ def installer_toutes_dependances(
     gui_critiques, gui_optionnelles = gui_deps_plateforme()
     critiques = [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "pywebview", *gui_critiques,
+        "fiona", "certifi", *gui_critiques,
     ]
     optionnelles = [
         "osmium", "numba", "laspy", "lazrs", "py7zr",

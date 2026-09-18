@@ -86,31 +86,14 @@ def resoudre_mode_bootstrap(
 def dependances_gui_plateforme(systeme: str) -> tuple[list[str], list[str]]:
     """Retourne ``(critiques, optionnelles)`` pour le systeme indique.
 
-    pywebview a besoin d'un backend graphique adapte a la plateforme :
-
-    - Windows utilise Qt pour eviter les regressions du bridge
-      pythonnet/WebView2 ;
-    - macOS installe Cocoa/WebKit et Qt afin de couvrir aussi les machines
-      sans affichage local ;
-    - Linux et les plateformes inconnues utilisent Qt, seul backend disponible
-      de facon fiable par pip.
-
-    Les deux listes distinguent les dependances critiques des optionnelles.
-    La politique actuelle rend tous les backends retenus critiques et ne
-    retourne donc aucune dependance optionnelle.
+    Le GUI est servi en HTTP local et consulte depuis un navigateur (voir
+    main_serve_gui() dans lidar2map.py) : aucun backend graphique dedie
+    (l'ancien pywebview + Qt/Cocoa selon l'OS) n'est plus necessaire, sur
+    aucune plateforme.
 
     De nouvelles listes sont creees a chaque appel pour que l'appelant puisse
-    les completer sans modifier une politique globale partagee.
+    les completer sans modifier une politique globale partagee (``systeme``
+    n'influence plus le resultat, mais reste au signature pour ne pas
+    perturber ses appelants).
     """
-    if systeme == "Darwin":
-        return (
-            [
-                "pyobjc-framework-WebKit",
-                "pyobjc-framework-Cocoa",
-                "PyQt6",
-                "PyQt6-WebEngine",
-                "qtpy",
-            ],
-            [],
-        )
-    return (["PyQt6", "PyQt6-WebEngine", "qtpy"], [])
+    return ([], [])

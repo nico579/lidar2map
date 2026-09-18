@@ -89,6 +89,32 @@
   <div style="margin-top:8px;color:var(--dim);font-size:11px" data-i18n="usage.hint">Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.</div>
  </div>
 </div>
+<!-- Navigateur de dossiers/fichiers côté serveur (remplace le sélecteur natif
+     pywebview retiré : le navigateur ne peut pas parcourir le disque du
+     serveur lui-même, donc c'est le serveur qui liste, /api/browse-dir). -->
+<div id="browse-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:16px 20px;width:min(560px,92vw);max-height:80vh;display:flex;
+      flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="display:flex;align-items:center;margin-bottom:8px">
+   <div id="browse-title" style="font-weight:600;font-size:1.1em" data-i18n="browse.title.dir">📁 Choisir un dossier</div>
+   <button class="btn" onclick="fermerBrowse()" data-i18n="share.close"
+           style="margin-left:auto;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+   <button class="btn" id="browse-up" onclick="browseMonter()"
+           style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">⬆</button>
+   <div id="browse-path" style="font-size:11px;color:var(--dim);overflow:auto;white-space:nowrap;flex:1"></div>
+  </div>
+  <div id="browse-list" style="overflow:auto;flex:1;border:1px solid var(--ac);border-radius:6px;padding:4px"></div>
+  <div style="display:flex;align-items:center;margin-top:10px;gap:8px">
+   <div id="browse-selection" style="font-size:11px;color:var(--dim);flex:1"></div>
+   <button class="btn" id="browse-confirm" onclick="browseConfirmer()"
+           style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)" data-i18n="browse.choose">Choisir</button>
+  </div>
+ </div>
+</div>
 <div id="form-inner">
 
   <!-- Exécution : où faire tourner ce traitement. En tête de formulaire car
@@ -774,7 +800,7 @@
      <div class="row">
       <label>Source MBTiles</label>
       <input type="text" id="f-source-decoupe" placeholder="chemin vers le fichier .mbtiles" data-i18n-placeholder="ph.mbtilespath">
-      <button class="btn btn-sm" onclick="pickFile('f-source-decoupe',false,[])">…</button>
+      <button class="btn btn-sm" onclick="pickFile('f-source-decoupe',false,['.mbtiles'])">…</button>
      </div>
     </div>
    </div>

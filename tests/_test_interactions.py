@@ -1021,6 +1021,7 @@ _vector_cli_src = (_ROOT / "_vector_cli.py").read_text(encoding="utf-8")
 _zone_cli_src = (_ROOT / "_zone_cli.py").read_text(encoding="utf-8")
 _sliding_src = (_ROOT / "_split_sliding.py").read_text(encoding="utf-8")
 _runtime_paths_src = (_ROOT / "_runtime_paths.py").read_text(encoding="utf-8")
+_history_cli_src = (_ROOT / "_history_cli.py").read_text(encoding="utf-8")
 _terrain_resolution_src = (_ROOT / "_terrain_resolution.py").read_text(
     encoding="utf-8"
 )
@@ -1366,12 +1367,15 @@ for _nom, _ids in (
 # osm_tags_sel / wfs_couches_sel du même dict avaient déjà ce conditionnement.
 check("cfg depuis argv : --workers ne va qu'au champ du type lancé",
       # CONTRAT : chaque workers_* est conditionné au type lancé (tokens du gate)
-      all(k in _src for k in ('if t == "lidar" else 8',
-                              'if t == "scan" else 8',
-                              'if t == "osm" else 4')))
+      all(k in _history_cli_src for k in (
+          'if type_run == "lidar" else 8',
+          'if type_run == "scan" else 8',
+          'if type_run == "osm" else 4',
+      )))
 check("vecteur : workers plafonné à 4 dans le champ ET à la relecture",
       'id="f-workers-v" value="4" min="1" max="4"' in _html
-      and 'min(_arg_int("--workers", default=4), 4) if t == "vecteur"' in _src
+      and 'min(_arg_int("--workers", default=4), 4)' in _history_cli_src
+      and 'if type_run == "vecteur" else 4' in _history_cli_src
       and '"max4"' not in _appjs and '"pbfpar"' not in _appjs)
 check("row-simplif-fusion : plus de double attribut class",
       '<div class="row hidden" id="row-simplif-fusion"' in _html
@@ -1698,9 +1702,9 @@ check("cœur : rayon zone converti en DEGRÉS pour un CRS_NATIF géographique "
       and "rayon_km / 111.0" in _src)
 check("--production-dir : flag + défaut + émission GUI + relecture argv",
       'dossier_travail / "production"' in _runtime_paths_src
-      and '"--production-dir", "--dossier-production"' in _src
+      and '"--production-dir", "--dossier-production"' in _history_cli_src
       and 'cmd += ["--production-dir"' in _src
-      and '"production_dir": _arg("--production-dir"' in _src)
+      and '"production_dir": _arg("--production-dir"' in _history_cli_src)
 # cache et production peuvent être sur des volumes différents
 # (--production-dir) : la copie cross-device doit rester sous .part, puis être
 # publiée par replace (jamais de shutil.move directement vers le final).
@@ -1717,16 +1721,17 @@ check("GUI : champ production (Projet, à côté du cache), sauvé/restauré",
       # dans le cadre Projet : après le cache, avant la section Zone
       and _html.find('id="f-cache-dir"') < _html.find('id="f-production-dir"')
                                          < _html.find('data-i18n="sec.zone"'))
-# Bouton « … » des 3 dossiers : SÉLECTEUR positionné sur le dossier courant du
-# champ ou, si vide, sur le défaut du tier (start+kind → pick_dir passe directory=).
-# Le dossier choisi est enregistré dans le champ.
-check("bouton « … » : sélecteur positionné (courant ou défaut du tier)",
+# Bouton « … » des 3 dossiers : navigateur serveur (browseOuvrir/
+# /api/browse-dir, pywebview retiré) positionné sur le dossier courant du
+# champ ou, si vide, sur le défaut du tier (start+kind → _api_browse_dir
+# résout le tier). Le dossier choisi est enregistré dans le champ.
+check("bouton « … » : navigateur positionné (courant ou défaut du tier)",
       "pickDir('f-dossier','output')" in _html
       and "pickDir('f-cache-dir','cache')" in _html
       and "pickDir('f-production-dir','production')" in _html
-      and "pywebview.api.pick_dir(start, kind" in _appjs
-      and "def pick_dir(self, start=" in _src
-      and "create_file_dialog(webview.FOLDER_DIALOG, directory=s)" in _src)
+      and "browseOuvrir({ mode: 'dir', kind: kind || '', start })" in _appjs
+      and "def _api_browse_dir(" in _src
+      and '"cache": DOSSIER_CACHE, "production": DOSSIER_PRODUCTION,' in _src)
 # CORRECTION à la note : --cleanup-keep-tiles est GARDÉ. La séparation le rend
 # inutile en mode LAZ (le .laz reconvertit sans re-download) mais PAS en MNT, où
 # le .tif téléchargé est évincé par --cleanup → une tâche +file re-téléchargerait.

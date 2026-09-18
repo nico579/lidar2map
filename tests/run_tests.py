@@ -41,6 +41,7 @@ FAST_SCRIPTS = (
     "_test_patch_delivery.py",
     "_test_rlidar2map_CLI.py",
     "test_phone_share.py",
+    "test_serve_web.py",
 )
 
 SCIENTIFIC_SCRIPTS = (

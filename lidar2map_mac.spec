@@ -11,7 +11,6 @@ Résultat :
         jre/jdk-21.0.10+7-jre/
         osmosis/osmosis-0.49.2/
         tagmapping-min.xml
-        PyQt6/
         ...
 
 Ce build onedir est ensuite zippé et embarqué dans le launcher .app
@@ -163,20 +162,9 @@ else:
 if staging_osmosis_root:
     datas += _add_tree(staging_osmosis_root, "osmosis")
 
-# PyQt6 + pywebview + qtpy (GUI Qt)
-for lib in ("PyQt6", "pywebview", "qtpy"):
-    try:
-        d, b, h = collect_all(lib)
-        datas += d; binaries += b; hiddenimports += h
-    except Exception as e:
-        print(f"  [WARN] collect_all({lib!r}) : {e}")
-
-hiddenimports += [
-    "webview.platforms.qt",
-    "PyQt6.QtWebEngineWidgets",
-    "PyQt6.QtWebEngineCore",
-    "PyQt6.QtWebChannel",
-]
+# pywebview/PyQt6/qtpy retirés : le GUI est servi en HTTP local et consulté
+# depuis le navigateur (voir main_serve_gui() dans lidar2map.py), plus de
+# backend graphique dédié à bundler.
 
 # pyproj
 datas         += collect_data_files("pyproj")
@@ -286,26 +274,11 @@ except Exception:
 datas         += collect_data_files("certifi")
 hiddenimports += ["certifi"]
 
-# Runtime hook
+# Runtime hook (certifi seul depuis le retrait de pywebview/QtWebEngine :
+# plus de chemin de backend graphique à forcer au démarrage du bundle).
 _hook = SRC / "hook_mac_runtime.py"
 _hook.write_text("""\
 import os, sys
-_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
-os.environ.setdefault('PYWEBVIEW_GUI', 'qt')
-_candidates = [
-    os.path.join(_base, 'PyQt6', 'Qt6', 'lib', 'QtWebEngineCore.framework',
-                 'Helpers', 'QtWebEngineProcess.app', 'Contents', 'MacOS',
-                 'QtWebEngineProcess'),
-    os.path.join(_base, 'QtWebEngineProcess'),
-    os.path.join(_base, 'PyQt6', 'QtWebEngineProcess'),
-]
-for _p in _candidates:
-    if os.path.isfile(_p):
-        os.environ.setdefault('QTWEBENGINEPROCESS_PATH', _p)
-        break
-_res = os.path.join(_base, 'PyQt6', 'Qt6', 'Resources')
-if os.path.isdir(_res):
-    os.environ.setdefault('QTWEBENGINE_RESOURCES_PATH', _res)
 try:
     import certifi
     os.environ.setdefault('SSL_CERT_FILE', certifi.where())
@@ -317,9 +290,6 @@ except Exception:
 _excludes_mac = [
     "tkinter", "matplotlib",
     "PyQt5", "PySide2", "PySide6",
-    "webview.platforms.cocoa",
-    "webview.platforms.gtk",
-    "clr_loader", "pythonnet",
     "test", "pydoc_data",
     # "unittest" retiré : scipy.ndimage l'importe en interne → LRM/RRIM cassés
     "IPython", "jupyter",

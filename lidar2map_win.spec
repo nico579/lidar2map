@@ -26,9 +26,8 @@ from PyInstaller.utils.hooks import (
     collect_all,           # ajout vs version originale
 )
 
-# Cette spec sert AUSSI pour Linux (cf. lidar2map_linux_build.sh).
-# Windows  : pywebview -> WinForms / Edge WebView2 (pas de Qt)
-# Linux    : pywebview -> PyQt6 + WebEngine (seul backend pip viable)
+# Cette spec sert AUSSI pour Linux (cf. lidar2map_linux_build.sh). Plus de
+# backend GUI dedie a bundler (pywebview retire, GUI servi en HTTP local).
 IS_LINUX = sys.platform.startswith("linux")
 
 ONEFILE = False
@@ -270,26 +269,12 @@ try:
 except Exception:
     pass
 
-# ── pywebview : backend Qt forcé (Windows ET Linux) ──────────────────────────
-# Cette spec sert Windows et Linux ; les deux utilisent désormais le backend Qt
-# (PyQt6 + QtWebEngine). Sous Windows ça remplace WinForms/WebView2+pythonnet
-# (régression pythonnet 3.1.0 : récursion infinie sérialisation .NET -> bridge
-# JS<->Python cassé -> GUI gelée + freezes WinForms) -> plus de couche .NET,
-# moteur Chromium identique sur les 3 OS.
-datas         += collect_data_files("webview")
-hiddenimports += collect_submodules("webview")
-for _lib in ("PyQt6", "qtpy"):
-    try:
-        d, b, h = collect_all(_lib)
-        datas += d; binaries += b; hiddenimports += h
-    except Exception as _e:
-        print(f"  [WARN] collect_all({_lib}) a échoué : {_e}")
-hiddenimports += [
-    "webview.platforms.qt",
-    "PyQt6.QtWebEngineWidgets",
-    "PyQt6.QtWebEngineCore",
-    "PyQt6.QtWebChannel",
-]
+# pywebview/PyQt6/QtWebEngine retirés (le GUI est servi en HTTP local et
+# consulté depuis le navigateur déjà installé de l'utilisateur, voir
+# main_serve_gui() dans lidar2map.py) : plus de backend graphique dédié à
+# bundler, ni sur Windows ni sur Linux. C'était le poste le plus lourd du
+# bundle (QtWebEngine embarque son propre Chromium, plusieurs centaines de
+# Mo) - c'est tout le gain de la migration web.
 
 # ── PIL ───────────────────────────────────────────────────────────────────────
 hiddenimports += [
@@ -380,42 +365,11 @@ _excludes = [
     # "unittest" retiré : scipy.ndimage l'importe en interne → LRM/RRIM cassés
     "IPython", "jupyter",
 ]
-# Backend Qt sur Windows+Linux : on garde PyQt6, on exclut WinForms/Cocoa et
-# toute la couche .NET (plus utilisée).
-_excludes += ["webview.platforms.winforms", "webview.platforms.cocoa",
-              "clr", "clr_loader", "clr_loader.netfx", "pythonnet"]
 
-# ── Runtime hook : forcer PYWEBVIEW_GUI=qt + chemins QtWebEngine ─────────────
-# S'applique Windows ET Linux (backend Qt sur les deux). Les gardes os.path
-# rendent les chemins inexistants inoffensifs sur l'OS qui ne les a pas.
-_hook = SRC / "build" / "_runtime_hook_qt.py"
-_hook.parent.mkdir(parents=True, exist_ok=True)
-_hook.write_text("""\
-import os, sys
-_base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
-os.environ.setdefault('PYWEBVIEW_GUI', 'qt')
-# Qt plugins (xcb platform plugin etc.)
-_plugins = os.path.join(_base, 'PyQt6', 'Qt6', 'plugins')
-if os.path.isdir(_plugins):
-    os.environ.setdefault('QT_PLUGIN_PATH', _plugins)
-# QtWebEngineProcess
-for _cand in (
-    os.path.join(_base, 'PyQt6', 'Qt6', 'bin', 'QtWebEngineProcess.exe'),   # Windows
-    os.path.join(_base, 'PyQt6', 'Qt6', 'libexec', 'QtWebEngineProcess'),   # Linux
-    os.path.join(_base, 'PyQt6', 'QtWebEngineProcess'),
-):
-    if os.path.isfile(_cand):
-        os.environ.setdefault('QTWEBENGINEPROCESS_PATH', _cand)
-        break
-_res = os.path.join(_base, 'PyQt6', 'Qt6', 'resources')
-if os.path.isdir(_res):
-    os.environ.setdefault('QTWEBENGINE_RESOURCES_PATH', _res)
-_loc = os.path.join(_base, 'PyQt6', 'Qt6', 'translations')
-if os.path.isdir(_loc):
-    os.environ.setdefault('QTWEBENGINE_LOCALES_PATH',
-                          os.path.join(_loc, 'qtwebengine_locales'))
-""")
-_runtime_hooks = [str(_hook)]
+# Hook runtime Qt/QtWebEngine retiré avec pywebview : plus rien à forcer au
+# démarrage du bundle (le GUI est une page HTML servie en HTTP, ouverte dans
+# le navigateur de l'utilisateur).
+_runtime_hooks = []
 
 # Passe 1 : analyse de lidar2map.py pour la détection des imports
 a_detect = Analysis(

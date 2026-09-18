@@ -9,6 +9,71 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 
+# (typename WFS, label FR [GUI + logs runtime], label EN [--help CLI])
+COUCHES_WFS = {
+    # ── Cadastre ──────────────────────────────────────────────────────────────
+    "cadastre":        ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle",
+                        "Parcelles cadastrales (PCI)",
+                        "Cadastral parcels (PCI)"),
+    # ── Hydrographie ──────────────────────────────────────────────────────────
+    "cours_eau":       ("BDTOPO_V3:cours_d_eau",
+                        "Cours d'eau BD TOPO V3",
+                        "Watercourses BD TOPO V3"),
+    "troncons_eau":    ("BDTOPO_V3:troncon_hydrographique",
+                        "Tronçons hydrographiques BD TOPO V3",
+                        "Hydrographic segments BD TOPO V3"),
+    "plans_eau":       ("BDTOPO_V3:plan_d_eau",
+                        "Plans d'eau BD TOPO V3",
+                        "Water bodies BD TOPO V3"),
+    "detail_hydro":    ("BDTOPO_V3:detail_hydrographique",
+                        "Détails hydrographiques (sources, cascades…)",
+                        "Hydrographic details (springs, waterfalls…)"),
+    # ── Bâti / structures ─────────────────────────────────────────────────────
+    "batiments":       ("BDTOPO_V3:batiment",
+                        "Bâtiments BD TOPO V3",
+                        "Buildings BD TOPO V3"),
+    "constructions":   ("BDTOPO_V3:construction_surfacique",
+                        "Constructions surfaciques (murets, terrasses, enclos)",
+                        "Surface constructions (low walls, terraces, enclosures)"),
+    "cimetieres":      ("BDTOPO_V3:cimetiere",
+                        "Cimetières",
+                        "Cemeteries"),
+    # ── Transport ─────────────────────────────────────────────────────────────
+    "routes":          ("BDTOPO_V3:troncon_de_route",
+                        "Tronçons de routes BD TOPO V3",
+                        "Road segments BD TOPO V3"),
+    "chemins":         ("BDTOPO_V3:itineraire_autre",
+                        "Chemins et itinéraires anciens",
+                        "Tracks and old routes"),
+    # ── Relief / orographie ───────────────────────────────────────────────────
+    "lignes_orog":     ("BDTOPO_V3:ligne_orographique",
+                        "Lignes orographiques (talwegs, crêtes)",
+                        "Orographic lines (talwegs, ridges)"),
+    "detail_orog":     ("BDTOPO_V3:detail_orographique",
+                        "Détails orographiques (rochers, grottes)",
+                        "Orographic details (rocks, caves)"),
+    # ── Végétation / milieu ───────────────────────────────────────────────────
+    "forets":          ("BDTOPO_V3:foret_publique",
+                        "Forêts publiques",
+                        "Public forests"),
+    "reserves":        ("BDTOPO_V3:parc_ou_reserve",
+                        "Parcs et réserves naturelles",
+                        "Parks and nature reserves"),
+    # ── Toponymie / lieux ─────────────────────────────────────────────────────
+    "lieux_dits":      ("BDTOPO_V3:lieu_dit_non_habite",
+                        "Lieux-dits non habités (toponymie historique)",
+                        "Uninhabited place names (historical toponymy)"),
+    # ── Admin ─────────────────────────────────────────────────────────────────
+    "communes":        ("BDTOPO_V3:commune",
+                        "Limites communales",
+                        "Municipal boundaries"),
+    # ── Agriculture ───────────────────────────────────────────────────────────
+    "rpg":             ("RPG.LATEST:parcelles_graphiques",
+                        "Registre Parcellaire Graphique (cultures)",
+                        "Graphic Parcel Register (RPG, crops)"),
+}
+
+
 @dataclass(frozen=True)
 class DependancesParserWfs:
     """Dépendances nécessaires à la construction du parser WFS."""

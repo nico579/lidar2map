@@ -11,6 +11,144 @@ from typing import Any, Callable, Mapping
 import urllib.error
 
 
+# ── Geofabrik : département → région (URL slug) ──────────────────────────────
+# Table statique (135 entries) construite une seule fois à l'import au lieu
+# d'être recréée à chaque appel d'`if args.osm:` dans main().
+GEOFABRIK = {
+    # !! Geofabrik utilise les ANCIENNES régions administratives (pré-réforme 2016).
+    # Les nouvelles régions (Occitanie, Nouvelle-Aquitaine, Grand Est, etc.)
+    # n'existent PAS sur Geofabrik — chaque département pointe vers son ancienne région.
+    # Source : https://download.geofabrik.de/europe/france.html
+
+    # Rhône-Alpes (≠ Auvergne-Rhône-Alpes)
+    "01": "rhone-alpes",           # Ain
+    "07": "rhone-alpes",           # Ardèche
+    "26": "rhone-alpes",           # Drôme
+    "38": "rhone-alpes",           # Isère
+    "42": "rhone-alpes",           # Loire
+    "69": "rhone-alpes",           # Rhône
+    "73": "rhone-alpes",           # Savoie
+    "74": "rhone-alpes",           # Haute-Savoie
+    # Auvergne (≠ Auvergne-Rhône-Alpes)
+    "03": "auvergne",              # Allier
+    "15": "auvergne",              # Cantal
+    "43": "auvergne",              # Haute-Loire
+    "63": "auvergne",              # Puy-de-Dôme
+    # Bourgogne (≠ Bourgogne-Franche-Comté)
+    "21": "bourgogne",             # Côte-d'Or
+    "58": "bourgogne",             # Nièvre
+    "71": "bourgogne",             # Saône-et-Loire
+    "89": "bourgogne",             # Yonne
+    # Franche-Comté (≠ Bourgogne-Franche-Comté)
+    "25": "franche-comte",         # Doubs
+    "39": "franche-comte",         # Jura
+    "70": "franche-comte",         # Haute-Saône
+    "90": "franche-comte",         # Territoire de Belfort
+    # Bretagne (inchangée)
+    "22": "bretagne",              # Côtes-d'Armor
+    "29": "bretagne",              # Finistère
+    "35": "bretagne",              # Ille-et-Vilaine
+    "56": "bretagne",              # Morbihan
+    # Centre (Geofabrik utilise "centre", pas "centre-val-de-loire")
+    "18": "centre",                # Cher
+    "28": "centre",                # Eure-et-Loir
+    "36": "centre",                # Indre
+    "37": "centre",                # Indre-et-Loire
+    "41": "centre",                # Loir-et-Cher
+    "45": "centre",                # Loiret
+    # Corse (inchangée)
+    "2A": "corse",                 # Corse-du-Sud
+    "2B": "corse",                 # Haute-Corse
+    # Alsace (≠ Grand Est)
+    "67": "alsace",                # Bas-Rhin
+    "68": "alsace",                # Haut-Rhin
+    # Champagne-Ardenne (≠ Grand Est)
+    "08": "champagne-ardenne",     # Ardennes
+    "10": "champagne-ardenne",     # Aube
+    "51": "champagne-ardenne",     # Marne
+    "52": "champagne-ardenne",     # Haute-Marne
+    # Lorraine (≠ Grand Est)
+    "54": "lorraine",              # Meurthe-et-Moselle
+    "55": "lorraine",              # Meuse
+    "57": "lorraine",              # Moselle
+    "88": "lorraine",              # Vosges
+    # Nord-Pas-de-Calais (≠ Hauts-de-France)
+    "59": "nord-pas-de-calais",    # Nord
+    "62": "nord-pas-de-calais",    # Pas-de-Calais
+    # Picardie (≠ Hauts-de-France)
+    "02": "picardie",              # Aisne
+    "60": "picardie",              # Oise
+    "80": "picardie",              # Somme
+    # Île-de-France (inchangée)
+    "75": "ile-de-france",         # Paris
+    "77": "ile-de-france",         # Seine-et-Marne
+    "78": "ile-de-france",         # Yvelines
+    "91": "ile-de-france",         # Essonne
+    "92": "ile-de-france",         # Hauts-de-Seine
+    "93": "ile-de-france",         # Seine-Saint-Denis
+    "94": "ile-de-france",         # Val-de-Marne
+    "95": "ile-de-france",         # Val-d'Oise
+    # Haute-Normandie (≠ Normandie)
+    "27": "haute-normandie",       # Eure
+    "76": "haute-normandie",       # Seine-Maritime
+    # Basse-Normandie (≠ Normandie)
+    "14": "basse-normandie",       # Calvados
+    "50": "basse-normandie",       # Manche
+    "61": "basse-normandie",       # Orne
+    # Aquitaine (≠ Nouvelle-Aquitaine)
+    "24": "aquitaine",             # Dordogne
+    "33": "aquitaine",             # Gironde
+    "40": "aquitaine",             # Landes
+    "47": "aquitaine",             # Lot-et-Garonne
+    "64": "aquitaine",             # Pyrénées-Atlantiques
+    # Limousin (≠ Nouvelle-Aquitaine)
+    "19": "limousin",              # Corrèze
+    "23": "limousin",              # Creuse
+    "87": "limousin",              # Haute-Vienne
+    # Poitou-Charentes (≠ Nouvelle-Aquitaine)
+    "16": "poitou-charentes",      # Charente
+    "17": "poitou-charentes",      # Charente-Maritime
+    "79": "poitou-charentes",      # Deux-Sèvres
+    "86": "poitou-charentes",      # Vienne
+    # Languedoc-Roussillon (≠ Occitanie)
+    "11": "languedoc-roussillon",  # Aude
+    "30": "languedoc-roussillon",  # Gard
+    "34": "languedoc-roussillon",  # Hérault
+    "48": "languedoc-roussillon",  # Lozère
+    "66": "languedoc-roussillon",  # Pyrénées-Orientales
+    # Midi-Pyrénées (≠ Occitanie)
+    "09": "midi-pyrenees",         # Ariège
+    "12": "midi-pyrenees",         # Aveyron
+    "31": "midi-pyrenees",         # Haute-Garonne
+    "32": "midi-pyrenees",         # Gers
+    "46": "midi-pyrenees",         # Lot
+    "65": "midi-pyrenees",         # Hautes-Pyrénées
+    "81": "midi-pyrenees",         # Tarn
+    "82": "midi-pyrenees",         # Tarn-et-Garonne
+    # Pays de la Loire (inchangé)
+    "44": "pays-de-la-loire",      # Loire-Atlantique
+    "49": "pays-de-la-loire",      # Maine-et-Loire
+    "53": "pays-de-la-loire",      # Mayenne
+    "72": "pays-de-la-loire",      # Sarthe
+    "85": "pays-de-la-loire",      # Vendée
+    # Provence-Alpes-Côte d'Azur (inchangée)
+    "04": "provence-alpes-cote-d-azur",  # Alpes-de-Haute-Provence
+    "05": "provence-alpes-cote-d-azur",  # Hautes-Alpes
+    "06": "provence-alpes-cote-d-azur",  # Alpes-Maritimes
+    "13": "provence-alpes-cote-d-azur",  # Bouches-du-Rhône
+    "83": "provence-alpes-cote-d-azur",  # Var
+    "84": "provence-alpes-cote-d-azur",  # Vaucluse
+    # DOM/TOM (extraits Geofabrik séparés)
+    "971": "guadeloupe",
+    "972": "martinique",
+    "973": "guyane",
+    "974": "reunion",
+    "976": "mayotte",
+}
+GEOFABRIK_BASE_URL = "https://download.geofabrik.de/europe/france"
+GEOFABRIK_BASE_URL_ROOT = "https://download.geofabrik.de/europe"
+
+
 @dataclass(frozen=True)
 class DependancesAcquisitionOsm:
     """Coutures nécessaires à la résolution et au téléchargement du PBF."""

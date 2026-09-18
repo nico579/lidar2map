@@ -72,8 +72,12 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --fusionner     Fusion de GeoJSON/GeoJSON.gz en un seul fichier
   --serve         Sert les livrables d'un projet sur le WiFi (URL + QR)
                   pour import direct sur le téléphone (OsmAnd/Locus)
+  --serve-gui     Sert le GUI sur HTTP local et ouvre le navigateur
+                  (--port/--bind/--trusted-host/--no-browser). Seul mode GUI
+                  (pywebview retiré) ; routes en lecture seule pour
+                  l'instant, launch/stop/pick_dir suivent.
 
-  Sans argument   → GUI pywebview (interface HTML/JS)
+  Sans argument   → --serve-gui (serveur web + navigateur, voir ci-dessus)
 
   Pré-flags globaux (lus AVANT argparse, tel un préfixe de commande :
   ils sélectionnent la source ou le pipeline, puis sont retirés de argv) :
@@ -1240,12 +1244,12 @@ def _definir_chunk_log(cle):
 # ── Requêtes HTTP via urllib (stdlib, zéro dépendance) ──────────────────────
 _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 
-# Version applicative — SOURCE UNIQUE : utilisée par --version (les 3 mains),
-# par le check de mise à jour du GUI (Api.check_update) ET par le titre de la
-# fenêtre GUI (create_window). Le bump de release se fait ICI, nulle part
-# ailleurs (fini les 3 chaînes argparse à synchroniser).
-VERSION      = "1.48.3"
-VERSION_DATE = "2026-08"
+# Version applicative — SOURCE UNIQUE : utilisée par --version (les 3 mains)
+# ET par le check de mise à jour du GUI (Api.check_update). Le bump de
+# release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
+# synchroniser).
+VERSION      = "1.49.0"
+VERSION_DATE = "2026-09"
 
 
 def _urlopen(url, headers=None, timeout=15):
@@ -1547,10 +1551,19 @@ def _arg_float_positif(s):
     return v
 
 
-# ── MBTiles / WMTS — paramètres de batch ─────────────────────────────────────
-SEUIL_ERR_CONSEC      = 30   # erreurs consécutives → abandon WMTS (panne systémique)
-SEUIL_HORS_COUVERTURE = 300  # tuiles toutes en 204 avec 0 succès → bbox hors couche
-BATCH_MBTILES_INSERT  = 2000 # tuiles par INSERT executemany dans MBTiles WMTS
+# ── MBTiles / WMTS — politique raster pure ───────────────────────────────────
+from _raster_policy import (
+    BATCH_MBTILES_INSERT,
+    COUCHES,
+    SEUIL_ERR_CONSEC,
+    SEUIL_HORS_COUVERTURE,
+    WMTS_HEADERS,
+    WMTS_URL,
+    WMTS_URL_PUB,
+    jpeg_quality_sortie as _jpeg_quality_sortie,
+    nom_mbtiles_wmts as _nom_mbtiles_wmts,
+)
+
 BATCH_SQLITEDB_INSERT = 2000 # tuiles par batch lors de la conversion vers .sqlitedb
 SEUIL_RMAP_PADDING    = 1_000_000  # tuiles vides de remplissage max avant refus RMAP
 HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargement dalles)
@@ -1560,142 +1573,11 @@ HTTP_CHUNK_SIZE       = 65536  # taille de lecture par chunk HTTP (téléchargem
 # qui utilisent WFS_URL (BDTOPO, etc.) retombent alors sur None (à adapter).
 WFS_URL   = getattr(PROVIDER, "WFS_URL",   None)
 
-# ── Geofabrik : département → région (URL slug) ──────────────────────────────
-# Table statique (135 entries) construite une seule fois à l'import au lieu
-# d'être recréée à chaque appel d'`if args.osm:` dans main().
-_GEOFABRIK = {
-    # !! Geofabrik utilise les ANCIENNES régions administratives (pré-réforme 2016).
-    # Les nouvelles régions (Occitanie, Nouvelle-Aquitaine, Grand Est, etc.)
-    # n'existent PAS sur Geofabrik — chaque département pointe vers son ancienne région.
-    # Source : https://download.geofabrik.de/europe/france.html
-
-    # Rhône-Alpes (≠ Auvergne-Rhône-Alpes)
-    "01": "rhone-alpes",           # Ain
-    "07": "rhone-alpes",           # Ardèche
-    "26": "rhone-alpes",           # Drôme
-    "38": "rhone-alpes",           # Isère
-    "42": "rhone-alpes",           # Loire
-    "69": "rhone-alpes",           # Rhône
-    "73": "rhone-alpes",           # Savoie
-    "74": "rhone-alpes",           # Haute-Savoie
-    # Auvergne (≠ Auvergne-Rhône-Alpes)
-    "03": "auvergne",              # Allier
-    "15": "auvergne",              # Cantal
-    "43": "auvergne",              # Haute-Loire
-    "63": "auvergne",              # Puy-de-Dôme
-    # Bourgogne (≠ Bourgogne-Franche-Comté)
-    "21": "bourgogne",             # Côte-d'Or
-    "58": "bourgogne",             # Nièvre
-    "71": "bourgogne",             # Saône-et-Loire
-    "89": "bourgogne",             # Yonne
-    # Franche-Comté (≠ Bourgogne-Franche-Comté)
-    "25": "franche-comte",         # Doubs
-    "39": "franche-comte",         # Jura
-    "70": "franche-comte",         # Haute-Saône
-    "90": "franche-comte",         # Territoire de Belfort
-    # Bretagne (inchangée)
-    "22": "bretagne",              # Côtes-d'Armor
-    "29": "bretagne",              # Finistère
-    "35": "bretagne",              # Ille-et-Vilaine
-    "56": "bretagne",              # Morbihan
-    # Centre (Geofabrik utilise "centre", pas "centre-val-de-loire")
-    "18": "centre",                # Cher
-    "28": "centre",                # Eure-et-Loir
-    "36": "centre",                # Indre
-    "37": "centre",                # Indre-et-Loire
-    "41": "centre",                # Loir-et-Cher
-    "45": "centre",                # Loiret
-    # Corse (inchangée)
-    "2A": "corse",                 # Corse-du-Sud
-    "2B": "corse",                 # Haute-Corse
-    # Alsace (≠ Grand Est)
-    "67": "alsace",                # Bas-Rhin
-    "68": "alsace",                # Haut-Rhin
-    # Champagne-Ardenne (≠ Grand Est)
-    "08": "champagne-ardenne",     # Ardennes
-    "10": "champagne-ardenne",     # Aube
-    "51": "champagne-ardenne",     # Marne
-    "52": "champagne-ardenne",     # Haute-Marne
-    # Lorraine (≠ Grand Est)
-    "54": "lorraine",              # Meurthe-et-Moselle
-    "55": "lorraine",              # Meuse
-    "57": "lorraine",              # Moselle
-    "88": "lorraine",              # Vosges
-    # Nord-Pas-de-Calais (≠ Hauts-de-France)
-    "59": "nord-pas-de-calais",    # Nord
-    "62": "nord-pas-de-calais",    # Pas-de-Calais
-    # Picardie (≠ Hauts-de-France)
-    "02": "picardie",              # Aisne
-    "60": "picardie",              # Oise
-    "80": "picardie",              # Somme
-    # Île-de-France (inchangée)
-    "75": "ile-de-france",         # Paris
-    "77": "ile-de-france",         # Seine-et-Marne
-    "78": "ile-de-france",         # Yvelines
-    "91": "ile-de-france",         # Essonne
-    "92": "ile-de-france",         # Hauts-de-Seine
-    "93": "ile-de-france",         # Seine-Saint-Denis
-    "94": "ile-de-france",         # Val-de-Marne
-    "95": "ile-de-france",         # Val-d'Oise
-    # Haute-Normandie (≠ Normandie)
-    "27": "haute-normandie",       # Eure
-    "76": "haute-normandie",       # Seine-Maritime
-    # Basse-Normandie (≠ Normandie)
-    "14": "basse-normandie",       # Calvados
-    "50": "basse-normandie",       # Manche
-    "61": "basse-normandie",       # Orne
-    # Aquitaine (≠ Nouvelle-Aquitaine)
-    "24": "aquitaine",             # Dordogne
-    "33": "aquitaine",             # Gironde
-    "40": "aquitaine",             # Landes
-    "47": "aquitaine",             # Lot-et-Garonne
-    "64": "aquitaine",             # Pyrénées-Atlantiques
-    # Limousin (≠ Nouvelle-Aquitaine)
-    "19": "limousin",              # Corrèze
-    "23": "limousin",              # Creuse
-    "87": "limousin",              # Haute-Vienne
-    # Poitou-Charentes (≠ Nouvelle-Aquitaine)
-    "16": "poitou-charentes",      # Charente
-    "17": "poitou-charentes",      # Charente-Maritime
-    "79": "poitou-charentes",      # Deux-Sèvres
-    "86": "poitou-charentes",      # Vienne
-    # Languedoc-Roussillon (≠ Occitanie)
-    "11": "languedoc-roussillon",  # Aude
-    "30": "languedoc-roussillon",  # Gard
-    "34": "languedoc-roussillon",  # Hérault
-    "48": "languedoc-roussillon",  # Lozère
-    "66": "languedoc-roussillon",  # Pyrénées-Orientales
-    # Midi-Pyrénées (≠ Occitanie)
-    "09": "midi-pyrenees",         # Ariège
-    "12": "midi-pyrenees",         # Aveyron
-    "31": "midi-pyrenees",         # Haute-Garonne
-    "32": "midi-pyrenees",         # Gers
-    "46": "midi-pyrenees",         # Lot
-    "65": "midi-pyrenees",         # Hautes-Pyrénées
-    "81": "midi-pyrenees",         # Tarn
-    "82": "midi-pyrenees",         # Tarn-et-Garonne
-    # Pays de la Loire (inchangé)
-    "44": "pays-de-la-loire",      # Loire-Atlantique
-    "49": "pays-de-la-loire",      # Maine-et-Loire
-    "53": "pays-de-la-loire",      # Mayenne
-    "72": "pays-de-la-loire",      # Sarthe
-    "85": "pays-de-la-loire",      # Vendée
-    # Provence-Alpes-Côte d'Azur (inchangée)
-    "04": "provence-alpes-cote-d-azur",  # Alpes-de-Haute-Provence
-    "05": "provence-alpes-cote-d-azur",  # Hautes-Alpes
-    "06": "provence-alpes-cote-d-azur",  # Alpes-Maritimes
-    "13": "provence-alpes-cote-d-azur",  # Bouches-du-Rhône
-    "83": "provence-alpes-cote-d-azur",  # Var
-    "84": "provence-alpes-cote-d-azur",  # Vaucluse
-    # DOM/TOM (extraits Geofabrik séparés)
-    "971": "guadeloupe",
-    "972": "martinique",
-    "973": "guyane",
-    "974": "reunion",
-    "976": "mayotte",
-}
-_GEOFABRIK_BASE_URL      = "https://download.geofabrik.de/europe/france"
-_GEOFABRIK_BASE_URL_ROOT = "https://download.geofabrik.de/europe"
+from _osm_acquisition import (
+    GEOFABRIK as _GEOFABRIK,
+    GEOFABRIK_BASE_URL as _GEOFABRIK_BASE_URL,
+    GEOFABRIK_BASE_URL_ROOT as _GEOFABRIK_BASE_URL_ROOT,
+)
 
 
 from _terrain_zones import (
@@ -2669,8 +2551,6 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 # PIPELINE WMTS — SCAN 25 / ORTHO
 # ============================================================
 
-WMTS_URL     = "https://data.geopf.fr/private/wmts"
-WMTS_URL_PUB = "https://data.geopf.fr/wmts"
 # Clé API IGN — chargée depuis lidar2map.env si présent, sinon valeur par défaut.
 # Pour utiliser votre propre clé, créez lidar2map.env (non versionné) avec :
 #   IGN_APIKEY=votre_cle
@@ -2686,59 +2566,6 @@ APIKEY_DEFAUT = os.environ.get("IGN_APIKEY", "")
 # professionnels (CGU IGN). Leur clé d'accès n'est pas distribuable aux particuliers.
 # Source : réponse IGN du 31/03/2026 — geoplateforme@ign.fr
 # Les couches publiques (planign, ortho, cadastre…) ne nécessitent aucune clé.
-WMTS_HEADERS  = {"User-Agent": "Mozilla/5.0 Gecko/20100101 Firefox/49.0"}
-
-# Couches WMTS IGN — (identifiant_layer, style, format, clé_privée_requise)
-# Endpoint public  : https://data.geopf.fr/wmts
-# Endpoint privé   : https://data.geopf.fr/private/wmts
-# ⚠ Les couches avec clé_privée_requise=True nécessitent une clé API professionnelle.
-COUCHES = {
-    # ── Cartes topographiques (public, sans clé) ──────────────────────────────
-    "planign":       ("GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2",         "normal", "image/png",  False),
-    "etatmajor40":   ("GEOGRAPHICALGRIDSYSTEMS.ETATMAJOR40",       "normal", "image/jpeg", False),
-    "etatmajor10":   ("GEOGRAPHICALGRIDSYSTEMS.ETATMAJOR10",       "normal", "image/jpeg", False),
-    "pentes":        ("GEOGRAPHICALGRIDSYSTEMS.SLOPES.MOUNTAIN",   "normal", "image/png",  False),
-    # ── Imagerie (public, sans clé) ───────────────────────────────────────────
-    "ortho":         ("ORTHOIMAGERY.ORTHOPHOTOS",                  "normal", "image/jpeg", False),
-    # Orthophotographies historiques métropole — clé pour archéo et exploration
-    # (restanques avant déprise, anciens chemins encore parcourus, cabanons).
-    # Couverture variable selon les departments: tester avant de se fier dessus.
-    "ortho_1950":    ("ORTHOIMAGERY.ORTHOPHOTOS.1950-1965",        "normal", "image/png",  False),
-    "ortho_1965":    ("ORTHOIMAGERY.ORTHOPHOTOS.1965-1980",        "normal", "image/png",  False),
-    "ortho_1980":    ("ORTHOIMAGERY.ORTHOPHOTOS.1980-1995",        "normal", "image/png",  False),
-    # Infrarouge couleur — distingue feuillus/résineux, repère humidité du sol
-    # (utile pour trouver d'anciens drainages, fossés, cours d'eau dévoyés).
-    "ortho_irc":     ("ORTHOIMAGERY.ORTHOPHOTOS.IRC",              "normal", "image/jpeg", False),
-    # Imagerie satellitaire (vrai satellite, pas avion)
-    "pleiades":      ("ORTHOIMAGERY.ORTHO-SAT.PLEIADES.2024",      "normal", "image/jpeg", False),
-    "spot":          ("ORTHOIMAGERY.ORTHO-SAT.SPOT.2024",          "normal", "image/jpeg", False),
-    # Orthos EDUGEO PACA — emprises locales restreintes aux centres urbains.
-    # Tester d'abord la couverture pour Toulon-Hyères ou Marseille-Martigues
-    # selon ta zone (Garéoult/Mazaugues est entre les deux, hors emprises).
-    "edugeo_marseille_1969": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1969", "normal", "image/png", False),
-    "edugeo_marseille_1980": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1980", "normal", "image/png", False),
-    "edugeo_marseille_1987": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1987", "normal", "image/png", False),
-    "edugeo_marseille_1988": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES1988", "normal", "image/png", False),
-    "edugeo_marseille_2010": ("ORTHOIMAGERY.EDUGEO.MARSEILLE-MARTIGUES2010", "normal", "image/png", False),
-    "edugeo_toulon_1972":    ("ORTHOIMAGERY.EDUGEO.TOULON-HYERES1972",      "normal", "image/png", False),
-    # ── Données thématiques (public, sans clé) ────────────────────────────────
-    "cadastre":      ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS",      "normal", "image/png",  False),
-    "ombrage":       ("ELEVATION.ELEVATIONGRIDCOVERAGE.SHADOW",    "normal", "image/png",  False),
-    # ── Imagerie hors-France (tuiles XYZ ArcGIS, public, sans clé) ────────────
-    # Convention "XYZ:<template>" : URL de tuile XYZ avec {z}/{y}/{x} (même
-    # schéma Web Mercator que les WMTS IGN). Gérée par construire_url_wmts.
-    # naip = USGS Imagery (dérivé NAIP, ortho sub-métrique sur les USA contigus,
-    # domaine public) — complément image du LiDAR 3DEP (us-tnm).
-    "naip":          ("XYZ:https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}", "normal", "image/jpeg", False),
-    # ── Cartes topographiques — RÉSERVÉES AUX PROFESSIONNELS ─────────────────
-    # Accès restreint : compte pro sur cartes.gouv.fr + SIRET requis
-    "scan25":        ("GEOGRAPHICALGRIDSYSTEMS.MAPS",              "normal", "image/jpeg", True),
-    "scan25tour":    ("GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN25TOUR",   "normal", "image/jpeg", True),
-    "scan100":       ("GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN100",      "normal", "image/jpeg", True),
-    "scanoaci":      ("GEOGRAPHICALGRIDSYSTEMS.MAPS.SCAN-OACI",    "normal", "image/jpeg", True),
-}
-
-
 from _mbtiles_wmts_helpers import (
     _DependancesTelechargementWmts,
     _bbox_valide_wgs84,
@@ -2810,37 +2637,6 @@ class ZoneHorsCouvertureWMTS(RuntimeError):
     utile. En chunk de grille auto-généré, la boucle de split la rattrape et
     saute la cellule (mer, hors frontière) : légitimement vide, pas une erreur."""
     pass
-
-
-def _jpeg_quality_sortie(img_fmt, formats_image, qualite_image):
-    """Qualité de re-encodage PNG→JPEG côté client, ou None si aucun re-encodage.
-
-    SOURCE DE VÉRITÉ UNIQUE partagée par la passe simple (main_wmts) et le split
-    (_traiter_bbox_wmts) : les deux jumeaux avaient divergé (le split convertissait
-    toujours PNG→JPEG en ignorant --image-format png, R2#14). Règles :
-      - serveur JPEG natif (ortho, scan*…) → None (jamais reconverti ; --image-format
-        png sur ces couches est signalé puis ignoré, cf. la note dans main_wmts) ;
-      - PNG natif + --image-format png → None (l'utilisateur garde le PNG lossless) ;
-      - PNG natif + --image-format jpeg/auto → la qualité demandée (conversion).
-    """
-    _native_png = img_fmt.lower() in ("image/png", "png")
-    return qualite_image if (_native_png and formats_image != "png") else None
-
-
-def _nom_mbtiles_wmts(nom, couche, zoom_min, zoom_max, jpeg_q):
-    """Nom de base du MBTiles WMTS (sans extension). SOURCE DE VÉRITÉ UNIQUE
-    partagée par la passe simple (main_wmts) et le split (_traiter_bbox_wmts),
-    pour que les deux jumeaux nomment identiquement (cf. R2#14).
-
-    Encode un segment qualité `_q<Q>` quand une conversion PNG→JPEG a lieu
-    (jpeg_q non None), sinon rien. Sans ce segment, relancer avec un
-    --image-quality/--image-format différent réutilisait le MBTiles obsolète :
-    le fichier existait, `_mbtiles_a_regenerer` le validait, la nouvelle qualité
-    était ignorée en silence (R2#18). couche/zoom sont déjà dans le nom ; le
-    natif (jpeg_q None) est pleinement déterminé par la couche → pas de segment,
-    donc aucun MBTiles déjà en cache n'est orphelin pour les couches JPEG."""
-    _q = f"_q{int(jpeg_q)}" if jpeg_q is not None else ""
-    return f"{nom}_{couche}_z{zoom_min}-{zoom_max}{_q}"
 
 
 from _mbtiles_wmts import (
@@ -4977,69 +4773,7 @@ def main_wmts():
 # PIPELINE WFS IGN — VECTEUR (GeoJSON)
 # ============================================================
 
-# (typename WFS, label FR [GUI + logs runtime], label EN [--help CLI])
-COUCHES_WFS = {
-    # ── Cadastre ──────────────────────────────────────────────────────────────
-    "cadastre":        ("CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle",
-                        "Parcelles cadastrales (PCI)",
-                        "Cadastral parcels (PCI)"),
-    # ── Hydrographie ──────────────────────────────────────────────────────────
-    "cours_eau":       ("BDTOPO_V3:cours_d_eau",
-                        "Cours d'eau BD TOPO V3",
-                        "Watercourses BD TOPO V3"),
-    "troncons_eau":    ("BDTOPO_V3:troncon_hydrographique",
-                        "Tronçons hydrographiques BD TOPO V3",
-                        "Hydrographic segments BD TOPO V3"),
-    "plans_eau":       ("BDTOPO_V3:plan_d_eau",
-                        "Plans d'eau BD TOPO V3",
-                        "Water bodies BD TOPO V3"),
-    "detail_hydro":    ("BDTOPO_V3:detail_hydrographique",
-                        "Détails hydrographiques (sources, cascades…)",
-                        "Hydrographic details (springs, waterfalls…)"),
-    # ── Bâti / structures ─────────────────────────────────────────────────────
-    "batiments":       ("BDTOPO_V3:batiment",
-                        "Bâtiments BD TOPO V3",
-                        "Buildings BD TOPO V3"),
-    "constructions":   ("BDTOPO_V3:construction_surfacique",
-                        "Constructions surfaciques (murets, terrasses, enclos)",
-                        "Surface constructions (low walls, terraces, enclosures)"),
-    "cimetieres":      ("BDTOPO_V3:cimetiere",
-                        "Cimetières",
-                        "Cemeteries"),
-    # ── Transport ─────────────────────────────────────────────────────────────
-    "routes":          ("BDTOPO_V3:troncon_de_route",
-                        "Tronçons de routes BD TOPO V3",
-                        "Road segments BD TOPO V3"),
-    "chemins":         ("BDTOPO_V3:itineraire_autre",
-                        "Chemins et itinéraires anciens",
-                        "Tracks and old routes"),
-    # ── Relief / orographie ───────────────────────────────────────────────────
-    "lignes_orog":     ("BDTOPO_V3:ligne_orographique",
-                        "Lignes orographiques (talwegs, crêtes)",
-                        "Orographic lines (talwegs, ridges)"),
-    "detail_orog":     ("BDTOPO_V3:detail_orographique",
-                        "Détails orographiques (rochers, grottes)",
-                        "Orographic details (rocks, caves)"),
-    # ── Végétation / milieu ───────────────────────────────────────────────────
-    "forets":          ("BDTOPO_V3:foret_publique",
-                        "Forêts publiques",
-                        "Public forests"),
-    "reserves":        ("BDTOPO_V3:parc_ou_reserve",
-                        "Parcs et réserves naturelles",
-                        "Parks and nature reserves"),
-    # ── Toponymie / lieux ─────────────────────────────────────────────────────
-    "lieux_dits":      ("BDTOPO_V3:lieu_dit_non_habite",
-                        "Lieux-dits non habités (toponymie historique)",
-                        "Uninhabited place names (historical toponymy)"),
-    # ── Admin ─────────────────────────────────────────────────────────────────
-    "communes":        ("BDTOPO_V3:commune",
-                        "Limites communales",
-                        "Municipal boundaries"),
-    # ── Agriculture ───────────────────────────────────────────────────────────
-    "rpg":             ("RPG.LATEST:parcelles_graphiques",
-                        "Registre Parcellaire Graphique (cultures)",
-                        "Graphic Parcel Register (RPG, crops)"),
-}
+from _vector_cli import COUCHES_WFS
 
 WFS_PAGE = 1000   # features par requête (limite serveur IGN — WFS_URL défini ligne ~1274)
 
@@ -5826,6 +5560,11 @@ _HIST_RUN_ID    = ""
 _HIST_T_DEBUT   = 0.0
 _HIST_FINALIZED = False
 
+from _history_cli import (
+    DependancesCfgDepuisArgv as _DependancesCfgDepuisArgv,
+    cfg_depuis_argv as _cfg_depuis_argv_impl,
+)
+
 
 def _hist_disabled() -> bool:
     """Historique réservé aux runs pilotés par le GUI.
@@ -5843,152 +5582,14 @@ def _hist_disabled() -> bool:
 
 def _cfg_depuis_argv() -> dict:
     """Construit le cfg JSON depuis sys.argv. Clés attendues par loadConfig() JS."""
-    argv = sys.argv[1:]
-
-    # Helpers variadiques : acceptent plusieurs orthographes du même flag
-    # (anglais canonique + alias français) et prennent la 1re présente dans argv.
-    def _arg(*flags, default=""):
-        for flag in flags:
-            try: return argv[argv.index(flag) + 1]
-            except (ValueError, IndexError): continue
-        return default
-
-    def _arg_int(*flags, default=0):
-        v = _arg(*flags, default="")
-        try: return int(v) if v else default
-        except ValueError: return default
-
-    def _arg_float(*flags, default=0.0):
-        v = _arg(*flags, default="")
-        try: return float(v) if v else default
-        except ValueError: return default
-
-    def _flag(*flags): return any(f in argv for f in flags)
-
-    def _args_after(*flags):
-        """Retourne tous les args après le 1er flag présent jusqu'au prochain -- ou fin."""
-        for flag in flags:
-            try:
-                i = argv.index(flag) + 1
-            except ValueError:
-                continue
-            result = []
-            while i < len(argv) and not argv[i].startswith("--"):
-                result.append(argv[i])
-                i += 1
-            return result
-        return []
-
-    t = ("lidar"   if _flag("--lidar", "--ignlidar")   else
-         "scan"    if _flag("--raster", "--ignraster")  else
-         "vecteur" if _flag("--vector", "--ignvecteur") else
-         "osm"     if _flag("--osm")        else
-         "fusion"  if _flag("--merge", "--fusionner")  else
-         "decoupe" if _flag("--split", "--decouper")   else "lidar")
-
-    mode = ("region" if _flag("--zone-region")      else
-            "dep"  if _flag("--zone-department", "--zone-departement") else
-            "gps"  if _flag("--zone-gps")         else
-            "bbox" if _flag("--zone-bbox")         else "ville")
-
-    fmts = _args_after("--file-formats", "--formats-fichier")
-    ombs = _args_after("--shadings", "--ombrages")
-    _source_cli = _arg("--source")
-    _maintenance_cli = _flag(
-        "--tiles-purge-invalid", "--dalles-purger-invalides",
-        "--tiles-purge-out-of-zone", "--dalles-purger-hors-zone",
-        "--shadings-compress", "--ombrages-compresser",
+    return _cfg_depuis_argv_impl(
+        sys.argv[1:],
+        dependances=_DependancesCfgDepuisArgv(
+            provider=PROVIDER,
+            svf_gamma=SVF_GAMMA,
+            rediger_secrets=_rediger_secrets,
+        ),
     )
-    _produit_cli = bool(
-        ombs or fmts or _flag("--shading", "--shading-preset")
-    )
-    _lidar_standard = (
-        t == "lidar" and not _source_cli
-        and not (_maintenance_cli and not _produit_cli)
-    )
-    if (_lidar_standard and not ombs
-            and not _flag("--shading", "--shading-preset")):
-        ombs = ["lrm"]
-    if (_lidar_standard and not fmts
-            and (ombs and not any(v in ombs for v in ("aucun", "none"))
-                 or _flag("--shading", "--shading-preset"))):
-        fmts = ["mbtiles"]
-
-    return {
-        # Provider — pris du global déjà résolu (PROVIDER.CODE), car _load_provider
-        # a strippé --provider de sys.argv ; _arg("--provider") ne le verrait plus.
-        "provider": PROVIDER.CODE,
-        # Zone
-        "type":    t,
-        "mode":    mode,
-        "nom":     _arg("--zone-name", "--zone-nom"),
-        "dossier": _arg("--output-dir", "--dossier"),
-        "cache_dir": _arg("--cache-dir", "--dossier-cache"),
-        "production_dir": _arg("--production-dir", "--dossier-production"),
-        "dep":     _arg("--zone-department", "--zone-departement"),
-        "region":  _arg("--zone-region"),
-        "ville":   _arg("--zone-city", "--zone-ville"),
-        "gps":     _arg("--zone-gps"),
-        "bbox":    _arg("--zone-bbox"),
-        "zone_width": _arg_float("--zone-width", "--zone-largeur", default=20.0),
-        # LiDAR
-        "tel":           (_flag("--download", "--telechargement")
-                          or (_lidar_standard
-                              and not _flag("--no-download",
-                                            "--no-telechargement"))),
-        # Compression ON par defaut : seule la NEGATION apparait dans argv
-        "comp":          not _flag("--no-download-compress",
-                                   "--no-telechargement-compresser"),
-        "ecraser_tel":   _flag("--download-overwrite", "--telechargement-ecraser"),
-        # --workers est UNIQUE en ligne de commande mais la GUI a un champ par
-        # type : ne l'appliquer qu'au champ du type réellement lancé, sinon un
-        # run LiDAR `--workers 8` repeuplait aussi le champ vecteur (plafonné à
-        # 4) et le champ OSM. Même conditionnement que osm_tags_sel /
-        # wfs_couches_sel plus bas, qui l'avaient déjà.
-        "workers_l":     _arg_int("--workers", default=8) if t == "lidar" else 8,
-        "laz_parallel":  _arg_int("--laz-parallel", default=1),
-        "dossier_dalles":_arg("--tiles-dir", "--dossier-dalles"),
-        "no_omb":        bool(ombs) or _flag("--shadings", "--ombrages", "--shading"),
-        "ombrages":      ombs,
-        # --shading répétable : collecter CHAQUE occurrence (contrairement à
-        # _arg qui ne prend que la première).
-        "shading_specs": [argv[i + 1] for i, a in enumerate(argv)
-                          if a == "--shading" and i + 1 < len(argv)],
-        "elevation":     _arg_int("--shading-elevation", "--ombrages-elevation", default=25),
-        "svf_conv":      _arg("--svf-conv") or "flux",
-        "svf_dist":      _arg_float("--svf-dist", default=20.0),
-        "svf_gamma":     _arg_float("--svf-gamma", default=SVF_GAMMA),
-        "sweep_horizon": True,  # coché par défaut (sweep-horizon SVF)
-        "ecraser_omb":   _flag("--shadings-overwrite", "--ombrages-ecraser"),
-        "mbtiles_l":     "mbtiles" in fmts,
-        "rmap":          "rmap"    in fmts,
-        "sqlitedb":      "sqlitedb" in fmts,
-        "zoom_min_l":    _arg_int("--zoom-min", default=8),
-        "zoom_max_l":    _arg_int("--zoom-max", default=18),
-        "qualite_l":     _arg_int("--image-quality", "--qualite-image", default=85),
-        "ecraser_mbt":   _flag("--tiles-overwrite", "--tuiles-ecraser"),
-        "cols_decoupe":  _arg_int("--split-cols", "--cols-decoupe", default=1),
-        "rows_decoupe":  _arg_int("--split-rows", "--rows-decoupe", default=1),
-        "split_width_l": _arg_float("--split-width", "--split-largeur", default=0.0),
-        "nettoyage":     _flag("--cleanup", "--nettoyage"),
-        # IGN Raster
-        "couche":        _arg("--layer", "--couche"),
-        "zoom_min_s":    _arg_int("--zoom-min", default=12),
-        "zoom_max_s":    _arg_int("--zoom-max", default=16),
-        "mbtiles_s":     "mbtiles" in fmts,
-        "rmap_s":        "rmap"    in fmts,
-        "sqlitedb_s":    "sqlitedb" in fmts,
-        "qualite_s":     _arg_int("--image-quality", "--qualite-image", default=85),
-        "workers_s":     _arg_int("--workers", default=8) if t == "scan" else 8,
-        # OSM
-        "osm_tags_sel":  _args_after("--layer", "--couche") if t == "osm" else [],
-        "workers_osm":   _arg_int("--workers", default=4) if t == "osm" else 4,
-        # IGN Vectoriel
-        "wfs_couches_sel": _args_after("--layer", "--couche") if t == "vecteur" else [],
-        "workers_v":     min(_arg_int("--workers", default=4), 4) if t == "vecteur" else 4,
-        # Argv complet pour debug (clés API masquées)
-        "argv":    _rediger_secrets(" ".join(argv)),
-    }
 
 
 def _historique_debut() -> str:
@@ -6443,110 +6044,217 @@ def main_serve():
         sys.exit(0)
 
 
-def lancer_gui():
-    """
-    GUI PyWebView — fenêtre native affichant un formulaire HTML/CSS/JS.
-    Communication bidirectionnelle via l'objet Api exposé à JavaScript.
-    """
-    # threading et queue : imports module-level (l'ancien ré-import local
-    # shadowait les mêmes modules sans raison).
+_CHEMIN_CFG_CLES = ("dossier", "cache_dir", "production_dir")
 
-    # ── Sélection du backend GUI ───────────────────────────────────────────
-    # Forcer le backend Qt AVANT l'import de webview sur les 3 OS (pywebview
-    # peut lire PYWEBVIEW_GUI dès l'import) :
-    #   macOS   : évite Cocoa (NSScreen None en SSH+VNC -> crash).
-    #   Windows : évite WinForms/pythonnet (régression 3.1.0 -> GUI gelée).
-    #   Linux   : Qt est le seul backend viable.
-    # En frozen, le runtime hook la pose déjà ; ceci fiabilise le mode dev.
-    if platform.system() in ("Darwin", "Windows", "Linux"):
-        os.environ.setdefault("PYWEBVIEW_GUI", "qt")
+
+def _valider_cfg_web(cfg: dict) -> str:
+    """Chaîne d'erreur si un chemin de ``cfg`` est refusé, "" sinon.
+
+    launch()/start_share() exposées en HTTP : les chemins de cfg ne
+    viennent plus du même process de confiance que web_bridge.js (avant,
+    JS et Python co-localisés dans pywebview se faisaient mutuellement
+    confiance). Pas un système de permissions complet (Nico : "reste
+    simple") - juste un garde-fou contre un chemin manifestement dangereux
+    (racine d'un disque, dossier système), pas une validation métier."""
+    if not isinstance(cfg, dict):
+        return "cfg invalide"
+    interdits = set()
+    for p in ("/", "/etc", "/bin", "/usr", "/System", "/Windows",
+              "C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)"):
+        try:
+            if Path(p).exists():
+                interdits.add(Path(p).resolve())
+        except OSError:
+            pass
+    for cle in _CHEMIN_CFG_CLES:
+        valeur = cfg.get(cle)
+        if not valeur:
+            continue
+        try:
+            resolu = Path(str(valeur)).expanduser().resolve()
+        except (OSError, ValueError):
+            return f"{cle} invalide"
+        if resolu in interdits or resolu.parent == resolu:  # racine d'un disque
+            return f"{cle} vise un dossier système"
+    return ""
+
+
+def main_serve_gui():
+    """Mode par défaut (lancement sans argument) ainsi que --serve-gui
+    explicite : sert gui/index.html + app.js + style.css sur HTTP local et
+    ouvre le navigateur dessus, comme blink2video (serve.py, --open-browser
+    - ici actif par défaut, --no-browser pour le désactiver). Seul mode GUI :
+    pywebview a été retiré (plus d'import webview/PyQt6/QtWebEngine nulle
+    part). Une seule instance d'Api pour toute la durée du process : launch/
+    stop/poll_log partagent son état (subprocess en cours, queue de log)."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="lidar2map.py --serve-gui",
+        description="Sert le GUI lidar2map sur HTTP local (navigateur). "
+                     "Mode par défaut d'un lancement sans argument.")
+    parser.add_argument("--serve-gui", action="store_true", help="Mode serveur web (ce mode)")
+    parser.add_argument("--port", type=int, default=8766, metavar="N",
+                        help="Port d'écoute (défaut 8766)")
+    parser.add_argument("--bind", default="127.0.0.1", metavar="ADRESSE",
+                        help="Adresse d'écoute (défaut 127.0.0.1, boucle locale uniquement)")
+    parser.add_argument("--trusted-host", default="", metavar="HOTE",
+                        help="Hôte additionnel de confiance (ex. via un tunnel Tailscale/WireGuard), "
+                             "même usage que --trusted-host dans blink2video")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="Ne pas ouvrir automatiquement le navigateur (usage scripté)")
+    args = parser.parse_args()
+
+    import _serve_web
+    gui_dir = _resoudre_gui_dir()
+    api = Api()
+
+    def _launch(cfg):
+        erreur = _valider_cfg_web(cfg or {})
+        if erreur:
+            return {"error": erreur}
+        return api.launch(cfg or {})
+
+    def _stop(payload):
+        payload = payload or {}
+        return {"result": api.stop(bool(payload.get("stop_remote")),
+                                   bool(payload.get("purge_remote")))}
+
+    def _start_share(cfg):
+        erreur = _valider_cfg_web(cfg or {})
+        if erreur:
+            return {"ok": False, "error": erreur}
+        return api.start_share(cfg or {})
+
+    def _set_lang(payload):
+        return api.set_lang((payload or {}).get("code"))
+
+    def _set_ui_zoom(payload):
+        return api.set_ui_zoom((payload or {}).get("z"))
+
+    def _open_folder(payload):
+        api.open_folder((payload or {}).get("path", ""))
+        return {"ok": True}
+
 
     try:
-        import webview
-    except ImportError:
-        print("  PyWebView missing - automatic install...")
-        # PyWebView nécessite un backend natif :
-        #   Windows : WebView2 (préinstallé Win10+)         → "pywebview"
-        #   macOS   : Cocoa WebKit (préinstallé)            → "pywebview"
-        #   Linux   : QtWebEngine via PyQt6 (recommandé)    → "pywebview[qt6]"
-        #             alternative : GTK via pygobject       → "pywebview[gtk]"
-        #
-        # Sur Linux, sans extra, pywebview lève RuntimeError au démarrage
-        # ("No suitable backend found"). On utilise [qt6] (et non [qt] qui
-        # fait du PyQt5 dans pywebview < 6.0) pour rester cohérent avec
-        # _installer_deps + lidar2map_mac.spec qui sont sur PyQt6.
-        # [gtk] nécessiterait des paquets système (libgirepository1.0-dev,
-        # gir1.2-webkit2-4.0…) et n'est donc pas le défaut.
-        if LINUX:
-            pkg = "pywebview[qt6]"
-        else:
-            pkg = "pywebview"
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", pkg,
-                            "--break-system-packages", "-q"], check=True, timeout=600)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            # Fallback : tenter sans --break-system-packages (envs Conda/venv).
-            # Un échec/timeout ici ne doit pas crasher : on laisse l'import
-            # webview ci-dessous échouer proprement avec un message clair.
+        server = _serve_web.demarrer(
+            bind=args.bind, port=args.port, trusted_host=args.trusted_host.strip(),
+            gui_dir=gui_dir,
+            api_routes={
+                "init": _api_get_init_data,
+                "historique": _lire_historique,
+                "usage": _api_get_usage,
+                "last-error": api.get_last_error,
+                "check-update": api.check_update,
+                "poll-log": api.poll_log,
+                "autocomplete-ville": api.autocomplete_ville,
+                "browse-dir": _api_browse_dir,
+                "help": api.get_help,
+                "projets": api.get_projets,
+            },
+            post_routes={
+                "launch": _launch,
+                "stop": _stop,
+                "clear-historique": lambda _payload: api.clear_historique(),
+                "set-lang": _set_lang,
+                "set-ui-zoom": _set_ui_zoom,
+                "start-share": _start_share,
+                "stop-share": lambda _payload: api.stop_share(),
+                "open-folder": _open_folder,
+            },
+        )
+    except OSError as e:
+        print(f"  Could not listen on {args.bind}:{args.port}: {e}")
+        print("  (another instance already running on this port?)")
+        sys.exit(1)
+
+    # Toujours 127.0.0.1 pour l'ouverture, même si --bind écoute ailleurs
+    # (accès LAN) : le navigateur ouvert est celui de CETTE machine, même
+    # convention que blink2video (serve.py, même commentaire).
+    url = f"http://127.0.0.1:{args.port}/"
+    print(f"  lidar2map web GUI: {url}")
+    if args.trusted_host:
+        print(f"  Trusted host: {args.trusted_host} (also reachable through it)")
+    if args.bind not in ("127.0.0.1", "localhost"):
+        print(f"  WARNING: listening on {args.bind} — reachable by other devices "
+              f"on the network at http://<this-machine-ip>:{args.port}/, "
+              f"with no login of any kind.")
+    print("  Ctrl+C to stop.")
+    if not args.no_browser:
+        import webbrowser
+        # Délai : laisser le serveur réellement démarrer avant l'ouverture
+        # (thread non bloquant, mêmes paramètres que blink2video).
+        threading.Timer(0.5, webbrowser.open, [url]).start()
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        proc = getattr(api, "_process", None)
+        if proc and proc.poll() is None:
+            print("  Server stopping - stopping the running job...", flush=True)
+            api.stop()
             try:
-                subprocess.run([sys.executable, "-m", "pip", "install", pkg, "-q"],
-                               check=True, timeout=600)
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as _e_wv:
-                print(f"  PyWebView install failed ({type(_e_wv).__name__}).")
-        try:
-            import webview
-        except ImportError:
-            if LINUX:
-                print("  ERROR: pywebview installed but without a working backend.")
-                print("  On Linux, also install the required system packages:")
-                print("    Debian/Ubuntu : sudo apt install python3-pyqt6 python3-pyqt6.qtwebengine")
-                print("    Fedora/RHEL   : sudo dnf install python3-pyqt6 python3-pyqt6-webengine")
-                print("    Arch          : sudo pacman -S python-pyqt6 python-pyqt6-webengine")
-            raise
+                proc.wait(timeout=20)
+            except Exception:
+                pass
+        server.shutdown()
+        server.server_close()
+        print("\n  Web GUI server stopped.")
+        sys.exit(0)
 
-    # Supprimer les warnings internes pywebview (AccessibilityObject, COM, etc.)
-    import logging as _logging
-    for _name in ("pywebview", "pywebview.window", "pywebview.util",
-                  "pywebview.platforms", "pywebview.js"):
-        _lg = _logging.getLogger(_name)
-        _lg.setLevel(_logging.CRITICAL)
-        _lg.handlers.clear()
-        _lg.propagate = False
 
-    # En mode frozen, l'exe est son propre lanceur (pas de python + .py).
-    SCRIPT  = (Path(sys.executable).resolve()
-               if getattr(sys, "frozen", False)
-               else Path(__file__).resolve())
+# ── Table zooms pour la sélection de couche ───────────────────────────────
+# NB : _lire_zoom_limites_wmts() interroge GetCapabilities au runtime et
+# corrige automatiquement ces valeurs si elles diffèrent de la réalité.
+# Cette table sert seulement à pré-remplir la GUI. Au niveau module (et non
+# locale à une fonction) pour que _api_get_init_data() reste appelable
+# directement, sans dépendance à pywebview (retiré).
+_ZOOMS_GUI = {
+    "scan25": (8, 16), "scan25tour": (8, 16), "scan100": (6, 14),
+    "scanoaci": (6, 15), "planign": (6, 18), "etatmajor40": (6, 15),
+    "etatmajor10": (8, 16), "pentes": (6, 14), "ortho": (10, 20),
+    "cadastre": (12, 19), "ombrage": (6, 14),
+    # Orthos historiques métropole (résolution dégradée vs ortho actuelle)
+    "ortho_1950": (10, 18), "ortho_1965": (10, 18), "ortho_1980": (10, 18),
+    # Infrarouge couleur (couverture identique à ortho)
+    "ortho_irc": (10, 19),
+    # Satellite : résolution plus faible que aérien → zoom max plus bas
+    "pleiades": (10, 19), "spot": (8, 16),
+    # EDUGEO : couverture restreinte aux centres urbains, zooms élevés
+    "edugeo_marseille_1969": (12, 18), "edugeo_marseille_1980": (12, 18),
+    "edugeo_marseille_1987": (12, 18), "edugeo_marseille_1988": (12, 18),
+    "edugeo_marseille_2010": (12, 18), "edugeo_toulon_1972": (12, 18),
+    # USGS Imagery (USA) : cache complet jusqu'à z16 (~1.8 m), partiel au-delà.
+    "naip": (11, 16),
+}
 
-    # ── Table zooms pour la sélection de couche ───────────────────────────────
-    # NB : _lire_zoom_limites_wmts() interroge GetCapabilities au runtime et
-    # corrige automatiquement ces valeurs si elles diffèrent de la réalité.
-    # Cette table sert seulement à pré-remplir la GUI.
-    _ZOOMS_GUI = {
-        "scan25": (8, 16), "scan25tour": (8, 16), "scan100": (6, 14),
-        "scanoaci": (6, 15), "planign": (6, 18), "etatmajor40": (6, 15),
-        "etatmajor10": (8, 16), "pentes": (6, 14), "ortho": (10, 20),
-        "cadastre": (12, 19), "ombrage": (6, 14),
-        # Orthos historiques métropole (résolution dégradée vs ortho actuelle)
-        "ortho_1950": (10, 18), "ortho_1965": (10, 18), "ortho_1980": (10, 18),
-        # Infrarouge couleur (couverture identique à ortho)
-        "ortho_irc": (10, 19),
-        # Satellite : résolution plus faible que aérien → zoom max plus bas
-        "pleiades": (10, 19), "spot": (8, 16),
-        # EDUGEO : couverture restreinte aux centres urbains, zooms élevés
-        "edugeo_marseille_1969": (12, 18), "edugeo_marseille_1980": (12, 18),
-        "edugeo_marseille_1987": (12, 18), "edugeo_marseille_1988": (12, 18),
-        "edugeo_marseille_2010": (12, 18), "edugeo_toulon_1972": (12, 18),
-        # USGS Imagery (USA) : cache complet jusqu'à z16 (~1.8 m), partiel au-delà.
-        "naip": (11, 16),
-    }
+# ── Données statiques exposées au formulaire ──────────────────────────────
+# Tables statiques pures (aucune dépendance à COUCHES/COUCHES_WFS, donc
+# sûres au niveau module) : _COUCHES_DATA/_WFS_DATA restent construites à
+# l'appel dans _api_get_init_data(), pas ici - voir son commentaire.
+_COUCHES_PRIVEES = {"scan25", "scan25tour", "scan100", "scanoaci"}
+_COUCHES_LABELS = {"naip": "USGS Imagery (USA, ~1 m)"}
+# Pays propriétaire de chaque couche raster (filtre l'onglet selon le provider).
+_COUCHES_PAYS = {"naip": "us"}   # défaut "fr" (couches IGN)
+_OSM_TAGS_DATA = [
+    {"tag": "highway=*",              "label": "Routes/chemins"},
+    {"tag": "waterway=*",             "label": "Cours d'eau"},
+    {"tag": "natural=water",          "label": "Plans d'eau"},
+    {"tag": "natural=*",              "label": "Naturel (tout)"},
+    {"tag": "boundary=administrative","label": "Limites admin"},
+    {"tag": "landuse=*",              "label": "Occupation sol"},
+    {"tag": "building=*",             "label": "Bâtiments"},
+    {"tag": "historic=*",             "label": "Historique"},
+]
 
-    # ── Données statiques exposées au formulaire ──────────────────────────────
-    _COUCHES_PRIVEES = {"scan25", "scan25tour", "scan100", "scanoaci"}
-    _COUCHES_LABELS = {"naip": "USGS Imagery (USA, ~1 m)"}
-    # Pays propriétaire de chaque couche raster (filtre l'onglet selon le provider).
-    _COUCHES_PAYS = {"naip": "us"}   # défaut "fr" (couches IGN)
-    _COUCHES_DATA = [
+
+def _api_get_init_data():
+    # couches/wfs reconstruits ICI (pas des constantes figées à l'import) :
+    # COUCHES/COUCHES_WFS sont une façade relisable (voir
+    # test_parser_runner_and_gui_read_the_facade_catalog), au même titre que
+    # pour le parser CLI et le pré-run WFS - un catalogue patché après coup
+    # (tests, changement de provider) doit se refléter ici aussi.
+    couches_data = [
         {"code": k,
          "label": f"{'⚠ [PRO] ' if k in _COUCHES_PRIVEES else ''}{k}  "
                   f"({_COUCHES_LABELS.get(k, v[0])})",
@@ -6556,1187 +6264,119 @@ def lancer_gui():
          "pays":       _COUCHES_PAYS.get(k, "fr")}
         for k, v in COUCHES.items()
     ]
-    _WFS_DATA = [{"alias": k, "label": v[1]} for k, v in COUCHES_WFS.items()]
-    _OSM_TAGS_DATA = [
-        {"tag": "highway=*",              "label": "Routes/chemins"},
-        {"tag": "waterway=*",             "label": "Cours d'eau"},
-        {"tag": "natural=water",          "label": "Plans d'eau"},
-        {"tag": "natural=*",              "label": "Naturel (tout)"},
-        {"tag": "boundary=administrative","label": "Limites admin"},
-        {"tag": "landuse=*",              "label": "Occupation sol"},
-        {"tag": "building=*",             "label": "Bâtiments"},
-        {"tag": "historic=*",             "label": "Historique"},
-    ]
+    wfs_data = [{"alias": k, "label": v[1]} for k, v in COUCHES_WFS.items()]
+    return {
+        "couches":    couches_data,
+        "wfs":        wfs_data,
+        "osm_tags":   _OSM_TAGS_DATA,
+        "apikey_def": APIKEY_DEFAUT,
+        "historique": _lire_historique(),
+        "providers":  _discover_providers(),
+        "active_provider": PROVIDER.CODE,
+        "resolution_m": RESOLUTION_M,   # défaut LRM/RRIM = 15 px × résolution
 
-    # ── Classe API exposée à JavaScript ──────────────────────────────────────
-    def _classify_err(line: str) -> bool:
-        """True si la ligne ressemble à une erreur (ERREUR/Error/Traceback/argparse).
-
-        Utilisé par les 3 sites de drain stdout du subprocess pour rester
-        synchronisés — sans cette factorisation, une évolution du heuristique
-        ne se propageait qu'à un site sur trois.
-        """
-        upbuf = line.upper()
-        return (
-            any(w in upbuf for w in ("ERREUR", "ERROR", "TRACEBACK"))
-            or line.strip().startswith("usage:")
-            or ": error:" in line
-        )
-
-    class Api:
-        def __init__(self):
-            self._process   = None
-            self._log_queue = queue.Queue()
-            self._done      = False
-            self._retcode   = None
-            self.window     = None  # injecté par pywebview au démarrage
-            # Lock pour les attributs partagés entre le thread d'écoute du
-            # subprocess (run) et le thread main (poll_log, get_last_error).
-            # Le GIL protège les opérations atomiques ; le lock protège la
-            # cohérence multi-attributs (ex: lire _retcode et _modal_error_msg
-            # ensemble doit voir l'état stable d'un même moment).
-            self._lock = threading.Lock()
-            self._err_lines       = []
-            self._tail_lines      = []
-            self._modal_error_msg = ""
-            self._partage         = _PartageServeur()   # transfert LAN vers téléphone
-            self._stop_t          = None   # horodatage de la demande d'arrêt (stop)
-            self._reader_t        = None   # thread lecteur stdout du run courant
-            # Verrou + drapeau anti-double-lancement : launch() décide sous ce
-            # verrou et pose _launching AVANT de rendre la main. Sans ça, deux
-            # clics rapides lisaient tous deux _process=None (le subprocess
-            # n'étant créé que plus tard) et lançaient deux traitements.
-            self._launch_lock     = threading.Lock()
-            self._launching       = False
-
-        # ── Données initiales ─────────────────────────────────────────────
-        def get_init_data(self):
-            return {
-                "couches":    _COUCHES_DATA,
-                "wfs":        _WFS_DATA,
-                "osm_tags":   _OSM_TAGS_DATA,
-                "apikey_def": APIKEY_DEFAUT,
-                "historique": _lire_historique(),
-                "providers":  _discover_providers(),
-                "active_provider": PROVIDER.CODE,
-                "resolution_m": RESOLUTION_M,   # défaut LRM/RRIM = 15 px × résolution
-
-                "regions":    _regions_disponibles(),
-                "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
-                "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
-            }
-
-        def get_help(self):
-            """Texte affiché par le bouton Aide du GUI : le docstring d'usage du
-            module (source UNIQUE — le même bloc qui documente les modes et les
-            paramètres CLI en tête de fichier). Pas de copie à maintenir."""
-            import sys as _sys
-            return (_sys.modules[__name__].__doc__ or "").strip()
-
-        def get_usage(self, cfg=None):
-            """Onglet Usage (LECTURE SEULE) : tailles des 3 tiers (cache /
-            production / projets) + leurs sous-dossiers, pour un ménage MANUEL
-            via l'explorateur (bouton open_folder). Ne supprime rien — le cache
-            est partagé entre projets, une purge auto risquerait de jeter des
-            dalles qu'un autre projet réutilise (règle Nico : nettoyage manuel).
-            Prend les racines custom du formulaire (cache_dir/production_dir) si
-            posées, sinon les défauts."""
-            cfg = cfg or {}
-            def _walk(p):
-                total = 0
-                try:
-                    for r, _dirs, files in os.walk(p):
-                        for f in files:
-                            try:
-                                total += (Path(r) / f).stat().st_size
-                            except OSError:
-                                pass
-                except OSError:
-                    pass
-                return total
-            def _children(root):
-                out = []
-                try:
-                    for d in sorted(root.iterdir()):
-                        if d.is_dir():
-                            out.append({"label": d.name, "path": str(d),
-                                        "bytes": _walk(d)})
-                except OSError:
-                    pass
-                return out
-            def _tier(key, label, root):
-                root = Path(root)
-                ok = root.exists()
-                return {"key": key, "label": label, "path": str(root),
-                        "exists": ok,
-                        "bytes": _walk(root) if ok else 0,
-                        "children": _children(root) if ok else []}
-            cache = (Path(cfg["cache_dir"]).expanduser()
-                     if cfg.get("cache_dir") else DOSSIER_CACHE)
-            prod = (Path(cfg["production_dir"]).expanduser()
-                    if cfg.get("production_dir") else DOSSIER_PRODUCTION)
-            projets = DOSSIER_TRAVAIL / "Projets"
-            return {"tiers": [
-                _tier("cache", "Cache", cache),
-                _tier("production", "Production", prod),
-                _tier("projets", "Projets", projets),
-            ]}
-
-        # ── Partage LAN vers le téléphone (QR) ────────────────────────────
-        def start_share(self, cfg=None):
-            """Sert les livrables du dernier run (ou de `cfg`) sur le LAN.
-            Renvoie {ok, url, fichiers} ou {ok:False, error}."""
-            cfg = cfg or getattr(self, "_cfg_launch", None) or {}
-            nom = (cfg.get("nom") or "").strip()
-            if not nom:
-                return {"ok": False, "error": "Aucun projet : lance d'abord une génération."}
-            # Miroir exact du routage du pipeline : slug minuscule en sortie
-            # automatique, dossier direct avec un --output-dir personnalisé.
-            proj = _dossier_partage_projet(nom, cfg.get("dossier"))
-            fichiers = _livrables_projet(proj)
-            if not fichiers:
-                return {"ok": False,
-                        "error": f"Aucun livrable (sqlitedb/rmap/mbtiles/map) dans {proj}"}
-            try:
-                url = self._partage.demarrer(fichiers)
-            except Exception as e:
-                return {"ok": False, "error": f"Partage impossible : {e}"}
-            # Liste du serveur (dédupliquée, ordre par récence) : le modal PC
-            # affiche exactement ce que la page téléphone sert.
-            return {"ok": True, "url": url, "fichiers": self._partage.fichiers}
-
-        def stop_share(self):
-            try:
-                self._partage.arreter()
-            except Exception:
-                pass
-            return {"ok": True}
-
-        def get_projets(self, dossier=None):
-            """Noms des projets existants (sous-dossiers de Projets/, ou du
-            dossier de sortie custom), récents d'abord. Alimente la datalist
-            du champ Nom (combobox éditable : saisie libre + suggestions)."""
-            try:
-                dirs = [d for d in _base_projets(dossier).iterdir() if d.is_dir()]
-                dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
-            except OSError:
-                return []
-            return [d.name for d in dirs]
-
-        def get_historique(self):
-            """Retourne la liste historique — appelable depuis JS à tout moment."""
-            return _lire_historique()
-
-        def clear_historique(self):
-            """Vide intégralement l'historique (action destructive — la confirmation
-            est gérée côté JS via confirm() avant l'appel)."""
-            try:
-                _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
-                return {"ok": True}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
-
-        def set_lang(self, code):
-            """Persiste l'override manuel de langue de l'UI (toggle FR/EN).
-            'fr' ou 'en' ; toute autre valeur est ignorée."""
-            if code not in ("fr", "en"):
-                return {"ok": False, "error": "lang invalide"}
-            return {"ok": _ecrire_pref("lang", code)}
-
-        def set_ui_zoom(self, z):
-            """Persiste le zoom de l'interface (Ctrl+molette / Ctrl+±),
-            restauré au prochain lancement via get_init_data. Borné 0.5–2.5."""
-            try:
-                z = float(z)
-            except (TypeError, ValueError):
-                return {"ok": False, "error": "zoom invalide"}
-            if not (0.5 <= z <= 2.5):
-                return {"ok": False, "error": "zoom hors plage"}
-            return {"ok": _ecrire_pref("ui_zoom", round(z, 2))}
-
-        # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
-        # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
-        # WebView2 traite mal vis-à-vis du CORS — on relaie ici en Python.
-        # FR : Geoplateforme BAN (rapide, précis pour communes françaises)
-        # Hors FR : Nominatim avec countrycodes=<pays> pour scoper à un pays
-        def autocomplete_ville(self, prefix, country="fr"):
-            try:
-                p = (prefix or "").strip()
-                if len(p) < 3:
-                    return []
-                country = (country or "fr").lower()
-                if country == "fr":
-                    url = ("https://data.geopf.fr/geocodage/search/"
-                           f"?q={urllib.parse.quote(p)}"
-                           "&type=municipality&autocomplete=1&limit=8")
-                    req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-                    with urllib.request.urlopen(req, timeout=3) as r:
-                        data = json.load(r)
-                    out = []
-                    for f in data.get("features", []):
-                        props = f.get("properties", {}) or {}
-                        label = props.get("name") or props.get("label") or ""
-                        if label:
-                            out.append({"label": label,
-                                        "context": props.get("context", "")})
-                    return out
-                # Non-FR : Nominatim international, filtre par pays
-                url = ("https://nominatim.openstreetmap.org/search"
-                       f"?q={urllib.parse.quote(p)}"
-                       f"&countrycodes={country}&format=json&limit=8&addressdetails=1")
-                req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
-                with urllib.request.urlopen(req, timeout=5) as r:
-                    data = json.load(r)
-                out = []
-                for item in data:
-                    addr = item.get("address", {}) or {}
-                    label = (addr.get("city") or addr.get("town")
-                             or addr.get("village") or addr.get("municipality")
-                             or item.get("display_name", "").split(",")[0])
-                    if label:
-                        ctx_parts = [addr.get(k) for k in ("state", "country") if addr.get(k)]
-                        out.append({"label": label,
-                                    "context": ", ".join(ctx_parts)})
-                return out
-            except Exception:
-                return []
-
-        # ── Dialogs fichiers ─────────────────────────────────────────────
-        def _get_window(self):
-            if self.window is None and webview.windows:
-                self.window = webview.windows[0]
-            return self.window
-
-        def pick_dir(self, start="", kind=""):
-            """Sélecteur de dossier, positionné sur le dossier COURANT du champ
-            (start) ou, si vide (« (auto) »), sur la racine par défaut du tier
-            (output/cache/production), créée si absente pour que le dialog s'y
-            ouvre. Le dossier choisi est renvoyé au JS qui le pose dans le champ."""
-            w = self._get_window()
-            if not w: return ""
-            s = (start or "").strip()
-            if not s:
-                s = str({"cache": DOSSIER_CACHE,
-                         "production": DOSSIER_PRODUCTION,
-                         "output": DOSSIER_TRAVAIL / "Projets"}.get(kind, DOSSIER_TRAVAIL))
-            try:
-                Path(s).mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-            try:
-                r = w.create_file_dialog(webview.FOLDER_DIALOG, directory=s)
-                return r[0] if r else ""
-            except Exception as e:
-                print(f"  pick_dir erreur : {e}")
-                return ""
-
-        def pick_file(self, multiple=False, exts=None):
-            w = self._get_window()
-            if not w: return [] if multiple else ""
-            types = tuple(exts) if exts else ()
-            try:
-                r = w.create_file_dialog(
-                    webview.OPEN_DIALOG, allow_multiple=multiple, file_types=types)
-                if not r: return [] if multiple else ""
-                return list(r) if multiple else r[0]
-            except Exception as e:
-                print(f"  pick_file erreur : {e}")
-                return [] if multiple else ""
-
-        # ── Construction de la commande CLI ──────────────────────────────
-        def _build_cmd(self, cfg):
-            # Frozen : l'exe est self-launching, on n'y prépose pas sys.executable.
-            cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
-                   else [sys.executable, str(SCRIPT)])
-            t = cfg.get("type", "lidar")
-
-            # Provider (multi-pays) — toujours explicite dans le subprocess.
-            # Le contrat CLI LiDAR l'exige, y compris pour fr-ign sélectionné
-            # par défaut dans la GUI.
-            if cfg.get("provider"):
-                cmd += ["--provider", cfg["provider"]]
-            # Mode LAZ (structures debout) : case + réglages ≠ défauts
-            # (la GUI n'envoie dfm_* que si modifiés, cf. app.js).
-            if cfg.get("laz"):
-                cmd += ["--laz"]
-                if cfg.get("laz_hmin"):
-                    cmd += ["--laz-hmin", str(cfg["laz_hmin"])]
-                if cfg.get("laz_hmax"):
-                    cmd += ["--laz-hmax", str(cfg["laz_hmax"])]
-                if cfg.get("laz_classes"):
-                    cmd += ["--laz-classes", str(cfg["laz_classes"])]
-                if cfg.get("laz_ground"):
-                    cmd += ["--laz-ground", str(cfg["laz_ground"])]
-                if cfg.get("laz_csf_threshold"):
-                    cmd += ["--laz-csf-threshold", str(cfg["laz_csf_threshold"])]
-                if cfg.get("laz_csf_resolution"):
-                    cmd += ["--laz-csf-resolution", str(cfg["laz_csf_resolution"])]
-                if cfg.get("laz_csf_rigidness"):
-                    cmd += ["--laz-csf-rigidness", str(cfg["laz_csf_rigidness"])]
-            # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
-            # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
-            if cfg.get("lidar_apikey"):
-                cmd += ["--api-key", cfg["lidar_apikey"]]
-
-            # Zone (pas pour fusion / découpe)
-            if t != "fusion" and t != "decoupe":
-                mode = cfg.get("mode", "ville")
-                if mode == "ville"  and cfg.get("ville"):
-                    cmd += ["--zone-city", cfg["ville"]]
-                elif mode == "gps"  and cfg.get("gps"):
-                    cmd += ["--zone-gps", cfg["gps"]]
-                elif mode == "bbox" and cfg.get("bbox"):
-                    cmd += ["--zone-bbox", cfg["bbox"]]
-                elif mode == "dep"  and cfg.get("dep"):
-                    cmd += ["--zone-department", cfg["dep"]]
-                elif mode == "region" and cfg.get("region"):
-                    cmd += ["--zone-region", cfg["region"]]
-                if cfg.get("zone_width") is not None and cfg["zone_width"] != "":
-                    cmd += ["--zone-width", str(cfg["zone_width"])]
-                if cfg.get("nom"):
-                    cmd += ["--zone-name", cfg["nom"]]
-                if cfg.get("dossier"):
-                    cmd += ["--output-dir", cfg["dossier"]]
-                # Dossier cache global (--cache-dir) : commun à tous les types,
-                # comme --output-dir. Propriété d'installation, saisi dans Projet.
-                if cfg.get("cache_dir"):
-                    cmd += ["--cache-dir", cfg["cache_dir"]]
-                # Dossier production (--production-dir) : racine des .tif LAZ
-                # (produits). Saisi dans Projet (ligne des racines), n'a d'effet
-                # qu'en mode LAZ, mais émis inconditionnellement comme --cache-dir.
-                if cfg.get("production_dir"):
-                    cmd += ["--production-dir", cfg["production_dir"]]
-
-            # ── LiDAR ────────────────────────────────────────────────────
-            if t == "lidar":
-                cmd.append("--lidar")
-                # Le CLI télécharge désormais les données manquantes par défaut.
-                # La GUI doit donc exprimer aussi le choix négatif : sans ce
-                # --no-download, décocher la case n'aurait plus aucun effet.
-                cmd.append("--download" if cfg.get("tel", True)
-                           else "--no-download")
-                # Compression ON par défaut côté CLI : n'émettre que la
-                # déviation (case décochée → --no-download-compress).
-                if not cfg.get("comp", True):
-                    cmd.append("--no-download-compress")
-                if cfg.get("ecraser_tel"): cmd.append("--download-overwrite")
-                if cfg.get("dossier_dalles"):
-                    cmd += ["--tiles-dir", cfg["dossier_dalles"]]
-                if cfg.get("workers_l"):
-                    cmd += ["--workers", str(cfg["workers_l"])]
-                # --laz-parallel : n'émettre que si explicitement > 1 (défaut 1 =
-                # sériel, sûr). Le champ GUI est borné (max 8) et n'apparaît qu'en
-                # mode LAZ ; le cœur affiche l'estimation RAM (~3 Go × N).
-                if cfg.get("laz_parallel", 1) and cfg["laz_parallel"] > 1:
-                    cmd += ["--laz-parallel", str(cfg["laz_parallel"])]
-                if cfg.get("no_omb"):
-                    ombs = cfg.get("ombrages", [])
-                    if ombs: cmd += ["--shadings"] + ombs
-                    # Instances paramétrées (shuttle list) — répétable
-                    for _spec in cfg.get("shading_specs", []) or []:
-                        cmd += ["--shading", str(_spec)]
-                    if cfg.get("elevation"):
-                        cmd += ["--shading-elevation", str(cfg["elevation"])]
-                    if cfg.get("svf_conv"):
-                        cmd += ["--svf-conv", str(cfg["svf_conv"])]
-                    if cfg.get("svf_dist"):
-                        cmd += ["--svf-dist", str(cfg["svf_dist"])]
-                    if cfg.get("svf_gamma"):
-                        cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
-                    if cfg.get("ecraser_omb"): cmd.append("--shadings-overwrite")
-                    # BooleanOptionalAction : émettre explicitement on/off.
-                    # Le sweep concerne désormais svf/opos/oneg (plus aucun
-                    # gate ray-cast forcé côté kernel). N'émettre le flag
-                    # global que si une de ces instances est présente : sinon
-                    # il fuit sur un run sans aucune d'elles (ex. hillshade
-                    # seul) et polluerait la commande sans effet utile.
-                    if any(str(s).startswith(("svf", "opos", "oneg"))
-                           for s in cfg.get("shading_specs", []) or []):
-                        cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
-                fmts = []
-                if cfg.get("mbtiles_l"): fmts.append("mbtiles")
-                if cfg.get("rmap"):      fmts.append("rmap")
-                if cfg.get("sqlitedb"):  fmts.append("sqlitedb")
-                if fmts:
-                    cmd += ["--file-formats"] + fmts
-                    if cfg.get("zoom_min_l"): cmd += ["--zoom-min", str(cfg["zoom_min_l"])]
-                    if cfg.get("zoom_max_l"): cmd += ["--zoom-max", str(cfg["zoom_max_l"])]
-                    if cfg.get("fmt_l") and cfg["fmt_l"] != "auto":
-                        cmd += ["--image-format", cfg["fmt_l"]]
-                    if cfg.get("qualite_l"): cmd += ["--image-quality", str(cfg["qualite_l"])]
-                    if cfg.get("ecraser_mbt"): cmd.append("--tiles-overwrite")
-                    # La case « 0 — Découpage à priori » est l'interrupteur :
-                    # décochée, on n'émet rien même si des valeurs traînent dans
-                    # les champs (elles sont conservées pour un recochage).
-                    _cols = cfg.get("cols_decoupe", 1) or 1
-                    _rows = cfg.get("rows_decoupe", 1) or 1
-                    if not cfg.get("decoupe", False):
-                        _cols = _rows = 1
-                    if _cols > 1 and _rows > 1:
-                        cmd += ["--split-cols", str(_cols),
-                                "--split-rows", str(_rows)]
-                    elif (cfg.get("decoupe", False)
-                          and cfg.get("split_width_l", 0) > 0):
-                        cmd += ["--split-width", str(cfg["split_width_l"])]
-                    if cfg.get("nettoyage"):
-                        cmd.append("--cleanup")
-                        # Posé par la file d'attente (renderFile/lancerFile) quand
-                        # une tâche ULTÉRIEURE retraite la même zone avec la même
-                        # source : on garde les dalles pour elle.
-                        if cfg.get("cleanup_keep_tiles"):
-                            cmd.append("--cleanup-keep-tiles")
-                    if cfg.get("min_free_gb", 0) > 0:
-                        cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
-                    # Sharding multi-VM : quelle tranche géographique CETTE
-                    # invocation traite (cf. section « Calcul distant » de
-                    # l'Exécution). Sans lien avec la case Découpage à
-                    # priori ci-dessus (un découpage interne au run), donc pas
-                    # gardé par cfg.get("decoupe").
-                    if cfg.get("remote_block"):
-                        cmd += ["--block", cfg["remote_block"]]
-                if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
-                if cfg.get("purger_zone"): cmd.append("--tiles-purge-out-of-zone")
-
-            # ── IGN Raster ───────────────────────────────────────────────
-            elif t == "scan":
-                cmd.append("--raster")
-                couche = cfg.get("couche", "scan25")
-                cmd += ["--layer", couche]
-                if cfg.get("apikey"): cmd += ["--api-key", cfg["apikey"]]
-                if cfg.get("tel_s"):
-                    if cfg.get("workers_s"):
-                        cmd += ["--workers", str(cfg["workers_s"])]
-                    if cfg.get("ecraser_tel_s"): cmd.append("--download-overwrite")
-                if cfg.get("tuiles_s"):
-                    fmts = []
-                    if cfg.get("mbtiles_s"): fmts.append("mbtiles")
-                    if cfg.get("rmap_s"):    fmts.append("rmap")
-                    if cfg.get("sqlitedb_s"):fmts.append("sqlitedb")
-                    if fmts: cmd += ["--file-formats"] + fmts
-                    cmd += ["--zoom-min", str(cfg.get("zoom_min_s", 12)),
-                            "--zoom-max", str(cfg.get("zoom_max_s", 16))]
-                    if cfg.get("fmt_s") and cfg["fmt_s"] != "auto":
-                        cmd += ["--image-format", cfg["fmt_s"]]
-                    if cfg.get("qualite_s"):
-                        cmd += ["--image-quality", str(cfg["qualite_s"])]
-                    if cfg.get("ecraser_tuil_s"): cmd.append("--tiles-overwrite")
-                    # Jumeau du LiDAR : la case du cadre est l'interrupteur.
-                    _cols = cfg.get("cols_decoupe_s", 0) or 0
-                    _rows = cfg.get("rows_decoupe_s", 0) or 0
-                    if not cfg.get("decoupe_s", False):
-                        _cols = _rows = 0
-                    if _cols > 0 and _rows > 0:
-                        cmd += ["--split-cols", str(_cols),
-                                "--split-rows", str(_rows)]
-                    elif (cfg.get("decoupe_s", False)
-                          and cfg.get("split_width_s", 0) > 0):
-                        cmd += ["--split-width", str(cfg["split_width_s"])]
-                    if cfg.get("nettoyage"): cmd.append("--cleanup")
-                    if cfg.get("min_free_gb", 0) > 0:
-                        cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
-
-            # ── OSM ──────────────────────────────────────────────────────
-            elif t == "osm":
-                cmd.append("--osm")
-                tags = cfg.get("osm_tags_sel", [])
-                if tags: cmd += ["--layer"] + tags
-                if cfg.get("tel_osm"):
-                    if cfg.get("workers_osm", 4) != 4: cmd += ["--workers", str(cfg["workers_osm"])]
-                    if cfg.get("ecraser_tel_osm"): cmd.append("--download-overwrite")
-                if cfg.get("tuiles_osm"):
-                    fmts = []
-                    if cfg.get("map"):        fmts.append("map")
-                    if cfg.get("osm_geojson"):     fmts.append("gz")
-                    if cfg.get("osm_geojson_raw"): fmts.append("geojson")
-                    if cfg.get("osm_transparent"): fmts.append("transparent-raster")
-                    if fmts: cmd += ["--file-formats"] + fmts
-                    if cfg.get("ecraser_tuil_osm"): cmd.append("--tiles-overwrite")
-
-            # ── IGN Vectoriel ─────────────────────────────────────────────
-            elif t == "vecteur":
-                cmd.append("--vector")
-                couches = cfg.get("wfs_couches_sel", [])
-                if couches: cmd += ["--layer"] + couches
-                if cfg.get("tel_v"):
-                    cmd += ["--workers", str(cfg.get("workers_v", 4))]
-                    if cfg.get("ecraser_tel_v"): cmd.append("--download-overwrite")
-                # Les GeoJSON sont écrits par le téléchargement (marqués
-                # « natif » dans la GUI) : ils sortent quel que soit l'état de
-                # la case « 2 — Générer la carte ». Celle-ci ne gouverne que les
-                # livrables DÉRIVÉS du GeoJSON.
-                fmts = []
-                if cfg.get("fusion_gz", True):  fmts.append("gz")
-                if cfg.get("fusion_gz_raw"):     fmts.append("geojson")
-                if not fmts: fmts = ["gz"]  # défaut si rien coché
-                _carte_v = cfg.get("carte_v", True)
-                if _carte_v and cfg.get("tuiles_v"): fmts.append("map")
-                if _carte_v and cfg.get("vec_transparent"):
-                    fmts.append("transparent-raster")
-                cmd += ["--file-formats"] + fmts
-                if _carte_v and cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
-                    cmd.append("--tiles-overwrite")
-                if _carte_v and cfg.get("tuiles_v") and cfg.get("simplif_v"):
-                    cmd += ["--vector-simplify", str(cfg["simplif_v"])]
-
-            # ── Fusion (GeoJSON ou MBTiles selon les fichiers choisis) ──────
-            elif t == "fusion":
-                cmd.append("--merge")
-                fichiers = cfg.get("fusion_fichiers", [])
-                if fichiers: cmd += ["--source"] + fichiers
-                nom = cfg.get("nom", "fusion") or "fusion"
-                # Aiguillage sur l'extension, comme main_fusionner côté CLI :
-                # un seul onglet/flag « Fusion », deux livrables possibles.
-                _fusion_mbtiles = bool(fichiers) and all(
-                    f.lower().endswith(".mbtiles") for f in fichiers)
-                if _fusion_mbtiles:
-                    # Dossier de sortie automatique : <Projets>/<nom>/fusion_raster
-                    sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion_raster"
-                    cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion.mbtiles")]
-                    fmts = []
-                    if cfg.get("fusion_mbtiles", True): fmts.append("mbtiles")
-                    if cfg.get("fusion_rmap"):            fmts.append("rmap")
-                    if cfg.get("fusion_sqlitedb"):         fmts.append("sqlitedb")
-                    if not fmts: fmts = ["mbtiles"]
-                    cmd += ["--file-formats"] + fmts
-                    if cfg.get("fusion_ecraser"): cmd.append("--tiles-overwrite")
-                else:
-                    # Extension du GeoJSON intermédiaire
-                    ext = ".geojson" if cfg.get("fusion_gz2_raw") and not cfg.get("fusion_gz2", True) else ".geojson.gz"
-                    # Dossier de sortie automatique : <Projets>/<nom>/fusion
-                    sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion"
-                    cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
-                    fmts = []
-                    if cfg.get("fusion_gz2", True):   fmts.append("gz")
-                    if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
-                    if cfg.get("fusion_map"):          fmts.append("map")
-                    if cfg.get("fusion_transparent"):  fmts.append("transparent-raster")
-                    if not fmts: fmts = ["gz"]
-                    cmd += ["--file-formats"] + fmts
-                    if cfg.get("fusion_map") and cfg.get("simplif_fusion"):
-                        cmd += ["--vector-simplify", str(cfg["simplif_fusion"])]
-
-            # ── Découpage raster (à posteriori) ──────────────────────────
-            elif t == "decoupe":
-                cmd.append("--split")
-                src_d = cfg.get("source_decoupe", "")
-                if src_d: cmd += ["--source", src_d]
-                if cfg.get("cols_decoupe_d", 0) > 0 and cfg.get("rows_decoupe_d", 0) > 0:
-                    cmd += ["--cols", str(cfg["cols_decoupe_d"]),
-                            "--rows", str(cfg["rows_decoupe_d"])]
-                elif cfg.get("split_width_d", 0) > 0:
-                    cmd += ["--split-width", str(cfg["split_width_d"])]
-                fmts_d = []
-                if cfg.get("mbtiles_d"):  fmts_d.append("mbtiles")
-                if cfg.get("rmap_d"):     fmts_d.append("rmap")
-                if cfg.get("sqlitedb_d"): fmts_d.append("sqlitedb")
-                if fmts_d: cmd += ["--file-formats"] + fmts_d
-                if cfg.get("ecraser_d"):  cmd.append("--tiles-overwrite")
+        "regions":    _regions_disponibles(),
+        "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
+        "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
+    }
 
 
-            return cmd
-
-        # ── Lancement ────────────────────────────────────────────────────
-        def _kill_tree(self, proc):
-            """Kill forcé de toute la hiérarchie du subprocess (Windows/Unix).
-            Partagé par stop() (escalade après grâce) et launch() (relance
-            après un Arrêter : l'intention utilisateur annule la grâce)."""
-            try:
-                if WINDOWS:
-                    subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
-            except Exception:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-
-        # Compte SSH d'administration et compte RDP créé sur la VM : fixés en
-        # dur (pas de champ GUI). "root" est le défaut universel d'une VM
-        # cloud neuve (Hetzner, etc.) ; "userlidar" est un nom de compte
-        # interne créé à la volée par le script de déploiement, sans raison
-        # de varier. Les exposer n'apportait rien (retour utilisateur
-        # 2026-08-04) : qui a besoin d'un autre compte utilise directement
-        # rlidar2map_CLI/rlidar2map_GUI en standalone (--ssh-user/--user).
-        _REMOTE_SSH_USER = "root"
-        _REMOTE_RDP_USER = "userlidar"
-
-        def _wrap_remote_cmd(self, cmd, cfg):
-            """Enveloppe `cmd` (sortie de _build_cmd) pour l'exécuter sur une VM
-            via --remote-cli au lieu de localement. Le préfixe exécutable est
-            conservé tel quel (frozen : 1 élément ; source : 2), --remote-cli et
-            ses propres options s'insèrent juste après, puis `--` et les
-            arguments lidar2map inchangés. Toujours --bundle (pas de choix
-            source dans la GUI, comme --remote-gui qui n'en propose pas non
-            plus) : qui veut --source utilise rlidar2map_CLI en standalone."""
-            prefix_len = 1 if getattr(sys, "frozen", False) else 2
-            prefix, lidar_args = cmd[:prefix_len], cmd[prefix_len:]
-            remote_cmd = list(prefix) + ["--remote-cli", "--bundle"]
-            if cfg.get("remote_session"):
-                remote_cmd += ["--session", cfg["remote_session"]]
-            _remote_mode = cfg.get("remote_mode")
-            if _remote_mode == "restart":
-                remote_cmd.append("--restart")
-            elif _remote_mode == "resume":
-                remote_cmd.append("--resume")
-            if cfg.get("remote_identity"):
-                remote_cmd += ["--identity", cfg["remote_identity"]]
-            _sync_only = cfg.get("remote_sync_only")
-            if _sync_only and _sync_only != "tout":
-                remote_cmd += ["--sync-only", _sync_only]
-            remote_cmd.append("{}@{}".format(self._REMOTE_SSH_USER, cfg["remote_host"]))
-            remote_cmd.append("--")
-            remote_cmd += lidar_args
-            return remote_cmd
-
-        def _build_remote_gui_cmd(self, cfg):
-            """Construit la commande --remote-gui (bureau distant) : aucun des
-            paramètres du formulaire (zone, type...) ne s'applique, seules les
-            options de préparation de VM (rlidar2map_GUI) comptent."""
-            cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
-                   else [sys.executable, str(SCRIPT)])
-            cmd += ["--remote-gui", "--ip", cfg["remote_host"],
-                    "--ssh-user", self._REMOTE_SSH_USER,
-                    "--user", self._REMOTE_RDP_USER]
-            if cfg.get("remote_identity"):
-                cmd += ["--identity", cfg["remote_identity"]]
-            return cmd
-
-        def launch(self, cfg):
-            # Décision de lancement sous verrou : lire l'état, tuer l'ancien run
-            # si « Arrêter puis Lancer », puis poser _launching AVANT de rendre
-            # la main. Le second clic d'un double-clic bloque sur ce verrou, le
-            # relâche, voit _process vivant OU _launching → rejeté. Le Popen
-            # lui-même est fait plus bas, SYNCHRONE (avant de lancer le thread
-            # lecteur), pour que _process soit posé avant tout autre launch().
-            with self._launch_lock:
-                proc = self._process
-                if proc and proc.poll() is None:
-                    if self._stop_t is None:
-                        return {"error": "Un processus est déjà en cours."}
-                    # Arrêter PUIS Lancer = intention sans ambiguïté : ne pas faire
-                    # attendre la grâce de 15 s à l'utilisateur (sinon « Un processus
-                    # est déjà en cours » tant que l'arrêt gracieux n'a pas abouti).
-                    # Escalade immédiate + courte attente de la mort effective.
-                    self._kill_tree(proc)
+def _api_get_usage(cfg=None):
+    """Onglet Usage (LECTURE SEULE) : tailles des 3 tiers (cache /
+    production / projets) + leurs sous-dossiers, pour un ménage MANUEL
+    via l'explorateur (bouton open_folder). Ne supprime rien — le cache
+    est partagé entre projets, une purge auto risquerait de jeter des
+    dalles qu'un autre projet réutilise (règle Nico : nettoyage manuel).
+    Prend les racines custom du formulaire (cache_dir/production_dir) si
+    posées, sinon les défauts."""
+    cfg = cfg or {}
+    def _walk(p):
+        total = 0
+        try:
+            for r, _dirs, files in os.walk(p):
+                for f in files:
                     try:
-                        proc.wait(timeout=8)
-                    except subprocess.TimeoutExpired:
-                        return {"error": "Arrêt encore en cours, réessayez dans quelques secondes."}
-                elif self._launching:
-                    # Un lancement est déjà engagé mais le subprocess n'est pas
-                    # encore créé (course double-clic) : rejeter comme un run actif.
-                    return {"error": "Un processus est déjà en cours."}
-                self._launching = True
-            # Laisser le thread lecteur de l'ANCIEN run se terminer avant de
-            # réinitialiser l'état : son finally pose _done=True et écraserait
-            # le _done=False du nouveau run (course). Le pipe étant clos par la
-            # mort du process, il sort en quelques ms.
-            if self._reader_t and self._reader_t.is_alive():
-                self._reader_t.join(timeout=5)
-            self._stop_t = None
-            remote_choix = cfg.get("remote_choix", "local")
-            if remote_choix in ("cli", "gui") and not cfg.get("remote_host", "").strip():
-                with self._launch_lock:
-                    self._launching = False
-                return {"error": "Hôte manquant pour l'exécution distante (ex. 192.0.2.10)."}
-            if remote_choix == "gui":
-                # Bureau distant : aucun argument lidar2map, _build_cmd ne
-                # servirait à rien (cfg.type/zone n'ont pas été validés côté GUI).
-                cmd = self._build_remote_gui_cmd(cfg)
-            else:
-                cmd = self._build_cmd(cfg)
-                if remote_choix == "cli":
-                    cmd = self._wrap_remote_cmd(cmd, cfg)
-            self._done = False
-            self._retcode = None
-            self._t_launch = time.time()
-            self._cfg_launch = cfg
-            # run_id partagé GUI ↔ subprocess via env LIDAR2MAP_HIST_RUN_ID :
-            # le subprocess sauve 'en cours' au début (crash-safe), puis 'ok'/'ko'
-            # à la fin. poll_log côté GUI peut alors mettre à jour la MÊME entrée
-            # avec le cfg complet (qui contient des champs absents de l'argv :
-            # tel_v, ecraser_tel_v, etc.) pour rappel exact via loadConfig().
-            self._hist_run_id = f"{int(time.time()*1000)}-{os.getpid()}-gui"
-            self._hist_saved  = False
-            if remote_choix == "gui":
-                # Bureau distant : pas de livrable local, rien à ouvrir à la
-                # fin (cfg.type/nom n'ont d'ailleurs pas été validés côté GUI,
-                # un calcul ici serait arbitraire, cf. open_folder qui ouvrait
-                # à tort Projets/ ou une racine sans rapport, bug vécu 2026-08-04).
-                self._result_dir = None
-            else:
-                # Calculer le dossier résultat attendu
-                t    = cfg.get("type", "lidar")
-                nom  = cfg.get("nom", "")
-                # Le pipeline CLI normalise le nom (slug ASCII minuscule) pour le
-                # nom de dossier : "Garéoult" → "gareoult". Sans cette normalisation
-                # ici, open_folder() pointerait vers un chemin inexistant.
-                nom_slug = normaliser_nom(nom) if nom else ""
-                base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
-                # Le subprocess utilise --provider <code> → ecrit dans lidar/<country>.
-                # On reconstruit le meme path ici sinon open_folder pointe ailleurs.
-                _cfg_provider = cfg.get("provider", PROVIDER.CODE)
-                _cfg_country = "fr"
-                for _p in _discover_providers():
-                    if _p["code"] == _cfg_provider:
-                        _cfg_country = _p.get("country", "fr")
-                        break
-                _lidar_subdir_cfg = f"lidar/{_cfg_country}"
-                _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
-                             "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
-                # Fusion MBTiles : sous-dossier propre (fusion_raster), aligné sur
-                # celui écrit par _build_cmd (même détection par extension), sinon
-                # "Ouvrir le dossier" pointe vers fusion/ resté vide.
-                _fusion_fichiers_cfg = cfg.get("fusion_fichiers") or []
-                if t == "fusion" and _fusion_fichiers_cfg and all(
-                        str(f).lower().endswith(".mbtiles") for f in _fusion_fichiers_cfg):
-                    _type_dir["fusion"] = "fusion_raster"
-                if t == "decoupe" and cfg.get("source_decoupe"):
-                    self._result_dir = str(Path(cfg["source_decoupe"]).parent)
-                elif cfg.get("dossier"):
-                    # --output-dir explicite : chaque main CLI l'utilise comme racine
-                    # DIRECTE (racine = args.dossier), sans sous-dossier <nom>/<type>.
-                    # Sans ce cas, open_folder visait dossier/nom/type inexistant et
-                    # l'explorateur ouvrait Mes Documents. Miroir du CLI, tous types.
-                    self._result_dir = str(Path(cfg["dossier"]))
-                else:
-                    self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
-            while not self._log_queue.empty():
-                try: self._log_queue.get_nowait()
-                except queue.Empty: break
-
-            # ── Création SYNCHRONE du subprocess ─────────────────────────────
-            # Faite ici (avant de lancer le thread lecteur) pour que _process
-            # soit posé avant que launch() rende la main : un second clic voit
-            # alors proc.poll() vivant et est rejeté. Tant que Popen n'a pas
-            # retourné, c'est _launching (posé plus haut, sous verrou) qui
-            # fait barrage.
-            self._log_queue.put(
-                {"line": "$ " + _rediger_secrets(
-                    " ".join(str(c) for c in cmd)) + "\n\n",
-                 "tag": "dim"})
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
-            # Propager le run_id au subprocess pour qu'il sauve 'en cours'
-            # SUR la même entrée que celle finalisée par poll_log côté GUI.
-            env["LIDAR2MAP_HIST_RUN_ID"] = self._hist_run_id
-            # Forcer UTF-8 sur stdout/stderr du child Python.
-            # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
-            # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
-            # arrivent corrompus dans le pipe. Ça casse à la fois le
-            # log lisible côté GUI ET la détection regex de mots-clés
-            # comme "ERREUR" qui contient un É (devient un ? si décodé
-            # en cp850 puis lu en utf-8).
-            env["PYTHONIOENCODING"] = "utf-8"
-            try:
-                # Créer un nouveau groupe de processus pour pouvoir signaler
-                # toute la hiérarchie (arrêt gracieux puis forcé, cf. stop()).
-                if WINDOWS:
-                    # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
-                    # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
-                    # avait été retirée sur un soupçon de blocage du pipe
-                    # stdout avec l'ancien backend WebView2 ; sous Qt
-                    # (backend forcé depuis), le pipe fonctionne :
-                    # revalidé par test dédié le 2026-07-02.
-                    self._process = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        bufsize=0, env=env,
-                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-                else:
-                    self._process = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        bufsize=0, env=env,
-                        start_new_session=True)
-            except Exception as e:
-                # Échec du spawn (binaire introuvable, argv trop long...) :
-                # remonter l'erreur tout de suite ET lever le drapeau, sinon
-                # _launching resterait True et bloquerait tout lancement futur.
-                self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
-                with self._lock:
-                    self._retcode = -1
-                self._done = True
-                with self._launch_lock:
-                    self._launching = False
-                return {"error": f"Échec du lancement : {e}"}
-            # subprocess vivant → le garde passe de _launching à proc.poll().
-            with self._launch_lock:
-                self._launching = False
-
-            def run():
-                try:
-                    buf = ""
-                    pct_re = re.compile(r"(\d+)%")
-                    # Décodeur incrémental : les chunks de 64 octets peuvent
-                    # couper une séquence UTF-8 multi-octets en deux ; un
-                    # .decode() par chunk produisait des � sporadiques sur les
-                    # accents (et pouvait casser _classify_err sur "ERREUR").
-                    import codecs as _codecs
-                    _dec = _codecs.getincrementaldecoder("utf-8")("replace")
-
-                    def _emit_ligne(texte):
-                        # Ligne complète → log GUI + buffers de diagnostic.
-                        # Le run peut MODIFIER le nom de projet (le mode LAZ
-                        # suffixe le nom de zone) : le chemin réel imprimé par
-                        # le pipeline (« Done! Folder: … ») est la source de
-                        # vérité et écrase le _result_dir précalculé — sinon
-                        # open_folder ouvre l'ancien dossier (bug vécu
-                        # 2026-07-16, même classe que le précédent bug country).
-                        # "[VM]" exclu : c'est le journal DISTANT relayé par
-                        # --remote-cli (print_remote_log_tail côté
-                        # rlidar2map_CLI), son "Done! Folder:" pointe vers un
-                        # chemin sur la VM, jamais valide en local (bug vécu
-                        # 2026-08-04 : open_folder ouvrait /root/... sur
-                        # Windows). Le cas distant est couvert juste après par
-                        # "  local :", imprimé par rlidar2map_CLI lui-même.
-                        if "Done! Folder:" in texte and "[VM]" not in texte:
-                            _rd = texte.split("Done! Folder:", 1)[1].strip()
-                            if _rd:
-                                self._result_dir = _rd
-                        # --remote-cli résume son run avec "  local : <racine
-                        # du run>" (rlidar2map_CLI.print_remote_hints) ; les
-                        # livrables synchronisés sont dans son sous-dossier
-                        # results/ (cf. VmController.sync_once), jamais à la
-                        # racine — sans le / "results", open_folder ouvrait le
-                        # dossier du run, pas celui des fichiers.
-                        elif "  local : " in texte:
-                            _rd = texte.split("  local : ", 1)[1].strip()
-                            if _rd:
-                                self._result_dir = str(Path(_rd) / "results")
-                        is_err = _classify_err(texte)
-                        with self._lock:
-                            if is_err and len(self._err_lines) < 20:
-                                self._err_lines.append(texte.strip())
-                            # Buffer circulaire des 10 dernières lignes
-                            # non-vides : fallback si retcode≠0 sans
-                            # ligne marquée "ERREUR".
-                            self._tail_lines.append(texte.strip())
-                            if len(self._tail_lines) > 10:
-                                self._tail_lines.pop(0)
-                        self._log_queue.put({"line": texte + "\n",
-                                             "tag": "err" if is_err else "ok"})
-
-                    # Reset des buffers de diagnostic (init dans __init__).
-                    # Lock pour cohérence avec poll_log / get_last_error.
-                    with self._lock:
-                        self._err_lines  = []
-                        self._tail_lines = []
-                    saw_cr = False
-                    for chunk in iter(lambda: self._process.stdout.read(64), b""):
-                        for ch in _dec.decode(chunk):
-                            if saw_cr:
-                                # Décision DIFFÉRÉE sur le \r : sous Windows,
-                                # CHAQUE print() termine par \r\n. Décider dès
-                                # le \r (ancien code) détournait vers la barre
-                                # de progression toute ligne de log contenant
-                                # un % (bilans "100%", ligne warp), qui
-                                # disparaissait alors du log GUI.
-                                # \r suivi de \n = fin de ligne normale → log ;
-                                # \r nu = repaint de barre de progression.
-                                saw_cr = False
-                                if ch == "\n":
-                                    if buf.strip():
-                                        _emit_ligne(buf)
-                                    buf = ""
-                                    continue
-                                m = pct_re.search(buf)
-                                if m and buf.strip():
-                                    self._log_queue.put({"pct": int(m.group(1)),
-                                                         "label": buf.strip()})
-                                # Repaint sans % : remplacé par le suivant,
-                                # comme sur un terminal (pas de concaténation).
-                                buf = ""
-                            if ch == "\r":
-                                saw_cr = True
-                            elif ch == "\n":
-                                if buf.strip():
-                                    _emit_ligne(buf)
-                                buf = ""
-                            else:
-                                buf += ch
-                    buf += _dec.decode(b"", True)   # flush décodeur (EOF)
-                    # Drain final : la boucle for-chunk a vu EOF, mais le buffer
-                    # interne `buf` peut contenir une dernière ligne sans \n
-                    # final (ex : print() Python sans flush avant sys.exit).
-                    # Sans ça, ces lignes sont perdues sur Windows quand le
-                    # child exit en moins de 100ms.
-                    if buf.strip():
-                        _emit_ligne(buf)
-                        buf = ""
-                    self._process.wait()
-                    with self._lock:
-                        self._retcode = self._process.returncode
-
-                    # Drain final post-wait : sur Windows, le pipe peut contenir
-                    # encore des données après que le child ait exit. Sans ce
-                    # drain, les dernières lignes (souvent les plus importantes :
-                    # message d'erreur final + sys.exit(1)) sont perdues.
-                    try:
-                        remaining = self._process.stdout.read()
-                        if remaining:
-                            text = remaining.decode("utf-8", errors="replace")
-                            for line in text.split("\n"):
-                                line = line.rstrip("\r")
-                                if not line.strip():
-                                    continue
-                                _emit_ligne(line)
-                    except Exception:
-                        # En cas d'erreur de lecture finale (pipe déjà fermé),
-                        # on continue silencieusement avec ce qu'on a.
+                        total += (Path(r) / f).stat().st_size
+                    except OSError:
                         pass
+        except OSError:
+            pass
+        return total
+    def _children(root):
+        out = []
+        try:
+            for d in sorted(root.iterdir()):
+                if d.is_dir():
+                    out.append({"label": d.name, "path": str(d),
+                                "bytes": _walk(d)})
+        except OSError:
+            pass
+        return out
+    def _tier(key, label, root):
+        root = Path(root)
+        ok = root.exists()
+        return {"key": key, "label": label, "path": str(root),
+                "exists": ok,
+                "bytes": _walk(root) if ok else 0,
+                "children": _children(root) if ok else []}
+    cache = (Path(cfg["cache_dir"]).expanduser()
+             if cfg.get("cache_dir") else DOSSIER_CACHE)
+    prod = (Path(cfg["production_dir"]).expanduser()
+            if cfg.get("production_dir") else DOSSIER_PRODUCTION)
+    projets = DOSSIER_TRAVAIL / "Projets"
+    return {"tiers": [
+        _tier("cache", "Cache", cache),
+        _tier("production", "Production", prod),
+        _tier("projets", "Projets", projets),
+    ]}
 
-                    sym = "✓" if self._retcode == 0 else "✗"
-                    self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
-                                         "tag": "ok" if self._retcode == 0 else "err"})
-                    # Si échec : préparer le message modal récapitulatif.
-                    # Priorité 1 : lignes marquées comme "ERREUR" (si détectées).
-                    # Priorité 2 : 10 dernières lignes non-vides (fallback générique
-                    # pour les cas où sys.exit(1) suit un print() libre que le filtre
-                    # n'a pas reconnu comme erreur).
-                    # On le stocke à la fois dans la queue ET sur l'instance, car
-                    # les dictionnaires complexes peuvent être mal sérialisés par
-                    # certaines versions de pywebview/WebView2.
-                    with self._lock:
-                        self._modal_error_msg = ""
-                        if self._retcode != 0:
-                            if self._err_lines:
-                                modal_lines = self._err_lines[-10:]
-                            elif self._tail_lines:
-                                modal_lines = self._tail_lines[-10:]
-                            else:
-                                modal_lines = [
-                                    f"Le traitement a échoué (code {self._retcode})",
-                                    "Aucun message d'erreur n'a été capturé.",
-                                    "Vérifiez le panneau de log pour les détails.",
-                                ]
-                            self._modal_error_msg = "\n".join(modal_lines)
-                            _modal_payload = {
-                                "modal_error": self._modal_error_msg,
-                                "retcode":     self._retcode,
-                            }
-                        else:
-                            _modal_payload = None
-                    if _modal_payload is not None:
-                        self._log_queue.put(_modal_payload)
-                    # Marquer la durée pour la sauvegarde historique (faite
-                    # dans poll_log). Mesuré dans tous les cas — y compris
-                    # échec — pour que l'entrée 'ko' soit horodatée correctement.
-                    self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
-                except Exception as e:
-                    self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
-                    with self._lock:
-                        self._retcode = -1
-                finally:
-                    self._done = True
 
-            self._reader_t = threading.Thread(target=run, daemon=True)
-            self._reader_t.start()
-            return {"cmd": " ".join(str(c) for c in cmd)}
+def _api_browse_dir(path: str = "", kind: str = "", exts=None, mode: str = "") -> dict:
+    """Navigateur de dossiers côté serveur : remplace le sélecteur natif
+    pywebview (retiré) - un navigateur ne peut pas parcourir le disque du
+    SERVEUR, donc c'est ici qu'on liste, /api/browse-dir sert cette liste,
+    web/app.js navigue dedans (voir browseOuvrir()).
 
-        def _stop_remote_run(self, purge_remote=False):
-            """Arrête le calcul VM associé au subprocess de surveillance."""
-            cfg = getattr(self, "_cfg_launch", {}) or {}
-            if cfg.get("remote_choix") != "cli":
-                return {"ok": False, "error": "Le traitement courant n'est pas un calcul VM."}
-            argv = ["--session", cfg.get("remote_session") or "lidar", "--stop"]
-            if cfg.get("remote_identity"):
-                argv += ["--identity", cfg["remote_identity"]]
-            argv.append("{}@{}".format(self._REMOTE_SSH_USER, cfg.get("remote_host", "")))
-            stopped = False
-            try:
-                remote_cli = _import_patchable_source_module(
-                    "tools", "rlidar2map_CLI")
-                controller = remote_cli.VmController(
-                    remote_cli.parse_options(argv))
-                stopped = controller.stop_remote()
-                purged = False
-                if purge_remote:
-                    state = controller.query_state()
-                    if state.exists:
-                        if not state.terminal or state.tmux:
-                            raise RuntimeError(
-                                "la session est encore active après la demande d'arrêt"
-                            )
-                        controller.purge_remote(state)
-                        purged = True
-                if stopped:
-                    self._log_queue.put({
-                        "line": "\n⚠ Traitement arrêté sur la VM.\n", "tag": "err"
-                    })
-                else:
-                    self._log_queue.put({
-                        "line": "\n⚠ Aucun traitement actif sur la VM.\n", "tag": "err"
-                    })
-                if purged:
-                    self._log_queue.put({
-                        "line": "⚠ Fichiers de la session supprimés sur la VM.\n",
-                        "tag": "err",
-                    })
-                return {"ok": True, "stopped": stopped, "purged": purged}
-            except BaseException as exc:
-                # argparse lève SystemExit (BaseException) si une session saisie
-                # dans le GUI est invalide ; la convertir en erreur du bridge.
-                message = str(exc) or exc.__class__.__name__
-                self._log_queue.put({
-                    "line": "\n✗ Arrêt sur la VM impossible : {}\n".format(message),
-                    "tag": "err",
-                })
-                return {"ok": False, "stopped": stopped, "error": message}
+    path vide -> racine par défaut du tier (kind), même convention que
+    l'ancien pick_dir. Chemin invalide/absent -> repli sur le dossier de
+    travail plutôt qu'une erreur : c'est une navigation, pas une action
+    destructive, un repli silencieux vaut mieux qu'un blocage.
 
-        def stop(self, stop_remote=False, purge_remote=False):
-            """Arrêt gracieux, puis forcé.
+    mode='file' (pick_file) : les fichiers sont listés en plus des
+    sous-dossiers, filtrés par exts s'il y en a, tous montrés sinon (ex.
+    une identité SSH n'a pas d'extension fixe). mode='dir' ou absent
+    (pick_dir) : seuls les dossiers sont listés, jamais les fichiers,
+    quel que soit exts."""
+    racines = {"cache": DOSSIER_CACHE, "production": DOSSIER_PRODUCTION,
+               "output": DOSSIER_TRAVAIL / "Projets"}
+    base = Path(path).expanduser() if path else racines.get(kind, DOSSIER_TRAVAIL)
+    try:
+        base = base.resolve()
+        if not base.is_dir():
+            raise ValueError
+    except (OSError, ValueError):
+        base = DOSSIER_TRAVAIL.resolve()
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+    extensions = tuple(str(e).lower() for e in (exts or []))
+    dossiers, fichiers = [], []
+    try:
+        for entree in sorted(base.iterdir(), key=lambda p: p.name.lower()):
+            if entree.is_dir():
+                dossiers.append(entree.name)
+            elif mode == "file" and (not extensions or entree.name.lower().endswith(extensions)):
+                fichiers.append(entree.name)
+    except OSError:
+        pass
+    parent = str(base.parent) if base.parent != base else None
+    return {"path": str(base), "parent": parent, "dirs": dossiers, "files": fichiers}
 
-            1. Signal doux : CTRL_BREAK au groupe Windows (routé vers le
-               soft-cancel _on_sigint du child : l'opération courante finit
-               proprement, manifeste/.part/sqlite fermés), SIGINT au groupe
-               Unix. L'ancien comportement (taskkill /F immédiat) coupait
-               net sans aucun cleanup.
-            2. Si le child vit encore après _STOP_GRACE_S (kernel numba
-               intuable, child sans console où CTRL_BREAK échoue), kill
-               forcé de toute la hiérarchie, comme avant.
-            L'escalade tourne dans un thread pour ne pas bloquer le bridge
-            JS ; _done est posé par le thread lecteur quand le pipe se ferme.
-            """
-            remote_result = None
-            if stop_remote:
-                # Faire l'appel SSH avant de couper le contrôleur local : cette
-                # méthode ne rend la main qu'une fois le process VM réellement
-                # sorti (ou forcé), et peut encore consigner le résultat au log.
-                remote_result = self._stop_remote_run(bool(purge_remote))
 
-            _STOP_GRACE_S = 15
-            proc = self._process
-            if not (proc and proc.poll() is None):
-                return remote_result
-            self._stop_t = time.time()   # lu par launch() : relance = escalade immédiate
-            self._log_queue.put(
-                {"line": f"\n⚠ Stop requested - graceful, forced after {_STOP_GRACE_S} s\n",
-                 "tag": "err"})
-            doux_ok = False
-            try:
-                if WINDOWS:
-                    proc.send_signal(_signal.CTRL_BREAK_EVENT)
-                else:
-                    os.killpg(os.getpgid(proc.pid), _signal.SIGINT)
-                doux_ok = True
-            except Exception:
-                pass
-
-            def _escalade():
-                try:
-                    proc.wait(timeout=_STOP_GRACE_S if doux_ok else 0.1)
-                    return   # sortie propre : le thread lecteur finalise (_done)
-                except subprocess.TimeoutExpired:
-                    pass
-                self._kill_tree(proc)
-                self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
-            threading.Thread(target=_escalade, daemon=True).start()
-            return remote_result
-
-        def check_update(self):
-            """Compare la dernière release GitHub à la version locale.
-
-            Appelé par le JS après l'init (non bloquant côté UI) ; silencieux
-            et {"update": False} sur toute erreur (hors ligne, rate-limit de
-            l'API GitHub, JSON inattendu). Une requête, timeout court.
-            """
-            try:
-                with _urlopen("https://api.github.com/repos/nico579/lidar2map"
-                              "/releases/latest", timeout=6) as r:
-                    d = json.loads(r.read())
-                tag = str(d.get("tag_name") or "")
-
-                def _triplet(v):
-                    n = re.findall(r"\d+", v)
-                    return tuple(int(x) for x in n[:3]) if n else (0,)
-
-                if tag and _triplet(tag) > _triplet(VERSION):
-                    return {"update": True, "latest": tag,
-                            "url": d.get("html_url") or
-                                   "https://github.com/nico579/lidar2map/releases/latest"}
-            except Exception:
-                pass
-            return {"update": False}
-
-        def open_url(self, url):
-            """Ouvre une URL dans le navigateur système (bandeau update).
-            Restreinte au repo du projet : le bridge JS ne doit pas pouvoir
-            ouvrir des URLs arbitraires."""
-            try:
-                if str(url).startswith("https://github.com/nico579/lidar2map"):
-                    import webbrowser
-                    webbrowser.open(url)
-            except Exception:
-                pass
-
-        def open_folder(self, path):
-            try:
-                if sys.platform == "win32":
-                    subprocess.Popen(["explorer", Path(path).resolve()])
-                elif sys.platform == "darwin":
-                    subprocess.Popen(["open", path])
-                else:
-                    subprocess.Popen(["xdg-open", path])
-            except Exception:
-                pass
-
-        def get_last_error(self):
-            """Retourne le message d'erreur du dernier run (ou chaîne vide).
-
-            Permet au JS de récupérer ce message **après** avoir constaté
-            que `done=True && code!=0`, sans dépendre de la transmission par
-            la queue (que pywebview/WebView2 sérialise parfois mal pour les
-            dicts à plusieurs clés).
-
-            Lecture sous lock pour voir un snapshot cohérent (msg + retcode
-            écrits ensemble dans run()).
-            """
-            with self._lock:
-                return {
-                    "msg":     getattr(self, "_modal_error_msg", "") or "",
-                    "retcode": getattr(self, "_retcode", 0) or 0,
-                }
-
-        def poll_log(self):
-            items = []
-            try:
-                while True:
-                    items.append(self._log_queue.get_nowait())
-            except queue.Empty:
-                pass
-            # Sauvegarde finale de l'historique côté GUI (thread-safe via
-            # poll_log). MET À JOUR l'entrée 'en cours' créée par le subprocess
-            # via le même run_id (env LIDAR2MAP_HIST_RUN_ID). Sauvegarde sur
-            # succès ET échec : sans ça, un crash du pipeline laissait l'entrée
-            # 'en cours' indéfiniment.
-            if self._done and not getattr(self, "_hist_saved", False):
-                self._hist_saved = True
-                try:
-                    _duree  = getattr(self, "_duree_run", 0) or \
-                              int(time.time() - getattr(self, "_t_launch", time.time()))
-                    _statut, _result = _bilan_historique_processus(
-                        self._retcode, getattr(self, "_result_dir", ""))
-                    _sauver_historique(
-                        getattr(self, "_cfg_launch", {}),
-                        _duree,
-                        _result,
-                        run_id=getattr(self, "_hist_run_id", ""),
-                        statut=_statut,
-                    )
-                    items.append({"line": f"  History saved: {_HISTORIQUE_PATH}\n",
-                                  "tag": "ok"})
-                except Exception as _he:
-                    items.append({"line": f"  History error: {_he}\n", "tag": "err"})
-
-            result_dir = getattr(self, "_result_dir", None) if (self._done and self._retcode == 0) else None
-            return {"items": items, "done": self._done, "code": self._retcode,
-                    "result_dir": result_dir}
-
-    # Front-end (HTML/CSS/JS) extrait dans gui/ : index.html + style.css + app.js.
-    # pywebview charge une CHAINE HTML (html=), pas une URL : on reassemble les 3
-    # fichiers ici via les sentinelles d'insertion. Les data Python passent par la
-    # classe Api (js_api), pas par interpolation, donc le front reste statique.
+def _resoudre_gui_dir() -> Path:
+    """Dossier gui/ (index.html + style.css + app.js), frozen ou source.
+    Extrait de lancer_gui() pour être partagé avec main_serve_gui()."""
     _gui_dir = None
     _bases = [BUNDLE_DIR]                      # frozen : _MEIPASS/gui (onedir + onefile)
     if "__file__" in globals():               # source : a cote de lidar2map.py
@@ -7748,125 +6388,1088 @@ def lancer_gui():
             break
     if _gui_dir is None:
         raise RuntimeError("GUI : gui/index.html introuvable (assets non bundles ?)")
-    HTML = (_gui_dir / "index.html").read_text(encoding="utf-8")
-    HTML = HTML.replace("/*__LIDAR2MAP_CSS__*/",
-                        (_gui_dir / "style.css").read_text(encoding="utf-8"))
-    HTML = HTML.replace("//__LIDAR2MAP_JS__",
-                        (_gui_dir / "app.js").read_text(encoding="utf-8"))
+    return _gui_dir
 
-    api = Api()
 
-    # Muselle l'avertissement bénin de fermeture QtWebEngine
-    # ("Release of profile requested but WebEnginePage still not deleted").
-    # (PYWEBVIEW_GUI=qt est déjà posé avant `import webview`, dans lancer_gui.)
-    if platform.system() in ("Windows", "Linux"):
+
+SCRIPT  = (Path(sys.executable).resolve()
+           if getattr(sys, "frozen", False)
+           else Path(__file__).resolve())
+
+# ── Classe API exposée à JavaScript ──────────────────────────────────────
+def _classify_err(line: str) -> bool:
+    """True si la ligne ressemble à une erreur (ERREUR/Error/Traceback/argparse).
+
+    Utilisé par les 3 sites de drain stdout du subprocess pour rester
+    synchronisés — sans cette factorisation, une évolution du heuristique
+    ne se propageait qu'à un site sur trois.
+    """
+    upbuf = line.upper()
+    return (
+        any(w in upbuf for w in ("ERREUR", "ERROR", "TRACEBACK"))
+        or line.strip().startswith("usage:")
+        or ": error:" in line
+    )
+
+
+class Api:
+    """Logique de pilotage d'un run lidar2map (subprocess, log, historique,
+    partage LAN...), consommée par les routes de main_serve_gui() (--serve-gui).
+    Anciennement nichée dans lancer_gui() (fenêtre pywebview, retirée) : rien
+    ici ne dépend de webview, une seule instance vit dans main_serve_gui()."""
+
+    def __init__(self):
+        self._process   = None
+        self._log_queue = queue.Queue()
+        self._done      = False
+        self._retcode   = None
+        # Lock pour les attributs partagés entre le thread d'écoute du
+        # subprocess (run) et le thread main (poll_log, get_last_error).
+        # Le GIL protège les opérations atomiques ; le lock protège la
+        # cohérence multi-attributs (ex: lire _retcode et _modal_error_msg
+        # ensemble doit voir l'état stable d'un même moment).
+        self._lock = threading.Lock()
+        self._err_lines       = []
+        self._tail_lines      = []
+        self._modal_error_msg = ""
+        self._partage         = _PartageServeur()   # transfert LAN vers téléphone
+        self._stop_t          = None   # horodatage de la demande d'arrêt (stop)
+        self._reader_t        = None   # thread lecteur stdout du run courant
+        # Verrou + drapeau anti-double-lancement : launch() décide sous ce
+        # verrou et pose _launching AVANT de rendre la main. Sans ça, deux
+        # clics rapides lisaient tous deux _process=None (le subprocess
+        # n'étant créé que plus tard) et lançaient deux traitements.
+        self._launch_lock     = threading.Lock()
+        self._launching       = False
+
+    # ── Données initiales ─────────────────────────────────────────────
+    # Extraites en fonctions top-level (_api_get_init_data / _api_get_usage,
+    # juste avant lancer_gui()) : ni l'une ni l'autre ne touchent self, et
+    # main_serve_gui() (mode --serve-gui, sans pywebview) doit pouvoir les
+    # appeler sans instancier cette classe ni importer webview.
+    def get_init_data(self):
+        return _api_get_init_data()
+
+    def get_help(self):
+        """Texte affiché par le bouton Aide du GUI : le docstring d'usage du
+        module (source UNIQUE — le même bloc qui documente les modes et les
+        paramètres CLI en tête de fichier). Pas de copie à maintenir."""
+        import sys as _sys
+        return (_sys.modules[__name__].__doc__ or "").strip()
+
+    def get_usage(self, cfg=None):
+        """Onglet Usage (LECTURE SEULE), voir _api_get_usage."""
+        return _api_get_usage(cfg)
+
+    # ── Partage LAN vers le téléphone (QR) ────────────────────────────
+    def start_share(self, cfg=None):
+        """Sert les livrables du dernier run (ou de `cfg`) sur le LAN.
+        Renvoie {ok, url, fichiers} ou {ok:False, error}."""
+        cfg = cfg or getattr(self, "_cfg_launch", None) or {}
+        nom = (cfg.get("nom") or "").strip()
+        if not nom:
+            return {"ok": False, "error": "Aucun projet : lance d'abord une génération."}
+        # Miroir exact du routage du pipeline : slug minuscule en sortie
+        # automatique, dossier direct avec un --output-dir personnalisé.
+        proj = _dossier_partage_projet(nom, cfg.get("dossier"))
+        fichiers = _livrables_projet(proj)
+        if not fichiers:
+            return {"ok": False,
+                    "error": f"Aucun livrable (sqlitedb/rmap/mbtiles/map) dans {proj}"}
         try:
-            from PyQt6 import QtCore as _QtCore
-            _QT_NOISE = ("WebEnginePage still not deleted",
-                         "Release of profile requested")
+            url = self._partage.demarrer(fichiers)
+        except Exception as e:
+            return {"ok": False, "error": f"Partage impossible : {e}"}
+        # Liste du serveur (dédupliquée, ordre par récence) : le modal PC
+        # affiche exactement ce que la page téléphone sert.
+        return {"ok": True, "url": url, "fichiers": self._partage.fichiers}
 
-            def _qt_msg_filter(_mode, _ctx, _msg):
-                if any(_n in _msg for _n in _QT_NOISE):
-                    return
+    def stop_share(self):
+        try:
+            self._partage.arreter()
+        except Exception:
+            pass
+        return {"ok": True}
+
+    def get_projets(self, dossier=None):
+        """Noms des projets existants (sous-dossiers de Projets/, ou du
+        dossier de sortie custom), récents d'abord. Alimente la datalist
+        du champ Nom (combobox éditable : saisie libre + suggestions)."""
+        try:
+            dirs = [d for d in _base_projets(dossier).iterdir() if d.is_dir()]
+            dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+        except OSError:
+            return []
+        return [d.name for d in dirs]
+
+    def get_historique(self):
+        """Retourne la liste historique — appelable depuis JS à tout moment."""
+        return _lire_historique()
+
+    def clear_historique(self):
+        """Vide intégralement l'historique (action destructive — la confirmation
+        est gérée côté JS via confirm() avant l'appel)."""
+        try:
+            _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def set_lang(self, code):
+        """Persiste l'override manuel de langue de l'UI (toggle FR/EN).
+        'fr' ou 'en' ; toute autre valeur est ignorée."""
+        if code not in ("fr", "en"):
+            return {"ok": False, "error": "lang invalide"}
+        return {"ok": _ecrire_pref("lang", code)}
+
+    def set_ui_zoom(self, z):
+        """Persiste le zoom de l'interface (Ctrl+molette / Ctrl+±),
+        restauré au prochain lancement via get_init_data. Borné 0.5–2.5."""
+        try:
+            z = float(z)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "zoom invalide"}
+        if not (0.5 <= z <= 2.5):
+            return {"ok": False, "error": "zoom hors plage"}
+        return {"ok": _ecrire_pref("ui_zoom", round(z, 2))}
+
+    # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
+    # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
+    # WebView2 traite mal vis-à-vis du CORS — on relaie ici en Python.
+    # FR : Geoplateforme BAN (rapide, précis pour communes françaises)
+    # Hors FR : Nominatim avec countrycodes=<pays> pour scoper à un pays
+    def autocomplete_ville(self, prefix, country="fr"):
+        try:
+            p = (prefix or "").strip()
+            if len(p) < 3:
+                return []
+            country = (country or "fr").lower()
+            if country == "fr":
+                url = ("https://data.geopf.fr/geocodage/search/"
+                       f"?q={urllib.parse.quote(p)}"
+                       "&type=municipality&autocomplete=1&limit=8")
+                req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    data = json.load(r)
+                out = []
+                for f in data.get("features", []):
+                    props = f.get("properties", {}) or {}
+                    label = props.get("name") or props.get("label") or ""
+                    if label:
+                        out.append({"label": label,
+                                    "context": props.get("context", "")})
+                return out
+            # Non-FR : Nominatim international, filtre par pays
+            url = ("https://nominatim.openstreetmap.org/search"
+                   f"?q={urllib.parse.quote(p)}"
+                   f"&countrycodes={country}&format=json&limit=8&addressdetails=1")
+            req = urllib.request.Request(url, headers={"User-Agent": _HTTP_UA})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                data = json.load(r)
+            out = []
+            for item in data:
+                addr = item.get("address", {}) or {}
+                label = (addr.get("city") or addr.get("town")
+                         or addr.get("village") or addr.get("municipality")
+                         or item.get("display_name", "").split(",")[0])
+                if label:
+                    ctx_parts = [addr.get(k) for k in ("state", "country") if addr.get(k)]
+                    out.append({"label": label,
+                                "context": ", ".join(ctx_parts)})
+            return out
+        except Exception:
+            return []
+
+    # ── Construction de la commande CLI ──────────────────────────────
+    def _build_cmd(self, cfg):
+        # Frozen : l'exe est self-launching, on n'y prépose pas sys.executable.
+        cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
+               else [sys.executable, str(SCRIPT)])
+        t = cfg.get("type", "lidar")
+
+        # Provider (multi-pays) — toujours explicite dans le subprocess.
+        # Le contrat CLI LiDAR l'exige, y compris pour fr-ign sélectionné
+        # par défaut dans la GUI.
+        if cfg.get("provider"):
+            cmd += ["--provider", cfg["provider"]]
+        # Mode LAZ (structures debout) : case + réglages ≠ défauts
+        # (la GUI n'envoie dfm_* que si modifiés, cf. app.js).
+        if cfg.get("laz"):
+            cmd += ["--laz"]
+            if cfg.get("laz_hmin"):
+                cmd += ["--laz-hmin", str(cfg["laz_hmin"])]
+            if cfg.get("laz_hmax"):
+                cmd += ["--laz-hmax", str(cfg["laz_hmax"])]
+            if cfg.get("laz_classes"):
+                cmd += ["--laz-classes", str(cfg["laz_classes"])]
+            if cfg.get("laz_ground"):
+                cmd += ["--laz-ground", str(cfg["laz_ground"])]
+            if cfg.get("laz_csf_threshold"):
+                cmd += ["--laz-csf-threshold", str(cfg["laz_csf_threshold"])]
+            if cfg.get("laz_csf_resolution"):
+                cmd += ["--laz-csf-resolution", str(cfg["laz_csf_resolution"])]
+            if cfg.get("laz_csf_rigidness"):
+                cmd += ["--laz-csf-rigidness", str(cfg["laz_csf_rigidness"])]
+        # Clé API LiDAR (us-3dep / OpenTopography). Champ saisi dans la GUI
+        # à côté de la dropdown provider, visible quand APIKEY_REQUISE=True.
+        if cfg.get("lidar_apikey"):
+            cmd += ["--api-key", cfg["lidar_apikey"]]
+
+        # Zone (pas pour fusion / découpe)
+        if t != "fusion" and t != "decoupe":
+            mode = cfg.get("mode", "ville")
+            if mode == "ville"  and cfg.get("ville"):
+                cmd += ["--zone-city", cfg["ville"]]
+            elif mode == "gps"  and cfg.get("gps"):
+                cmd += ["--zone-gps", cfg["gps"]]
+            elif mode == "bbox" and cfg.get("bbox"):
+                cmd += ["--zone-bbox", cfg["bbox"]]
+            elif mode == "dep"  and cfg.get("dep"):
+                cmd += ["--zone-department", cfg["dep"]]
+            elif mode == "region" and cfg.get("region"):
+                cmd += ["--zone-region", cfg["region"]]
+            if cfg.get("zone_width") is not None and cfg["zone_width"] != "":
+                cmd += ["--zone-width", str(cfg["zone_width"])]
+            if cfg.get("nom"):
+                cmd += ["--zone-name", cfg["nom"]]
+            if cfg.get("dossier"):
+                cmd += ["--output-dir", cfg["dossier"]]
+            # Dossier cache global (--cache-dir) : commun à tous les types,
+            # comme --output-dir. Propriété d'installation, saisi dans Projet.
+            if cfg.get("cache_dir"):
+                cmd += ["--cache-dir", cfg["cache_dir"]]
+            # Dossier production (--production-dir) : racine des .tif LAZ
+            # (produits). Saisi dans Projet (ligne des racines), n'a d'effet
+            # qu'en mode LAZ, mais émis inconditionnellement comme --cache-dir.
+            if cfg.get("production_dir"):
+                cmd += ["--production-dir", cfg["production_dir"]]
+
+        # ── LiDAR ────────────────────────────────────────────────────
+        if t == "lidar":
+            cmd.append("--lidar")
+            # Le CLI télécharge désormais les données manquantes par défaut.
+            # La GUI doit donc exprimer aussi le choix négatif : sans ce
+            # --no-download, décocher la case n'aurait plus aucun effet.
+            cmd.append("--download" if cfg.get("tel", True)
+                       else "--no-download")
+            # Compression ON par défaut côté CLI : n'émettre que la
+            # déviation (case décochée → --no-download-compress).
+            if not cfg.get("comp", True):
+                cmd.append("--no-download-compress")
+            if cfg.get("ecraser_tel"): cmd.append("--download-overwrite")
+            if cfg.get("dossier_dalles"):
+                cmd += ["--tiles-dir", cfg["dossier_dalles"]]
+            if cfg.get("workers_l"):
+                cmd += ["--workers", str(cfg["workers_l"])]
+            # --laz-parallel : n'émettre que si explicitement > 1 (défaut 1 =
+            # sériel, sûr). Le champ GUI est borné (max 8) et n'apparaît qu'en
+            # mode LAZ ; le cœur affiche l'estimation RAM (~3 Go × N).
+            if cfg.get("laz_parallel", 1) and cfg["laz_parallel"] > 1:
+                cmd += ["--laz-parallel", str(cfg["laz_parallel"])]
+            if cfg.get("no_omb"):
+                ombs = cfg.get("ombrages", [])
+                if ombs: cmd += ["--shadings"] + ombs
+                # Instances paramétrées (shuttle list) — répétable
+                for _spec in cfg.get("shading_specs", []) or []:
+                    cmd += ["--shading", str(_spec)]
+                if cfg.get("elevation"):
+                    cmd += ["--shading-elevation", str(cfg["elevation"])]
+                if cfg.get("svf_conv"):
+                    cmd += ["--svf-conv", str(cfg["svf_conv"])]
+                if cfg.get("svf_dist"):
+                    cmd += ["--svf-dist", str(cfg["svf_dist"])]
+                if cfg.get("svf_gamma"):
+                    cmd += ["--svf-gamma", str(cfg["svf_gamma"])]
+                if cfg.get("ecraser_omb"): cmd.append("--shadings-overwrite")
+                # BooleanOptionalAction : émettre explicitement on/off.
+                # Le sweep concerne désormais svf/opos/oneg (plus aucun
+                # gate ray-cast forcé côté kernel). N'émettre le flag
+                # global que si une de ces instances est présente : sinon
+                # il fuit sur un run sans aucune d'elles (ex. hillshade
+                # seul) et polluerait la commande sans effet utile.
+                if any(str(s).startswith(("svf", "opos", "oneg"))
+                       for s in cfg.get("shading_specs", []) or []):
+                    cmd.append("--svf-sweep" if cfg.get("sweep_horizon") else "--no-svf-sweep")
+            fmts = []
+            if cfg.get("mbtiles_l"): fmts.append("mbtiles")
+            if cfg.get("rmap"):      fmts.append("rmap")
+            if cfg.get("sqlitedb"):  fmts.append("sqlitedb")
+            if fmts:
+                cmd += ["--file-formats"] + fmts
+                if cfg.get("zoom_min_l"): cmd += ["--zoom-min", str(cfg["zoom_min_l"])]
+                if cfg.get("zoom_max_l"): cmd += ["--zoom-max", str(cfg["zoom_max_l"])]
+                if cfg.get("fmt_l") and cfg["fmt_l"] != "auto":
+                    cmd += ["--image-format", cfg["fmt_l"]]
+                if cfg.get("qualite_l"): cmd += ["--image-quality", str(cfg["qualite_l"])]
+                if cfg.get("ecraser_mbt"): cmd.append("--tiles-overwrite")
+                # La case « 0 — Découpage à priori » est l'interrupteur :
+                # décochée, on n'émet rien même si des valeurs traînent dans
+                # les champs (elles sont conservées pour un recochage).
+                _cols = cfg.get("cols_decoupe", 1) or 1
+                _rows = cfg.get("rows_decoupe", 1) or 1
+                if not cfg.get("decoupe", False):
+                    _cols = _rows = 1
+                if _cols > 1 and _rows > 1:
+                    cmd += ["--split-cols", str(_cols),
+                            "--split-rows", str(_rows)]
+                elif (cfg.get("decoupe", False)
+                      and cfg.get("split_width_l", 0) > 0):
+                    cmd += ["--split-width", str(cfg["split_width_l"])]
+                if cfg.get("nettoyage"):
+                    cmd.append("--cleanup")
+                    # Posé par la file d'attente (renderFile/lancerFile) quand
+                    # une tâche ULTÉRIEURE retraite la même zone avec la même
+                    # source : on garde les dalles pour elle.
+                    if cfg.get("cleanup_keep_tiles"):
+                        cmd.append("--cleanup-keep-tiles")
+                if cfg.get("min_free_gb", 0) > 0:
+                    cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
+                # Sharding multi-VM : quelle tranche géographique CETTE
+                # invocation traite (cf. section « Calcul distant » de
+                # l'Exécution). Sans lien avec la case Découpage à
+                # priori ci-dessus (un découpage interne au run), donc pas
+                # gardé par cfg.get("decoupe").
+                if cfg.get("remote_block"):
+                    cmd += ["--block", cfg["remote_block"]]
+            if cfg.get("purger_inv"):  cmd.append("--tiles-purge-invalid")
+            if cfg.get("purger_zone"): cmd.append("--tiles-purge-out-of-zone")
+
+        # ── IGN Raster ───────────────────────────────────────────────
+        elif t == "scan":
+            cmd.append("--raster")
+            couche = cfg.get("couche", "scan25")
+            cmd += ["--layer", couche]
+            if cfg.get("apikey"): cmd += ["--api-key", cfg["apikey"]]
+            if cfg.get("tel_s"):
+                if cfg.get("workers_s"):
+                    cmd += ["--workers", str(cfg["workers_s"])]
+                if cfg.get("ecraser_tel_s"): cmd.append("--download-overwrite")
+            if cfg.get("tuiles_s"):
+                fmts = []
+                if cfg.get("mbtiles_s"): fmts.append("mbtiles")
+                if cfg.get("rmap_s"):    fmts.append("rmap")
+                if cfg.get("sqlitedb_s"):fmts.append("sqlitedb")
+                if fmts: cmd += ["--file-formats"] + fmts
+                cmd += ["--zoom-min", str(cfg.get("zoom_min_s", 12)),
+                        "--zoom-max", str(cfg.get("zoom_max_s", 16))]
+                if cfg.get("fmt_s") and cfg["fmt_s"] != "auto":
+                    cmd += ["--image-format", cfg["fmt_s"]]
+                if cfg.get("qualite_s"):
+                    cmd += ["--image-quality", str(cfg["qualite_s"])]
+                if cfg.get("ecraser_tuil_s"): cmd.append("--tiles-overwrite")
+                # Jumeau du LiDAR : la case du cadre est l'interrupteur.
+                _cols = cfg.get("cols_decoupe_s", 0) or 0
+                _rows = cfg.get("rows_decoupe_s", 0) or 0
+                if not cfg.get("decoupe_s", False):
+                    _cols = _rows = 0
+                if _cols > 0 and _rows > 0:
+                    cmd += ["--split-cols", str(_cols),
+                            "--split-rows", str(_rows)]
+                elif (cfg.get("decoupe_s", False)
+                      and cfg.get("split_width_s", 0) > 0):
+                    cmd += ["--split-width", str(cfg["split_width_s"])]
+                if cfg.get("nettoyage"): cmd.append("--cleanup")
+                if cfg.get("min_free_gb", 0) > 0:
+                    cmd += ["--min-free-gb", str(cfg["min_free_gb"])]
+
+        # ── OSM ──────────────────────────────────────────────────────
+        elif t == "osm":
+            cmd.append("--osm")
+            tags = cfg.get("osm_tags_sel", [])
+            if tags: cmd += ["--layer"] + tags
+            if cfg.get("tel_osm"):
+                if cfg.get("workers_osm", 4) != 4: cmd += ["--workers", str(cfg["workers_osm"])]
+                if cfg.get("ecraser_tel_osm"): cmd.append("--download-overwrite")
+            if cfg.get("tuiles_osm"):
+                fmts = []
+                if cfg.get("map"):        fmts.append("map")
+                if cfg.get("osm_geojson"):     fmts.append("gz")
+                if cfg.get("osm_geojson_raw"): fmts.append("geojson")
+                if cfg.get("osm_transparent"): fmts.append("transparent-raster")
+                if fmts: cmd += ["--file-formats"] + fmts
+                if cfg.get("ecraser_tuil_osm"): cmd.append("--tiles-overwrite")
+
+        # ── IGN Vectoriel ─────────────────────────────────────────────
+        elif t == "vecteur":
+            cmd.append("--vector")
+            couches = cfg.get("wfs_couches_sel", [])
+            if couches: cmd += ["--layer"] + couches
+            if cfg.get("tel_v"):
+                cmd += ["--workers", str(cfg.get("workers_v", 4))]
+                if cfg.get("ecraser_tel_v"): cmd.append("--download-overwrite")
+            # Les GeoJSON sont écrits par le téléchargement (marqués
+            # « natif » dans la GUI) : ils sortent quel que soit l'état de
+            # la case « 2 — Générer la carte ». Celle-ci ne gouverne que les
+            # livrables DÉRIVÉS du GeoJSON.
+            fmts = []
+            if cfg.get("fusion_gz", True):  fmts.append("gz")
+            if cfg.get("fusion_gz_raw"):     fmts.append("geojson")
+            if not fmts: fmts = ["gz"]  # défaut si rien coché
+            _carte_v = cfg.get("carte_v", True)
+            if _carte_v and cfg.get("tuiles_v"): fmts.append("map")
+            if _carte_v and cfg.get("vec_transparent"):
+                fmts.append("transparent-raster")
+            cmd += ["--file-formats"] + fmts
+            if _carte_v and cfg.get("tuiles_v") and cfg.get("ecraser_tuil_v"):
+                cmd.append("--tiles-overwrite")
+            if _carte_v and cfg.get("tuiles_v") and cfg.get("simplif_v"):
+                cmd += ["--vector-simplify", str(cfg["simplif_v"])]
+
+        # ── Fusion (GeoJSON ou MBTiles selon les fichiers choisis) ──────
+        elif t == "fusion":
+            cmd.append("--merge")
+            fichiers = cfg.get("fusion_fichiers", [])
+            if fichiers: cmd += ["--source"] + fichiers
+            nom = cfg.get("nom", "fusion") or "fusion"
+            # Aiguillage sur l'extension, comme main_fusionner côté CLI :
+            # un seul onglet/flag « Fusion », deux livrables possibles.
+            _fusion_mbtiles = bool(fichiers) and all(
+                f.lower().endswith(".mbtiles") for f in fichiers)
+            if _fusion_mbtiles:
+                # Dossier de sortie automatique : <Projets>/<nom>/fusion_raster
+                sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion_raster"
+                cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion.mbtiles")]
+                fmts = []
+                if cfg.get("fusion_mbtiles", True): fmts.append("mbtiles")
+                if cfg.get("fusion_rmap"):            fmts.append("rmap")
+                if cfg.get("fusion_sqlitedb"):         fmts.append("sqlitedb")
+                if not fmts: fmts = ["mbtiles"]
+                cmd += ["--file-formats"] + fmts
+                if cfg.get("fusion_ecraser"): cmd.append("--tiles-overwrite")
+            else:
+                # Extension du GeoJSON intermédiaire
+                ext = ".geojson" if cfg.get("fusion_gz2_raw") and not cfg.get("fusion_gz2", True) else ".geojson.gz"
+                # Dossier de sortie automatique : <Projets>/<nom>/fusion
+                sortie_dir = _base_projets(cfg.get("dossier")) / nom / "fusion"
+                cmd += ["--output-file", str(sortie_dir / f"{nom}_fusion{ext}")]
+                fmts = []
+                if cfg.get("fusion_gz2", True):   fmts.append("gz")
+                if cfg.get("fusion_gz2_raw"):      fmts.append("geojson")
+                if cfg.get("fusion_map"):          fmts.append("map")
+                if cfg.get("fusion_transparent"):  fmts.append("transparent-raster")
+                if not fmts: fmts = ["gz"]
+                cmd += ["--file-formats"] + fmts
+                if cfg.get("fusion_map") and cfg.get("simplif_fusion"):
+                    cmd += ["--vector-simplify", str(cfg["simplif_fusion"])]
+
+        # ── Découpage raster (à posteriori) ──────────────────────────
+        elif t == "decoupe":
+            cmd.append("--split")
+            src_d = cfg.get("source_decoupe", "")
+            if src_d: cmd += ["--source", src_d]
+            if cfg.get("cols_decoupe_d", 0) > 0 and cfg.get("rows_decoupe_d", 0) > 0:
+                cmd += ["--cols", str(cfg["cols_decoupe_d"]),
+                        "--rows", str(cfg["rows_decoupe_d"])]
+            elif cfg.get("split_width_d", 0) > 0:
+                cmd += ["--split-width", str(cfg["split_width_d"])]
+            fmts_d = []
+            if cfg.get("mbtiles_d"):  fmts_d.append("mbtiles")
+            if cfg.get("rmap_d"):     fmts_d.append("rmap")
+            if cfg.get("sqlitedb_d"): fmts_d.append("sqlitedb")
+            if fmts_d: cmd += ["--file-formats"] + fmts_d
+            if cfg.get("ecraser_d"):  cmd.append("--tiles-overwrite")
+
+
+        return cmd
+
+    # ── Lancement ────────────────────────────────────────────────────
+    def _kill_tree(self, proc):
+        """Kill forcé de toute la hiérarchie du subprocess (Windows/Unix).
+        Partagé par stop() (escalade après grâce) et launch() (relance
+        après un Arrêter : l'intention utilisateur annule la grâce)."""
+        try:
+            if WINDOWS:
+                subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    # Compte SSH d'administration et compte RDP créé sur la VM : fixés en
+    # dur (pas de champ GUI). "root" est le défaut universel d'une VM
+    # cloud neuve (Hetzner, etc.) ; "userlidar" est un nom de compte
+    # interne créé à la volée par le script de déploiement, sans raison
+    # de varier. Les exposer n'apportait rien (retour utilisateur
+    # 2026-08-04) : qui a besoin d'un autre compte utilise directement
+    # rlidar2map_CLI/rlidar2map_GUI en standalone (--ssh-user/--user).
+    _REMOTE_SSH_USER = "root"
+    _REMOTE_RDP_USER = "userlidar"
+
+    def _wrap_remote_cmd(self, cmd, cfg):
+        """Enveloppe `cmd` (sortie de _build_cmd) pour l'exécuter sur une VM
+        via --remote-cli au lieu de localement. Le préfixe exécutable est
+        conservé tel quel (frozen : 1 élément ; source : 2), --remote-cli et
+        ses propres options s'insèrent juste après, puis `--` et les
+        arguments lidar2map inchangés. Toujours --bundle (pas de choix
+        source dans la GUI, comme --remote-gui qui n'en propose pas non
+        plus) : qui veut --source utilise rlidar2map_CLI en standalone."""
+        prefix_len = 1 if getattr(sys, "frozen", False) else 2
+        prefix, lidar_args = cmd[:prefix_len], cmd[prefix_len:]
+        remote_cmd = list(prefix) + ["--remote-cli", "--bundle"]
+        if cfg.get("remote_session"):
+            remote_cmd += ["--session", cfg["remote_session"]]
+        _remote_mode = cfg.get("remote_mode")
+        if _remote_mode == "restart":
+            remote_cmd.append("--restart")
+        elif _remote_mode == "resume":
+            remote_cmd.append("--resume")
+        if cfg.get("remote_identity"):
+            remote_cmd += ["--identity", cfg["remote_identity"]]
+        _sync_only = cfg.get("remote_sync_only")
+        if _sync_only and _sync_only != "tout":
+            remote_cmd += ["--sync-only", _sync_only]
+        remote_cmd.append("{}@{}".format(self._REMOTE_SSH_USER, cfg["remote_host"]))
+        remote_cmd.append("--")
+        remote_cmd += lidar_args
+        return remote_cmd
+
+    def _build_remote_gui_cmd(self, cfg):
+        """Construit la commande --remote-gui (bureau distant) : aucun des
+        paramètres du formulaire (zone, type...) ne s'applique, seules les
+        options de préparation de VM (rlidar2map_GUI) comptent."""
+        cmd = ([str(SCRIPT)] if getattr(sys, "frozen", False)
+               else [sys.executable, str(SCRIPT)])
+        cmd += ["--remote-gui", "--ip", cfg["remote_host"],
+                "--ssh-user", self._REMOTE_SSH_USER,
+                "--user", self._REMOTE_RDP_USER]
+        if cfg.get("remote_identity"):
+            cmd += ["--identity", cfg["remote_identity"]]
+        return cmd
+
+    def launch(self, cfg):
+        # Décision de lancement sous verrou : lire l'état, tuer l'ancien run
+        # si « Arrêter puis Lancer », puis poser _launching AVANT de rendre
+        # la main. Le second clic d'un double-clic bloque sur ce verrou, le
+        # relâche, voit _process vivant OU _launching → rejeté. Le Popen
+        # lui-même est fait plus bas, SYNCHRONE (avant de lancer le thread
+        # lecteur), pour que _process soit posé avant tout autre launch().
+        with self._launch_lock:
+            proc = self._process
+            if proc and proc.poll() is None:
+                if self._stop_t is None:
+                    return {"error": "Un processus est déjà en cours."}
+                # Arrêter PUIS Lancer = intention sans ambiguïté : ne pas faire
+                # attendre la grâce de 15 s à l'utilisateur (sinon « Un processus
+                # est déjà en cours » tant que l'arrêt gracieux n'a pas abouti).
+                # Escalade immédiate + courte attente de la mort effective.
+                self._kill_tree(proc)
                 try:
-                    sys.stderr.write(str(_msg) + "\n")
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    return {"error": "Arrêt encore en cours, réessayez dans quelques secondes."}
+            elif self._launching:
+                # Un lancement est déjà engagé mais le subprocess n'est pas
+                # encore créé (course double-clic) : rejeter comme un run actif.
+                return {"error": "Un processus est déjà en cours."}
+            self._launching = True
+        # Laisser le thread lecteur de l'ANCIEN run se terminer avant de
+        # réinitialiser l'état : son finally pose _done=True et écraserait
+        # le _done=False du nouveau run (course). Le pipe étant clos par la
+        # mort du process, il sort en quelques ms.
+        if self._reader_t and self._reader_t.is_alive():
+            self._reader_t.join(timeout=5)
+        self._stop_t = None
+        remote_choix = cfg.get("remote_choix", "local")
+        if remote_choix in ("cli", "gui") and not cfg.get("remote_host", "").strip():
+            with self._launch_lock:
+                self._launching = False
+            return {"error": "Hôte manquant pour l'exécution distante (ex. 192.0.2.10)."}
+        if remote_choix == "gui":
+            # Bureau distant : aucun argument lidar2map, _build_cmd ne
+            # servirait à rien (cfg.type/zone n'ont pas été validés côté GUI).
+            cmd = self._build_remote_gui_cmd(cfg)
+        else:
+            cmd = self._build_cmd(cfg)
+            if remote_choix == "cli":
+                cmd = self._wrap_remote_cmd(cmd, cfg)
+        self._done = False
+        self._retcode = None
+        self._t_launch = time.time()
+        self._cfg_launch = cfg
+        # run_id partagé GUI ↔ subprocess via env LIDAR2MAP_HIST_RUN_ID :
+        # le subprocess sauve 'en cours' au début (crash-safe), puis 'ok'/'ko'
+        # à la fin. poll_log côté GUI peut alors mettre à jour la MÊME entrée
+        # avec le cfg complet (qui contient des champs absents de l'argv :
+        # tel_v, ecraser_tel_v, etc.) pour rappel exact via loadConfig().
+        self._hist_run_id = f"{int(time.time()*1000)}-{os.getpid()}-gui"
+        self._hist_saved  = False
+        if remote_choix == "gui":
+            # Bureau distant : pas de livrable local, rien à ouvrir à la
+            # fin (cfg.type/nom n'ont d'ailleurs pas été validés côté GUI,
+            # un calcul ici serait arbitraire, cf. open_folder qui ouvrait
+            # à tort Projets/ ou une racine sans rapport, bug vécu 2026-08-04).
+            self._result_dir = None
+        else:
+            # Calculer le dossier résultat attendu
+            t    = cfg.get("type", "lidar")
+            nom  = cfg.get("nom", "")
+            # Le pipeline CLI normalise le nom (slug ASCII minuscule) pour le
+            # nom de dossier : "Garéoult" → "gareoult". Sans cette normalisation
+            # ici, open_folder() pointerait vers un chemin inexistant.
+            nom_slug = normaliser_nom(nom) if nom else ""
+            base = Path(cfg["dossier"]) if cfg.get("dossier") else DOSSIER_TRAVAIL / "Projets"
+            # Le subprocess utilise --provider <code> → ecrit dans lidar/<country>.
+            # On reconstruit le meme path ici sinon open_folder pointe ailleurs.
+            _cfg_provider = cfg.get("provider", PROVIDER.CODE)
+            _cfg_country = "fr"
+            for _p in _discover_providers():
+                if _p["code"] == _cfg_provider:
+                    _cfg_country = _p.get("country", "fr")
+                    break
+            _lidar_subdir_cfg = f"lidar/{_cfg_country}"
+            _type_dir = {"lidar":_lidar_subdir_cfg, "scan":"raster", "osm":"osm_vecteur",
+                         "vecteur":"ign_vecteur", "fusion":"fusion", "decoupe":""}
+            # Fusion MBTiles : sous-dossier propre (fusion_raster), aligné sur
+            # celui écrit par _build_cmd (même détection par extension), sinon
+            # "Ouvrir le dossier" pointe vers fusion/ resté vide.
+            _fusion_fichiers_cfg = cfg.get("fusion_fichiers") or []
+            if t == "fusion" and _fusion_fichiers_cfg and all(
+                    str(f).lower().endswith(".mbtiles") for f in _fusion_fichiers_cfg):
+                _type_dir["fusion"] = "fusion_raster"
+            if t == "decoupe" and cfg.get("source_decoupe"):
+                self._result_dir = str(Path(cfg["source_decoupe"]).parent)
+            elif cfg.get("dossier"):
+                # --output-dir explicite : chaque main CLI l'utilise comme racine
+                # DIRECTE (racine = args.dossier), sans sous-dossier <nom>/<type>.
+                # Sans ce cas, open_folder visait dossier/nom/type inexistant et
+                # l'explorateur ouvrait Mes Documents. Miroir du CLI, tous types.
+                self._result_dir = str(Path(cfg["dossier"]))
+            else:
+                self._result_dir = str(base / nom_slug / _type_dir.get(t, t)) if nom_slug else str(base)
+        while not self._log_queue.empty():
+            try: self._log_queue.get_nowait()
+            except queue.Empty: break
+
+        # ── Création SYNCHRONE du subprocess ─────────────────────────────
+        # Faite ici (avant de lancer le thread lecteur) pour que _process
+        # soit posé avant que launch() rende la main : un second clic voit
+        # alors proc.poll() vivant et est rejeté. Tant que Popen n'a pas
+        # retourné, c'est _launching (posé plus haut, sous verrou) qui
+        # fait barrage.
+        self._log_queue.put(
+            {"line": "$ " + _rediger_secrets(
+                " ".join(str(c) for c in cmd)) + "\n\n",
+             "tag": "dim"})
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        # Propager le run_id au subprocess pour qu'il sauve 'en cours'
+        # SUR la même entrée que celle finalisée par poll_log côté GUI.
+        env["LIDAR2MAP_HIST_RUN_ID"] = self._hist_run_id
+        # Forcer UTF-8 sur stdout/stderr du child Python.
+        # Sans ça, sur Windows le child utilise cp850 ou cp1252 par
+        # défaut, et les caractères accentués (é, →, ⚠, ✓, etc.)
+        # arrivent corrompus dans le pipe. Ça casse à la fois le
+        # log lisible côté GUI ET la détection regex de mots-clés
+        # comme "ERREUR" qui contient un É (devient un ? si décodé
+        # en cp850 puis lu en utf-8).
+        env["PYTHONIOENCODING"] = "utf-8"
+        try:
+            # Créer un nouveau groupe de processus pour pouvoir signaler
+            # toute la hiérarchie (arrêt gracieux puis forcé, cf. stop()).
+            if WINDOWS:
+                # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
+                # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
+                # avait été retirée sur un soupçon de blocage du pipe
+                # stdout avec l'ancien backend WebView2 ; sous Qt
+                # (backend forcé depuis), le pipe fonctionne :
+                # revalidé par test dédié le 2026-07-02.
+                self._process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    bufsize=0, env=env,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+            else:
+                self._process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    bufsize=0, env=env,
+                    start_new_session=True)
+        except Exception as e:
+            # Échec du spawn (binaire introuvable, argv trop long...) :
+            # remonter l'erreur tout de suite ET lever le drapeau, sinon
+            # _launching resterait True et bloquerait tout lancement futur.
+            self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
+            with self._lock:
+                self._retcode = -1
+            self._done = True
+            with self._launch_lock:
+                self._launching = False
+            return {"error": f"Échec du lancement : {e}"}
+        # subprocess vivant → le garde passe de _launching à proc.poll().
+        with self._launch_lock:
+            self._launching = False
+
+        def run():
+            try:
+                buf = ""
+                pct_re = re.compile(r"(\d+)%")
+                # Décodeur incrémental : les chunks de 64 octets peuvent
+                # couper une séquence UTF-8 multi-octets en deux ; un
+                # .decode() par chunk produisait des � sporadiques sur les
+                # accents (et pouvait casser _classify_err sur "ERREUR").
+                import codecs as _codecs
+                _dec = _codecs.getincrementaldecoder("utf-8")("replace")
+
+                def _emit_ligne(texte):
+                    # Ligne complète → log GUI + buffers de diagnostic.
+                    # Le run peut MODIFIER le nom de projet (le mode LAZ
+                    # suffixe le nom de zone) : le chemin réel imprimé par
+                    # le pipeline (« Done! Folder: … ») est la source de
+                    # vérité et écrase le _result_dir précalculé — sinon
+                    # open_folder ouvre l'ancien dossier (bug vécu
+                    # 2026-07-16, même classe que le précédent bug country).
+                    # "[VM]" exclu : c'est le journal DISTANT relayé par
+                    # --remote-cli (print_remote_log_tail côté
+                    # rlidar2map_CLI), son "Done! Folder:" pointe vers un
+                    # chemin sur la VM, jamais valide en local (bug vécu
+                    # 2026-08-04 : open_folder ouvrait /root/... sur
+                    # Windows). Le cas distant est couvert juste après par
+                    # "  local :", imprimé par rlidar2map_CLI lui-même.
+                    if "Done! Folder:" in texte and "[VM]" not in texte:
+                        _rd = texte.split("Done! Folder:", 1)[1].strip()
+                        if _rd:
+                            self._result_dir = _rd
+                    # --remote-cli résume son run avec "  local : <racine
+                    # du run>" (rlidar2map_CLI.print_remote_hints) ; les
+                    # livrables synchronisés sont dans son sous-dossier
+                    # results/ (cf. VmController.sync_once), jamais à la
+                    # racine — sans le / "results", open_folder ouvrait le
+                    # dossier du run, pas celui des fichiers.
+                    elif "  local : " in texte:
+                        _rd = texte.split("  local : ", 1)[1].strip()
+                        if _rd:
+                            self._result_dir = str(Path(_rd) / "results")
+                    is_err = _classify_err(texte)
+                    with self._lock:
+                        if is_err and len(self._err_lines) < 20:
+                            self._err_lines.append(texte.strip())
+                        # Buffer circulaire des 10 dernières lignes
+                        # non-vides : fallback si retcode≠0 sans
+                        # ligne marquée "ERREUR".
+                        self._tail_lines.append(texte.strip())
+                        if len(self._tail_lines) > 10:
+                            self._tail_lines.pop(0)
+                    self._log_queue.put({"line": texte + "\n",
+                                         "tag": "err" if is_err else "ok"})
+
+                # Reset des buffers de diagnostic (init dans __init__).
+                # Lock pour cohérence avec poll_log / get_last_error.
+                with self._lock:
+                    self._err_lines  = []
+                    self._tail_lines = []
+                saw_cr = False
+                for chunk in iter(lambda: self._process.stdout.read(64), b""):
+                    for ch in _dec.decode(chunk):
+                        if saw_cr:
+                            # Décision DIFFÉRÉE sur le \r : sous Windows,
+                            # CHAQUE print() termine par \r\n. Décider dès
+                            # le \r (ancien code) détournait vers la barre
+                            # de progression toute ligne de log contenant
+                            # un % (bilans "100%", ligne warp), qui
+                            # disparaissait alors du log GUI.
+                            # \r suivi de \n = fin de ligne normale → log ;
+                            # \r nu = repaint de barre de progression.
+                            saw_cr = False
+                            if ch == "\n":
+                                if buf.strip():
+                                    _emit_ligne(buf)
+                                buf = ""
+                                continue
+                            m = pct_re.search(buf)
+                            if m and buf.strip():
+                                self._log_queue.put({"pct": int(m.group(1)),
+                                                     "label": buf.strip()})
+                            # Repaint sans % : remplacé par le suivant,
+                            # comme sur un terminal (pas de concaténation).
+                            buf = ""
+                        if ch == "\r":
+                            saw_cr = True
+                        elif ch == "\n":
+                            if buf.strip():
+                                _emit_ligne(buf)
+                            buf = ""
+                        else:
+                            buf += ch
+                buf += _dec.decode(b"", True)   # flush décodeur (EOF)
+                # Drain final : la boucle for-chunk a vu EOF, mais le buffer
+                # interne `buf` peut contenir une dernière ligne sans \n
+                # final (ex : print() Python sans flush avant sys.exit).
+                # Sans ça, ces lignes sont perdues sur Windows quand le
+                # child exit en moins de 100ms.
+                if buf.strip():
+                    _emit_ligne(buf)
+                    buf = ""
+                self._process.wait()
+                with self._lock:
+                    self._retcode = self._process.returncode
+
+                # Drain final post-wait : sur Windows, le pipe peut contenir
+                # encore des données après que le child ait exit. Sans ce
+                # drain, les dernières lignes (souvent les plus importantes :
+                # message d'erreur final + sys.exit(1)) sont perdues.
+                try:
+                    remaining = self._process.stdout.read()
+                    if remaining:
+                        text = remaining.decode("utf-8", errors="replace")
+                        for line in text.split("\n"):
+                            line = line.rstrip("\r")
+                            if not line.strip():
+                                continue
+                            _emit_ligne(line)
                 except Exception:
+                    # En cas d'erreur de lecture finale (pipe déjà fermé),
+                    # on continue silencieusement avec ce qu'on a.
                     pass
 
-            _QtCore.qInstallMessageHandler(_qt_msg_filter)
+                sym = "✓" if self._retcode == 0 else "✗"
+                self._log_queue.put({"line": f"\n{sym} Terminé (code {self._retcode})\n",
+                                     "tag": "ok" if self._retcode == 0 else "err"})
+                # Si échec : préparer le message modal récapitulatif.
+                # Priorité 1 : lignes marquées comme "ERREUR" (si détectées).
+                # Priorité 2 : 10 dernières lignes non-vides (fallback générique
+                # pour les cas où sys.exit(1) suit un print() libre que le filtre
+                # n'a pas reconnu comme erreur).
+                # On le stocke à la fois dans la queue ET sur l'instance :
+                # get_last_error() peut ainsi le relire séparément, une fois
+                # done=True constaté, sans dépendre d'un item de poll_log
+                # encore présent dans la queue (déjà consommé, ou perdu si
+                # pris entre deux polls).
+                with self._lock:
+                    self._modal_error_msg = ""
+                    if self._retcode != 0:
+                        if self._err_lines:
+                            modal_lines = self._err_lines[-10:]
+                        elif self._tail_lines:
+                            modal_lines = self._tail_lines[-10:]
+                        else:
+                            modal_lines = [
+                                f"Le traitement a échoué (code {self._retcode})",
+                                "Aucun message d'erreur n'a été capturé.",
+                                "Vérifiez le panneau de log pour les détails.",
+                            ]
+                        self._modal_error_msg = "\n".join(modal_lines)
+                        _modal_payload = {
+                            "modal_error": self._modal_error_msg,
+                            "retcode":     self._retcode,
+                        }
+                    else:
+                        _modal_payload = None
+                if _modal_payload is not None:
+                    self._log_queue.put(_modal_payload)
+                # Marquer la durée pour la sauvegarde historique (faite
+                # dans poll_log). Mesuré dans tous les cas — y compris
+                # échec — pour que l'entrée 'ko' soit horodatée correctement.
+                self._duree_run = int(time.time() - getattr(self, "_t_launch", time.time()))
+            except Exception as e:
+                self._log_queue.put({"line": f"\nError: {e}\n", "tag": "err"})
+                with self._lock:
+                    self._retcode = -1
+            finally:
+                self._done = True
+
+        self._reader_t = threading.Thread(target=run, daemon=True)
+        self._reader_t.start()
+        return {"cmd": " ".join(str(c) for c in cmd)}
+
+    def _stop_remote_run(self, purge_remote=False):
+        """Arrête le calcul VM associé au subprocess de surveillance."""
+        cfg = getattr(self, "_cfg_launch", {}) or {}
+        if cfg.get("remote_choix") != "cli":
+            return {"ok": False, "error": "Le traitement courant n'est pas un calcul VM."}
+        argv = ["--session", cfg.get("remote_session") or "lidar", "--stop"]
+        if cfg.get("remote_identity"):
+            argv += ["--identity", cfg["remote_identity"]]
+        argv.append("{}@{}".format(self._REMOTE_SSH_USER, cfg.get("remote_host", "")))
+        stopped = False
+        try:
+            remote_cli = _import_patchable_source_module(
+                "tools", "rlidar2map_CLI")
+            controller = remote_cli.VmController(
+                remote_cli.parse_options(argv))
+            stopped = controller.stop_remote()
+            purged = False
+            if purge_remote:
+                state = controller.query_state()
+                if state.exists:
+                    if not state.terminal or state.tmux:
+                        raise RuntimeError(
+                            "la session est encore active après la demande d'arrêt"
+                        )
+                    controller.purge_remote(state)
+                    purged = True
+            if stopped:
+                self._log_queue.put({
+                    "line": "\n⚠ Traitement arrêté sur la VM.\n", "tag": "err"
+                })
+            else:
+                self._log_queue.put({
+                    "line": "\n⚠ Aucun traitement actif sur la VM.\n", "tag": "err"
+                })
+            if purged:
+                self._log_queue.put({
+                    "line": "⚠ Fichiers de la session supprimés sur la VM.\n",
+                    "tag": "err",
+                })
+            return {"ok": True, "stopped": stopped, "purged": purged}
+        except BaseException as exc:
+            # argparse lève SystemExit (BaseException) si une session saisie
+            # dans le GUI est invalide ; la convertir en erreur du bridge.
+            message = str(exc) or exc.__class__.__name__
+            self._log_queue.put({
+                "line": "\n✗ Arrêt sur la VM impossible : {}\n".format(message),
+                "tag": "err",
+            })
+            return {"ok": False, "stopped": stopped, "error": message}
+
+    def stop(self, stop_remote=False, purge_remote=False):
+        """Arrêt gracieux, puis forcé.
+
+        1. Signal doux : CTRL_BREAK au groupe Windows (routé vers le
+           soft-cancel _on_sigint du child : l'opération courante finit
+           proprement, manifeste/.part/sqlite fermés), SIGINT au groupe
+           Unix. L'ancien comportement (taskkill /F immédiat) coupait
+           net sans aucun cleanup.
+        2. Si le child vit encore après _STOP_GRACE_S (kernel numba
+           intuable, child sans console où CTRL_BREAK échoue), kill
+           forcé de toute la hiérarchie, comme avant.
+        L'escalade tourne dans un thread pour ne pas bloquer le bridge
+        JS ; _done est posé par le thread lecteur quand le pipe se ferme.
+        """
+        remote_result = None
+        if stop_remote:
+            # Faire l'appel SSH avant de couper le contrôleur local : cette
+            # méthode ne rend la main qu'une fois le process VM réellement
+            # sorti (ou forcé), et peut encore consigner le résultat au log.
+            remote_result = self._stop_remote_run(bool(purge_remote))
+
+        _STOP_GRACE_S = 15
+        proc = self._process
+        if not (proc and proc.poll() is None):
+            return remote_result
+        self._stop_t = time.time()   # lu par launch() : relance = escalade immédiate
+        self._log_queue.put(
+            {"line": f"\n⚠ Stop requested - graceful, forced after {_STOP_GRACE_S} s\n",
+             "tag": "err"})
+        doux_ok = False
+        try:
+            if WINDOWS:
+                proc.send_signal(_signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(os.getpgid(proc.pid), _signal.SIGINT)
+            doux_ok = True
         except Exception:
             pass
 
-    # Taille initiale bornée à l'écran : sous Qt + DPI, une hauteur fixe peut
-    # dépasser un écran de portable -> fenêtre hors écran. On clampe sur la
-    # zone de travail (hors barre des tâches) sous Windows. Redimensionnable.
-    _w, _h = 1300, 1000
-    try:
-        if platform.system() == "Windows":
-            import ctypes
-            from ctypes import wintypes
-            _r = wintypes.RECT()
-            ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(_r), 0)  # SPI_GETWORKAREA
-            _wa_w, _wa_h = _r.right - _r.left, _r.bottom - _r.top
-            if _wa_h > 0:
-                # REMPLIR la zone de travail (moins une marge) dans les DEUX
-                # dimensions, au lieu de plafonner à une taille fixe. La hauteur
-                # bloquée à 850 laissait un ascenseur vertical ; la largeur
-                # bloquée à 1300 laissait du vide à droite ET faisait passer les
-                # longues lignes (Projet, Zone) à la ligne, ce qui RAJOUTAIT de
-                # la hauteur → scroll. Plus large = les lignes tiennent d'un
-                # trait = contenu plus court. Cap à 2200 pour ne pas étirer
-                # absurdement une fenêtre sur écran ultra-large.
-                _h = max(600, _wa_h - 48)
-                _w = max(1000, min(2200, _wa_w - 48))
-    except Exception:
-        pass
+        def _escalade():
+            try:
+                proc.wait(timeout=_STOP_GRACE_S if doux_ok else 0.1)
+                return   # sortie propre : le thread lecteur finalise (_done)
+            except subprocess.TimeoutExpired:
+                pass
+            self._kill_tree(proc)
+            self._log_queue.put({"line": "\n⚠ Forced stop\n", "tag": "err"})
+        threading.Thread(target=_escalade, daemon=True).start()
+        return remote_result
 
-    win = webview.create_window(
-        f"lidar2map v{VERSION} — Cartes offline LiDAR / raster / OSM",
-        html=HTML,
-        js_api=api,
-        width=_w, height=_h,
-        min_size=(1000, 600),
-        # Zoom géré en JS (applyUiZoom : Ctrl+molette / Ctrl+± / Ctrl+0) pour
-        # pouvoir le PERSISTER (preferences.json). zoomable natif désactivé,
-        # sinon les deux zooms se cumuleraient.
-        zoomable=False,
-    )
-    # Assigner la fenêtre immédiatement — disponible dès create_window
-    api.window = win
+    def check_update(self):
+        """Compare la dernière release GitHub à la version locale.
 
-    def _au_close():
-        """Fermeture de la fenêtre : extinction garantie de tout l'arbre.
-
-        Accroché à l'événement pywebview `closed`, qui se déclenche AVANT le
-        teardown Qt. Indispensable : sous Qt/QtWebEngine, le teardown peut
-        fail-faster le process (STATUS_FAIL_FAST observé) sans que
-        webview.start() ne retourne, donc tout code placé après start() n'est
-        pas fiable. Sans ce handler : (1) un run CLI actif continuait en
-        headless, sans log ni stop ; (2) le process GUI pouvait survivre à la
-        fenêtre (zombies python + QtWebEngineProcess à tuer à la main).
+        Appelé par le JS après l'init (non bloquant côté UI) ; silencieux
+        et {"update": False} sur toute erreur (hors ligne, rate-limit de
+        l'API GitHub, JSON inattendu). Une requête, timeout court.
         """
         try:
-            proc = getattr(api, "_process", None)
-            if proc and proc.poll() is None:
-                print("  Window closed - stopping the running job...", flush=True)
-                api.stop()            # doux (CTRL_BREAK/SIGINT), escalade 15 s
-                try:
-                    proc.wait(timeout=20)   # laisser l'escalade aboutir
-                except Exception:
-                    pass
+            with _urlopen("https://api.github.com/repos/nico579/lidar2map"
+                          "/releases/latest", timeout=6) as r:
+                d = json.loads(r.read())
+            tag = str(d.get("tag_name") or "")
+
+            def _triplet(v):
+                n = re.findall(r"\d+", v)
+                return tuple(int(x) for x in n[:3]) if n else (0,)
+
+            if tag and _triplet(tag) > _triplet(VERSION):
+                return {"update": True, "latest": tag,
+                        "url": d.get("html_url") or
+                               "https://github.com/nico579/lidar2map/releases/latest"}
         except Exception:
             pass
-        print("  GUI window closed - exiting.", flush=True)
-        # Publier le log AVANT le os._exit ci-dessous : lui saute aussi les
-        # handlers atexit (dont celui qui renomme <log>.part -> <log>), donc
-        # sans cet appel explicite le fichier restait bloqué en .part à
-        # chaque fermeture normale de la fenêtre (vécu 2026-08-05 : 4/4 logs
-        # GUI orphelins, tous terminés proprement sur ce même message). Pur
-        # I/O Python (flush + close + rename) : aucun risque de réintroduire
-        # le fail-fast Qt que os._exit évite.
+        return {"update": False}
+
+    def open_url(self, url):
+        """Ouvre une URL dans le navigateur système (bandeau update).
+        Restreinte au repo du projet : le bridge JS ne doit pas pouvoir
+        ouvrir des URLs arbitraires."""
         try:
-            if isinstance(sys.stdout, _TeeLogger):
-                sys.stdout.close()
+            if str(url).startswith("https://github.com/nico579/lidar2map"):
+                import webbrowser
+                webbrowser.open(url)
         except Exception:
             pass
-        # os._exit : sortie inconditionnelle AVANT le teardown Qt (évite le
-        # fail-fast et les threads non-daemon qui retiennent le process).
-        # Les écritures critiques (historique, préférences) sont atomiques
-        # et posées au fil de l'eau.
-        os._exit(0)
 
-    win.events.closed += _au_close
+    def open_folder(self, path):
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer", Path(path).resolve()])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception:
+            pass
 
-    # Activable via flag --debug (clic droit → Inspect dans la fenêtre webview,
-    # ou F12, pour ouvrir les DevTools et voir la console JS).
-    _wv_debug = "--debug" in sys.argv
-    webview.start(debug=_wv_debug)
+    def get_last_error(self):
+        """Retourne le message d'erreur du dernier run (ou chaîne vide).
 
-    # Filet de sécurité : si l'événement `closed` n'a pas été délivré (backend
-    # exotique) mais que start() retourne, on passe par le même chemin.
-    _au_close()
+        Permet au JS de récupérer ce message **après** avoir constaté
+        que `done=True && code!=0`, sans dépendre d'un item de poll_log
+        encore présent dans la queue à ce moment-là.
+
+        Lecture sous lock pour voir un snapshot cohérent (msg + retcode
+        écrits ensemble dans run()).
+        """
+        with self._lock:
+            return {
+                "msg":     getattr(self, "_modal_error_msg", "") or "",
+                "retcode": getattr(self, "_retcode", 0) or 0,
+            }
+
+    def poll_log(self):
+        items = []
+        try:
+            while True:
+                items.append(self._log_queue.get_nowait())
+        except queue.Empty:
+            pass
+        # Sauvegarde finale de l'historique côté GUI (thread-safe via
+        # poll_log). MET À JOUR l'entrée 'en cours' créée par le subprocess
+        # via le même run_id (env LIDAR2MAP_HIST_RUN_ID). Sauvegarde sur
+        # succès ET échec : sans ça, un crash du pipeline laissait l'entrée
+        # 'en cours' indéfiniment.
+        if self._done and not getattr(self, "_hist_saved", False):
+            self._hist_saved = True
+            try:
+                _duree  = getattr(self, "_duree_run", 0) or \
+                          int(time.time() - getattr(self, "_t_launch", time.time()))
+                _statut, _result = _bilan_historique_processus(
+                    self._retcode, getattr(self, "_result_dir", ""))
+                _sauver_historique(
+                    getattr(self, "_cfg_launch", {}),
+                    _duree,
+                    _result,
+                    run_id=getattr(self, "_hist_run_id", ""),
+                    statut=_statut,
+                )
+                items.append({"line": f"  History saved: {_HISTORIQUE_PATH}\n",
+                              "tag": "ok"})
+            except Exception as _he:
+                items.append({"line": f"  History error: {_he}\n", "tag": "err"})
+
+        result_dir = getattr(self, "_result_dir", None) if (self._done and self._retcode == 0) else None
+        return {"items": items, "done": self._done, "code": self._retcode,
+                "result_dir": result_dir}
 
 
 def _normaliser_argv_valeurs_negatives():
@@ -7903,12 +7506,11 @@ def _normaliser_argv_valeurs_negatives():
 if __name__ == "__main__":
     try:
         _normaliser_argv_valeurs_negatives()
-        # --debug (DevTools WebView2) est un flag GUI-only. On le détecte tôt
-        # pour qu'il ne perturbe pas argparse en aval (qui ne le reconnaît pas).
-        # Lu directement dans sys.argv par lancer_gui() avant strip.
-        _is_only_debug = (len(sys.argv) == 2 and sys.argv[1] == "--debug")
-        if len(sys.argv) == 1 or _is_only_debug:
-            lancer_gui()
+        if len(sys.argv) == 1:
+            # Sans argument : serveur web + navigateur, comme blink2video.
+            # Seul mode GUI (pywebview retiré) - launch/stop/pick_dir/
+            # pick_file suivent en phases suivantes de la migration web.
+            main_serve_gui()
         else:
             # ── Détection du mode via un PRÉ-PARSER argparse ──────────────────
             # Au lieu de `if "--decouper" in sys.argv: ...` (grep, susceptible
@@ -7922,6 +7524,7 @@ if __name__ == "__main__":
             _DISPATCH = {
                 # mode_key: (sous-main, [flags reconnus : anglais canonique + alias FR])
                 "serve":      (main_serve,     ["--serve"]),
+                "servegui":   (main_serve_gui, ["--serve-gui"]),
                 "decouper":   (main_decouper,  ["--split", "--decouper"]),
                 "ignraster":  (main_wmts,      ["--raster", "--ignraster"]),
                 "ignvecteur": (main_wfs,       ["--vector", "--ignvecteur"]),

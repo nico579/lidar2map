@@ -78,6 +78,7 @@ MAP = {
     "_provider_runtime.py":          "_provider_runtime.py",
     "_zone_cli.py":                  "_zone_cli.py",
     "_raster_cli.py":                "_raster_cli.py",
+    "_raster_policy.py":             "_raster_policy.py",
     "_raster_run.py":                "_raster_run.py",
     "_raster_formats.py":            "_raster_formats.py",
     "_mbtiles_wmts.py":              "_mbtiles_wmts.py",
@@ -91,12 +92,14 @@ MAP = {
     "_bootstrap_tls.py":             "_bootstrap_tls.py",
     "_smoketest.py":                 "_smoketest.py",
     "_logging_helpers.py":           "_logging_helpers.py",
+    "_history_cli.py":               "_history_cli.py",
     "_tee_logger.py":                "_tee_logger.py",
     "_log_activation.py":            "_log_activation.py",
     "_atomic_files.py":              "_atomic_files.py",
     "_http_helpers.py":              "_http_helpers.py",
     "_runtime_paths.py":             "_runtime_paths.py",
     "_disk_guard.py":                "_disk_guard.py",
+    "_serve_web.py":                 "_serve_web.py",
     "_wfs_pipeline.py":              "_wfs_pipeline.py",
     "_bdtopo_bulk.py":               "_bdtopo_bulk.py",
     "_bdtopo_layers.py":             "_bdtopo_layers.py",
@@ -221,12 +224,14 @@ def is_rebuild_file(name: str) -> bool:
         or (name.startswith("_bootstrap_") and name.endswith(".py"))
         or name == "_smoketest.py"
         or name == "_logging_helpers.py"
+        or (name.startswith("_history_") and name.endswith(".py"))
         or name == "_tee_logger.py"
         or name == "_log_activation.py"
         or name == "_atomic_files.py"
         or name == "_http_helpers.py"
         or name == "_runtime_paths.py"
         or name == "_disk_guard.py"
+        or name == "_serve_web.py"
         or name == "_wfs_pipeline.py"
         or name == "_bdtopo_bulk.py"
         or name == "_bdtopo_layers.py"
