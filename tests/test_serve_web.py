@@ -371,5 +371,173 @@ class BrowseDirTests(unittest.TestCase):
         self.assertIsNone(data["parent"])
 
 
+class InstanceExistanteEtPortLibreTests(unittest.TestCase):
+    """Régression du 2026-09-19 : avant la migration, relancer l'exe ouvrait
+    toujours une fenêtre indépendante (calcul possible en parallèle) ; un
+    serveur unique par port ne le permet plus tout seul. _instance_existante
+    distingue « un lidar2map tourne déjà ici » d'un service tiers qui
+    occuperait le port par coïncidence ; _premier_port_libre fournit le port
+    une fois la décision (rejoindre ou lancer en parallèle) prise ailleurs."""
+
+    def _demarrer_lidar2map(self):
+        server = _serve_web.demarrer(
+            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+            api_routes={"init": L2M._api_get_init_data}, post_routes={},
+        )
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_address[1]
+
+    def test_detecte_une_vraie_instance_lidar2map(self):
+        port = self._demarrer_lidar2map()
+        self.assertTrue(L2M._instance_existante("127.0.0.1", port))
+
+    def test_rien_n_ecoute_sur_un_port_libre(self):
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port_libre = s.getsockname()[1]
+        self.assertFalse(L2M._instance_existante("127.0.0.1", port_libre))
+
+    def test_ignore_un_service_tiers_qui_repond_autre_chose(self):
+        # Un port occupé par un autre programme ne doit jamais être proposé
+        # comme « instance lidar2map à rejoindre ».
+        import http.server
+        import threading as _threading
+
+        class _Autre(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                corps = json.dumps({"app": "autre-chose"}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(corps)
+
+            def log_message(self, *a):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Autre)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        _threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.assertFalse(L2M._instance_existante("127.0.0.1", server.server_address[1]))
+
+    def test_premier_port_libre_retourne_le_port_de_depart_si_libre(self):
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            depart = s.getsockname()[1]
+        server, port = L2M._premier_port_libre(
+            "127.0.0.1", depart, "", ROOT / "gui", {}, {},
+        )
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.assertEqual(port, depart)
+
+    def test_premier_port_libre_saute_les_ports_deja_pris(self):
+        import socket
+        occupant = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        occupant.bind(("127.0.0.1", 0))
+        occupant.listen(1)
+        depart = occupant.getsockname()[1]
+        self.addCleanup(occupant.close)
+        try:
+            server, port = L2M._premier_port_libre(
+                "127.0.0.1", depart, "", ROOT / "gui", {}, {},
+            )
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            self.assertNotEqual(port, depart)
+            self.assertGreater(port, depart)
+        finally:
+            pass
+
+    def test_premier_port_libre_rend_none_si_toute_la_plage_est_prise(self):
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            depart = s.getsockname()[1]
+        occupants = []
+        try:
+            for p in range(depart, depart + L2M.PORT_RANGE_SIZE):
+                occ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                occ.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                occ.bind(("127.0.0.1", p))
+                occ.listen(1)
+                occupants.append(occ)
+            server, port = L2M._premier_port_libre(
+                "127.0.0.1", depart, "", ROOT / "gui", {}, {},
+            )
+            self.assertIsNone(server)
+            self.assertIsNone(port)
+        finally:
+            for occ in occupants:
+                occ.close()
+
+
+class MainServeGuiRejoindreTests(unittest.TestCase):
+    """main_serve_gui() : le chemin le plus sensible du prompt interactif -
+    répondre « rejoindre » (Entrée seule, ou Y) ne doit surtout pas démarrer
+    un second serveur, sinon les deux écriraient dans le même historique/
+    cache en croyant chacun être seul. Le prompt lui-même (builtins.input)
+    et sys.stdin.isatty sont mockés : aucun vrai terminal n'est nécessaire
+    pour exercer cette branche en CI."""
+
+    def setUp(self):
+        self.server = _serve_web.demarrer(
+            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+            api_routes={"init": L2M._api_get_init_data}, post_routes={},
+        )
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def test_reponse_par_defaut_rejoint_et_ne_demarre_pas_un_second_serveur(self):
+        import webbrowser
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port)]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input", return_value="") as m_input, \
+             mock.patch.object(webbrowser, "open") as m_open:
+            L2M.main_serve_gui()  # doit retourner, pas boucler ni sys.exit
+
+        m_input.assert_called_once()
+        m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/")
+        # Le port de l'instance existante répond toujours SEUL : si
+        # main_serve_gui avait quand même démarré un second serveur dessus,
+        # la construction du Server aurait levé OSError plus haut (déjà
+        # couvert par _premier_port_libre) - ici on vérifie l'absence
+        # d'ouverture sur un port voisin, signe qu'aucun second serveur n'a
+        # été tenté.
+        for voisin in range(self.port + 1, self.port + L2M.PORT_RANGE_SIZE):
+            self.assertFalse(L2M._instance_existante("127.0.0.1", voisin))
+
+    def test_reponse_n_ne_rejoint_pas(self):
+        # --no-browser volontairement ABSENT : c'est justement la branche
+        # interactive (rejoindre/nouveau) qu'on veut exercer, elle est
+        # sautée quand --no-browser est présent. threading.Timer est mocké
+        # (pas juste webbrowser.open) pour qu'aucun thread différé ne puisse
+        # ouvrir un vrai navigateur après la fin du test, une fois le
+        # correctif with-block levé.
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port)]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input", return_value="n"), \
+             mock.patch.object(L2M.threading, "Timer") as m_timer, \
+             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             self.assertRaises(SystemExit):
+            L2M.main_serve_gui()
+
+        # « N » : le Timer d'ouverture cible le NOUVEAU port (port+1), pas
+        # l'instance existante - la branche « rejoindre » n'a pas été
+        # prise. Le serveur créé pour ce port est refermé par le handler
+        # KeyboardInterrupt lui-même (comportement normal d'un Ctrl+C) avant
+        # que ce test ne reprenne la main, donc rien à vérifier après coup
+        # sur ce port.
+        m_timer.assert_called_once()
+        url_programmee = m_timer.call_args.args[2][0]
+        self.assertEqual(url_programmee, f"http://127.0.0.1:{self.port + 1}/")
+
+
 if __name__ == "__main__":
     unittest.main()

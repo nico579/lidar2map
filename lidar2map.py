@@ -6079,6 +6079,48 @@ def _valider_cfg_web(cfg: dict) -> str:
     return ""
 
 
+# Un serveur = une instance Api = un seul calcul actif à la fois (launch()
+# refuse un second lancement tant qu'un process tourne, comme avant la
+# migration pywebview->web). Avant, double-cliquer l'exe plusieurs fois
+# ouvrait autant de fenêtres/process indépendants, donc autant de calculs
+# possibles en parallèle ; un serveur sur port fixe ne le permet plus, un
+# second lancement échouait juste (port déjà pris). _instance_existante()
+# détecte ce cas précis pour proposer un choix (rejoindre ou lancer en
+# parallèle) plutôt que de trancher à sa place ; une petite plage de ports
+# consécutifs ensuite (même pattern que Jupyter Notebook) fournit le port
+# libre une fois le choix fait.
+PORT_RANGE_SIZE = 10
+
+
+def _instance_existante(bind: str, port: int, timeout: float = 1.0) -> bool:
+    """Vrai si un serveur lidar2map (et pas un service tiers qui occuperait
+    ce port par coïncidence) répond déjà sur bind:port."""
+    try:
+        with urllib.request.urlopen(
+                f"http://{bind}:{port}/api/init", timeout=timeout) as reponse:
+            return json.loads(reponse.read()).get("app") == "lidar2map"
+    except Exception:
+        return False
+
+
+def _premier_port_libre(bind: str, port_depart: int, trusted_host: str,
+                         gui_dir: Path, api_routes: dict, post_routes: dict):
+    """Essaie port_depart puis les suivants dans PORT_RANGE_SIZE, retourne
+    (server, port) sur le premier qui accepte, ou (None, None) si toute la
+    plage est prise."""
+    import _serve_web
+    for port in range(port_depart, port_depart + PORT_RANGE_SIZE):
+        try:
+            server = _serve_web.demarrer(
+                bind=bind, port=port, trusted_host=trusted_host,
+                gui_dir=gui_dir, api_routes=api_routes, post_routes=post_routes,
+            )
+            return server, port
+        except OSError:
+            continue
+    return None, None
+
+
 def main_serve_gui():
     """Mode par défaut (lancement sans argument) ainsi que --serve-gui
     explicite : sert gui/index.html + app.js + style.css sur HTTP local et
@@ -6094,7 +6136,11 @@ def main_serve_gui():
                      "Mode par défaut d'un lancement sans argument.")
     parser.add_argument("--serve-gui", action="store_true", help="Mode serveur web (ce mode)")
     parser.add_argument("--port", type=int, default=8766, metavar="N",
-                        help="Port d'écoute (défaut 8766)")
+                        help="Port d'écoute de départ (défaut 8766). Si une "
+                             "instance y tourne déjà, une question interactive "
+                             "propose de la rejoindre ou d'en lancer une "
+                             f"nouvelle (jusqu'à {PORT_RANGE_SIZE - 1} ports "
+                             "suivants essayés)")
     parser.add_argument("--bind", default="127.0.0.1", metavar="ADRESSE",
                         help="Adresse d'écoute (défaut 127.0.0.1, boucle locale uniquement)")
     parser.add_argument("--trusted-host", default="", metavar="HOTE",
@@ -6104,7 +6150,6 @@ def main_serve_gui():
                         help="Ne pas ouvrir automatiquement le navigateur (usage scripté)")
     args = parser.parse_args()
 
-    import _serve_web
     gui_dir = _resoudre_gui_dir()
     api = Api()
 
@@ -6135,49 +6180,79 @@ def main_serve_gui():
         api.open_folder((payload or {}).get("path", ""))
         return {"ok": True}
 
+    api_routes = {
+        "init": _api_get_init_data,
+        "historique": _lire_historique,
+        "usage": _api_get_usage,
+        "last-error": api.get_last_error,
+        "check-update": api.check_update,
+        "poll-log": api.poll_log,
+        "autocomplete-ville": api.autocomplete_ville,
+        "browse-dir": _api_browse_dir,
+        "help": api.get_help,
+        "projets": api.get_projets,
+    }
+    post_routes = {
+        "launch": _launch,
+        "stop": _stop,
+        "clear-historique": lambda _payload: api.clear_historique(),
+        "set-lang": _set_lang,
+        "set-ui-zoom": _set_ui_zoom,
+        "start-share": _start_share,
+        "stop-share": lambda _payload: api.stop_share(),
+        "open-folder": _open_folder,
+    }
+    trusted_host = args.trusted_host.strip()
+    port_depart = args.port
 
-    try:
-        server = _serve_web.demarrer(
-            bind=args.bind, port=args.port, trusted_host=args.trusted_host.strip(),
-            gui_dir=gui_dir,
-            api_routes={
-                "init": _api_get_init_data,
-                "historique": _lire_historique,
-                "usage": _api_get_usage,
-                "last-error": api.get_last_error,
-                "check-update": api.check_update,
-                "poll-log": api.poll_log,
-                "autocomplete-ville": api.autocomplete_ville,
-                "browse-dir": _api_browse_dir,
-                "help": api.get_help,
-                "projets": api.get_projets,
-            },
-            post_routes={
-                "launch": _launch,
-                "stop": _stop,
-                "clear-historique": lambda _payload: api.clear_historique(),
-                "set-lang": _set_lang,
-                "set-ui-zoom": _set_ui_zoom,
-                "start-share": _start_share,
-                "stop-share": lambda _payload: api.stop_share(),
-                "open-folder": _open_folder,
-            },
-        )
-    except OSError as e:
-        print(f"  Could not listen on {args.bind}:{args.port}: {e}")
-        print("  (another instance already running on this port?)")
+    # Un lidar2map tourne peut-être déjà sur le port de départ : avant la
+    # migration pywebview->web, relancer l'exe ouvrait toujours une fenêtre
+    # indépendante (donc un calcul possible en parallèle) ; un serveur par
+    # port ne le permet plus automatiquement, d'où ce choix explicite plutôt
+    # que de décider à la place de l'utilisateur (rejoindre reste le défaut,
+    # sur simple Entrée, puisque c'est ce qu'on veut le plus souvent).
+    if _instance_existante(args.bind, port_depart):
+        if not args.no_browser and sys.stdin.isatty():
+            url_existante = f"http://127.0.0.1:{port_depart}/"
+            print(f"  A lidar2map instance is already running at {url_existante}")
+            reponse = ""
+            try:
+                reponse = input(
+                    "  [Y] Join it in the browser (default)   "
+                    "[N] Start a new one on another port, for a parallel job : "
+                ).strip().lower()
+            except EOFError:
+                pass
+            if reponse != "n":
+                import webbrowser
+                webbrowser.open(url_existante)
+                print("  Opened in the browser. Not starting a new server.")
+                return
+        else:
+            print(f"  A lidar2map instance is already running on port "
+                  f"{port_depart} - starting a new one on the next free port "
+                  f"(non-interactive: --no-browser or no terminal attached).")
+        port_depart = args.port + 1
+
+    server, port = _premier_port_libre(
+        args.bind, port_depart, trusted_host, gui_dir, api_routes, post_routes,
+    )
+    if server is None:
+        derniere = port_depart + PORT_RANGE_SIZE - 1
+        print(f"  Could not listen on {args.bind}: every port from "
+              f"{port_depart} to {derniere} is already in use.")
         sys.exit(1)
 
     # Toujours 127.0.0.1 pour l'ouverture, même si --bind écoute ailleurs
     # (accès LAN) : le navigateur ouvert est celui de CETTE machine, même
     # convention que blink2video (serve.py, même commentaire).
-    url = f"http://127.0.0.1:{args.port}/"
+    url = f"http://127.0.0.1:{port}/"
     print(f"  lidar2map web GUI: {url}")
-    if args.trusted_host:
-        print(f"  Trusted host: {args.trusted_host} (also reachable through it)")
+    if trusted_host:
+        print(f"  Trusted host: {trusted_host} (also reachable through it)")
     if args.bind not in ("127.0.0.1", "localhost"):
         print(f"  WARNING: listening on {args.bind} — reachable by other devices "
-              f"on the network at http://<this-machine-ip>:{args.port}/, "
+              f"on the network at http://<this-machine-ip>:{port}/, "
               f"with no login of any kind.")
     print("  Ctrl+C to stop.")
     if not args.no_browser:
@@ -6278,6 +6353,11 @@ def _api_get_init_data():
         "regions":    _regions_disponibles(),
         "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
         "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
+        # Identifiant minimal, pas juste un détail de debug : c'est ce que
+        # _instance_existante() interroge pour distinguer « un lidar2map
+        # tourne déjà sur ce port » d'« un service tiers occupe ce port par
+        # coïncidence », avant de proposer de le rejoindre.
+        "app":        "lidar2map",
     }
 
 
