@@ -2933,6 +2933,7 @@ async function arreter() {
     alert(tf('remote.stop.error', {msg: result.error || t('del.unknown')}));
   }
   document.getElementById('footer-status').textContent = t('stopped');
+  document.getElementById('log-status').textContent = t('stopped');
 }
 
 function btnReset() {
