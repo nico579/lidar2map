@@ -149,6 +149,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 "stop": lambda payload: {"result": self.api.stop()},
                 "clear-historique": lambda _payload: self.api.clear_historique(),
                 "set-lang": lambda payload: self.api.set_lang((payload or {}).get("code")),
+                "set-trusted-host": lambda payload: self.api.set_trusted_host((payload or {}).get("host", "")),
             },
         )
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -270,6 +271,40 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         status, body = self._post("/api/clear-historique")
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
+
+    def test_api_set_trusted_host_persiste_et_applique_a_chaud(self):
+        # « à chaud » : Handler.trusted_host est un attribut de classe, la
+        # nouvelle valeur doit s'appliquer sans redémarrer le serveur créé
+        # dans setUp (contrairement à blink2video, qui doit relancer son
+        # process serve.py pour un changement équivalent).
+        #
+        # L2M.Api.set_trusted_host() fait `import _serve_web` (nom canonique,
+        # comme en usage réel où _serve_web.py n'est chargé qu'une fois) - ce
+        # n'est PAS le module `_serve_web` importé en tête de ce fichier de
+        # test sous l'alias l2m_serve_web_module (pour ne pas polluer le
+        # sys.modules canonique). Un troisième chargement, sous le nom
+        # canonique cette fois, apparaît donc dans sys.modules dès le premier
+        # appel : c'est LUI qu'il faut interroger pour vérifier ce que le
+        # code de production modifie réellement, pas l'alias de ce fichier.
+        status, body = self._post("/api/set-trusted-host", {"host": "100.64.1.2"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(L2M._lire_prefs().get("trusted_host"), "100.64.1.2")
+        self.assertEqual(sys.modules["_serve_web"].Handler.trusted_host, "100.64.1.2")
+        self.assertEqual(L2M._api_get_init_data()["trusted_host"], "100.64.1.2")
+
+    def test_api_set_trusted_host_espaces_sont_retires(self):
+        status, body = self._post("/api/set-trusted-host", {"host": "  100.64.1.2  "})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(L2M._lire_prefs().get("trusted_host"), "100.64.1.2")
+
+    def test_api_set_trusted_host_type_invalide_est_refuse(self):
+        status, body = self._post("/api/set-trusted-host", {"host": 12345})
+        self.assertEqual(status, 200)  # erreur métier, pas HTTP
+        data = json.loads(body)
+        self.assertFalse(data["ok"])
+        self.assertIn("error", data)
 
     def test_api_stop_sans_run_actif_ne_plante_pas(self):
         status, body = self._post("/api/stop")

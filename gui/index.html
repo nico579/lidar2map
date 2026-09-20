@@ -29,6 +29,9 @@
  <button class="btn" id="btn-usage" onclick="afficherUsage()" data-i18n="btn.usage"
          data-i18n-title="tip.usage" title="Usage disque : tailles des dossiers cache / production / projets (lecture seule)"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">📊 Usage</button>
+ <button class="btn" id="btn-remote" onclick="afficherRemote()" data-i18n="btn.remote"
+         data-i18n-title="tip.remote" title="Accès distant (VPN maillé type Tailscale/WireGuard)"
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">🌐 Accès distant</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
  <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
        title="Langue / Language">
@@ -112,6 +115,34 @@
    <div id="browse-selection" style="font-size:11px;color:var(--dim);flex:1"></div>
    <button class="btn" id="browse-confirm" onclick="browseConfirmer()"
            style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)" data-i18n="browse.choose">Choisir</button>
+  </div>
+ </div>
+</div>
+<!-- Accès distant : hôte de confiance (VPN maillé type Tailscale/WireGuard),
+     même mécanisme que blink2video (--trusted-host, hote_autorise() calquée
+     dessus). Pris en compte immédiatement (Handler.trusted_host est un
+     attribut de classe, pas besoin de redémarrer le serveur) et persisté
+     pour les lancements suivants, comme lang/ui_zoom. -->
+<div id="remote-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:20px 24px;max-width:92vw;width:min(480px,92vw);
+      box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="font-weight:600;font-size:1.1em;margin-bottom:4px" data-i18n="remote.title">🌐 Accès distant</div>
+  <div style="font-size:.85em;color:var(--dim,#999);margin-bottom:12px" data-i18n="remote.hint">
+   Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette
+   machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y
+   accéder depuis un téléphone. Ne faites confiance qu'à cette adresse précise ;
+   le serveur doit aussi écouter dessus (--bind au lancement, jamais 0.0.0.0).
+  </div>
+  <input type="text" id="remote-trusted-host" placeholder="100.x.y.z"
+         data-i18n-placeholder="ph.trustedhost" style="width:100%;box-sizing:border-box">
+  <div id="remote-status" style="font-size:.8em;color:var(--dim);margin-top:6px;min-height:1.2em"></div>
+  <div style="display:flex;align-items:center;margin-top:12px;gap:8px">
+   <button class="btn" onclick="enregistrerHoteConfiance()" data-i18n="remote.save"
+           style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Enregistrer</button>
+   <button class="btn" onclick="fermerRemote()" data-i18n="share.close"
+           style="margin-left:auto;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Fermer</button>
   </div>
  </div>
 </div>

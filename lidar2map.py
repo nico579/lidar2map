@@ -6145,7 +6145,9 @@ def main_serve_gui():
                         help="Adresse d'écoute (défaut 127.0.0.1, boucle locale uniquement)")
     parser.add_argument("--trusted-host", default="", metavar="HOTE",
                         help="Hôte additionnel de confiance (ex. via un tunnel Tailscale/WireGuard), "
-                             "même usage que --trusted-host dans blink2video")
+                             "même usage que --trusted-host dans blink2video. Passé une fois, "
+                             "conservé ensuite comme réglage (aussi modifiable depuis "
+                             "l'interface, bouton Accès distant) ; omis, reprend ce réglage")
     parser.add_argument("--no-browser", action="store_true",
                         help="Ne pas ouvrir automatiquement le navigateur (usage scripté)")
     args = parser.parse_args()
@@ -6176,6 +6178,9 @@ def main_serve_gui():
     def _set_ui_zoom(payload):
         return api.set_ui_zoom((payload or {}).get("z"))
 
+    def _set_trusted_host(payload):
+        return api.set_trusted_host((payload or {}).get("host", ""))
+
     def _open_folder(payload):
         api.open_folder((payload or {}).get("path", ""))
         return {"ok": True}
@@ -6198,11 +6203,21 @@ def main_serve_gui():
         "clear-historique": lambda _payload: api.clear_historique(),
         "set-lang": _set_lang,
         "set-ui-zoom": _set_ui_zoom,
+        "set-trusted-host": _set_trusted_host,
         "start-share": _start_share,
         "stop-share": lambda _payload: api.stop_share(),
         "open-folder": _open_folder,
     }
+    # --trusted-host explicite ce lancement-ci -> persisté pour les suivants
+    # (même contrat que côté blink2video, README section « Reaching it
+    # remotely » : « passé une fois avec --trusted-host, conservé ensuite
+    # comme n'importe quel réglage »). Absent -> reprend la préférence déjà
+    # enregistrée, via Réglages ou un lancement précédent.
     trusted_host = args.trusted_host.strip()
+    if trusted_host:
+        _ecrire_pref("trusted_host", trusted_host)
+    else:
+        trusted_host = _lire_prefs().get("trusted_host", "")
     port_depart = args.port
 
     # Un lidar2map tourne peut-être déjà sur le port de départ : avant la
@@ -6353,6 +6368,11 @@ def _api_get_init_data():
         "regions":    _regions_disponibles(),
         "lang":       _lire_prefs().get("lang"),   # None = auto-détection JS
         "ui_zoom":    _lire_prefs().get("ui_zoom"),  # None = 1.0
+        # Persisté (comme lang/ui_zoom), pas lu depuis _serve_web.Handler :
+        # Api.set_trusted_host() met à jour les deux ensemble, cette
+        # préférence reste donc la source de vérité pour pré-remplir le
+        # champ au chargement, avec ou sans --trusted-host CLI ce lancement-ci.
+        "trusted_host": _lire_prefs().get("trusted_host", ""),
         # Identifiant minimal, pas juste un détail de debug : c'est ce que
         # _instance_existante() interroge pour distinguer « un lidar2map
         # tourne déjà sur ce port » d'« un service tiers occupe ce port par
@@ -6612,6 +6632,25 @@ class Api:
         if not (0.5 <= z <= 2.5):
             return {"ok": False, "error": "zoom hors plage"}
         return {"ok": _ecrire_pref("ui_zoom", round(z, 2))}
+
+    def set_trusted_host(self, host):
+        """Persiste l'hôte de confiance (VPN maillé type Tailscale/WireGuard,
+        même mécanisme que --trusted-host côté blink2video) et l'applique
+        IMMÉDIATEMENT, sans redémarrer le serveur : contrairement à
+        blink2video (qui doit relancer son process serve.py), l'attribut
+        Handler.trusted_host de _serve_web.py est un simple attribut de
+        classe, modifiable à chaud. Pas de validation de format (une IP,
+        un nom Tailscale MagicDNS, etc. sont tous des chaînes valides ici) :
+        seule l'égalité exacte avec le Host déclaré compte, comme pour
+        --trusted-host lui-même."""
+        if not isinstance(host, str):
+            return {"ok": False, "error": "hôte invalide"}
+        host = host.strip()
+        ok = _ecrire_pref("trusted_host", host)
+        if ok:
+            import _serve_web
+            _serve_web.Handler.trusted_host = host
+        return {"ok": ok}
 
     # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
     # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
