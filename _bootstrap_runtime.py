@@ -26,6 +26,7 @@ MODULE_PAR_PAQUET = {
     "rasterio": "rasterio",
     "fiona": "fiona",
     "certifi": "certifi",
+    "pystray": "pystray",
     "pywebview": "webview",
     "osmium": "osmium",
     "numba": "numba",
@@ -362,7 +363,7 @@ def bootstrap_venv_si_besoin(
     # Cocoa/WebKit en plus sur macOS).
     _gui_crit, _gui_opt = gui_deps_plateforme()
     deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                       "rasterio", "fiona", "certifi"] + _gui_crit
+                       "rasterio", "fiona", "certifi", "pystray"] + _gui_crit
     deps_optionnelles = ["osmium", "numba"] + _gui_opt
     deps_pip = deps_critiques + deps_optionnelles
     print("  Installing dependencies in the venv (3-5 min)...")
@@ -498,7 +499,7 @@ def installer_deps(*, gui_deps_plateforme):
     deps = []
     for pkg in [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "osmium", "numba",
+        "fiona", "certifi", "pystray", "osmium", "numba",
     ]:
         mod = MODULE_PAR_PAQUET[pkg]
         if not _module_present(mod):
@@ -694,7 +695,7 @@ def installer_toutes_dependances(
     gui_critiques, gui_optionnelles = gui_deps_plateforme()
     critiques = [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", *gui_critiques,
+        "fiona", "certifi", "pystray", *gui_critiques,
     ]
     optionnelles = [
         "osmium", "numba", "laspy", "lazrs", "py7zr",

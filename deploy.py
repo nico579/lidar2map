@@ -100,6 +100,7 @@ MAP = {
     "_runtime_paths.py":             "_runtime_paths.py",
     "_disk_guard.py":                "_disk_guard.py",
     "_serve_web.py":                 "_serve_web.py",
+    "_autostart.py":                 "_autostart.py",
     "_wfs_pipeline.py":              "_wfs_pipeline.py",
     "_bdtopo_bulk.py":               "_bdtopo_bulk.py",
     "_bdtopo_layers.py":             "_bdtopo_layers.py",
@@ -232,6 +233,7 @@ def is_rebuild_file(name: str) -> bool:
         or name == "_runtime_paths.py"
         or name == "_disk_guard.py"
         or name == "_serve_web.py"
+        or name == "_autostart.py"
         or name == "_wfs_pipeline.py"
         or name == "_bdtopo_bulk.py"
         or name == "_bdtopo_layers.py"

@@ -50,6 +50,7 @@ window.pywebview = window.pywebview || {
     set_lang: (code) => _post('/api/set-lang', { code }),
     set_ui_zoom: (z) => _post('/api/set-ui-zoom', { z }),
     set_trusted_host: (host) => _post('/api/set-trusted-host', { host }),
+    set_autostart: (actif) => _post('/api/set-autostart', { actif }),
     start_share: (cfg) => _post('/api/start-share', cfg),
     stop_share: () => _post('/api/stop-share'),
     open_folder: (path) => _post('/api/open-folder', { path }),

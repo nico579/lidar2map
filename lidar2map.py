@@ -6121,6 +6121,45 @@ def _premier_port_libre(bind: str, port_depart: int, trusted_host: str,
     return None, None
 
 
+def _construire_tray_icon(gui_dir: Path, on_open, on_restart, on_stop):
+    """Icône de zone de notification (Ouvrir/Redémarrer/Arrêter) pendant que
+    le serveur web tourne dans son thread de fond. pystray + Pillow
+    seulement (pas de framework GUI complet) : Pillow est déjà une
+    dépendance critique de lidar2map (traitement raster), et pystray parle
+    directement l'API native de chaque OS - c'est exactement l'inverse de
+    pywebview/Qt qu'on vient de retirer, pas une régression sur la
+    réduction de dépendances menée pendant la migration."""
+    import pystray
+    from PIL import Image
+    image = Image.open(gui_dir / "lidar2map_icon.png")
+    menu = pystray.Menu(
+        pystray.MenuItem("Ouvrir", on_open, default=True),
+        pystray.MenuItem("Redémarrer", on_restart),
+        pystray.MenuItem("Arrêter", on_stop),
+    )
+    return pystray.Icon("lidar2map", image, "lidar2map", menu)
+
+
+def _relancer_process():
+    """Relance un nouveau process avec les mêmes arguments (même port/bind/
+    trusted-host demandés), pour un Redémarrer depuis le tray. Le process
+    courant doit avoir déjà libéré le port (server.server_close()) avant cet
+    appel, sinon le nouveau échouerait à écouter dessus.
+
+    CREATE_NO_WINDOW seul, jamais combiné à DETACHED_PROCESS : la
+    combinaison rendait le lancement erratique (parfois 15s à démarrer,
+    parfois un retour immédiat sans que le script n'ait rien exécuté),
+    constaté en réel sur watch2notif/self_update.py (2026-09-07) pour ce
+    même besoin (un process qui doit survivre à son parent, lancé sans
+    fenêtre visible)."""
+    executable = sys.executable if not getattr(sys, "frozen", False) else None
+    commande = ([executable] if executable else []) + list(sys.argv)
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    subprocess.Popen(
+        commande, cwd=os.getcwd(), close_fds=True, creationflags=flags,
+    )
+
+
 def main_serve_gui():
     """Mode par défaut (lancement sans argument) ainsi que --serve-gui
     explicite : sert gui/index.html + app.js + style.css sur HTTP local et
@@ -6150,6 +6189,9 @@ def main_serve_gui():
                              "l'interface, bouton Accès distant) ; omis, reprend ce réglage")
     parser.add_argument("--no-browser", action="store_true",
                         help="Ne pas ouvrir automatiquement le navigateur (usage scripté)")
+    parser.add_argument("--no-tray", action="store_true",
+                        help="Pas d'icône dans la zone de notification (usage scripté/serveur "
+                             "headless) ; sans elle, Ctrl+C reste le seul moyen d'arrêter")
     args = parser.parse_args()
 
     gui_dir = _resoudre_gui_dir()
@@ -6181,6 +6223,9 @@ def main_serve_gui():
     def _set_trusted_host(payload):
         return api.set_trusted_host((payload or {}).get("host", ""))
 
+    def _set_autostart(payload):
+        return api.set_autostart(bool((payload or {}).get("actif")))
+
     def _open_folder(payload):
         api.open_folder((payload or {}).get("path", ""))
         return {"ok": True}
@@ -6204,6 +6249,7 @@ def main_serve_gui():
         "set-lang": _set_lang,
         "set-ui-zoom": _set_ui_zoom,
         "set-trusted-host": _set_trusted_host,
+        "set-autostart": _set_autostart,
         "start-share": _start_share,
         "stop-share": lambda _payload: api.stop_share(),
         "open-folder": _open_folder,
@@ -6269,16 +6315,13 @@ def main_serve_gui():
         print(f"  WARNING: listening on {args.bind} — reachable by other devices "
               f"on the network at http://<this-machine-ip>:{port}/, "
               f"with no login of any kind.")
-    print("  Ctrl+C to stop.")
     if not args.no_browser:
         import webbrowser
         # Délai : laisser le serveur réellement démarrer avant l'ouverture
         # (thread non bloquant, mêmes paramètres que blink2video).
         threading.Timer(0.5, webbrowser.open, [url]).start()
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
+
+    def _arreter_le_job_et_le_serveur():
         proc = getattr(api, "_process", None)
         if proc and proc.poll() is None:
             print("  Server stopping - stopping the running job...", flush=True)
@@ -6289,8 +6332,44 @@ def main_serve_gui():
                 pass
         server.shutdown()
         server.server_close()
-        print("\n  Web GUI server stopped.")
-        sys.exit(0)
+
+    if args.no_tray:
+        print("  Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            _arreter_le_job_et_le_serveur()
+            print("\n  Web GUI server stopped.")
+            sys.exit(0)
+
+    # Icône de zone de notification : seul moyen d'arrêter dans ce mode (pas
+    # de garantie qu'un Ctrl+C interrompe proprement la boucle native de
+    # pystray selon l'OS, contrairement à time.sleep() ci-dessus - deux
+    # chemins complets et séparés plutôt qu'un mélange fragile des deux).
+    print("  Look for the lidar2map icon in the system tray.")
+    action = {"quoi": "stop"}
+
+    def _on_open(icon, item):
+        import webbrowser
+        webbrowser.open(url)
+
+    def _on_restart(icon, item):
+        action["quoi"] = "restart"
+        icon.stop()
+
+    def _on_stop(icon, item):
+        action["quoi"] = "stop"
+        icon.stop()
+
+    icon = _construire_tray_icon(gui_dir, _on_open, _on_restart, _on_stop)
+    icon.run()  # bloque jusqu'à icon.stop() (Redémarrer ou Arrêter)
+
+    _arreter_le_job_et_le_serveur()
+    if action["quoi"] == "restart":
+        _relancer_process()
+    print("\n  Web GUI server stopped.")
+    sys.exit(0)
 
 
 # ── Table zooms pour la sélection de couche ───────────────────────────────
@@ -6338,6 +6417,18 @@ _OSM_TAGS_DATA = [
 ]
 
 
+def _autostart_actif_sans_erreur() -> bool:
+    """is_enabled() ne doit jamais faire echouer le chargement de la page
+    (lecture d'un fichier/service potentiellement absent ou illisible selon
+    l'OS) : False par defaut, comme les autres lectures non critiques de
+    get_init_data."""
+    try:
+        import _autostart
+        return _autostart.is_enabled()
+    except Exception:
+        return False
+
+
 def _api_get_init_data():
     # couches/wfs reconstruits ICI (pas des constantes figées à l'import) :
     # COUCHES/COUCHES_WFS sont une façade relisable (voir
@@ -6373,6 +6464,11 @@ def _api_get_init_data():
         # préférence reste donc la source de vérité pour pré-remplir le
         # champ au chargement, avec ou sans --trusted-host CLI ce lancement-ci.
         "trusted_host": _lire_prefs().get("trusted_host", ""),
+        # Reflete l'etat REEL du systeme (existence du fichier de lancement
+        # automatique), pas une preference a part : jamais de desync possible
+        # comme pour trusted_host (CLI vs persiste), donc rien a mettre en
+        # cache ici.
+        "autostart_actif": _autostart_actif_sans_erreur(),
         # Identifiant minimal, pas juste un détail de debug : c'est ce que
         # _instance_existante() interroge pour distinguer « un lidar2map
         # tourne déjà sur ce port » d'« un service tiers occupe ce port par
@@ -6651,6 +6747,22 @@ class Api:
             import _serve_web
             _serve_web.Handler.trusted_host = host
         return {"ok": ok}
+
+    def set_autostart(self, actif):
+        """Active/desactive le lancement automatique du serveur web a
+        l'ouverture de session (meme mecanisme que watch2notif). Utile pour
+        le mode "serveur permanent, accessible a distance" : sans lui,
+        l'acces distant depuis un telephone suppose d'avoir pense a lancer
+        lidar2map soi-meme avant de quitter la maison."""
+        import _autostart
+        try:
+            if actif:
+                _autostart.enable()
+            else:
+                _autostart.disable()
+            return {"ok": True, "actif": _autostart.is_enabled()}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
     # Côté JS, fetch() depuis NavigateToString a un Origin "null" que

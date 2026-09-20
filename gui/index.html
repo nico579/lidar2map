@@ -138,6 +138,11 @@
   <input type="text" id="remote-trusted-host" placeholder="100.x.y.z"
          data-i18n-placeholder="ph.trustedhost" style="width:100%;box-sizing:border-box">
   <div id="remote-status" style="font-size:.8em;color:var(--dim);margin-top:6px;min-height:1.2em"></div>
+  <label style="display:flex;align-items:center;gap:6px;margin-top:14px;cursor:pointer">
+   <input type="checkbox" id="remote-autostart" onchange="toggleAutostart(this.checked)">
+   <span data-i18n="remote.autostart">Démarrer avec Windows (icône dans la zone de notification, pour un serveur toujours prêt en accès distant)</span>
+  </label>
+  <div id="remote-autostart-status" style="font-size:.8em;color:var(--dim);margin-top:4px;min-height:1.2em"></div>
   <div style="display:flex;align-items:center;margin-top:12px;gap:8px">
    <button class="btn" onclick="enregistrerHoteConfiance()" data-i18n="remote.save"
            style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Enregistrer</button>

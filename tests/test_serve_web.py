@@ -150,6 +150,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 "clear-historique": lambda _payload: self.api.clear_historique(),
                 "set-lang": lambda payload: self.api.set_lang((payload or {}).get("code")),
                 "set-trusted-host": lambda payload: self.api.set_trusted_host((payload or {}).get("host", "")),
+                "set-autostart": lambda payload: self.api.set_autostart(bool((payload or {}).get("actif"))),
             },
         )
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -301,6 +302,44 @@ class RoutesLectureSeuleTests(unittest.TestCase):
 
     def test_api_set_trusted_host_type_invalide_est_refuse(self):
         status, body = self._post("/api/set-trusted-host", {"host": 12345})
+        self.assertEqual(status, 200)  # erreur métier, pas HTTP
+        data = json.loads(body)
+        self.assertFalse(data["ok"])
+        self.assertIn("error", data)
+
+    def test_api_set_autostart_active_appelle_autostart_enable(self):
+        # import _autostart (nom canonique, pas un alias) : Api.set_autostart()
+        # fait le même import dans lidar2map.py, donc cible la même instance
+        # déjà en cache dans sys.modules - même piège que _serve_web (mocker
+        # un alias différent mockerait une copie que le code réel n'utilise
+        # jamais). enable()/disable() sont mockés : jamais toucher au vrai
+        # dossier Démarrage Windows pendant ce test (voir test_autostart.py
+        # pour le test du VRAI mécanisme, avec un chemin isolé).
+        import _autostart
+        with mock.patch.object(_autostart, "enable") as m_enable, \
+             mock.patch.object(_autostart, "is_enabled", return_value=True):
+            status, body = self._post("/api/set-autostart", {"actif": True})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["actif"])
+        m_enable.assert_called_once()
+
+    def test_api_set_autostart_desactive_appelle_autostart_disable(self):
+        import _autostart
+        with mock.patch.object(_autostart, "disable") as m_disable, \
+             mock.patch.object(_autostart, "is_enabled", return_value=False):
+            status, body = self._post("/api/set-autostart", {"actif": False})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["actif"])
+        m_disable.assert_called_once()
+
+    def test_api_set_autostart_erreur_remontee_proprement(self):
+        import _autostart
+        with mock.patch.object(_autostart, "enable", side_effect=RuntimeError("OS non supporte")):
+            status, body = self._post("/api/set-autostart", {"actif": True})
         self.assertEqual(status, 200)  # erreur métier, pas HTTP
         data = json.loads(body)
         self.assertFalse(data["ok"])
@@ -529,7 +568,13 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
 
     def test_reponse_par_defaut_rejoint_et_ne_demarre_pas_un_second_serveur(self):
         import webbrowser
-        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port)]
+        # --no-tray : sans lui, la branche "n" (nouveau serveur) atteindrait
+        # _construire_tray_icon()/icon.run() et bloquerait indéfiniment sur
+        # une vraie icône système en attente d'un clic qui ne viendra jamais
+        # (vécu en réel le 2026-09-20 : un run de test resté accroché,
+        # process tué à la main). time.sleep reste mocké ci-dessous pour la
+        # branche --no-tray, qu'il redevient pertinent de traverser.
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(sys.stdin, "isatty", return_value=True), \
              mock.patch("builtins.input", return_value="") as m_input, \
@@ -554,7 +599,13 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         # (pas juste webbrowser.open) pour qu'aucun thread différé ne puisse
         # ouvrir un vrai navigateur après la fin du test, une fois le
         # correctif with-block levé.
-        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port)]
+        # --no-tray : sans lui, la branche "n" (nouveau serveur) atteindrait
+        # _construire_tray_icon()/icon.run() et bloquerait indéfiniment sur
+        # une vraie icône système en attente d'un clic qui ne viendra jamais
+        # (vécu en réel le 2026-09-20 : un run de test resté accroché,
+        # process tué à la main). time.sleep reste mocké ci-dessous pour la
+        # branche --no-tray, qu'il redevient pertinent de traverser.
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(sys.stdin, "isatty", return_value=True), \
              mock.patch("builtins.input", return_value="n"), \
