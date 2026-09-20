@@ -708,7 +708,15 @@ def installer_toutes_dependances(
         module = MODULE_PAR_PAQUET[paquet]
         try:
             importer(module)
-        except ImportError:
+        except Exception:
+            # Exception, pas seulement ImportError : pystray tente une
+            # connexion X11 DÈS L'IMPORT sous Linux (Xlib.error.DisplayNameError,
+            # pas ImportError) - un module déjà installé mais dans un
+            # environnement headless (CI, serveur sans affichage) levait donc
+            # une exception non rattrapée ici, qui faisait planter tout le
+            # bootstrap (trouvé sur le job Linux du build v1.50.0). Le retry
+            # pip ci-dessous reste sûr dans les deux cas : si le paquet est
+            # déjà installé, pip le dit et ne retente rien.
             resultat = lancer(pip_base + [paquet], capture_output=True)
             if resultat.returncode == 0:
                 # Le paquet vient d'être ajouté dans un sous-processus. Une

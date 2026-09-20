@@ -1249,8 +1249,9 @@ class BootstrapDependencyTests(unittest.TestCase):
 
 
 class BootstrapFullInstallTests(unittest.TestCase):
-    def _run(self, *, missing=(), returncode=0, gui=()):
+    def _run(self, *, missing=(), casse_environnement=(), returncode=0, gui=()):
         missing = set(missing)
+        casse_environnement = set(casse_environnement)
         imports = []
         commands = []
         messages = []
@@ -1259,6 +1260,12 @@ class BootstrapFullInstallTests(unittest.TestCase):
             imports.append(module)
             if module in missing:
                 raise ImportError(module)
+            if module in casse_environnement:
+                # Simule pystray sous Linux sans X11 : Xlib lève une
+                # exception A L'IMPORT (pas une ImportError) quand aucun
+                # affichage n'est disponible - le module est bien installé,
+                # juste inutilisable dans cet environnement précis.
+                raise RuntimeError(f"pas d'affichage disponible pour {module}")
 
         def lancer(command, **kwargs):
             commands.append((command, kwargs))
@@ -1315,6 +1322,21 @@ class BootstrapFullInstallTests(unittest.TestCase):
         self.assertEqual(commands[0][0][-1], "osmium")
         self.assertEqual(len(commands), 1)
         self.assertIn("    ⚠ osmium (optional - skipped)", messages)
+
+    def test_full_install_survives_an_import_time_environment_error(self):
+        # Régression du build Linux v1.50.0 : pystray, déjà installé, levait
+        # Xlib.error.DisplayNameError (pas ImportError) à l'import sur un
+        # runner sans X11, non rattrapée par le seul `except ImportError`
+        # d'alors - tout le bootstrap plantait. pip est quand même invoqué
+        # (retry idempotent, sûr même si le paquet est déjà là) et returncode=0
+        # ici simule ce cas exact (déjà installé, pip ne fait rien de plus).
+        ok, imports, commands, messages = self._run(
+            casse_environnement={"pystray"}, returncode=0,
+        )
+        self.assertTrue(ok)
+        self.assertIn("pystray", imports)
+        self.assertEqual(commands[0][0][-1], "pystray")
+        self.assertIn("    ✓ pystray", messages)
 
 
 class BootstrapUninstallPlanningTests(unittest.TestCase):
