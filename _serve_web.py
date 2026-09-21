@@ -208,7 +208,11 @@ class Handler(BaseHTTPRequestHandler):
         if gestionnaire is None:
             self.send_error(404)
             return
-        longueur = int(self.headers.get("Content-Length") or 0)
+        try:
+            longueur = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self.send_error(400)
+            return
         try:
             payload = json.loads(self.rfile.read(longueur) or b"{}")
         except json.JSONDecodeError:
