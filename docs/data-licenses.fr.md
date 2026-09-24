@@ -94,7 +94,7 @@ L'application distribuée utilise ou embarque :
 - SciPy
 - Pillow
 - ijson
-- pywebview
+- pystray
 
 Ces projets conservent leurs propres droits d'auteur et conditions de licence.
 Leur inclusion ne les replace pas sous la notice GPL de lidar2map.

@@ -359,8 +359,8 @@ def bootstrap_venv_si_besoin(
     # Si l'install d'une dep optionnelle (osmium, numba) échoue, on retry
     # sans elle plutôt que de bloquer tout le script.
     #
-    # Deps GUI : spécifiques à la plateforme (Qt sur les trois OS, avec
-    # Cocoa/WebKit en plus sur macOS).
+    # Deps GUI par plateforme : vides depuis la 1.49.0 (GUI servi en HTTP
+    # local, plus de Qt ni de pywebview) ; le point d'extension est conservé.
     _gui_crit, _gui_opt = gui_deps_plateforme()
     deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
                        "rasterio", "fiona", "certifi", "pystray"] + _gui_crit
@@ -481,11 +481,11 @@ def installer_deps(*, gui_deps_plateforme):
     Si toutes échouent, on s'arrête PROPREMENT avec un message clair plutôt
     que de continuer pour planter sur le premier ``import pyproj`` venu.
     """
-    # Deps GUI spécifiques à la plateforme (Qt partout, Cocoa/WebKit sur macOS)
+    # Deps GUI par plateforme (vides depuis la 1.49.0, cf. gui_deps_plateforme)
     _gui_crit, _gui_opt = gui_deps_plateforme()
 
     # find_spec ne charge pas le module — beaucoup plus rapide que __import__
-    # pour les modules lourds (rasterio, scipy, PIL, PyQt6 prennent 200-500 ms
+    # pour les modules lourds (rasterio, scipy, PIL prennent 200-500 ms
     # chacun à l'import). Gain typique au démarrage à froid : 2-3 s.
     import importlib.util as _ilu
 
@@ -493,7 +493,7 @@ def installer_deps(*, gui_deps_plateforme):
         try:
             return _ilu.find_spec(name) is not None
         except (ImportError, ValueError):
-            # ValueError : module parent absent (PyQt6.X quand PyQt6 manque)
+            # ValueError : module parent absent (paquet.X quand paquet manque)
             return False
 
     deps = []
@@ -721,9 +721,9 @@ def installer_toutes_dependances(
             if resultat.returncode == 0:
                 # Le paquet vient d'être ajouté dans un sous-processus. Une
                 # réimportation immédiate peut rester aveugle aux nouveaux
-                # sous-modules d'un package parent déjà chargé (notamment
-                # PyQt6-WebEngine). Le prochain processus, puis PyInstaller,
-                # constituent la validation dans un environnement frais.
+                # sous-modules d'un package parent déjà chargé. Le prochain
+                # processus, puis PyInstaller, constituent la validation
+                # dans un environnement frais.
                 ecrire(f"    ✓ {paquet}")
                 continue
 

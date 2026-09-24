@@ -92,7 +92,7 @@ The distributed application uses or bundles:
 - SciPy
 - Pillow
 - ijson
-- pywebview
+- pystray
 
 These projects retain their own copyright and licence terms. Their inclusion
 does not relicense them under lidar2map's GPL notice.
