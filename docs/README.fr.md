@@ -44,7 +44,7 @@ instructions utilisateur actuelles :
 - [Plan de refonte de `lidar2map.py` et tests de non-régression](plan_refonte.fr.md)
 - [Conception de l’unification de l’exécution distante](evolution_execution_distante.md)
 - [Investigation du bootstrap Python 3.12](correctif_bootstrap_python312_multiplateforme.md)
-- [Investigation de la parallélisation warp/overviews/MBTiles](correctif_parallelisation_warp_overviews_mbtiles.md)
+- [Parallélisation du warp et des overviews : état et travaux restants](correctif_parallelisation_warp_overviews_mbtiles.md)
 
 En cas de contradiction, les guides utilisateur et l’aide du programme actuel
 font foi.

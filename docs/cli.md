@@ -532,8 +532,11 @@ merged file could be written.
 
 Combines several MBTiles into one, for example two adjacent zones produced
 by separate runs. Bounds and the zoom range are the union of all sources;
-sources must share the same tile format (jpeg/png/webp). An overlapping tile
-is resolved by the last source listed in `--source`.
+sources must share the same tile format (jpeg/png/webp). When several
+sources contain the same tile, an opaque tile from the source listed last in
+`--source` replaces the earlier one. A tile with transparent pixels, such as
+the edge and low-zoom tiles of adjacent split blocks, is composited over the
+tile already merged, so neighbouring blocks join without gaps.
 
 ```bash
 python lidar2map.py --merge \
