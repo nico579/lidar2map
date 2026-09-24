@@ -32,6 +32,9 @@
  <button class="btn" id="btn-remote" onclick="afficherRemote()" data-i18n="btn.remote"
          data-i18n-title="tip.remote" title="Accès distant (VPN maillé type Tailscale/WireGuard)"
          style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">🌐 Accès distant</button>
+ <button class="btn" id="btn-new-instance" onclick="nouvelleInstance()" data-i18n="btn.newinst"
+         data-i18n-title="tip.newinst" title="Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter."
+         style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg);margin-left:6px">➕ Nouvelle instance</button>
  <span id="footer-status" style="font-size:11px;color:var(--dim);margin-left:8px"></span>
  <span style="margin-left:auto;display:flex;border:1px solid var(--bd);border-radius:4px;overflow:hidden"
        title="Langue / Language">

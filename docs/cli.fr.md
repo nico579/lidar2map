@@ -739,10 +739,11 @@ de traitement inconnues.
 
 | Option | Défaut / valeurs | Rôle |
 |---|---|---|
-| `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement interactif demande s’il faut le rejoindre ou en démarrer un autre ; un lancement non interactif en démarre un autre. Jusqu’à dix ports consécutifs sont essayés. |
+| `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement interactif demande s’il faut le rejoindre ou en démarrer un autre ; un lancement sans terminal le rejoint. Jusqu’à dix ports consécutifs sont essayés. |
 | `--bind ADRESSE` | `127.0.0.1` | Adresse d’écoute. Utiliser une adresse de VPN maillé avec `--trusted-host` ; jamais `0.0.0.0`. |
 | `--trusted-host HÔTE` | réglage enregistré | Hôte de confiance supplémentaire, en général l’adresse de cette machine sur le VPN maillé. Une fois passé, il est enregistré et repris aux lancements suivants ; la boîte **🌐 Accès distant** du GUI modifie le même réglage. |
-| `--no-browser` | désactivé | Ne pas ouvrir le navigateur. La question rejoindre/nouveau n’est pas posée. |
+| `--no-browser` | désactivé | Ne pas ouvrir le navigateur. Si un serveur répond déjà sur `--port`, rien n’est démarré. |
+| `--new-instance` | désactivé | Toujours démarrer un nouveau serveur sur le premier port libre, sans question, même si un serveur tourne déjà : traitement en parallèle. Le bouton **➕ Nouvelle instance** du GUI l’utilise. |
 | `--no-tray` | désactivé | Pas d’icône dans la zone de notification ; arrêt par `Ctrl+C`. Obligatoire sous Linux sans affichage. |
 
 ```bash

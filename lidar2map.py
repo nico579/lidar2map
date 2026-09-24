@@ -79,7 +79,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                   notification Ouvrir/Redémarrer/Arrêter. Options :
                   --port N, --bind ADRESSE, --trusted-host HOTE (VPN maillé,
                   enregistré), --no-browser, --no-tray (obligatoire sous
-                  Linux sans affichage ; arrêt par Ctrl+C).
+                  Linux sans affichage ; arrêt par Ctrl+C), --new-instance
+                  (serveur parallèle sans question). Si une instance tourne
+                  déjà : question en terminal, sinon elle est rejointe.
 
   Sans argument   → --serve-gui (serveur web + navigateur, voir ci-dessus)
 
@@ -6215,6 +6217,110 @@ def _relancer_process():
     )
 
 
+def _langue_console() -> str:
+    """'fr' ou 'en' pour la question posée dans le terminal : langue choisie
+    dans le GUI si elle est enregistrée, sinon langue du système."""
+    lang = _lire_prefs().get("lang")
+    if lang in ("fr", "en"):
+        return lang
+    import locale
+    try:
+        systeme = (locale.getlocale()[0] or "").lower()
+    except (ValueError, TypeError):
+        systeme = ""
+    systeme = systeme or os.environ.get("LANG", "").lower()
+    return "fr" if systeme.startswith(("fr", "french")) else "en"
+
+
+def _textes_instance_existante(lang):
+    """(question, annonce) du choix rejoindre / nouvelle instance ; « N »
+    répond « nouvelle » dans les deux langues (Non / New)."""
+    if lang == "fr":
+        return ("  [O] La rejoindre dans le navigateur (défaut)   "
+                "[N] En démarrer une nouvelle sur un autre port, pour un "
+                "calcul en parallèle : ",
+                "  Une instance lidar2map tourne déjà sur {url}")
+    return ("  [Y] Join it in the browser (default)   "
+            "[N] Start a new one on another port, for a parallel job : ",
+            "  A lidar2map instance is already running at {url}")
+
+
+def _hote_sonde(bind: str) -> str:
+    """Adresse à interroger pour joindre un serveur écoutant sur ``bind`` :
+    une adresse joker (0.0.0.0, ::) ne se contacte pas, la boucle locale si."""
+    return "127.0.0.1" if bind in ("", "0.0.0.0", "::") else bind
+
+
+def _port_libre(bind: str, port: int) -> bool:
+    """Vrai si ``port`` peut être écouté sur ``bind`` à cet instant."""
+    import socket
+    famille = socket.AF_INET6 if ":" in bind else socket.AF_INET
+    with socket.socket(famille, socket.SOCK_STREAM) as sonde:
+        if os.name != "nt":
+            # Même règle que _serve_web.Server.allow_reuse_address.
+            sonde.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sonde.bind((bind, port))
+        except OSError:
+            return False
+    return True
+
+
+def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
+                                delai_s=30.0, popen=None,
+                                instance_existante=None, attendre=time.sleep):
+    """Bouton « Nouvelle instance » du GUI : démarre un second serveur
+    (--new-instance --no-browser, même --bind) sur le premier port libre à
+    partir de ``port_depart``, puis attend qu'il réponde. Retourne
+    {"ok": True, "port": N} ; la page ouvre alors l'onglet elle-même, avec
+    son propre nom d'hôte (accès local ou via l'hôte de confiance).
+
+    Processus détaché, sans fenêtre ni console (mêmes drapeaux que
+    _relancer_process) : il vit indépendamment de celui-ci et s'arrête par
+    sa propre icône de zone de notification : refusé quand ce serveur tourne
+    lui-même sans icône (--no-tray), l'instance ne pourrait pas être arrêtée."""
+    if sans_icone:
+        return {"ok": False, "error": (
+            "Sans icône de zone de notification (--no-tray), une instance "
+            "démarrée d'ici ne pourrait pas être arrêtée : lancez-la dans un "
+            "terminal avec --serve-gui --new-instance.")}
+    popen = popen or subprocess.Popen
+    instance_existante = instance_existante or _instance_existante
+    port = next((p for p in range(port_depart, port_depart + PORT_RANGE_SIZE)
+                 if _port_libre(bind, p)), None)
+    if port is None:
+        return {"ok": False, "error": (
+            f"Aucun port libre de {port_depart} à "
+            f"{port_depart + PORT_RANGE_SIZE - 1}.")}
+    base = ([str(SCRIPT)] if getattr(sys, "frozen", False)
+            else [sys.executable, str(SCRIPT)])
+    commande = base + ["--serve-gui", "--new-instance", "--port", str(port),
+                       "--bind", bind, "--no-browser"]
+    options = {"cwd": os.getcwd(), "close_fds": True,
+               "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+               "stderr": subprocess.DEVNULL}
+    if sys.platform == "win32":
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    else:
+        options["start_new_session"] = True
+    try:
+        processus = popen(commande, **options)
+    except OSError as exc:
+        return {"ok": False, "error": f"Démarrage impossible : {exc}"}
+    fin = time.monotonic() + delai_s
+    while time.monotonic() < fin:
+        if instance_existante(_hote_sonde(bind), port):
+            return {"ok": True, "port": port}
+        if processus.poll() is not None:
+            return {"ok": False, "error": (
+                f"La nouvelle instance s'est arrêtée au démarrage "
+                f"(code {processus.returncode}).")}
+        attendre(0.25)
+    return {"ok": False, "error": (
+        f"La nouvelle instance ne répond pas sur le port {port} "
+        f"après {delai_s:.0f} s.")}
+
+
 def main_serve_gui():
     """Mode par défaut (lancement sans argument) ainsi que --serve-gui
     explicite : sert gui/index.html + app.js + style.css sur HTTP local et
@@ -6247,6 +6353,10 @@ def main_serve_gui():
     parser.add_argument("--no-tray", action="store_true",
                         help="Pas d'icône dans la zone de notification (usage scripté/serveur "
                              "headless) ; sans elle, Ctrl+C reste le seul moyen d'arrêter")
+    parser.add_argument("--new-instance", action="store_true",
+                        help="Démarre un nouveau serveur sur le premier port libre même si une "
+                             "instance tourne déjà, sans question (calcul en parallèle). Sans "
+                             "cette option, un lancement rejoint l'instance existante")
     args = parser.parse_args()
 
     gui_dir = _resoudre_gui_dir()
@@ -6285,6 +6395,15 @@ def main_serve_gui():
         api.open_folder((payload or {}).get("path", ""))
         return {"ok": True}
 
+    # Port réel connu seulement après le démarrage du serveur (plus bas) :
+    # la route le lit au moment de l'appel.
+    etat_serveur = {"port": None}
+
+    def _new_instance(_payload):
+        return _demarrer_nouvelle_instance(
+            bind=args.bind, port_depart=etat_serveur["port"] + 1,
+            sans_icone=args.no_tray)
+
     api_routes = {
         "init": _api_get_init_data,
         "historique": _lire_historique,
@@ -6308,6 +6427,7 @@ def main_serve_gui():
         "start-share": _start_share,
         "stop-share": lambda _payload: api.stop_share(),
         "open-folder": _open_folder,
+        "new-instance": _new_instance,
     }
     # --trusted-host explicite ce lancement-ci -> persisté pour les suivants
     # (même contrat que côté blink2video, README section « Reaching it
@@ -6327,27 +6447,32 @@ def main_serve_gui():
     # port ne le permet plus automatiquement, d'où ce choix explicite plutôt
     # que de décider à la place de l'utilisateur (rejoindre reste le défaut,
     # sur simple Entrée, puisque c'est ce qu'on veut le plus souvent).
-    if _instance_existante(args.bind, port_depart):
+    # Sans terminal (app macOS, raccourci de bureau Linux, démarrage
+    # automatique), la question est impossible : on applique ce même défaut,
+    # rejoindre, au lieu de démarrer en silence un second serveur (ce que
+    # faisait l'ancien code, à l'inverse du choix interactif). Paralléliser
+    # reste possible sans terminal : bouton « Nouvelle instance » du GUI, ou
+    # --new-instance.
+    if not args.new_instance and _instance_existante(args.bind, port_depart):
+        url_existante = f"http://127.0.0.1:{port_depart}/"
+        nouvelle = False
         if not args.no_browser and sys.stdin.isatty():
-            url_existante = f"http://127.0.0.1:{port_depart}/"
-            print(f"  A lidar2map instance is already running at {url_existante}")
-            reponse = ""
+            question, deja = _textes_instance_existante(_langue_console())
+            print(deja.format(url=url_existante))
             try:
-                reponse = input(
-                    "  [Y] Join it in the browser (default)   "
-                    "[N] Start a new one on another port, for a parallel job : "
-                ).strip().lower()
+                nouvelle = input(question).strip().lower() == "n"
             except EOFError:
-                pass
-            if reponse != "n":
-                import webbrowser
-                webbrowser.open(url_existante)
-                print("  Opened in the browser. Not starting a new server.")
+                nouvelle = False
+        if not nouvelle:
+            if args.no_browser:
+                print(f"  A lidar2map instance is already running at "
+                      f"{url_existante} - nothing to start (--no-browser; "
+                      f"use --new-instance for a parallel server).")
                 return
-        else:
-            print(f"  A lidar2map instance is already running on port "
-                  f"{port_depart} - starting a new one on the next free port "
-                  f"(non-interactive: --no-browser or no terminal attached).")
+            import webbrowser
+            webbrowser.open(url_existante)
+            print("  Opened in the browser. Not starting a new server.")
+            return
         port_depart = args.port + 1
 
     server, port = _premier_port_libre(
@@ -6362,6 +6487,7 @@ def main_serve_gui():
     # Toujours 127.0.0.1 pour l'ouverture, même si --bind écoute ailleurs
     # (accès LAN) : le navigateur ouvert est celui de CETTE machine, même
     # convention que blink2video (serve.py, même commentaire).
+    etat_serveur["port"] = port
     url = f"http://127.0.0.1:{port}/"
     print(f"  lidar2map web GUI: {url}")
     if trusted_host:

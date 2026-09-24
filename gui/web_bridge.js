@@ -54,6 +54,7 @@ window.pywebview = window.pywebview || {
     start_share: (cfg) => _post('/api/start-share', cfg),
     stop_share: () => _post('/api/stop-share'),
     open_folder: (path) => _post('/api/open-folder', { path }),
+    new_instance: () => _post('/api/new-instance'),
 
     // Pas de route serveur : le navigateur ouvre déjà des URL nativement.
     open_url: (url) => { window.open(url, '_blank'); },

@@ -778,6 +778,153 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         url_programmee = m_timer.call_args.args[2][0]
         self.assertEqual(url_programmee, f"http://127.0.0.1:{self.port + 1}/")
 
+    def _aucun_serveur_voisin(self):
+        for voisin in range(self.port + 1, self.port + L2M.PORT_RANGE_SIZE):
+            self.assertFalse(L2M._instance_existante("127.0.0.1", voisin))
+
+    def test_sans_terminal_rejoint_au_lieu_de_demarrer_un_second_serveur(self):
+        # App macOS, raccourci de bureau Linux : pas de question possible. Le
+        # défaut interactif (rejoindre) s'applique ; avant, un second serveur
+        # démarrait en silence sur le port suivant.
+        import webbrowser
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(sys.stdin, "isatty", return_value=False), \
+             mock.patch("builtins.input") as m_input, \
+             mock.patch.object(webbrowser, "open") as m_open:
+            L2M.main_serve_gui()
+        m_input.assert_not_called()
+        m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/")
+        self._aucun_serveur_voisin()
+
+    def test_sans_navigateur_ne_lance_rien_si_une_instance_tourne(self):
+        # Démarrage automatique (--no-browser) alors qu'un serveur tourne déjà :
+        # ni second serveur, ni navigateur.
+        import webbrowser
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port),
+                "--no-browser", "--no-tray"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input") as m_input, \
+             mock.patch.object(webbrowser, "open") as m_open:
+            L2M.main_serve_gui()
+        m_input.assert_not_called()
+        m_open.assert_not_called()
+        self._aucun_serveur_voisin()
+
+    def test_new_instance_demarre_sans_question_sur_le_port_suivant(self):
+        import contextlib
+        import io
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port),
+                "--new-instance", "--no-browser", "--no-tray"]
+        sortie = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input") as m_input, \
+             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             contextlib.redirect_stdout(sortie), \
+             self.assertRaises(SystemExit):
+            L2M.main_serve_gui()
+        m_input.assert_not_called()
+        self.assertIn(f"http://127.0.0.1:{self.port + 1}/", sortie.getvalue())
+
+    def test_question_posee_en_francais_si_la_langue_enregistree_est_fr(self):
+        import webbrowser
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(L2M, "_lire_prefs", return_value={"lang": "fr"}), \
+             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch("builtins.input", return_value="") as m_input, \
+             mock.patch.object(webbrowser, "open") as m_open:
+            L2M.main_serve_gui()
+        self.assertIn("[O] La rejoindre", m_input.call_args.args[0])
+        m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/")
+
+
+class NouvelleInstanceTests(unittest.TestCase):
+    """Bouton « Nouvelle instance » : second serveur détaché, port libre,
+    attente de sa réponse (Popen et sonde remplacés : pas de vrai process)."""
+
+    def _processus(self, code=None):
+        processus = mock.Mock()
+        processus.poll.return_value = code
+        processus.returncode = code
+        return processus
+
+    def test_port_libre_suivant_commande_et_attente_de_la_reponse(self):
+        import socket
+        import subprocess
+        occupant = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        occupant.bind(("127.0.0.1", 0))
+        occupant.listen(1)
+        self.addCleanup(occupant.close)
+        depart = occupant.getsockname()[1]
+        popen = mock.Mock(return_value=self._processus())
+        sondes = []
+
+        def sonde(hote, port):
+            sondes.append((hote, port))
+            return len(sondes) >= 3
+
+        r = L2M._demarrer_nouvelle_instance(
+            bind="127.0.0.1", port_depart=depart, popen=popen,
+            instance_existante=sonde, attendre=lambda _s: None)
+        self.assertTrue(r["ok"], r)
+        self.assertGreater(r["port"], depart)
+        self.assertEqual(popen.call_args.args[0][-7:], [
+            "--serve-gui", "--new-instance", "--port", str(r["port"]),
+            "--bind", "127.0.0.1", "--no-browser"])
+        options = popen.call_args.kwargs
+        self.assertIs(options["stdin"], subprocess.DEVNULL)
+        if sys.platform == "win32":
+            self.assertEqual(options["creationflags"], subprocess.CREATE_NO_WINDOW)
+        else:
+            self.assertTrue(options["start_new_session"])
+        self.assertEqual(sondes[-1], ("127.0.0.1", r["port"]))
+
+    def test_instance_arretee_au_demarrage_signalee(self):
+        r = L2M._demarrer_nouvelle_instance(
+            bind="127.0.0.1", port_depart=0,
+            popen=mock.Mock(return_value=self._processus(code=2)),
+            instance_existante=lambda _h, _p: False, attendre=lambda _s: None)
+        self.assertFalse(r["ok"])
+        self.assertIn("code 2", r["error"])
+
+    def test_aucun_port_libre(self):
+        popen = mock.Mock()
+        with mock.patch.object(L2M, "_port_libre", return_value=False):
+            r = L2M._demarrer_nouvelle_instance(
+                bind="127.0.0.1", port_depart=20000, popen=popen)
+        self.assertFalse(r["ok"])
+        popen.assert_not_called()
+
+    def test_refuse_sans_icone(self):
+        popen = mock.Mock()
+        r = L2M._demarrer_nouvelle_instance(
+            bind="127.0.0.1", port_depart=20000, sans_icone=True, popen=popen)
+        self.assertFalse(r["ok"])
+        self.assertIn("--new-instance", r["error"])
+        popen.assert_not_called()
+
+    def test_sonde_une_adresse_joker_par_la_boucle_locale(self):
+        self.assertEqual(L2M._hote_sonde("0.0.0.0"), "127.0.0.1")
+        self.assertEqual(L2M._hote_sonde("::"), "127.0.0.1")
+        self.assertEqual(L2M._hote_sonde("100.64.0.7"), "100.64.0.7")
+
+    def test_bouton_ouvre_l_onglet_pendant_le_clic_puis_vise_le_port(self):
+        # L'onglet doit s'ouvrir avant l'appel réseau (geste utilisateur),
+        # sinon l'anti-popup du navigateur le bloque après l'attente.
+        html = (ROOT / "gui" / "index.html").read_text(encoding="utf-8")
+        pont = (ROOT / "gui" / "web_bridge.js").read_text(encoding="utf-8")
+        app = (ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('onclick="nouvelleInstance()"', html)
+        self.assertIn("new_instance: () => _post('/api/new-instance')", pont)
+        corps = app[app.index("function nouvelleInstance()"):]
+        corps = corps[:corps.index("\nfunction ")]
+        self.assertLess(corps.index("window.open('', '_blank')"),
+                        corps.index("pywebview.api.new_instance()"))
+        self.assertIn("location.hostname + ':' + r.port", corps)
+
 
 if __name__ == "__main__":
     unittest.main()
