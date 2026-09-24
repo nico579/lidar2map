@@ -255,7 +255,10 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(Path(data["path"]), ROOT.resolve())
         self.assertIn("gui", data["dirs"])
-        self.assertIn("Tests", data["dirs"])
+        # Nom réel du dossier de tests : « Tests » dans le dossier de travail,
+        # « tests » dans le dépôt (deploy.py) ; en dur, la CI Linux/macOS
+        # échouait depuis la v1.50.0.
+        self.assertIn(Path(__file__).resolve().parent.name, data["dirs"])
 
     def test_api_launch_refuse_un_chemin_vers_un_dossier_systeme(self):
         cible = "C:\\Windows" if os.name == "nt" else "/etc"
