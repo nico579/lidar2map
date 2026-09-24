@@ -166,11 +166,19 @@ If lidar2map is started again while a server already answers on port 8766:
 
 - from a terminal, it asks whether to join the running interface (default:
   press Enter) or to start a second server on the next free port, for a job in
-  parallel;
-- without a terminal (for example `LIDAR2MAP.app` opened from the Finder), it
-  starts a second server on the next free port.
+  parallel. The question follows the language chosen in the interface. On
+  Windows, double-clicking `lidar2map.exe` opens a console window where it is
+  asked;
+- without a terminal (for example `LIDAR2MAP.app` opened from the Finder, or a
+  Linux desktop shortcut), it joins the running interface: the page opens
+  again and no second server starts;
+- with `--no-browser` (start at login), it starts nothing.
 
-Up to ten consecutive ports are tried. Each server runs one job at a time.
+To run a job in parallel without a terminal, use **➕ New instance** in the
+interface: it starts a second server on the next free port and opens it in a
+new tab, with its own tray icon to stop it. From a terminal,
+`--serve-gui --new-instance` does the same without asking. Up to ten
+consecutive ports are tried. Each server runs one job at a time.
 
 On a desktop without a system tray (for example GNOME without the AppIndicator
 extension) or on a machine without a display, start with

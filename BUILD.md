@@ -74,7 +74,7 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 |---------|----------------|
 | Sécurité | `Handler.hote_autorise()` : `Host`, adresse TCP du client et `Origin` vérifiés ; pas de compte |
 | Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer |
-| Seconde instance | `_instance_existante()` interroge `/api/init` ; rejoindre ou port suivant (10 ports) |
+| Seconde instance | `_instance_existante()` interroge `/api/init` : question en terminal, sinon rejoindre (rien avec `--no-browser`) ; `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
 | Démarrage automatique | `_autostart.py` : script VBS (dossier Démarrage), agent `launchd`, service `systemd --user` ; transmet `LIDAR2MAP_WORK_DIR` en mode figé |
 | Accès distant | `--trusted-host` (réglage enregistré) + `--bind` sur l'adresse du VPN maillé |
 

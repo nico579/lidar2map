@@ -180,10 +180,18 @@ Si lidar2map est relancé alors qu’un serveur répond déjà sur le port 8766 
 
 - depuis un terminal, il demande s’il faut rejoindre l’interface existante
   (défaut : touche Entrée) ou démarrer un second serveur sur le port libre
-  suivant, pour un traitement en parallèle ;
-- sans terminal (par exemple `LIDAR2MAP.app` ouvert depuis le Finder), il
-  démarre un second serveur sur le port libre suivant.
+  suivant, pour un traitement en parallèle. La question suit la langue choisie
+  dans l’interface. Sous Windows, un double-clic sur `lidar2map.exe` ouvre une
+  fenêtre de console où elle est posée ;
+- sans terminal (par exemple `LIDAR2MAP.app` ouvert depuis le Finder, ou un
+  raccourci de bureau Linux), il rejoint l’interface existante : la page se
+  rouvre et aucun second serveur ne démarre ;
+- avec `--no-browser` (démarrage automatique), il ne démarre rien.
 
+Pour un traitement en parallèle sans terminal, utilisez **➕ Nouvelle
+instance** dans l’interface : elle démarre un second serveur sur le port libre
+suivant et l’ouvre dans un nouvel onglet, avec sa propre icône pour l’arrêter.
+Depuis un terminal, `--serve-gui --new-instance` fait de même sans question.
 Jusqu’à dix ports consécutifs sont essayés. Chaque serveur exécute un seul
 traitement à la fois.
 
