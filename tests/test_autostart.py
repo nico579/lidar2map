@@ -71,5 +71,70 @@ class AutostartWindowsTests(unittest.TestCase):
         self.assertTrue(_autostart.is_enabled())
 
 
+class AutostartDossierTravailFigeTests(unittest.TestCase):
+    """Figé, l'exe relancé à l'ouverture de session est l'exe INTERNE du
+    dossier d'extraction : sans LIDAR2MAP_WORK_DIR (posé d'ordinaire par le
+    launcher), il y écrivait Projets/cache/historique, effacés par le
+    launcher à la mise à jour suivante. Générateurs appelés directement
+    (fichiers en dossier temporaire, systemctl/launchctl mockés) : valables
+    sur les 3 OS, quel que soit celui qui exécute le test."""
+
+    DOSSIER = "/home/nico/Mes Cartes/lidar2map 100%"
+
+    def setUp(self):
+        self.tmp_ctx = tempfile.TemporaryDirectory()
+        self.tmp = Path(self.tmp_ctx.name)
+        self.patches = [
+            mock.patch.object(_autostart.sys, "frozen", True, create=True),
+            mock.patch.dict("os.environ", {"APPDATA": str(self.tmp),
+                                           "LIDAR2MAP_WORK_DIR": self.DOSSIER}),
+            mock.patch.object(_autostart.Path, "home", return_value=self.tmp),
+            mock.patch.object(_autostart.subprocess, "run"),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+        self.tmp_ctx.cleanup()
+
+    def test_environnement_transmis_seulement_fige(self):
+        self.assertEqual(_autostart._lidar2map_environment(),
+                         {"LIDAR2MAP_WORK_DIR": self.DOSSIER})
+        with mock.patch.object(_autostart.sys, "frozen", False):
+            self.assertEqual(_autostart._lidar2map_environment(), {})
+
+    def test_vbs_pose_le_dossier_de_travail_avant_le_lancement(self):
+        _autostart._enable_windows()
+        contenu = _autostart._windows_startup_file().read_text(encoding="utf-8")
+        ligne_env = (f'shell.Environment("PROCESS")("LIDAR2MAP_WORK_DIR") = '
+                     f'"{self.DOSSIER}"')
+        self.assertIn(ligne_env, contenu)
+        self.assertLess(contenu.index(ligne_env), contenu.index("shell.Run"))
+
+    def test_service_systemd_quote_les_chemins_et_pose_l_environnement(self):
+        _autostart._enable_linux()
+        contenu = _autostart._linux_service_file().read_text(encoding="utf-8")
+        self.assertIn('Environment="LIDAR2MAP_WORK_DIR=/home/nico/Mes Cartes/'
+                      'lidar2map 100%%"\n', contenu)
+        exec_start = next(l for l in contenu.splitlines()
+                          if l.startswith("ExecStart="))
+        self.assertTrue(exec_start.startswith('ExecStart="'))
+        self.assertIn('"--serve-gui" "--no-browser"', exec_start)
+
+    def test_plist_launchd_pose_l_environnement_echappe(self):
+        with mock.patch.dict("os.environ",
+                             {"LIDAR2MAP_WORK_DIR": "/Users/a&b/cartes"}):
+            _autostart._enable_mac()
+        contenu = _autostart._mac_plist_file().read_text(encoding="utf-8")
+        self.assertIn("<key>EnvironmentVariables</key>", contenu)
+        self.assertIn("<string>/Users/a&amp;b/cartes</string>", contenu)
+        import plistlib
+        donnees = plistlib.loads(contenu.encode("utf-8"))
+        self.assertEqual(donnees["EnvironmentVariables"],
+                         {"LIDAR2MAP_WORK_DIR": "/Users/a&b/cartes"})
+
+
 if __name__ == "__main__":
     unittest.main()

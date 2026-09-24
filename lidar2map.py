@@ -6151,6 +6151,20 @@ def _construire_tray_icon(gui_dir: Path, on_open, on_restart, on_stop):
     return pystray.Icon("lidar2map", image, "lidar2map", menu)
 
 
+def _commande_relance(*, frozen, executable, argv):
+    """Commande qui relance ce même serveur avec les mêmes arguments.
+
+    Figé, ``argv[0]`` ne désigne PAS l'exécutable : _loader.py le remplace
+    par le chemin de ``_internal/lidar2map.py`` (texte, ni exécutable ni
+    lançable par CreateProcess sous Windows). On relance donc l'exe courant
+    (``executable``) avec la sentinelle interne, retirée au démarrage comme
+    quand le launcher l'ajoute : aucune ré-extraction, même dossier de
+    travail (LIDAR2MAP_WORK_DIR hérité de l'environnement)."""
+    if frozen:
+        return [executable, _INNER_FLAG] + list(argv[1:])
+    return [executable] + list(argv)
+
+
 def _relancer_process():
     """Relance un nouveau process avec les mêmes arguments (même port/bind/
     trusted-host demandés), pour un Redémarrer depuis le tray. Le process
@@ -6163,8 +6177,11 @@ def _relancer_process():
     constaté en réel sur watch2notif/self_update.py (2026-09-07) pour ce
     même besoin (un process qui doit survivre à son parent, lancé sans
     fenêtre visible)."""
-    executable = sys.executable if not getattr(sys, "frozen", False) else None
-    commande = ([executable] if executable else []) + list(sys.argv)
+    commande = _commande_relance(
+        frozen=getattr(sys, "frozen", False),
+        executable=sys.executable,
+        argv=sys.argv,
+    )
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     subprocess.Popen(
         commande, cwd=os.getcwd(), close_fds=True, creationflags=flags,
