@@ -1666,11 +1666,11 @@ def _ecrire_json_atomique(path, data, indent=None):
 
 
 def _ecrire_texte_atomique(path, texte, encoding="utf-8"):
-    """Ã‰crit un petit fichier texte via un ``.part`` voisin puis replace.
+    """Écrit un petit fichier texte via un ``.part`` voisin puis replace.
 
-    L'ancien fichier reste intact si l'Ã©criture, le fsync ou la publication
-    Ã©choue. Ce helper couvre notamment les listes de dalles et signatures,
-    qui servent de source de vÃ©ritÃ© aux reprises suivantes.
+    L'ancien fichier reste intact si l'écriture, le fsync ou la publication
+    échoue. Ce helper couvre notamment les listes de dalles et signatures,
+    qui servent de source de vérité aux reprises suivantes.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -6538,35 +6538,52 @@ def _api_get_usage(cfg=None):
     Prend les racines custom du formulaire (cache_dir/production_dir) si
     posées, sinon les défauts."""
     cfg = cfg or {}
-    def _walk(p):
+    def _taille_arbre(p):
+        # os.scandir : sous Windows, entry.stat() vient du listing du dossier
+        # (aucun appel système par fichier), là où os.walk + Path.stat()
+        # rouvrait chaque fichier - des dizaines de milliers de dalles en
+        # cache. Même périmètre qu'os.walk : liens vers des dossiers non
+        # suivis, fichiers (y compris via lien) comptés.
         total = 0
         try:
-            for r, _dirs, files in os.walk(p):
-                for f in files:
+            with os.scandir(p) as entrees:
+                for e in entrees:
                     try:
-                        total += (Path(r) / f).stat().st_size
+                        if e.is_dir(follow_symlinks=False):
+                            total += _taille_arbre(e.path)
+                        elif e.is_file():
+                            total += e.stat().st_size
                     except OSError:
                         pass
         except OSError:
             pass
         return total
-    def _children(root):
-        out = []
-        try:
-            for d in sorted(root.iterdir()):
-                if d.is_dir():
-                    out.append({"label": d.name, "path": str(d),
-                                "bytes": _walk(d)})
-        except OSError:
-            pass
-        return out
     def _tier(key, label, root):
         root = Path(root)
         ok = root.exists()
+        if not ok:
+            return {"key": key, "label": label, "path": str(root),
+                    "exists": False, "bytes": 0, "children": []}
+        # Un seul parcours : le total du tier = ses sous-dossiers (déjà
+        # mesurés pour le détail) + ses fichiers de premier niveau. Avant,
+        # l'arbre entier était parcouru deux fois (total puis enfants).
+        enfants, fichiers_racine = [], 0
+        try:
+            for d in sorted(root.iterdir()):
+                try:
+                    if d.is_dir():
+                        enfants.append({"label": d.name, "path": str(d),
+                                        "bytes": _taille_arbre(d)})
+                    elif d.is_file():
+                        fichiers_racine += d.stat().st_size
+                except OSError:
+                    pass
+        except OSError:
+            pass
         return {"key": key, "label": label, "path": str(root),
-                "exists": ok,
-                "bytes": _walk(root) if ok else 0,
-                "children": _children(root) if ok else []}
+                "exists": True,
+                "bytes": fichiers_racine + sum(c["bytes"] for c in enfants),
+                "children": enfants}
     cache = (Path(cfg["cache_dir"]).expanduser()
              if cfg.get("cache_dir") else DOSSIER_CACHE)
     prod = (Path(cfg["production_dir"]).expanduser()
