@@ -135,7 +135,8 @@ L’interface détecte automatiquement le français ou l’anglais et propose au
 un sélecteur manuel.
 
 Par défaut, le serveur n’écoute que sur cette machine (`127.0.0.1`) et n’accepte
-que ses requêtes ; il n’y a ni compte ni mot de passe. Fermer l’onglet du
+que ses requêtes, plus celles de l’hôte de confiance s’il est défini (voir
+2.5) ; il n’y a ni compte ni mot de passe. Fermer l’onglet du
 navigateur n’arrête ni le serveur ni un traitement en cours : rouvrez la page
 depuis l’icône de la zone de notification ou à la même adresse.
 
@@ -194,19 +195,19 @@ question.
 Jusqu’à dix ports consécutifs sont essayés. Chaque serveur exécute un seul
 traitement à la fois.
 
-Sur un bureau sans zone de notification (par exemple GNOME sans l’extension
-AppIndicator) ou sur une machine sans affichage, lancez avec
-`--serve-gui --no-tray`, et ajoutez `--no-browser` si aucun navigateur ne doit
-s’ouvrir ; arrêtez alors le serveur par `Ctrl+C` dans son terminal. Sous Linux
-sans affichage, `--no-tray` est obligatoire. Les options du serveur sont détaillées dans la
+Si l’icône ne peut pas être créée (Linux sans affichage, par exemple via SSH ou
+dans un service démarré avant la session graphique), le serveur continue sans
+elle et le signale ; arrêtez-le par `Ctrl+C` dans son terminal. Sur un bureau
+sans zone de notification (par exemple GNOME sans l’extension AppIndicator),
+lancez avec `--serve-gui --no-tray`, et ajoutez `--no-browser` si aucun
+navigateur ne doit s’ouvrir. Les options du serveur sont détaillées dans la
 [référence CLI](cli.fr.md#serveur-de-linterface-web).
 
 ### 2.5 Démarrage automatique et accès distant
 
 Le bouton **🌐 Accès distant** ouvre deux réglages.
 
-**Démarrage automatique.** La case s’intitule *Démarrer avec Windows* mais
-fonctionne aussi sous macOS et Linux. Elle démarre le serveur en arrière-plan à
+**Démarrage automatique.** Cette case démarre le serveur en arrière-plan à
 l’ouverture de session, sans ouvrir le navigateur : un script dans le dossier
 Démarrage de Windows, un agent `launchd` sous macOS ou un service
 `systemd --user` sous Linux. L’interface est ensuite accessible depuis l’icône
@@ -218,21 +219,18 @@ pour que l’entrée de démarrage soit réécrite.
 
 **Hôte de confiance.** Pour atteindre l’interface depuis un téléphone via un VPN
 maillé comme Tailscale ou WireGuard, indiquez l’adresse de cette machine sur ce
-réseau (par exemple `100.x.y.z`, donnée par `tailscale ip`). Le réglage est
-enregistré et appliqué immédiatement. Le serveur doit aussi écouter sur cette
-adresse, ce qui est une option de lancement :
+réseau (par exemple `100.x.y.z`, donnée par `tailscale ip`) et enregistrez. Le
+serveur écoute alors aussi sur cette adresse, au même port, tout en répondant
+toujours sur `127.0.0.1` sur cette machine : ouvrez `http://100.x.y.z:8766/` sur
+le téléphone. Le réglage est enregistré, appliqué immédiatement et repris aux
+lancements suivants, y compris par le serveur démarré automatiquement. Si
+l’adresse n’existe pas encore (VPN non connecté), le serveur réessaie toutes
+les 30 secondes. L’équivalent en ligne de commande est
+`--serve-gui --trusted-host 100.x.y.z`.
 
-```bash
-python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
-```
-
-Avec l’application binaire autonome, passez les mêmes options au lanceur.
-
-Ouvrez ensuite `http://100.x.y.z:8766/`, y compris sur cette machine : la page
-ouverte automatiquement au lancement pointe toujours vers `127.0.0.1`, où ce
-serveur n’écoute plus. N’utilisez pas `--bind 0.0.0.0`. Le serveur démarré
-automatiquement n’écoute que sur `127.0.0.1` : il n’est donc pas joignable via
-le VPN.
+`--bind` n’est pas nécessaire pour cela. Avec une adresse autre que la boucle
+locale, le serveur n’écoute que sur celle-ci et y ouvre sa page ; évitez
+`--bind 0.0.0.0`, qui expose le serveur sur tous les réseaux.
 
 ## 3. Historique, arrêt propre et file d’attente
 

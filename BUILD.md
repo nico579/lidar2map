@@ -73,11 +73,11 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Élément | Implémentation |
 |---------|----------------|
 | Sécurité | `Handler.hote_autorise()` : `Host`, adresse TCP du client et `Origin` vérifiés ; pas de compte |
-| Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer |
+| Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer, repli automatique sans icône si elle ne peut pas être créée |
 | Seconde instance | `_instance_existante()` interroge `/api/init` : question dans le terminal s'il est visible (`_terminal_interactif()`), sinon dans la page (`?deja-ouverte=1`) ; rien avec `--no-browser`. `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
 | Console Windows | Launcher et exe interne restent des applications console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Le launcher la réaffiche pendant une (ré)extraction. Changement de spec : rebuild |
 | Démarrage automatique | `_autostart.py` : script VBS (dossier Démarrage), agent `launchd`, service `systemd --user` ; transmet `LIDAR2MAP_WORK_DIR` en mode figé |
-| Accès distant | `--trusted-host` (réglage enregistré) + `--bind` sur l'adresse du VPN maillé |
+| Accès distant | `--trusted-host` (réglage enregistré) : `_serve_web.EcouteHoteConfiance` écoute en plus sur son adresse (même port, IPv4/IPv6), réessaie toutes les 30 s tant qu'elle n'existe pas (VPN arrêté), suit les changements à chaud ; le serveur principal reste sur 127.0.0.1. `--bind` sur une autre adresse désactive ce complément |
 
 ### Osmosis et JRE
 
@@ -697,9 +697,9 @@ workflow GitHub configure automatiquement ces variables lorsque les secrets
   sudo zypper install gdal             # openSUSE
   ```
 - **Machine sans affichage (SSH, serveur, service)** : `pystray` tente de se
-  connecter au serveur X dès l'import (`Xlib.error.DisplayNameError`) et le
-  serveur web s'arrête au démarrage. Lancer avec `--serve-gui --no-tray` (et
-  `--no-browser`), arrêt par `Ctrl+C` :
+  connecter au serveur X dès l'import (`Xlib.error.DisplayNameError`). Le
+  serveur continue alors sans icône (« System tray icon unavailable ») ;
+  `--no-tray` évite la tentative. Arrêt par `Ctrl+C` :
   ```bash
   python3 lidar2map.py --serve-gui --no-browser --no-tray
   ```

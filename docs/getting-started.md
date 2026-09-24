@@ -122,7 +122,8 @@ interface detects English or French automatically and also provides a manual
 language toggle.
 
 By default the server listens only on this computer (`127.0.0.1`) and accepts
-requests only from it; there is no account or password. Closing the browser tab
+requests only from it, plus the trusted host if you set one (see 2.5); there
+is no account or password. Closing the browser tab
 stops neither the server nor a running job: reopen the page from the tray icon
 or at the same address.
 
@@ -178,20 +179,19 @@ server and opens it in a new tab, with its own tray icon to stop it. From a
 terminal, `--serve-gui --new-instance` does the same without asking. Up to ten
 consecutive ports are tried. Each server runs one job at a time.
 
-On a desktop without a system tray (for example GNOME without the AppIndicator
-extension) or on a machine without a display, start with
-`--serve-gui --no-tray`, and add `--no-browser` if no browser should open; stop
-the server with `Ctrl+C` in its terminal. On Linux without a display,
-`--no-tray` is required. The server
-options are listed in the
+If the tray icon cannot be created (Linux without a display, for example over
+SSH or in a service started before the graphical session), the server keeps
+running without it and says so; stop it with `Ctrl+C` in its terminal. On a
+desktop without a system tray (for example GNOME without the AppIndicator
+extension), start with `--serve-gui --no-tray`, and add `--no-browser` if no
+browser should open. The server options are listed in the
 [CLI reference](cli.md#web-interface-server).
 
 ### 2.5. Start at login and remote access
 
 The **🌐 Remote access** button opens two settings.
 
-**Start at login.** The checkbox is labelled *Start with Windows* but also works
-on macOS and Linux. It starts the server in the background at login, without
+**Start at login.** This checkbox starts the server in the background at login, without
 opening the browser: a script in the Windows Startup folder, a `launchd` agent
 on macOS, or a `systemd --user` service on Linux. The interface is then
 available from the tray icon or at `http://127.0.0.1:8766/`. With the
@@ -202,20 +202,17 @@ startup entry is rewritten.
 
 **Trusted host.** To reach the interface from a phone over a mesh VPN such as
 Tailscale or WireGuard, enter this computer's address on that network (for
-example `100.x.y.z`, given by `tailscale ip`). The setting is saved and applied
-immediately. The server must also listen on that address, which is a launch
-option:
+example `100.x.y.z`, given by `tailscale ip`) and save. The server then also
+listens on that address, on the same port, while still answering on
+`127.0.0.1` on this computer: open `http://100.x.y.z:8766/` on the phone. The
+setting is saved, applied immediately, and reused by later launches, including
+the server started at login. If the address does not exist yet (VPN not
+connected), the server retries every 30 seconds. The command-line equivalent is
+`--serve-gui --trusted-host 100.x.y.z`.
 
-```bash
-python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
-```
-
-With the standalone application, pass the same options to the launcher.
-
-Then open `http://100.x.y.z:8766/`, including on this computer: the page opened
-automatically at launch still points to `127.0.0.1`, where this server no
-longer listens. Do not use `--bind 0.0.0.0`. The server started at login
-listens only on `127.0.0.1`, so it is not reachable through the VPN.
+`--bind` is not needed for this. Given an address other than the loopback, the
+server listens only there and opens its page on that address; avoid
+`--bind 0.0.0.0`, which exposes the server on every network.
 
 ## 3. History, clean stops, and the processing queue
 

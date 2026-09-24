@@ -721,15 +721,15 @@ processing options.
 | Option | Default / values | Meaning |
 |---|---|---|
 | `--port N` | `8766` | First port tried. If a lidar2map server already answers there, a launch from a terminal asks there whether to join it or to start another server; otherwise the question is asked in the page it opens. Up to ten consecutive ports are tried. |
-| `--bind ADDRESS` | `127.0.0.1` | Listening address. Use a mesh-VPN address together with `--trusted-host`; never `0.0.0.0`. |
-| `--trusted-host HOST` | saved setting | Additional trusted host, typically this computer's mesh-VPN address. Once passed, it is saved and reused by later launches; the GUI's **🌐 Remote access** dialog edits the same setting. |
+| `--bind ADDRESS` | `127.0.0.1` | Listening address. With the loopback default, the trusted host is listened to as well, so remote access does not need `--bind`. Another address replaces the loopback, and the page opens there; avoid `0.0.0.0`. |
+| `--trusted-host HOST` | saved setting | Additional trusted host, typically this computer's mesh-VPN address. The server also listens on its address, on the same port, as soon as it exists on this computer (retried every 30 s). Once passed, it is saved and reused by later launches; the GUI's **🌐 Remote access** dialog edits the same setting. |
 | `--no-browser` | off | Do not open the browser. If a server already answers on `--port`, nothing is started. |
 | `--new-instance` | off | Always start a new server on the first free port, without asking, even if one already runs: a parallel job. The GUI's **➕ New instance** button uses it. |
-| `--no-tray` | off | No tray icon; stop with `Ctrl+C`. Required on Linux without a display. |
+| `--no-tray` | off | No tray icon; stop with `Ctrl+C`. Applied automatically when the icon cannot be created (Linux without a display). |
 
 ```bash
 python lidar2map.py --serve-gui --no-browser --no-tray
-python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+python lidar2map.py --serve-gui --trusted-host 100.x.y.z
 python lidar2map.py --serve-gui --help
 ```
 
