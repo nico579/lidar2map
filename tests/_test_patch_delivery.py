@@ -173,4 +173,22 @@ if _bash:
                               capture_output=True, text=True)
     assert _syntaxe.returncode == 0, _syntaxe.stderr
 
+# Windows : pas de console visible au double-clic, CLI inchangée depuis un
+# terminal (hide_console ne masque que la console dont le programme est le
+# propriétaire). L'exe interne garde une console, même masquée : l'arrêt
+# propre des traitements passe par CTRL_BREAK_EVENT.
+lanceur_spec = (ROOT / "lidar2map_win_launcher.spec").read_text(encoding="utf-8")
+interne_spec = (ROOT / "lidar2map_win.spec").read_text(encoding="utf-8")
+assert 'hide_console="hide-early" if sys.platform == "win32" else None' in lanceur_spec
+assert "console=True" in lanceur_spec
+assert 'HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None' in interne_spec
+assert interne_spec.count("hide_console=HIDE_CONSOLE") == 2
+assert "CONSOLE = True" in interne_spec
+# Launcher : console réaffichée pendant une (ré)extraction si elle était
+# masquée, puis remasquée ; jamais masquée si elle était visible (terminal).
+bloc_lanceur = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+bloc_lanceur = bloc_lanceur[:bloc_lanceur.index("# Pas de bundle.zip → exe onedir lancé directement")]
+assert "IsWindowVisible" in bloc_lanceur and "ShowWindow" in bloc_lanceur
+assert '_console_a_remasquer = (_need_extract\n                                    and _console_windows("masquee"))' in bloc_lanceur
+
 print("TOUS OK — contrat de patch des outils distants")

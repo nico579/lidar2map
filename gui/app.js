@@ -31,7 +31,7 @@ const I18N = {
     "btn.share":"Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Télécharge le fichier. Dans Locus : Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers. « Ouvrir avec » peut aussi fonctionner selon Android.", "share.close":"Fermer",
     "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
     "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
-    "btn.remote":"🌐 Accès distant", "tip.remote":"Accès distant (VPN maillé type Tailscale/WireGuard).", "remote.title":"🌐 Accès distant", "remote.hint":"Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y accéder depuis un téléphone. Ne faites confiance qu'à cette adresse précise ; le serveur doit aussi écouter dessus (--bind au lancement, jamais 0.0.0.0).", "ph.trustedhost":"100.x.y.z", "remote.save":"Enregistrer", "remote.saving":"Enregistrement…", "remote.saved":"Enregistré. Pris en compte immédiatement, sans redémarrage.", "remote.error":"Échec de l'enregistrement.", "remote.autostart":"Démarrer avec Windows (icône dans la zone de notification, pour un serveur toujours prêt en accès distant)", "remote.autostart.on":"Activé : une icône apparaîtra dans la zone de notification à l'ouverture de session.", "remote.autostart.off":"Désactivé.", "btn.newinst":"➕ Nouvelle instance", "tip.newinst":"Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter.", "newinst.starting":"Démarrage d'une nouvelle instance lidar2map…",
+    "btn.remote":"🌐 Accès distant", "tip.remote":"Accès distant (VPN maillé type Tailscale/WireGuard).", "remote.title":"🌐 Accès distant", "remote.hint":"Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y accéder depuis un téléphone. Ne faites confiance qu'à cette adresse précise ; le serveur doit aussi écouter dessus (--bind au lancement, jamais 0.0.0.0).", "ph.trustedhost":"100.x.y.z", "remote.save":"Enregistrer", "remote.saving":"Enregistrement…", "remote.saved":"Enregistré. Pris en compte immédiatement, sans redémarrage.", "remote.error":"Échec de l'enregistrement.", "remote.autostart":"Démarrer avec Windows (icône dans la zone de notification, pour un serveur toujours prêt en accès distant)", "remote.autostart.on":"Activé : une icône apparaîtra dans la zone de notification à l'ouverture de session.", "remote.autostart.off":"Désactivé.", "btn.newinst":"➕ Nouvelle instance", "tip.newinst":"Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter.", "newinst.starting":"Démarrage d'une nouvelle instance lidar2map…", "instance.title":"lidar2map est déjà ouvert", "instance.hint":"Une instance tourne déjà et s'affiche dans cet onglet. Pour lancer un calcul en parallèle, démarrez une nouvelle instance (second serveur).", "instance.keep":"Continuer avec cette instance", "instance.new":"➕ Nouvelle instance",
     "browse.title.dir":"📁 Choisir un dossier", "browse.title.file":"📄 Choisir un fichier", "browse.choose":"Choisir ce dossier", "browse.select":"Valider la sélection", "browse.empty":"(dossier vide)", "browse.selected":"sélectionné(s) :",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
     "proj.pick":"↻ projet existant…",
@@ -196,7 +196,7 @@ const I18N = {
     "btn.share":"Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Download the file. In Locus: Map Manager → Import map → system file manager. ‘Open with’ may also work, depending on Android.", "share.close":"Close",
     "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
     "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
-    "btn.remote":"🌐 Remote access", "tip.remote":"Remote access (mesh VPN like Tailscale/WireGuard).", "remote.title":"🌐 Remote access", "remote.hint":"On a mesh VPN (Tailscale, WireGuard), enter this machine's address on that network here (e.g. 100.x.y.z, from 'tailscale ip') to reach it from a phone. Only that exact address is trusted; the server must also listen on it (--bind at launch, never 0.0.0.0).", "ph.trustedhost":"100.x.y.z", "remote.save":"Save", "remote.saving":"Saving…", "remote.saved":"Saved. Takes effect immediately, no restart needed.", "remote.error":"Failed to save.", "remote.autostart":"Start with Windows (system tray icon, for a server always ready for remote access)", "remote.autostart.on":"Enabled: an icon will appear in the system tray at login.", "remote.autostart.off":"Disabled.", "btn.newinst":"➕ New instance", "tip.newinst":"Starts a second lidar2map server on the next port, opened in a new tab, to run a job in parallel. Each instance has its own system tray icon to stop it.", "newinst.starting":"Starting a new lidar2map instance…",
+    "btn.remote":"🌐 Remote access", "tip.remote":"Remote access (mesh VPN like Tailscale/WireGuard).", "remote.title":"🌐 Remote access", "remote.hint":"On a mesh VPN (Tailscale, WireGuard), enter this machine's address on that network here (e.g. 100.x.y.z, from 'tailscale ip') to reach it from a phone. Only that exact address is trusted; the server must also listen on it (--bind at launch, never 0.0.0.0).", "ph.trustedhost":"100.x.y.z", "remote.save":"Save", "remote.saving":"Saving…", "remote.saved":"Saved. Takes effect immediately, no restart needed.", "remote.error":"Failed to save.", "remote.autostart":"Start with Windows (system tray icon, for a server always ready for remote access)", "remote.autostart.on":"Enabled: an icon will appear in the system tray at login.", "remote.autostart.off":"Disabled.", "btn.newinst":"➕ New instance", "tip.newinst":"Starts a second lidar2map server on the next port, opened in a new tab, to run a job in parallel. Each instance has its own system tray icon to stop it.", "newinst.starting":"Starting a new lidar2map instance…", "instance.title":"lidar2map is already open", "instance.hint":"An instance is already running and is shown in this tab. To run a job in parallel, start a new instance (second server).", "instance.keep":"Continue with this instance", "instance.new":"➕ New instance",
     "browse.title.dir":"📁 Choose a folder", "browse.title.file":"📄 Choose a file", "browse.choose":"Choose this folder", "browse.select":"Confirm selection", "browse.empty":"(empty folder)", "browse.selected":"selected:",
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
@@ -721,6 +721,7 @@ async function initAsync() {
     pywebview.api.check_update().then(r => {
       if (r && r.update) afficherBandeauUpdate(r.latest, r.url);
     }).catch(() => {});
+    verifierInstanceDejaOuverte();
   } catch(e) {
     console.error('initAsync error:', e);
     document.getElementById('footer-status').textContent = t('initerr') + e;
@@ -1843,8 +1844,19 @@ function afficherRemote() {
 // après l'attente du démarrage (plusieurs secondes), il serait bloqué comme
 // popup. Il est ensuite dirigé vers le port du nouveau serveur, avec le même
 // nom d'hôte que cette page (accès local ou via l'hôte de confiance).
-function nouvelleInstance() {
+// dansCetOnglet=true (choix posé à la relance, cf. verifierInstanceDejaOuverte) :
+// cet onglet, ouvert pour la question, part vers la nouvelle instance au lieu
+// d'en ouvrir un autre, ce qui laisserait deux onglets sur la même instance.
+function nouvelleInstance(dansCetOnglet) {
   if (!(window.pywebview && pywebview.api && pywebview.api.new_instance)) { alert(t('apiunavail')); return; }
+  if (dansCetOnglet) {
+    document.getElementById('footer-status').textContent = t('newinst.starting');
+    Promise.resolve(pywebview.api.new_instance()).then(r => {
+      if (!r || !r.ok) { alert((r && r.error) || t('apiunavail')); return; }
+      location.href = location.protocol + '//' + location.hostname + ':' + r.port + '/';
+    }).catch(e => alert(t('apiunavail') + ' : ' + e));
+    return;
+  }
   const onglet = window.open('', '_blank');
   if (onglet) {
     try { onglet.document.title = 'lidar2map'; onglet.document.body.textContent = t('newinst.starting'); }
@@ -1862,6 +1874,21 @@ function nouvelleInstance() {
     if (onglet) onglet.close();
     alert(t('apiunavail') + ' : ' + e);
   });
+}
+// Relance sans terminal visible alors qu'une instance tourne : le serveur a
+// ouvert cette page avec ?deja-ouverte=1 pour poser ici la question. Le
+// paramètre est retiré de l'adresse (un rechargement ne la repose pas).
+function verifierInstanceDejaOuverte() {
+  if (!new URLSearchParams(location.search).has('deja-ouverte')) return;
+  history.replaceState(null, '', location.pathname);
+  const modal = document.getElementById('instance-modal');
+  if (modal) modal.style.display = 'flex';
+  const garder = document.getElementById('instance-keep');
+  if (garder) garder.focus();
+}
+function fermerInstanceModal() {
+  const modal = document.getElementById('instance-modal');
+  if (modal) modal.style.display = 'none';
 }
 function fermerRemote() {
   const modal = document.getElementById('remote-modal');

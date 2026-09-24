@@ -21,6 +21,7 @@ Prérequis (orchestré par lidar2map_win_build.ps1) :
 """
 
 import re
+import sys
 from pathlib import Path
 
 SRC = Path(SPECPATH)
@@ -136,6 +137,11 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,       # stdout du child visible dans le terminal
+    # Double-clic : la console créée pour ce programme est masquée dès le
+    # démarrage du bootloader. Lancé depuis un terminal existant (CLI), la
+    # console n'est pas la sienne et reste visible : sortie, attente et code
+    # de retour inchangés. Windows uniquement (ignoré ailleurs par PyInstaller).
+    hide_console="hide-early" if sys.platform == "win32" else None,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

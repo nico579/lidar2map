@@ -81,7 +81,8 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                   enregistré), --no-browser, --no-tray (obligatoire sous
                   Linux sans affichage ; arrêt par Ctrl+C), --new-instance
                   (serveur parallèle sans question). Si une instance tourne
-                  déjà : question en terminal, sinon elle est rejointe.
+                  déjà : question dans le terminal s'il est visible, sinon
+                  dans la page ouverte (continuer ou nouvelle instance).
 
   Sans argument   → --serve-gui (serveur web + navigateur, voir ci-dessus)
 
@@ -712,6 +713,31 @@ if getattr(sys, "frozen", False):
             if _need_extract:
                 _expected_sha = _bundle_sha()   # calcul SHA si pas encore fait
 
+            # Windows : un double-clic masque la console dès le bootloader
+            # (hide_console des specs). Une (ré)extraction dure 30-60 s :
+            # la réafficher le temps de la progression, puis la remasquer.
+            # Une console déjà visible (lancement depuis un terminal) n'est
+            # jamais masquée : ce serait la fenêtre de l'utilisateur.
+            def _console_windows(action):
+                if _sys != "Windows":
+                    return False
+                try:
+                    import ctypes as _ct
+                    _hwnd = _ct.windll.kernel32.GetConsoleWindow()
+                    if not _hwnd:
+                        return False
+                    if action == "masquee":
+                        return not _ct.windll.user32.IsWindowVisible(_hwnd)
+                    _ct.windll.user32.ShowWindow(_hwnd, 5 if action == "afficher" else 0)
+                    return True
+                except Exception:
+                    return False
+
+            _console_a_remasquer = (_need_extract
+                                    and _console_windows("masquee"))
+            if _console_a_remasquer:
+                _console_windows("afficher")
+
             # Détection robuste : si le zip a été créé avec --keepParent,
             # l'extraction crée un sous-dossier lidar2map/ → l'exe est un niveau
             # plus bas. On corrige automatiquement.
@@ -896,6 +922,9 @@ if getattr(sys, "frozen", False):
                         sys.exit(1)
                     finally:
                         _lock.unlink(missing_ok=True)
+
+            if _console_a_remasquer:
+                _console_windows("masquer")
 
             # Résoudre le vrai chemin de l'exe (gère --keepParent)
             _inner_exe = _resolve_exe(_inner_exe)
@@ -6245,6 +6274,37 @@ def _textes_instance_existante(lang):
             "  A lidar2map instance is already running at {url}")
 
 
+def _console_windows_visible() -> bool:
+    """Vrai si ce processus a une fenêtre de console visible (Windows)."""
+    try:
+        import ctypes
+        fenetre = ctypes.windll.kernel32.GetConsoleWindow()
+        return bool(fenetre) and bool(ctypes.windll.user32.IsWindowVisible(fenetre))
+    except Exception:
+        return False
+
+
+def _terminal_interactif(*, stdin=None, plateforme=None,
+                         console_visible=None) -> bool:
+    """Vrai si une question posée dans le terminal sera vue et répondue.
+
+    isatty() ne suffit pas sous Windows : lancé par double-clic, l'exe garde
+    une console (nécessaire à l'arrêt propre des traitements par
+    CTRL_BREAK_EVENT) mais masquée (hide_console des specs) ou sans fenêtre
+    (CREATE_NO_WINDOW) ; personne n'y verrait la question. Dans Windows
+    Terminal, la fenêtre de console reste une pseudo-fenêtre invisible : la
+    question passe alors par la page, ce qui reste correct."""
+    stdin = sys.stdin if stdin is None else stdin
+    try:
+        if not stdin.isatty():
+            return False
+    except (AttributeError, ValueError, OSError):
+        return False
+    if (plateforme or sys.platform) != "win32":
+        return True
+    return (console_visible or _console_windows_visible)()
+
+
 def _hote_sonde(bind: str) -> str:
     """Adresse à interroger pour joindre un serveur écoutant sur ``bind`` :
     une adresse joker (0.0.0.0, ::) ne se contacte pas, la boucle locale si."""
@@ -6447,16 +6507,17 @@ def main_serve_gui():
     # port ne le permet plus automatiquement, d'où ce choix explicite plutôt
     # que de décider à la place de l'utilisateur (rejoindre reste le défaut,
     # sur simple Entrée, puisque c'est ce qu'on veut le plus souvent).
-    # Sans terminal (app macOS, raccourci de bureau Linux, démarrage
-    # automatique), la question est impossible : on applique ce même défaut,
-    # rejoindre, au lieu de démarrer en silence un second serveur (ce que
-    # faisait l'ancien code, à l'inverse du choix interactif). Paralléliser
-    # reste possible sans terminal : bouton « Nouvelle instance » du GUI, ou
-    # --new-instance.
+    # Sans terminal visible (double-clic sous Windows : console masquée ;
+    # app macOS ; raccourci de bureau Linux), la question est posée DANS LA
+    # PAGE : l'instance existante s'ouvre avec ?deja-ouverte=1, et le GUI
+    # propose d'y continuer ou de démarrer une nouvelle instance. Jamais de
+    # second serveur démarré en silence (ancien comportement, à l'inverse du
+    # choix interactif). --no-browser (démarrage automatique) : rien à faire.
     if not args.new_instance and _instance_existante(args.bind, port_depart):
         url_existante = f"http://127.0.0.1:{port_depart}/"
         nouvelle = False
-        if not args.no_browser and sys.stdin.isatty():
+        interactif = not args.no_browser and _terminal_interactif()
+        if interactif:
             question, deja = _textes_instance_existante(_langue_console())
             print(deja.format(url=url_existante))
             try:
@@ -6470,7 +6531,8 @@ def main_serve_gui():
                       f"use --new-instance for a parallel server).")
                 return
             import webbrowser
-            webbrowser.open(url_existante)
+            webbrowser.open(url_existante if interactif
+                            else url_existante + "?deja-ouverte=1")
             print("  Opened in the browser. Not starting a new server.")
             return
         port_depart = args.port + 1

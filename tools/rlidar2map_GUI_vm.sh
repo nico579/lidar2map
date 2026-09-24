@@ -377,8 +377,8 @@ cat > "${USER_HOME}/.local/bin/lidar2map-gui" << EOF
 #!/bin/sh
 # lidar2map démarre son serveur web local, puis ouvre l'interface dans le
 # navigateur : BROWSER, lu en priorité par Python, le désigne sans ambiguïté.
-# Un second double-clic pendant qu'il tourne rouvre la même interface ; un
-# calcul en parallèle passe par le bouton « Nouvelle instance » du GUI.
+# Un second double-clic pendant qu'il tourne ouvre l'interface existante avec
+# la question : continuer, ou « Nouvelle instance » pour un calcul parallèle.
 export BROWSER=firefox
 exec "${INSTALL_DIR}/lidar2map" "\$@"
 EOF
