@@ -92,7 +92,7 @@ only the source-specific settings that apply to the selected operation.
 |---|---|
 | <img src="../screenshots/GUI/vector_merge.PNG" alt="Vector merge workflow" width="440"> | <img src="../screenshots/GUI/raster_split.PNG" alt="Raster split workflow" width="440"> |
 
-The LiDAR DTM screen is shown in [Getting started](getting-started.md#first-launch-and-graphical-workflow),
+The LiDAR DTM screen is shown in [Getting started](getting-started.md#2-first-launch-and-graphical-workflow--binary-application-or-python-script),
 and the two LAZ/DFM variants are shown in [DFM, LAZ, and CSF](dfm.md#enable-point-cloud-mode).
 
 ## Format compatibility
@@ -131,7 +131,7 @@ plain `.geojson` file instead. Raster split can also take an existing MBTiles
 and convert each resulting chunk to RMAP or SQLiteDB.
 
 The index sheet generated next to these files is not itself a map format; see
-[Index sheet](getting-started.md#index-sheet).
+[Index sheet](getting-started.md#4-index-sheet).
 
 ## Send a project to a phone
 

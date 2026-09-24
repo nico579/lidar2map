@@ -22,7 +22,9 @@ python lidar2map.py <mode> <area> [options]
 With a release, replace `python lidar2map.py` with `lidar2map.exe` on Windows,
 `./lidar2map` on Linux, or the executable inside `LIDAR2MAP.app` on macOS.
 
-- No argument opens the GUI.
+- No argument opens the GUI: it starts the local web interface server and
+  opens the interface in the browser. See
+  [Web interface server](#web-interface-server) for its options.
 - Any processing argument selects the headless CLI.
 - Use one primary mode per invocation: `--lidar`, `--raster`, `--osm`,
   `--vector`, `--merge`, `--split`, or `--serve`.
@@ -108,7 +110,7 @@ exception is direct conversion of an existing `.mbtiles` file.
 | `--zone-city NAME` | required selector | Geocode a town with Nominatim. |
 | `--zone-gps LAT,LON` | required selector | WGS84 centre; a semicolon is also accepted as the separator. |
 | `--zone-bbox W,S,E,N` | required selector | WGS84 west, south, east, north in degrees. Reversed pairs are normalized; a zero-area or out-of-range bbox is rejected. |
-| `--zone-department NUM` | France only | One French département, or a list/range handled as successive runs; see [France-specific areas](#france-specific-areas). |
+| `--zone-department NUM` | France only | One French département, or a list/range handled as successive runs; see [France-specific areas](#france-specific-areas-and-examples). |
 | `--zone-region SLUG` | France / Geofabrik | An old-style Geofabrik France region slug. |
 | `--zone-width KM` | required for `--lidar` with a town/GPS point; otherwise `20` where applicable | Side of the square around a town or GPS point, not its radius. It does not alter a bbox, département, or region. |
 | `--zone-name NAME` | automatic | Overrides the normalized project name. City, GPS, bbox, département, and region all have automatic names. |
@@ -708,6 +710,35 @@ python lidar2map.py --serve --zone-name gareoult \
 
 In Locus, use **Map Manager → Import map → system file manager**. See
 [Formats and mobile applications](formats.md) for app-specific advice.
+
+## Web interface server
+
+Running lidar2map without arguments is the same as `--serve-gui`: it serves
+the GUI over local HTTP and opens it in the default browser. The options below
+require the explicit `--serve-gui`; without it, they are rejected as unknown
+processing options.
+
+| Option | Default / values | Meaning |
+|---|---|---|
+| `--port N` | `8766` | First port tried. If a lidar2map server already answers there, an interactive launch asks whether to join it or to start another server; a non-interactive launch starts another one. Up to ten consecutive ports are tried. |
+| `--bind ADDRESS` | `127.0.0.1` | Listening address. Use a mesh-VPN address together with `--trusted-host`; never `0.0.0.0`. |
+| `--trusted-host HOST` | saved setting | Additional trusted host, typically this computer's mesh-VPN address. Once passed, it is saved and reused by later launches; the GUI's **🌐 Remote access** dialog edits the same setting. |
+| `--no-browser` | off | Do not open the browser. The interactive join-or-new question is skipped. |
+| `--no-tray` | off | No tray icon; stop with `Ctrl+C`. Required on Linux without a display. |
+
+```bash
+python lidar2map.py --serve-gui --no-browser --no-tray
+python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+python lidar2map.py --serve-gui --help
+```
+
+The server accepts a request only when its `Host` header names this computer
+(`127.0.0.1`, `localhost`, `::1`) or the trusted host; when the connection
+comes from this computer, unless `Host` is the trusted host; and when the
+browser's `Origin`, if present, names one of those hosts. There is no account
+or password. The tray icon, a second launch, start at login, and
+remote access are described in
+[Getting started](getting-started.md#24-tray-icon-stopping-and-a-second-launch).
 
 ## Rebuild an index sheet
 

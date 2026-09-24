@@ -24,7 +24,9 @@ Avec une release, remplacer `python lidar2map.py` par `lidar2map.exe` sous
 Windows, `./lidar2map` sous Linux ou l’exécutable contenu dans
 `LIDAR2MAP.app` sous macOS.
 
-- Sans argument, lidar2map ouvre l’interface graphique.
+- Sans argument, lidar2map ouvre l’interface graphique : il démarre le
+  serveur local de l’interface web et l’ouvre dans le navigateur. Voir
+  [Serveur de l’interface web](#serveur-de-linterface-web) pour ses options.
 - Tout argument de traitement sélectionne la CLI sans fenêtre.
 - Utiliser un seul mode principal par invocation : `--lidar`, `--raster`,
   `--osm`, `--vector`, `--merge`, `--split` ou `--serve`.
@@ -727,6 +729,35 @@ Dans Locus, utiliser **Gestionnaire de cartes → Importer une carte →
 gestionnaire de fichiers système**. Voir
 [Formats et applications mobiles](formats.fr.md) pour les conseils par
 application.
+
+## Serveur de l’interface web
+
+Lancer lidar2map sans argument équivaut à `--serve-gui` : le GUI est servi en
+HTTP local et ouvert dans le navigateur par défaut. Les options ci-dessous
+exigent `--serve-gui` explicite ; sans lui, elles sont rejetées comme options
+de traitement inconnues.
+
+| Option | Défaut / valeurs | Rôle |
+|---|---|---|
+| `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement interactif demande s’il faut le rejoindre ou en démarrer un autre ; un lancement non interactif en démarre un autre. Jusqu’à dix ports consécutifs sont essayés. |
+| `--bind ADRESSE` | `127.0.0.1` | Adresse d’écoute. Utiliser une adresse de VPN maillé avec `--trusted-host` ; jamais `0.0.0.0`. |
+| `--trusted-host HÔTE` | réglage enregistré | Hôte de confiance supplémentaire, en général l’adresse de cette machine sur le VPN maillé. Une fois passé, il est enregistré et repris aux lancements suivants ; la boîte **🌐 Accès distant** du GUI modifie le même réglage. |
+| `--no-browser` | désactivé | Ne pas ouvrir le navigateur. La question rejoindre/nouveau n’est pas posée. |
+| `--no-tray` | désactivé | Pas d’icône dans la zone de notification ; arrêt par `Ctrl+C`. Obligatoire sous Linux sans affichage. |
+
+```bash
+python lidar2map.py --serve-gui --no-browser --no-tray
+python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+python lidar2map.py --serve-gui --help
+```
+
+Le serveur n’accepte une requête que si son en-tête `Host` désigne cette machine
+(`127.0.0.1`, `localhost`, `::1`) ou l’hôte de confiance ; si la connexion vient
+de cette machine, sauf quand `Host` est l’hôte de confiance ; et si l’`Origin`
+du navigateur, quand il est présent, désigne l’un de ces hôtes. Il n’y a ni
+compte ni mot de passe. L’icône de la zone de notification, le
+second lancement, le démarrage automatique et l’accès distant sont décrits dans
+[Bien démarrer](getting-started.fr.md#24-icône-de-la-zone-de-notification-arrêt-et-second-lancement).
 
 ## Reconstruire une planche d’index
 

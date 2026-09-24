@@ -25,12 +25,12 @@ bloc `--__lidar2map_inner__` en tête détecte le mode launcher vs inner
         |
         | lit
         v
-lidar2map_bundle.zip (~460 Mo)       fichier SÉPARÉ (remplaçable)
+lidar2map_bundle.zip                 fichier SÉPARÉ (remplaçable)
   lidar2map(.exe)   binaire interne (entry point = _loader.py)
   _internal/
     lidar2map.py  <── remplaçable depuis Windows sans rebuild
     rasterio/
-    PyQt6/
+    gui/          index.html + app.js + style.css (servis en HTTP local)
     osmosis/      bundlé si présent au moment du build
     jre/          bundlé si présent au moment du build
     ...
@@ -61,13 +61,22 @@ Dossier d'installation
 Le fichier `.bundle_sha` stocke le SHA256 ET le mtime du zip sur deux lignes.
 Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 
-### Backends graphiques
+### Interface graphique
 
-| OS      | Backend  | Notes |
-|---------|----------|-------|
-| Windows | PyQt6    | Forcé via `PYWEBVIEW_GUI=qt` — évite la régression pythonnet 3.1.0 du backend WinForms (sérialisation .NET en récursion → GUI gelée) |
-| macOS   | PyQt6    | Forcé via `PYWEBVIEW_GUI=qt` — fonctionne en SSH+VNC |
-| Linux   | PyQt6    | Seul backend viable via pip |
+Depuis la 1.49.0, il n'y a plus de backend graphique embarqué (pywebview,
+PyQt6/QtWebEngine et Cocoa retirés, plus collectés par les specs) : un
+lancement sans argument équivaut à `--serve-gui`. `_serve_web.py` (stdlib,
+`ThreadingHTTPServer`) sert `gui/` sur `http://127.0.0.1:8766/` et le
+navigateur par défaut l'affiche. Les appels de `app.js` passent par
+`gui/web_bridge.js` (fetch vers `/api/*`).
+
+| Élément | Implémentation |
+|---------|----------------|
+| Sécurité | `Handler.hote_autorise()` : `Host`, adresse TCP du client et `Origin` vérifiés ; pas de compte |
+| Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer |
+| Seconde instance | `_instance_existante()` interroge `/api/init` ; rejoindre ou port suivant (10 ports) |
+| Démarrage automatique | `_autostart.py` : script VBS (dossier Démarrage), agent `launchd`, service `systemd --user` ; transmet `LIDAR2MAP_WORK_DIR` en mode figé |
+| Accès distant | `--trusted-host` (réglage enregistré) + `--bind` sur l'adresse du VPN maillé |
 
 ### Osmosis et JRE
 
@@ -83,9 +92,12 @@ Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
 
 | Fichier | Rôle |
 |---------|------|
-| `lidar2map.py` | Script principal — seul fichier à modifier pour les mises à jour |
+| `lidar2map.py` | Script principal : façade, bloc launcher, CLI, API du GUI web — patchable sans rebuild (hors bloc launcher) |
+| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…) — compilés dans le bundle : une modification exige un rebuild (`deploy.py` le détecte) |
+| `providers/` | Un fichier par source LiDAR/raster — patchable sans rebuild |
+| `gui/` | Front-end servi par `_serve_web.py` (`index.html`, `app.js`, `style.css`, `web_bridge.js`) — patchable sans rebuild |
 | `_loader.py` | Entry point PyInstaller — chargé dans le binaire, ne change jamais |
-| `update_app.py` | Met à jour `lidar2map.py` dans le bundle sans rebuild |
+| `update_app.py` | Met à jour `lidar2map.py`, `providers/`, `gui/` et les outils `tools/` embarqués dans le bundle sans rebuild |
 | `lidar2map_mac.spec` | Build interne onedir macOS ARM64 |
 | `lidar2map_mac_launcher.spec` | Launcher `.app` macOS |
 | `lidar2map_mac_build.sh` | Script de build macOS (4 étapes + signature/notarisation optionnelle) |
@@ -151,9 +163,9 @@ sans ouvrir la GUI. Utilisé par les scripts `setup_build_*`.
 python3.12 lidar2map.py --installer-deps
 ```
 
-Installe : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona, certifi,
-pywebview, PyQt6/WebEngine/qtpy (les 3 OS), osmium, numba, laspy,
-py7zr, mapbox-vector-tile.
+Installe les critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
+certifi, pystray ; puis les optionnelles (un échec ne bloque pas) : osmium,
+numba, laspy, lazrs, py7zr, mapbox-vector-tile, cloth-simulation-filter.
 
 ### `--telecharger-outils`
 
@@ -357,7 +369,7 @@ Permet de patcher un `.app` zippé sans accès à un Mac. Le bundle interne
 `Contents/Resources/lidar2map_bundle.zip` est régénéré, l'archive externe
 recopie verbatim les `ZipInfo` de toutes les autres entrées — donc les
 permissions Unix de `Contents/MacOS/lidar2map` (mode `0o755`, créé par
-`ditto`), les symlinks PyQt6 et les xattrs sont préservés. Impossible
+`ditto`), les symlinks et les xattrs sont préservés. Impossible
 à obtenir avec un `Compress-Archive` Windows.
 
 ### Mode release multi-OS (publication automatique)
@@ -402,14 +414,17 @@ Deux opérations **distinctes** : **compiler** (PyInstaller, OS-spécifique —
 `.exe` / ELF / `.app` avec libs natives) vs **mettre à jour** le
 `_internal/lidar2map.py` d'un bundle existant (simple manip de zip, faisable
 pour **les 3 OS depuis une seule machine** via `update_app.py --release`).
-`update_app.py` ne patche QUE le code de l'app *inner* — pas le bloc launcher,
-ni les dépendances, ni les specs.
+`update_app.py` ne patche QUE le code de l'app *inner* (`lidar2map.py`,
+`providers/`, `gui/`, `tools/`) — pas le bloc launcher, ni les modules `_*.py`
+compilés, ni les dépendances, ni les specs.
 
 | Changement | Rebuild ? |
 |------------|-----------|
-| Code app dans `lidar2map.py` (`main`, GUI, calcul…) | **Non** — `update_app.py` (3 OS, sans recompiler) |
+| Code app dans `lidar2map.py` (`main`, API du GUI, calcul…) | **Non** — `update_app.py` (3 OS, sans recompiler) |
+| `providers/*.py`, `gui/*`, outils `tools/` embarqués | **Non** — `update_app.py` |
+| Un module `_*.py` (`_serve_web.py`, `_mbtiles_lidar.py`…) | **Oui** — compilé dans le bundle |
 | **Bloc launcher** de `lidar2map.py` (recherche bundle / extraction / **lockfile**) | **Oui** — compilé *dans* l'exe launcher, pas dans le bundle |
-| Ajout / mise à jour d'une **dépendance** (rasterio, PyQt6…) | Oui |
+| Ajout / mise à jour d'une **dépendance** (rasterio, numba…) | Oui |
 | Changement d'un **spec** ou de `_loader.py` | Oui |
 | Mise à jour de Python / PyInstaller, nouvel OS | Oui |
 
@@ -428,7 +443,7 @@ macOS et reste incluse dans l'archive Linux pour les lanceurs de bureau.
 Détails :
 - ☁️ **`release.yml`** — **source de vérité des binaires distribués** : runner neuf,
   reproductible (pas de dérive machine ; ex. un venv local avec une mauvaise
-  version de pythonnet/PyQt6). Seul moyen d'obtenir Linux/macOS sans la machine.
+  version d'une dépendance). Seul moyen d'obtenir Linux/macOS sans la machine.
   Déclenché par un tag `vX.Y.Z`.
 - ☁️ **`update.yml`** — fait tourner `update_app.py --release` **sur un runner** :
   download + patch + ré-upload des ~1,5 Go d'assets se font sur le **réseau GitHub**,
@@ -477,7 +492,8 @@ shebang `#!/usr/bin/env python3`, faire `chmod +x deploy.py` la 1ère fois).
 - `--new-tag vX.Y.Z` = créer un **nouveau** tag git → déclenche `release.yml` (rebuild complet 3 OS, ~30 min).
 
 `tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml` ni par
-`update_app.py --release`, qui ne touchent que `_internal/lidar2map.py`) → classé rebuild.
+`update_app.py --release`, qui ne touchent que `_internal/lidar2map.py`, `providers/`,
+`gui/` et `tools/`) → classé rebuild.
 
 > ⚠️ **Angle mort** assumé : le bloc launcher et les dépendances vivent *dans*
 > `lidar2map.py`. Si seul `lidar2map.py` change, le script suppose un fix de code
@@ -507,20 +523,24 @@ python3.12 lidar2map.py --ignlidar --help   # aide d'un mode précis
 Premier lancement : crée `~/.lidar2map/venv` et installe les dépendances critiques.
 Lancements suivants : re-exec direct dans le venv (~1 s).
 
-### Application buildée — macOS en SSH+VNC
+### Application buildée — macOS (ou Linux) à distance, en SSH
+
+Le GUI étant une page web, VNC n'est plus nécessaire. Sur la machine distante,
+lancer le serveur sans navigateur ni icône (pas de session graphique en SSH),
+puis ouvrir un tunnel depuis le poste local :
 
 ```bash
-# VNC doit être actif avant de lancer (indispensable pour la GUI Qt)
-# Depuis SSH :
-~/Downloads/dist/LIDAR2MAP.app/Contents/MacOS/lidar2map
+# Sur la machine distante, depuis SSH :
+~/Downloads/dist/LIDAR2MAP.app/Contents/MacOS/lidar2map --serve-gui --no-browser --no-tray
 
-# Ou via open (arrière-plan)
-open ~/Downloads/dist/LIDAR2MAP.app
+# Sur le poste local :
+ssh -N -L 8766:127.0.0.1:8766 utilisateur@machine-distante
+# puis ouvrir http://127.0.0.1:8766/ dans le navigateur local
 ```
 
-Sans VNC : `QApplication.primaryScreen()` retourne None → crash Qt.
-Le backend Qt (PyQt6) est forcé via `PYWEBVIEW_GUI=qt` car le backend
-Cocoa par défaut ne voit pas la session VNC depuis SSH.
+Le tunnel arrive sur `127.0.0.1` côté distant avec `Host: 127.0.0.1:8766` :
+les contrôles de provenance de `_serve_web.py` l'acceptent sans
+`--trusted-host`.
 
 ### Zoom dans la GUI
 
@@ -675,17 +695,17 @@ workflow GitHub configure automatiquement ces variables lorsque les secrets
   sudo pacman -S gdal                  # Arch
   sudo zypper install gdal             # openSUSE
   ```
-- **`No suitable backend found`** (pywebview, GUI) : Qt absent au niveau
-  système. Installer les paquets distro (pas pip) :
+- **Machine sans affichage (SSH, serveur, service)** : `pystray` tente de se
+  connecter au serveur X dès l'import (`Xlib.error.DisplayNameError`) et le
+  serveur web s'arrête au démarrage. Lancer avec `--serve-gui --no-tray` (et
+  `--no-browser`), arrêt par `Ctrl+C` :
   ```bash
-  sudo apt install python3-pyqt6 python3-pyqt6.qtwebengine    # Debian/Ubuntu
-  sudo dnf install python3-qt6 python3-qt6-qtwebengine        # Fedora
-  sudo pacman -S python-pyqt6 python-pyqt6-webengine          # Arch
+  python3 lidar2map.py --serve-gui --no-browser --no-tray
   ```
-- **Wayland, fenêtre blanche ou artefacts d'affichage** : forcer X11 :
-  ```bash
-  QT_QPA_PLATFORM=xcb python3 lidar2map.py
-  ```
+- **Pas d'icône dans la zone de notification** (GNOME sans zone de
+  notification) : installer et activer l'extension AppIndicator
+  (`gnome-shell-extension-appindicator` sur Debian/Ubuntu/Fedora), ou lancer
+  avec `--serve-gui --no-tray` et arrêter par `Ctrl+C`.
 
 ### Spécifique macOS
 
