@@ -76,6 +76,11 @@ def _warped_3857_valide(chemin):
         return False
 
 
+# Threads de calcul du warp rasterio. num_threads=0 n'a jamais voulu dire
+# « tous les CPUs » : GDAL ramène toute valeur <= 1 au warp mono-thread.
+_WARP_THREADS = os.cpu_count() or 1
+
+
 def _tile_workers_defaut():
     """Parallélisme de l'encodage de tuiles (JPEG/PNG, Pillow libère le GIL,
     cf. le pool dans generer_mbtiles_lidar) : DÉCOUPLÉ de --workers, qui
@@ -537,6 +542,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         "blockxsize": 512,
                         "blockysize": 512,
                         "BIGTIFF":    "YES",
+                        # Compression deflate des blocs répartie sur tous les
+                        # cœurs (option de création GTiff) : c'était le goulot
+                        # une fois le warp parallélisé. Octets de pixels
+                        # identiques, seul le temps d'écriture change.
+                        "NUM_THREADS": "ALL_CPUS",
                     })
 
                     # Écriture dans <warped>.part validé puis replace (#4) :
@@ -553,7 +563,9 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_transform = dst_transform,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
-                                num_threads   = 0)  # 0 = tous les CPUs
+                                # PAS 0 : rasterio/GDAL traitent 0 comme 1
+                                # (warp mono-thread, mesuré identique à 1).
+                                num_threads   = _WARP_THREADS)
 
                     # Masque de couverture (cf. commentaire à la définition de
                     # warped_cov) : reprojette le masque GDAL de la source avec
@@ -589,7 +601,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                             src_nodata    = 0,
                             dst_nodata    = 0,
                             resampling    = _Resampling.nearest,
-                            num_threads   = 0)
+                            num_threads   = _WARP_THREADS)
                     cov_part.replace(warped_cov)
                 # Les overviews font partie du fichier : les construire sur le
                 # .part avant publication. Une interruption ne peut alors pas
@@ -600,7 +612,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     try:
                         import rasterio as _rio_o
                         from rasterio.enums import Resampling as _Res_o
-                        with _rio_o.open(str(warped_part), "r+") as ds_o:
+                        # GDAL_NUM_THREADS : calcul + compression des
+                        # overviews sur tous les cœurs (résultat identique).
+                        with _rio_o.Env(GDAL_NUM_THREADS="ALL_CPUS"), \
+                                _rio_o.open(str(warped_part), "r+") as ds_o:
                             ds_o.build_overviews(overview_levels, _Res_o.gauss)
                             ds_o.update_tags(
                                 ns="rio_overview", resampling="gauss"
