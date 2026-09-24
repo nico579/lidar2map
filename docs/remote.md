@@ -141,8 +141,8 @@ installs the snap, and snaps do not start in this RDP session.
 
 The shortcut starts the lidar2map web interface server, which opens the
 interface in Firefox after a few seconds; its tray icon appears in the XFCE
-panel. Double-clicking it again while it runs reopens the same interface; use
-**➕ New instance** in the interface to run a job in parallel.
+panel. Double-clicking it again while it runs opens the running interface with
+a choice: continue with it, or **➕ New instance** for a job in parallel.
 
 At the end, the local RDP client opens automatically:
 

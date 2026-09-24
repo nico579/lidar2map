@@ -48,7 +48,7 @@ There is no system installation.
 
 | OS | How to start |
 |---|---|
-| Windows | Double-click `lidar2map.exe`. Starting it from a terminal also exposes the startup log. |
+| Windows | Double-click `lidar2map.exe`: no console window appears, except during the extraction after an installation or update, to show its progress. Started from a terminal, it keeps showing its log there. |
 | Linux | Run `chmod +x lidar2map` once, then `./lidar2map` from the extracted directory. |
 | macOS | Double-click `LIDAR2MAP.app`. If Gatekeeper blocks it, run `xattr -dr com.apple.quarantine LIDAR2MAP.app`, then double-click again. |
 
@@ -164,20 +164,18 @@ forced after 15 seconds if the job does not end.
 
 If lidar2map is started again while a server already answers on port 8766:
 
-- from a terminal, it asks whether to join the running interface (default:
-  press Enter) or to start a second server on the next free port, for a job in
-  parallel. The question follows the language chosen in the interface. On
-  Windows, double-clicking `lidar2map.exe` opens a console window where it is
-  asked;
-- without a terminal (for example `LIDAR2MAP.app` opened from the Finder, or a
-  Linux desktop shortcut), it joins the running interface: the page opens
-  again and no second server starts;
+- without a visible terminal (double-click on `lidar2map.exe` or
+  `LIDAR2MAP.app`, Linux desktop shortcut), the running interface opens in a
+  new tab with the question: **Continue with this instance** (default) or
+  **➕ New instance**, which turns that tab into a second server on the next
+  free port, for a job in parallel;
+- from a terminal, the same question is asked there (Enter: join, `N`: new
+  server), in the language chosen in the interface;
 - with `--no-browser` (start at login), it starts nothing.
 
-To run a job in parallel without a terminal, use **➕ New instance** in the
-interface: it starts a second server on the next free port and opens it in a
-new tab, with its own tray icon to stop it. From a terminal,
-`--serve-gui --new-instance` does the same without asking. Up to ten
+At any time, the **➕ New instance** button in the interface starts a second
+server and opens it in a new tab, with its own tray icon to stop it. From a
+terminal, `--serve-gui --new-instance` does the same without asking. Up to ten
 consecutive ports are tried. Each server runs one job at a time.
 
 On a desktop without a system tray (for example GNOME without the AppIndicator

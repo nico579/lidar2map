@@ -720,7 +720,7 @@ processing options.
 
 | Option | Default / values | Meaning |
 |---|---|---|
-| `--port N` | `8766` | First port tried. If a lidar2map server already answers there, an interactive launch asks whether to join it or to start another server; a launch without a terminal joins it. Up to ten consecutive ports are tried. |
+| `--port N` | `8766` | First port tried. If a lidar2map server already answers there, a launch from a terminal asks there whether to join it or to start another server; otherwise the question is asked in the page it opens. Up to ten consecutive ports are tried. |
 | `--bind ADDRESS` | `127.0.0.1` | Listening address. Use a mesh-VPN address together with `--trusted-host`; never `0.0.0.0`. |
 | `--trusted-host HOST` | saved setting | Additional trusted host, typically this computer's mesh-VPN address. Once passed, it is saved and reused by later launches; the GUI's **🌐 Remote access** dialog edits the same setting. |
 | `--no-browser` | off | Do not open the browser. If a server already answers on `--port`, nothing is started. |

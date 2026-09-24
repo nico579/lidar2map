@@ -32,6 +32,12 @@ IS_LINUX = sys.platform.startswith("linux")
 
 ONEFILE = False
 CONSOLE = True
+# Exe interne lancé seul (démarrage automatique, relance) : même règle que le
+# launcher, console masquée seulement si elle lui appartient. Lancé par le
+# launcher, il partage la console (déjà masquée) de celui-ci. Garder une
+# console, même invisible, est nécessaire : l'arrêt propre des traitements
+# passe par CTRL_BREAK_EVENT, qui n'atteint que les processus d'une console.
+HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None
 NAME    = "lidar2map"
 
 SRC               = Path(SPECPATH)
@@ -401,6 +407,7 @@ if ONEFILE:
         name=NAME, debug=False,
         bootloader_ignore_signals=False, strip=False, upx=False,
         upx_exclude=[], runtime_tmpdir=None, console=CONSOLE,
+        hide_console=HIDE_CONSOLE,
         disable_windowed_traceback=False, argv_emulation=False,
         target_arch=None, codesign_identity=None, entitlements_file=None,
         icon=str(APP_ICON),
@@ -411,7 +418,8 @@ else:
         pyz, a.scripts, [],
         exclude_binaries=True, name=NAME, debug=False,
         bootloader_ignore_signals=False, strip=False, upx=False,
-        console=CONSOLE, disable_windowed_traceback=False,
+        console=CONSOLE, hide_console=HIDE_CONSOLE,
+        disable_windowed_traceback=False,
         argv_emulation=False, target_arch=None,
         codesign_identity=None, entitlements_file=None, icon=str(APP_ICON),
         version=_version_info(VERSION),

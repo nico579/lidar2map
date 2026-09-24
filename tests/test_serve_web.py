@@ -730,7 +730,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         # branche --no-tray, qu'il redevient pertinent de traverser.
         argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input", return_value="") as m_input, \
              mock.patch.object(webbrowser, "open") as m_open:
             L2M.main_serve_gui()  # doit retourner, pas boucler ni sys.exit
@@ -761,7 +761,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         # branche --no-tray, qu'il redevient pertinent de traverser.
         argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input", return_value="n"), \
              mock.patch.object(L2M.threading, "Timer") as m_timer, \
              mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
@@ -782,19 +782,20 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         for voisin in range(self.port + 1, self.port + L2M.PORT_RANGE_SIZE):
             self.assertFalse(L2M._instance_existante("127.0.0.1", voisin))
 
-    def test_sans_terminal_rejoint_au_lieu_de_demarrer_un_second_serveur(self):
-        # App macOS, raccourci de bureau Linux : pas de question possible. Le
-        # défaut interactif (rejoindre) s'applique ; avant, un second serveur
-        # démarrait en silence sur le port suivant.
+    def test_sans_terminal_la_question_passe_par_la_page(self):
+        # Double-clic Windows (console masquée), app macOS, raccourci Linux :
+        # l'instance existante s'ouvre avec la question dans la page ; avant,
+        # un second serveur démarrait en silence sur le port suivant.
         import webbrowser
         argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(sys.stdin, "isatty", return_value=False), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=False), \
              mock.patch("builtins.input") as m_input, \
              mock.patch.object(webbrowser, "open") as m_open:
             L2M.main_serve_gui()
         m_input.assert_not_called()
-        m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/")
+        # La question est posée dans la page (?deja-ouverte=1).
+        m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/?deja-ouverte=1")
         self._aucun_serveur_voisin()
 
     def test_sans_navigateur_ne_lance_rien_si_une_instance_tourne(self):
@@ -804,7 +805,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port),
                 "--no-browser", "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input") as m_input, \
              mock.patch.object(webbrowser, "open") as m_open:
             L2M.main_serve_gui()
@@ -819,7 +820,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
                 "--new-instance", "--no-browser", "--no-tray"]
         sortie = io.StringIO()
         with mock.patch.object(sys, "argv", argv), \
-             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input") as m_input, \
              mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
              contextlib.redirect_stdout(sortie), \
@@ -833,12 +834,53 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         argv = ["lidar2map.py", "--serve-gui", "--port", str(self.port), "--no-tray"]
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(L2M, "_lire_prefs", return_value={"lang": "fr"}), \
-             mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input", return_value="") as m_input, \
              mock.patch.object(webbrowser, "open") as m_open:
             L2M.main_serve_gui()
         self.assertIn("[O] La rejoindre", m_input.call_args.args[0])
         m_open.assert_called_once_with(f"http://127.0.0.1:{self.port}/")
+
+
+class TerminalInteractifTests(unittest.TestCase):
+    """Question dans le terminal seulement s'il est vu : sous Windows, l'exe
+    garde une console masquée (hide_console) même lancé par double-clic."""
+
+    class _Entree:
+        def __init__(self, tty):
+            self.tty = tty
+
+        def isatty(self):
+            return self.tty
+
+    def test_sans_tty_jamais_interactif(self):
+        self.assertFalse(L2M._terminal_interactif(
+            stdin=self._Entree(False), plateforme="linux"))
+        self.assertFalse(L2M._terminal_interactif(
+            stdin=object(), plateforme="linux"))  # sans isatty()
+
+    def test_tty_hors_windows_interactif(self):
+        self.assertTrue(L2M._terminal_interactif(
+            stdin=self._Entree(True), plateforme="darwin"))
+
+    def test_windows_selon_la_visibilite_de_la_console(self):
+        self.assertFalse(L2M._terminal_interactif(
+            stdin=self._Entree(True), plateforme="win32",
+            console_visible=lambda: False))
+        self.assertTrue(L2M._terminal_interactif(
+            stdin=self._Entree(True), plateforme="win32",
+            console_visible=lambda: True))
+
+    def test_page_pose_la_question_et_nettoie_l_adresse(self):
+        html = (ROOT / "gui" / "index.html").read_text(encoding="utf-8")
+        app = (ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="instance-modal"', html)
+        self.assertIn('nouvelleInstance(true)', html)
+        corps = app[app.index("function verifierInstanceDejaOuverte()"):]
+        corps = corps[:corps.index("\nfunction ")]
+        self.assertIn("has('deja-ouverte')", corps)
+        self.assertIn("history.replaceState", corps)
+        self.assertIn("verifierInstanceDejaOuverte();", app)
 
 
 class NouvelleInstanceTests(unittest.TestCase):
@@ -919,11 +961,16 @@ class NouvelleInstanceTests(unittest.TestCase):
         app = (ROOT / "gui" / "app.js").read_text(encoding="utf-8")
         self.assertIn('onclick="nouvelleInstance()"', html)
         self.assertIn("new_instance: () => _post('/api/new-instance')", pont)
-        corps = app[app.index("function nouvelleInstance()"):]
+        corps = app[app.index("function nouvelleInstance(dansCetOnglet)"):]
         corps = corps[:corps.index("\nfunction ")]
-        self.assertLess(corps.index("window.open('', '_blank')"),
-                        corps.index("pywebview.api.new_instance()"))
-        self.assertIn("location.hostname + ':' + r.port", corps)
+        # Chemin bouton : onglet ouvert AVANT l'appel réseau.
+        chemin_bouton = corps[corps.index("const onglet = window.open('', '_blank');"):]
+        self.assertIn("pywebview.api.new_instance()", chemin_bouton)
+        self.assertIn("location.hostname + ':' + r.port", chemin_bouton)
+        # Chemin question à la relance : cet onglet part vers le nouveau port.
+        chemin_relance = corps[corps.index("if (dansCetOnglet)"):
+                               corps.index("const onglet = window.open")]
+        self.assertIn("location.href = location.protocol", chemin_relance)
 
 
 if __name__ == "__main__":

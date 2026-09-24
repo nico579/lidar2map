@@ -739,7 +739,7 @@ de traitement inconnues.
 
 | Option | Défaut / valeurs | Rôle |
 |---|---|---|
-| `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement interactif demande s’il faut le rejoindre ou en démarrer un autre ; un lancement sans terminal le rejoint. Jusqu’à dix ports consécutifs sont essayés. |
+| `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement depuis un terminal y demande s’il faut le rejoindre ou en démarrer un autre ; sinon, la question est posée dans la page ouverte. Jusqu’à dix ports consécutifs sont essayés. |
 | `--bind ADRESSE` | `127.0.0.1` | Adresse d’écoute. Utiliser une adresse de VPN maillé avec `--trusted-host` ; jamais `0.0.0.0`. |
 | `--trusted-host HÔTE` | réglage enregistré | Hôte de confiance supplémentaire, en général l’adresse de cette machine sur le VPN maillé. Une fois passé, il est enregistré et repris aux lancements suivants ; la boîte **🌐 Accès distant** du GUI modifie le même réglage. |
 | `--no-browser` | désactivé | Ne pas ouvrir le navigateur. Si un serveur répond déjà sur `--port`, rien n’est démarré. |

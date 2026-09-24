@@ -154,6 +154,27 @@
   </div>
  </div>
 </div>
+<!-- lidar2map relancé sans terminal visible (double-clic) alors qu'une
+     instance tourne : le serveur ouvre cette instance avec ?deja-ouverte=1
+     et c'est ici que la question rejoindre / nouvelle instance est posée. -->
+<div id="instance-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.55);align-items:center;justify-content:center">
+ <div style="background:var(--bg2,#1e1e1e);color:var(--fg,#eee);border-radius:10px;
+      padding:20px 24px;max-width:92vw;width:min(480px,92vw);
+      box-shadow:0 8px 40px rgba(0,0,0,.5)">
+  <div style="font-weight:600;font-size:1.1em;margin-bottom:4px" data-i18n="instance.title">lidar2map est déjà ouvert</div>
+  <div style="font-size:.85em;color:var(--dim,#999);margin-bottom:12px" data-i18n="instance.hint">
+   Une instance tourne déjà et s'affiche dans cet onglet. Pour lancer un calcul
+   en parallèle, démarrez une nouvelle instance (second serveur).
+  </div>
+  <div style="display:flex;align-items:center;margin-top:12px;gap:8px">
+   <button class="btn" id="instance-keep" onclick="fermerInstanceModal()" data-i18n="instance.keep"
+           style="background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">Continuer avec cette instance</button>
+   <button class="btn" onclick="fermerInstanceModal(); nouvelleInstance(true)" data-i18n="instance.new"
+           style="margin-left:auto;background:var(--bg3);border:1px solid var(--ac);color:var(--fg)">➕ Nouvelle instance</button>
+  </div>
+ </div>
+</div>
 <div id="form-inner">
 
   <!-- Exécution : où faire tourner ce traitement. En tête de formulaire car

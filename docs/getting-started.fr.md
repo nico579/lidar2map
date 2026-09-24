@@ -53,7 +53,7 @@ ensemble. Rien n’est installé dans le système.
 
 | OS | Démarrage |
 |---|---|
-| Windows | Double-cliquer sur `lidar2map.exe`. Un lancement depuis un terminal affiche aussi le journal de démarrage. |
+| Windows | Double-cliquer sur `lidar2map.exe` : aucune fenêtre de console n’apparaît, sauf pendant l’extraction qui suit une installation ou une mise à jour, pour en montrer la progression. Lancé depuis un terminal, il y affiche toujours son journal. |
 | Linux | Exécuter une fois `chmod +x lidar2map`, puis `./lidar2map` depuis le dossier extrait. |
 | macOS | Double-cliquer sur `LIDAR2MAP.app`. Si Gatekeeper le bloque, exécuter `xattr -dr com.apple.quarantine LIDAR2MAP.app`, puis recommencer. |
 
@@ -178,20 +178,19 @@ pas.
 
 Si lidar2map est relancé alors qu’un serveur répond déjà sur le port 8766 :
 
-- depuis un terminal, il demande s’il faut rejoindre l’interface existante
-  (défaut : touche Entrée) ou démarrer un second serveur sur le port libre
-  suivant, pour un traitement en parallèle. La question suit la langue choisie
-  dans l’interface. Sous Windows, un double-clic sur `lidar2map.exe` ouvre une
-  fenêtre de console où elle est posée ;
-- sans terminal (par exemple `LIDAR2MAP.app` ouvert depuis le Finder, ou un
-  raccourci de bureau Linux), il rejoint l’interface existante : la page se
-  rouvre et aucun second serveur ne démarre ;
+- sans terminal visible (double-clic sur `lidar2map.exe` ou `LIDAR2MAP.app`,
+  raccourci de bureau Linux), l’interface existante s’ouvre dans un nouvel
+  onglet avec la question : **Continuer avec cette instance** (défaut) ou
+  **➕ Nouvelle instance**, qui fait de cet onglet un second serveur sur le port
+  libre suivant, pour un traitement en parallèle ;
+- depuis un terminal, la même question y est posée (Entrée : rejoindre, `N` :
+  nouveau serveur), dans la langue choisie dans l’interface ;
 - avec `--no-browser` (démarrage automatique), il ne démarre rien.
 
-Pour un traitement en parallèle sans terminal, utilisez **➕ Nouvelle
-instance** dans l’interface : elle démarre un second serveur sur le port libre
-suivant et l’ouvre dans un nouvel onglet, avec sa propre icône pour l’arrêter.
-Depuis un terminal, `--serve-gui --new-instance` fait de même sans question.
+À tout moment, le bouton **➕ Nouvelle instance** de l’interface démarre un
+second serveur et l’ouvre dans un nouvel onglet, avec sa propre icône pour
+l’arrêter. Depuis un terminal, `--serve-gui --new-instance` fait de même sans
+question.
 Jusqu’à dix ports consécutifs sont essayés. Chaque serveur exécute un seul
 traitement à la fois.
 

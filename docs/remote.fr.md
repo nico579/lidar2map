@@ -148,9 +148,9 @@ dans cette session RDP.
 
 Le raccourci démarre le serveur de l’interface web de lidar2map, qui ouvre
 l’interface dans Firefox au bout de quelques secondes ; son icône apparaît dans
-le panneau XFCE. Un second double-clic pendant qu’il tourne rouvre la même
-interface ; utilisez **➕ Nouvelle instance** dans l’interface pour un
-traitement en parallèle.
+le panneau XFCE. Un second double-clic pendant qu’il tourne ouvre l’interface
+existante avec un choix : continuer avec elle, ou **➕ Nouvelle instance** pour
+un traitement en parallèle.
 
 À la fin, le client RDP local s’ouvre automatiquement :
 
