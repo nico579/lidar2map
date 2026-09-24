@@ -164,18 +164,18 @@ class Handler(BaseHTTPRequestHandler):
                 cfg["cache_dir"] = query["cache_dir"][0]
             if query.get("production_dir"):
                 cfg["production_dir"] = query["production_dir"][0]
-            self.send_json(self.api_routes["usage"](cfg))
+            self._repondre(self.api_routes["usage"], cfg)
             return
         if clef == "autocomplete-ville":
             query = parse_qs(parsed.query)
             prefix = (query.get("prefix") or [""])[0]
             country = (query.get("country") or ["fr"])[0]
-            self.send_json(self.api_routes["autocomplete-ville"](prefix, country))
+            self._repondre(self.api_routes["autocomplete-ville"], prefix, country)
             return
         if clef == "projets":
             query = parse_qs(parsed.query)
             dossier = (query.get("dossier") or [None])[0]
-            self.send_json(self.api_routes["projets"](dossier))
+            self._repondre(self.api_routes["projets"], dossier)
             return
         if clef == "browse-dir":
             query = parse_qs(parsed.query)
@@ -184,14 +184,14 @@ class Handler(BaseHTTPRequestHandler):
             exts_brut = (query.get("exts") or [""])[0]
             exts = [e for e in exts_brut.split(",") if e]
             mode = (query.get("mode") or [""])[0]
-            self.send_json(self.api_routes["browse-dir"](path, kind, exts, mode))
+            self._repondre(self.api_routes["browse-dir"], path, kind, exts, mode)
             return
 
         gestionnaire = self.api_routes.get(clef)
         if gestionnaire is None:
             self.send_error(404)
             return
-        self.send_json(gestionnaire())
+        self._repondre(gestionnaire)
 
     # --------------------------------------------------------------- POST
 
@@ -213,12 +213,31 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             self.send_error(400)
             return
+        if longueur < 0:
+            # rfile.read(-1) lirait jusqu'à la fermeture de la connexion :
+            # en keep-alive HTTP/1.1, le fil du serveur resterait bloqué.
+            self.send_error(400)
+            return
         try:
             payload = json.loads(self.rfile.read(longueur) or b"{}")
-        except json.JSONDecodeError:
+        except ValueError:
+            # JSONDecodeError, mais aussi UnicodeDecodeError (corps non UTF-8),
+            # toutes deux sous-classes de ValueError.
             self.send_json({"error": "corps JSON illisible"}, 400)
             return
-        self.send_json(gestionnaire(payload))
+        self._repondre(gestionnaire, payload)
+
+    def _repondre(self, gestionnaire, *args) -> None:
+        """Appelle la route et renvoie son résultat en JSON. Une exception
+        de la route devient une réponse 500 JSON : sans ça, socketserver
+        coupait la connexion sans réponse et le fetch() de web_bridge.js
+        échouait en erreur réseau opaque."""
+        try:
+            resultat = gestionnaire(*args)
+        except Exception as exc:
+            self.send_json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            return
+        self.send_json(resultat)
 
 
 class Server(ThreadingHTTPServer):

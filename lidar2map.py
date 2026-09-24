@@ -5910,10 +5910,20 @@ class _PartageServeur:
                 if name in ("", "index.html"):
                     _al = (self.headers.get("Accept-Language") or "").lower()
                     txt = self._TXT["fr" if _al.startswith("fr") else "en"]
+                    def _taille_ko(p):
+                        # Fichier supprimé/déplacé depuis le démarrage du
+                        # partage : l'omettre plutôt que faire échouer
+                        # toute la page d'index.
+                        try:
+                            return p.stat().st_size // 1024
+                        except OSError:
+                            return None
+                    tailles = {n: _taille_ko(self.server._table[n])
+                               for n in self.server._noms}
                     items = "".join(
                         f'<li><a href="/{quote(n)}">{_html.escape(n)}</a> '
-                        f'<span>{self.server._table[n].stat().st_size // 1024} Ko</span></li>'
-                        for n in self.server._noms)
+                        f'<span>{tailles[n]} Ko</span></li>'
+                        for n in self.server._noms if tailles[n] is not None)
                     page = (
                         "<!doctype html><meta name=viewport "
                         "content='width=device-width,initial-scale=1'>"
@@ -5931,15 +5941,29 @@ class _PartageServeur:
                     self.wfile.write(page)
                     return
                 p = self.server._table.get(name)
-                if p is None or not p.exists():
+                try:
+                    f = open(p, "rb") if p is not None else None
+                except OSError:
+                    f = None
+                if f is None:
                     self.send_error(404)
                     return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Length", str(p.stat().st_size))
-                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
-                self.end_headers()
-                with open(p, "rb") as f:
+                with f:
+                    # En-têtes HTTP en latin-1 strict : un nom hors latin-1
+                    # (œ, idéogrammes d'une zone jp-gsi...) levait
+                    # UnicodeEncodeError, avalé par handle_error -> téléchargement
+                    # coupé sans message. filename= en repli ASCII +
+                    # filename*= RFC 5987 pour le vrai nom.
+                    repli = (name.encode("ascii", "replace").decode("ascii")
+                             .replace('"', "_").replace("\\", "_"))
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(os.fstat(f.fileno()).st_size))
+                    self.send_header(
+                        "Content-Disposition",
+                        f"attachment; filename=\"{repli}\"; "
+                        f"filename*=UTF-8''{quote(name, safe='')}")
+                    self.end_headers()
                     shutil.copyfileobj(f, self.wfile)
 
         self._httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 0), _H)
@@ -7228,6 +7252,20 @@ class Api:
                 # encore créé (course double-clic) : rejeter comme un run actif.
                 return {"error": "Un processus est déjà en cours."}
             self._launching = True
+        # Toute exception avant le Popen (cfg inattendue dans _build_cmd,
+        # chemin invalide...) laissait _launching à True : chaque lancement
+        # suivant répondait « Un processus est déjà en cours. » jusqu'au
+        # redémarrage du serveur. Le drapeau est donc relâché sur toute
+        # sortie exceptionnelle, puis l'exception propagée.
+        try:
+            return self._lancer_apres_reservation(cfg)
+        except BaseException:
+            with self._launch_lock:
+                self._launching = False
+            raise
+
+    def _lancer_apres_reservation(self, cfg):
+        """Suite de launch(), une fois _launching posé sous verrou."""
         # Laisser le thread lecteur de l'ANCIEN run se terminer avant de
         # réinitialiser l'état : son finally pose _done=True et écraserait
         # le _done=False du nouveau run (course). Le pipe étant clos par la
@@ -7699,6 +7737,13 @@ class Api:
             }
 
     def poll_log(self):
+        # _done lu AVANT de vider la file : le thread lecteur pose ses
+        # dernières lignes (« Terminé (code N) », erreur finale) puis
+        # _done=True. Lu après, un _done posé entre la vidange et la lecture
+        # renvoyait done=True sans ces lignes, et le JS arrête de sonder dès
+        # done : elles étaient perdues. Lu avant, done=True garantit que
+        # tout ce qui précède est déjà dans la file.
+        done = self._done
         items = []
         try:
             while True:
@@ -7710,7 +7755,7 @@ class Api:
         # via le même run_id (env LIDAR2MAP_HIST_RUN_ID). Sauvegarde sur
         # succès ET échec : sans ça, un crash du pipeline laissait l'entrée
         # 'en cours' indéfiniment.
-        if self._done and not getattr(self, "_hist_saved", False):
+        if done and not getattr(self, "_hist_saved", False):
             self._hist_saved = True
             try:
                 _duree  = getattr(self, "_duree_run", 0) or \
@@ -7729,8 +7774,8 @@ class Api:
             except Exception as _he:
                 items.append({"line": f"  History error: {_he}\n", "tag": "err"})
 
-        result_dir = getattr(self, "_result_dir", None) if (self._done and self._retcode == 0) else None
-        return {"items": items, "done": self._done, "code": self._retcode,
+        result_dir = getattr(self, "_result_dir", None) if (done and self._retcode == 0) else None
+        return {"items": items, "done": done, "code": self._retcode,
                 "result_dir": result_dir}
 
 
