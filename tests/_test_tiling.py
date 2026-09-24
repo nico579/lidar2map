@@ -97,6 +97,92 @@ assert n_jpeg > 0, "aucune tuile JPEG interieure (gain taille perdu)"
 assert n_png_alpha > 0, "aucune tuile PNG-alpha de bord (R1#7 KO)"
 print("MIXED-FORMAT OK (JPEG interieur + PNG-alpha bord)")
 
+# ── Issue #3 : zone sans dalle publiée = transparente, pas de tuiles noires ──
+# Couverture LiDAR HD partielle (cas réel : Sens, quart nord-ouest non publié
+# par IGN) : le VRT du MNT a un trou nodata, que les noyaux peignent en noir
+# (gris neutre 128 pour le LRM, pris ici : il échappait même au cull des
+# tuiles vides). _poser_masque_validite recopie le masque du MNT dans
+# l'ombrage, le tuileur en fait de la transparence. Référence : le même
+# ombrage sans masque, soit le rendu d'avant, tout opaque.
+Hm = Wm = 4096
+bboxm = (900000.0, 6250000.0 - Hm * 0.5, 900000.0 + Wm * 0.5, 6250000.0)
+profm = dict(driver="GTiff", count=1, height=Hm, width=Wm, crs="EPSG:2154",
+             transform=from_origin(bboxm[0], bboxm[3], 0.5, 0.5))
+dem = np.full((Hm, Wm), 150.0, np.float32)
+dem[:Hm // 2, :Wm // 2] = -9999.0                 # quart NO sans dalle
+dem_path = tmp / "mnt_troue.tif"
+with rasterio.open(str(dem_path), "w", dtype="float32", nodata=-9999.0,
+                   **profm) as ds:
+    ds.write(dem, 1)
+ombrage = arrj.copy()
+ombrage[:Hm // 2, :Wm // 2] = 128                 # nodata LRM → gris neutre
+
+
+def _ombrage(nom):
+    chemin = tmp / f"{nom}.tif"
+    with rasterio.open(str(chemin), "w", dtype="uint8", **profm) as ds:
+        ds.write(ombrage, 1)
+    return chemin
+
+
+def _pixels_opaques(mbtiles, z):
+    """(pixels opaques, pixels à alpha intermédiaire, nombre de tuiles) à z."""
+    con_m = sqlite3.connect(str(mbtiles))
+    n_opaques = n_intermediaires = n_tuiles = 0
+    for (blob,) in con_m.execute(
+            "SELECT tile_data FROM tiles WHERE zoom_level=?", (z,)):
+        im = Image.open(io.BytesIO(blob))
+        alpha = (np.asarray(im.getchannel("A")) if im.mode in ("RGBA", "LA")
+                 else np.full((256, 256), 255, np.uint8))
+        n_opaques += int((alpha == 255).sum())
+        n_intermediaires += int(((alpha > 0) & (alpha < 255)).sum())
+        n_tuiles += 1
+    con_m.close()
+    return n_opaques, n_intermediaires, n_tuiles
+
+
+ref = _ombrage("zone3ref_lrm_ombrage")
+masque_etat = {"fichier": tmp / "_masque_mnt.tif"}
+masque_ok = l2m._poser_masque_validite(masque_ombrage := _ombrage(
+    "zone3_lrm_ombrage"), dem_path, masque_etat)
+assert masque_ok, "masque du MNT non posé malgré un trou nodata"
+assert not masque_etat["complet"]
+with rasterio.open(str(masque_ombrage)) as ds:
+    assert ds.read_masks(1)[:Hm // 2, :Wm // 2].max() == 0
+    assert ds.read_masks(1)[Hm // 2:, :].min() == 255
+mbt_ref = l2m.generer_mbtiles_lidar(ref, tmp, "zone3ref_lrm_ombrage",
+                                    zoom_min=14, zoom_max=17,
+                                    format_tuiles="jpeg", bbox_natif=bboxm,
+                                    tile_workers=2)
+mbt_m = l2m.generer_mbtiles_lidar(masque_ombrage, tmp, "zone3_lrm_ombrage",
+                                  zoom_min=14, zoom_max=17,
+                                  format_tuiles="jpeg", bbox_natif=bboxm,
+                                  tile_workers=2)
+(n_ref, _, t_ref), (n_m, n_mi, t_m) = (_pixels_opaques(mbt_ref, 17),
+                                       _pixels_opaques(mbt_m, 17))
+print(f"issue #3: opaque z17 sans masque={n_ref} avec masque={n_m}"
+      f" ratio={n_m / n_ref:.3f} tuiles {t_ref}->{t_m} alpha_intermediaire={n_mi}")
+# Un quart de la zone sans données → ~75 % des pixels opaques d'avant.
+assert 0.70 < n_m / n_ref < 0.80, f"ratio {n_m / n_ref:.3f} (attendu ~0.75)"
+# Trou EXACTEMENT transparent : le masque est binaire, un alpha à 1 venait de
+# GDAL qui décale une valeur source égale au dst_nodata (vu sur un vrai run).
+assert n_mi == 0, f"{n_mi} pixel(s) à alpha intermédiaire"
+# Tuiles entièrement dans le trou : écartées, plus de tuile grise opaque.
+assert t_m < t_ref, f"aucune tuile vide écartée ({t_ref} -> {t_m})"
+
+# MNT complet (cas courant) : aucun ombrage touché, pas de masque posé.
+dem_plein = tmp / "mnt_plein.tif"
+with rasterio.open(str(dem_plein), "w", dtype="float32", nodata=-9999.0,
+                   **profm) as ds:
+    ds.write(np.full((Hm, Wm), 150.0, np.float32), 1)
+etat_plein = {"fichier": tmp / "_masque_plein.tif"}
+plein = _ombrage("zone3plein_lrm_ombrage")
+assert not l2m._poser_masque_validite(plein, dem_plein, etat_plein)
+assert etat_plein["complet"] and not etat_plein["fichier"].exists()
+with rasterio.open(str(plein)) as ds:
+    assert rasterio.enums.MaskFlags.per_dataset not in ds.mask_flag_enums[0]
+print("NODATA-MASK OK (issue #3 : trou transparent, MNT complet intact)")
+
 # ── RMAP (CompeGPS/TwoNav) : structure binaire écrite à la main ──────────────
 # Header : magic + 9×int32 (10, 7, 0, w, -h, 24, 1, 256, 256), offset map info
 # (int64), int32 0, n_zooms, n_zooms×int64. Par zoom : w, -h, nx, ny puis

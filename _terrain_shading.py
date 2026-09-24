@@ -22,6 +22,7 @@ class DependancesGenererOmbrages:
     formater_duree: Callable
     source_a_des_donnees: Callable
     publier_tif_atomique: Callable
+    poser_masque_validite: Callable
     hillshade_chunked_multi: Callable
     stop_event: object
     svf_chunked: Callable
@@ -181,6 +182,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
     _hms = dependances.formater_duree
     _source_a_des_donnees = dependances.source_a_des_donnees
     _publier_tif_atomique = dependances.publier_tif_atomique
+    _poser_masque_validite = dependances.poser_masque_validite
     _hillshade_chunked_multi = dependances.hillshade_chunked_multi
     _stop_event = dependances.stop_event
     _svf_chunked = dependances.svf_chunked
@@ -342,7 +344,13 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
             nom_affiche = chemin_final.name if chemin_final else chemin_part.name
             print(f"  Partial file removed: {nom_affiche}")
 
+    # Masque de validité du MNT (issue #3 : zone sans dalle publiée rendue en
+    # tuiles noires) : calculé au premier ombrage publié, recopié ensuite dans
+    # chacun, le tuileur en fait de la transparence.
+    _masque_mnt = {"fichier": _chemin_part(dossier_ville / "_masque_mnt.tif")}
+
     def _publier_sortie_ombrage(chemin_part, chemin_final):
+        _poser_masque_validite(chemin_part, source, _masque_mnt)
         _publier_tif_atomique(chemin_part, chemin_final)
         _parts_ombrages_actifs.pop(chemin_part, None)
         _sorties_a_regenerer.discard(chemin_final)
@@ -803,6 +811,7 @@ def generer_ombrages(cogs, dossier_ville, choix=None, elevation_soleil=None, nom
         # temporaire de ce processus est supprimée, jamais l'ancien final.
         for _chemin_part_actif in tuple(_parts_ombrages_actifs):
             _abandonner_sortie_ombrage(_chemin_part_actif)
+        _masque_mnt["fichier"].unlink(missing_ok=True)
         # Suppression du dossier transactionnel .part (VRT + dalles.txt).
         if _vrt_tmpdir and _vrt_tmpdir.exists():
             _shutil_vrt.rmtree(_vrt_tmpdir, ignore_errors=True)

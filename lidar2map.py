@@ -1248,7 +1248,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.50.1"
+VERSION      = "1.50.2"
 VERSION_DATE = "2026-09"
 
 
@@ -2346,6 +2346,7 @@ from _ombrages_pures import (
     _lrm_array,
     _lrm_chunked,
     _nodata_mask,                  # noqa: F401 - réexport de façade, testé directement
+    _poser_masque_validite,
     _publier_tif_atomique as _publier_tif_atomique_impl,
     _rrim_chunked,
     _sauver_array_georef as _sauver_array_georef_impl,
@@ -2458,6 +2459,7 @@ def _dependances_generer_ombrages():
         formater_duree=_hms,
         source_a_des_donnees=_source_a_des_donnees,
         publier_tif_atomique=_publier_tif_atomique,
+        poser_masque_validite=_poser_masque_validite,
         hillshade_chunked_multi=_hillshade_chunked_multi,
         stop_event=_stop_event,
         svf_chunked=_svf_chunked,

@@ -556,21 +556,29 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 num_threads   = 0)  # 0 = tous les CPUs
 
                     # Masque de couverture (cf. commentaire à la définition de
-                    # warped_cov) : reprojette une source constante à 255 avec
+                    # warped_cov) : reprojette le masque GDAL de la source avec
                     # EXACTEMENT le même transform/CRS que les bandes réelles
                     # ci-dessus, dst_nodata=0 — capture la vraie empreinte
                     # pivotée (GDAL sait la calculer, nous non sans réinventer
                     # la géométrie de reprojection). Fichier à part : ne
                     # change pas le nombre de bandes de warped_3857.tif, donc
                     # ne perturbe pas la détection RGBA existante (_w_count).
-                    import numpy as _np_cov
+                    # read_masks() et non une constante à 255 (issue #3) : un
+                    # ombrage porte le masque du MNT (_poser_masque_validite),
+                    # une zone sans dalle publiée devient transparente au lieu
+                    # de tuiles noires. Source sans masque ni nodata = 255
+                    # partout, donc le rendu d'avant.
                     cov_part = _chemin_part(warped_cov)
                     cov_profile = dst_profile.copy()
                     cov_profile.update(count=1, dtype="uint8", nodata=None,
                                        compress="deflate", predictor=1)
                     with _rio_w.open(str(cov_part), "w", **cov_profile) as dst_cov:
-                        _cov_src = _np_cov.full((src.height, src.width), 255,
-                                                dtype=_np_cov.uint8)
+                        _cov_src = src.read_masks(1)
+                        # src_nodata=0 : sans lui, GDAL décale d'un cran une
+                        # valeur source égale au dst_nodata pour la garder
+                        # distincte, et un pixel masqué ressortait à 1 (alpha
+                        # quasi nul mais non nul, tuile vide jamais écartée,
+                        # constaté sur un vrai tuilage).
                         _reproject(
                             source        = _cov_src,
                             destination   = _rio_w.band(dst_cov, 1),
@@ -578,6 +586,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                             src_crs       = src.crs,
                             dst_transform = dst_transform,
                             dst_crs       = "EPSG:3857",
+                            src_nodata    = 0,
                             dst_nodata    = 0,
                             resampling    = _Resampling.nearest,
                             num_threads   = 0)
@@ -821,6 +830,11 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 continue
                             atile = alpha_img.crop(
                                 (left, 0, left + TILE_SIZE, TILE_SIZE))
+                            if atile.getbbox() is None:
+                                # Tuile entièrement hors données (masque de la
+                                # source, issue #3) : même sort qu'une tuile
+                                # vide, pas une PNG transparente de plus.
+                                continue
                             if atile.getextrema()[0] < 255:
                                 _tiles_args.append((tile, atile, z, tx, ty))
                                 if _use_jpeg:

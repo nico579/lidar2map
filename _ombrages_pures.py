@@ -178,6 +178,82 @@ def _source_a_des_donnees(source, max_dim=512):
         return True
 
 
+def _poser_masque_validite(tif, source, etat, chunk=4096):
+    """Recopie dans `tif` (ombrage calculé depuis `source`) le masque de
+    validité du MNT, sous forme de masque GDAL interne (issue #3).
+
+    Les noyaux peignent le nodata en noir (gris neutre pour le LRM) faute de
+    canal pour le signaler : une zone sans dalle publiée (couverture LiDAR HD
+    partielle) sortait en tuiles noires opaques. Avec ce masque, le tuileur
+    la rend transparente via read_masks(), comme gdal2tiles le fait d'une
+    source à nodata. Validité = convention des noyaux (_nodata_mask).
+
+    `etat` est partagé par tous les ombrages d'un run : le masque du MNT est
+    calculé UNE fois dans etat["fichier"], et etat["complet"] retient
+    l'absence de trou, cas courant où aucun ombrage n'est modifié.
+    Échec du calcul : avertissement, ombrage publié sans masque (rendu
+    d'avant). Échec pendant l'écriture dans `tif` : propagé, un masque à
+    moitié écrit masquerait des données valides.
+    Retourne True si un masque a été posé."""
+    import numpy as np
+    import rasterio
+    from rasterio.windows import Window
+
+    if etat.get("complet"):
+        return False
+    masque = Path(etat["fichier"])
+    if "complet" not in etat:
+        try:
+            with rasterio.open(str(source)) as src:
+                profil = dict(driver="GTiff", width=src.width, height=src.height,
+                              count=1, dtype="uint8", crs=src.crs,
+                              transform=src.transform, compress="deflate",
+                              tiled=True, blockxsize=512, blockysize=512,
+                              BIGTIFF="IF_SAFER")
+                complet = True
+                with rasterio.open(str(masque), "w", **profil) as dst:
+                    for r in range(0, src.height, chunk):
+                        for c in range(0, src.width, chunk):
+                            if _stop_event.is_set():
+                                raise KeyboardInterrupt("masque MNT interrompu")
+                            win = Window(c, r, min(chunk, src.width - c),
+                                         min(chunk, src.height - r))
+                            valide = ~_nodata_mask(src.read(1, window=win),
+                                                   src.nodata)
+                            complet = complet and bool(valide.all())
+                            dst.write(np.where(valide, 255, 0).astype(np.uint8),
+                                      1, window=win)
+        except KeyboardInterrupt:
+            masque.unlink(missing_ok=True)
+            raise
+        except Exception as e:
+            print(f"  WARNING: no-data mask not computed ({type(e).__name__}: "
+                  f"{e}), areas without data will render black", flush=True)
+            etat["complet"] = True   # pas de nouvelle tentative dans ce run
+            masque.unlink(missing_ok=True)
+            return False
+        etat["complet"] = complet
+        if complet:
+            masque.unlink(missing_ok=True)
+            return False
+    # Masque INTERNE (pas de .msk à côté) : la publication atomique ne
+    # déplace que le .tif.
+    with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True):
+        with rasterio.open(str(masque)) as msk, \
+             rasterio.open(str(tif), "r+") as dst:
+            if (dst.width, dst.height) != (msk.width, msk.height):
+                print(f"  WARNING: {Path(tif).name} {dst.width}×{dst.height}"
+                      f" != MNT {msk.width}×{msk.height}, no-data mask not"
+                      f" applied", flush=True)
+                return False
+            for r in range(0, msk.height, chunk):
+                for c in range(0, msk.width, chunk):
+                    win = Window(c, r, min(chunk, msk.width - c),
+                                 min(chunk, msk.height - r))
+                    dst.write_mask(msk.read(1, window=win), window=win)
+    return True
+
+
 def _percentiles_grille(src_path, halo, calc_block, p_lo, p_hi):
     """Percentiles globaux estimés sur une grille 3×3 de fenêtres réparties
     sur toute l'étendue du raster (fractions 0.2/0.5/0.8 en x et y).
