@@ -536,6 +536,136 @@ check("numberMatched inconnu → pages pleines suivies jusqu'à la page courte",
       d is not None and len(d) == 2665 and len(req) == 2)
 
 time.sleep = _real_sleep
+
+print("== 9. préférences et historique : lecture ratée jamais réécrite, verrou ==")
+# _lire_prefs()/_sauver_historique() rendaient {} / [] sur TOUTE erreur, puis
+# réécrivaient : un refus Windows passager (fichier en cours de remplacement)
+# effaçait toutes les autres préférences, ou l'historique sauf l'entrée
+# courante. Et plusieurs instances se volaient des entrées d'historique.
+import subprocess as _sp
+import threading as _th
+
+_af = l2m._atomic_files_impl
+_saved_prefs, _saved_hist = l2m._PREFS_PATH, l2m._HISTORIQUE_PATH
+_d9 = tmp / "prefs_historique"
+_d9.mkdir(parents=True, exist_ok=True)
+l2m._PREFS_PATH = _d9 / "preferences.json"
+l2m._HISTORIQUE_PATH = _d9 / "historique.json"
+import builtins as _builtins
+import contextlib as _contextlib
+import io as _io
+_real_io_open = _io.open
+
+
+@_contextlib.contextmanager
+def _refus_sur(cible, fois=None):
+    """Ouverture de `cible` refusée (sémantique Windows), `fois` fois ou
+    toujours. Au niveau d'io.open : vaut pour open() comme Path.read_text."""
+    reste = [fois]
+
+    def ouvrir(fichier, *a, **k):
+        if (isinstance(fichier, (str, os.PathLike)) and Path(fichier) == cible
+                and (reste[0] is None or reste[0] > 0)):
+            if reste[0] is not None:
+                reste[0] -= 1
+            raise PermissionError(13, "Access is denied")
+        return _real_io_open(fichier, *a, **k)
+    _builtins.open = _io.open = ouvrir
+    try:
+        yield
+    finally:
+        _builtins.open = _io.open = _real_io_open
+
+
+try:
+    check("lire_json : absent → défaut",
+          _af.lire_json(_d9 / "absent.json", {"d": 1}) == {"d": 1})
+    (_d9 / "corrompu.json").write_text("{pas du json", encoding="utf-8")
+    check("lire_json : corrompu → défaut (repartir de zéro)",
+          _af.lire_json(_d9 / "corrompu.json", []) == [])
+    (_d9 / "sain.json").write_text('{"a": 1}', encoding="utf-8")
+    with _refus_sur(_d9 / "sain.json", fois=2):
+        lu = _af.lire_json(_d9 / "sain.json", {})
+    check("lire_json : refus passager retenté → contenu", lu == {"a": 1}, str(lu))
+    with _refus_sur(_d9 / "sain.json"):
+        try:
+            _af.lire_json(_d9 / "sain.json", {})
+            leve = False
+        except PermissionError:
+            leve = True
+    check("lire_json : refus persistant → PermissionError, jamais le défaut", leve)
+
+    prefs_avant = {"lang": "fr", "ui_zoom": 1.2}
+    l2m._PREFS_PATH.write_text(json.dumps(prefs_avant), encoding="utf-8")
+    with _refus_sur(l2m._PREFS_PATH):
+        ok = l2m._ecrire_pref("trusted_host", "100.64.0.1")
+    apres = json.loads(l2m._PREFS_PATH.read_text(encoding="utf-8"))
+    check("préférence : refus persistant → rien réécrit, autres clés intactes",
+          ok is False and apres == prefs_avant, f"ok={ok} {apres}")
+    ok = l2m._ecrire_pref("trusted_host", "100.64.0.1")
+    apres = json.loads(l2m._PREFS_PATH.read_text(encoding="utf-8"))
+    check("préférence : écriture normale garde les autres clés",
+          ok and apres == {**prefs_avant, "trusted_host": "100.64.0.1"}, str(apres))
+
+    hist_avant = [{"id": f"r{i}", "date": "2026-09-24 10:00"} for i in range(3)]
+    l2m._HISTORIQUE_PATH.write_text(json.dumps(hist_avant), encoding="utf-8")
+    with _refus_sur(l2m._HISTORIQUE_PATH):
+        l2m._sauver_historique({"type": "lidar"}, 0, run_id="nouveau",
+                               statut="en cours")
+    apres = json.loads(l2m._HISTORIQUE_PATH.read_text(encoding="utf-8"))
+    check("historique : refus persistant → fichier intact (3 entrées)",
+          apres == hist_avant, f"{len(apres)} entrée(s)")
+
+    l2m._HISTORIQUE_PATH.write_text("[]", encoding="utf-8")
+    _depart = _th.Barrier(20)
+
+    def _sauver(i):
+        _depart.wait()
+        l2m._sauver_historique({"type": "lidar"}, 0, run_id=f"run{i}",
+                               statut="en cours")
+
+    _fils = [_th.Thread(target=_sauver, args=(i,)) for i in range(20)]
+    for _f in _fils:
+        _f.start()
+    for _f in _fils:
+        _f.join()
+    ids = {e["id"] for e in
+           json.loads(l2m._HISTORIQUE_PATH.read_text(encoding="utf-8"))}
+    check("historique : 20 sauvegardes simultanées → 20 entrées",
+          ids == {f"run{i}" for i in range(20)}, f"{len(ids)} entrée(s)")
+
+    # Verrou tenu par un AUTRE processus, puis relâché par l'OS à sa mort
+    # (interpréteur de base : tuer le lanceur de venv laisserait l'enfant).
+    _cible = _d9 / "croise.json"
+    _enfant = _sp.Popen(
+        [getattr(sys, "_base_executable", sys.executable), "-c",
+         "import sys, time; sys.path.insert(0, sys.argv[1]); "
+         "import _atomic_files as a\n"
+         "with a.verrou_inter_processus(sys.argv[2]):\n"
+         "    print('pris', flush=True); time.sleep(60)\n",
+         str(_APP.parent), str(_cible)],
+        stdout=_sp.PIPE, text=True)
+    try:
+        _enfant.stdout.readline()             # l'enfant tient le verrou
+        try:
+            with _af.verrou_inter_processus(_cible, delai_s=0.3):
+                bloque = False
+        except TimeoutError:
+            bloque = True
+        check("verrou : tenu par un autre processus → TimeoutError", bloque)
+    finally:
+        _enfant.kill()
+        _enfant.wait(timeout=30)
+    try:
+        with _af.verrou_inter_processus(_cible, delai_s=5):
+            repris = True
+    except TimeoutError:
+        repris = False
+    check("verrou : processus tué → relâché par l'OS, repris sans nettoyage",
+          repris)
+finally:
+    l2m._PREFS_PATH, l2m._HISTORIQUE_PATH = _saved_prefs, _saved_hist
+
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")
 sys.exit(0 if ok_all else 1)

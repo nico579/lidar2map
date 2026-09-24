@@ -1248,7 +1248,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.50.3"
+VERSION      = "1.50.4"
 VERSION_DATE = "2026-09"
 
 
@@ -1658,7 +1658,8 @@ def _ecrire_json_atomique(path, data, indent=None):
                 os.fsync(f.fileno())  # garantit que le contenu est sur disque
             except (OSError, AttributeError):
                 pass  # fsync indisponible (ramdisk, certains FS) — non critique
-        os.replace(tmp, path)
+        # Refus Windows passager (un lecteur tient la cible) : retenté.
+        _atomic_files_impl.remplacer(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -5723,19 +5724,24 @@ _PREFS_PATH = DOSSIER_TRAVAIL / "preferences.json"
 
 def _lire_prefs() -> dict:
     try:
-        import json as _json
-        with open(_PREFS_PATH, "r", encoding="utf-8") as f:
-            d = _json.load(f)
+        d = _atomic_files_impl.lire_json(_PREFS_PATH, {})
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
 
 
 def _ecrire_pref(cle: str, valeur) -> bool:
-    prefs = _lire_prefs()
-    prefs[cle] = valeur
+    # Lecture-modification-écriture sous verrou (fils du serveur web, autres
+    # instances). Un fichier présent mais illisible ne se réécrit JAMAIS à
+    # partir de {} : un refus Windows passager effaçait sinon toutes les autres
+    # préférences en n'en gardant qu'une (même défaut mesuré dans blink2video :
+    # 4 lectures sur 70 969 en échec sous forte concurrence, 2026-09-24).
     try:
-        _ecrire_json_atomique(_PREFS_PATH, prefs, indent=2)
+        with _atomic_files_impl.verrou_inter_processus(_PREFS_PATH):
+            prefs = _atomic_files_impl.lire_json(_PREFS_PATH, {})
+            prefs = prefs if isinstance(prefs, dict) else {}
+            prefs[cle] = valeur
+            _ecrire_json_atomique(_PREFS_PATH, prefs, indent=2)
         return True
     except Exception:
         return False
@@ -5782,30 +5788,34 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
         "duree":     _hms(duree_s) if duree_s > 0 else "",
         "params":    cfg,   # cfg complet pour rappel exact
     }
-    historique = []
-    if _HISTORIQUE_PATH.exists():
-        try:
-            historique = json.loads(_HISTORIQUE_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            historique = []
-    # Update si entrée existante (même run_id), sinon insert en tête.
-    idx = -1
-    if run_id:
-        for i, e in enumerate(historique):
-            if e.get("id") == run_id:
-                idx = i
-                break
-    if idx >= 0:
-        # Préserver la date de début ; poser date_fin si finalisation.
-        entree["date"] = historique[idx].get("date", now_str)
-        if statut in ("ok", "ko"):
-            entree["date_fin"] = now_str
-        historique[idx] = entree
-    else:
-        historique.insert(0, entree)
-    historique = historique[:_HISTORIQUE_MAX]
+    # Lecture-modification-écriture sous verrou inter-processus : plusieurs
+    # instances tournent en parallèle depuis 1.50.0, deux traitements qui
+    # démarraient ou finissaient ensemble se volaient des entrées. Un
+    # historique présent mais illisible (refus Windows persistant) fait
+    # renoncer à CETTE sauvegarde : l'ancien `except: []` réécrivait un
+    # historique réduit à la seule entrée courante.
     try:
-        _ecrire_json_atomique(_HISTORIQUE_PATH, historique, indent=2)
+        with _atomic_files_impl.verrou_inter_processus(_HISTORIQUE_PATH):
+            historique = _atomic_files_impl.lire_json(_HISTORIQUE_PATH, [])
+            if not isinstance(historique, list):
+                historique = []
+            # Update si entrée existante (même run_id), sinon insert en tête.
+            idx = -1
+            if run_id:
+                for i, e in enumerate(historique):
+                    if isinstance(e, dict) and e.get("id") == run_id:
+                        idx = i
+                        break
+            if idx >= 0:
+                # Préserver la date de début ; poser date_fin si finalisation.
+                entree["date"] = historique[idx].get("date", now_str)
+                if statut in ("ok", "ko"):
+                    entree["date_fin"] = now_str
+                historique[idx] = entree
+            else:
+                historique.insert(0, entree)
+            historique = historique[:_HISTORIQUE_MAX]
+            _ecrire_json_atomique(_HISTORIQUE_PATH, historique, indent=2)
         # Log discret au début (l'utilisateur n'a pas besoin de savoir), plus
         # explicite à la fin pour confirmer la sauvegarde finale.
         if statut == "en cours":
@@ -5818,12 +5828,11 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
 
 def _lire_historique() -> list:
     """Retourne la liste des entrées d'historique (liste vide si absent/corrompu)."""
-    if not _HISTORIQUE_PATH.exists():
-        return []
     try:
-        return json.loads(_HISTORIQUE_PATH.read_text(encoding="utf-8"))
+        historique = _atomic_files_impl.lire_json(_HISTORIQUE_PATH, [])
+        return historique if isinstance(historique, list) else []
     except Exception:
-        return []
+        return []   # affichage seul : rien n'est réécrit à partir d'ici
 
 # ============================================================
 # INTERFACE GRAPHIQUE (PyWebView)
@@ -6708,7 +6717,10 @@ class Api:
         """Vide intégralement l'historique (action destructive — la confirmation
         est gérée côté JS via confirm() avant l'appel)."""
         try:
-            _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
+            # Sous le verrou de _sauver_historique : une sauvegarde lue avant
+            # ce vidage et écrite après ferait sinon réapparaître les entrées.
+            with _atomic_files_impl.verrou_inter_processus(_HISTORIQUE_PATH):
+                _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}

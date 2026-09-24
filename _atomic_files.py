@@ -2,10 +2,105 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import sqlite3
+import time
 import uuid
 from pathlib import Path
+
+# Sous Windows, remplacer ou lire un fichier qu'un autre fil ou processus tient
+# ouvert échoue en PermissionError le temps de cet accès : quelques nouvelles
+# tentatives rapprochées l'absorbent (pip fait de même autour d'os.replace).
+_TENTATIVES_REFUS = 10
+_PAUSE_REFUS_S = 0.05
+
+
+def lire_json(path, defaut):
+    """Contenu JSON de ``path``, ou ``defaut`` s'il est absent ou corrompu.
+
+    Un fichier PRÉSENT mais illisible (refus Windows qui persiste, erreur
+    disque) lève l'OSError au lieu de rendre ``defaut`` : un appelant qui
+    réécrit ensuite (lecture-modification-écriture) effacerait sinon tout le
+    contenu sur un simple refus d'accès passager."""
+    path = Path(path)
+    for tentative in range(_TENTATIVES_REFUS):
+        try:
+            texte = path.read_text(encoding="utf-8")
+            break
+        except FileNotFoundError:
+            return defaut
+        except PermissionError:
+            if tentative == _TENTATIVES_REFUS - 1:
+                raise
+            time.sleep(_PAUSE_REFUS_S)
+    try:
+        return json.loads(texte)
+    except ValueError:
+        return defaut   # contenu corrompu : repartir de zéro, comme avant
+
+
+def remplacer(source, cible):
+    """``os.replace`` qui retente un refus Windows passager (lecteur en cours)."""
+    for tentative in range(_TENTATIVES_REFUS):
+        try:
+            os.replace(source, cible)
+            return
+        except PermissionError:
+            if tentative == _TENTATIVES_REFUS - 1:
+                raise
+            time.sleep(_PAUSE_REFUS_S)
+
+
+if os.name == "nt":
+    import msvcrt
+
+    def _verrouiller(fd):
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+
+    def _deverrouiller(fd):
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _verrouiller(fd):
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _deverrouiller(fd):
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def verrou_inter_processus(path, delai_s=30.0):
+    """Verrou exclusif sur ``path`` (fichier ``.lock`` voisin), entre fils ET
+    entre processus : msvcrt.locking sous Windows, fcntl.flock ailleurs (le
+    mécanisme du paquet filelock, sans dépendance). Chaque prise ouvre son
+    propre descripteur, donc deux fils d'un même processus s'excluent aussi.
+    L'OS relâche le verrou à la mort du processus : jamais d'orphelin à
+    nettoyer, contrairement à un fichier créé en O_EXCL. TimeoutError au-delà
+    de ``delai_s``."""
+    verrou = Path(str(path) + ".lock")
+    verrou.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(verrou, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fin = time.monotonic() + delai_s
+        while True:
+            try:
+                _verrouiller(fd)
+                break
+            except OSError:
+                if time.monotonic() >= fin:
+                    raise TimeoutError(f"verrou occupé : {verrou}") from None
+                time.sleep(_PAUSE_REFUS_S)
+        try:
+            yield
+        finally:
+            _deverrouiller(fd)
+    finally:
+        os.close(fd)
 
 
 SQLITE_SUFFIXES = ("", "-wal", "-shm", "-journal")
