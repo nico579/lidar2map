@@ -1,8 +1,51 @@
 """Fusion a posteriori de plusieurs magasins MBTiles en un seul."""
 
 from dataclasses import dataclass
+import io
 import sqlite3
 import sys
+
+
+def _a_de_la_transparence(image):
+    """Vrai si l'image décodée porte au moins un pixel non opaque."""
+    if image.mode not in ("RGBA", "LA", "PA") and "transparency" not in image.info:
+        return False
+    alpha = image.convert("RGBA").getchannel("A")
+    return alpha.getextrema()[0] < 255
+
+
+def composer_tuiles(dessous, dessus):
+    """Octets de la tuile fusionnée quand deux sources ont le même (z, x, y).
+
+    Le tuileur LiDAR émet volontairement les tuiles de bord et de bas zoom
+    d'un bloc en PNG à alpha nul hors emprise (R1#7), pour qu'elles se
+    COMPOSENT avec celles du bloc voisin. Remplacer l'une par l'autre
+    (INSERT OR REPLACE) trouait la fusion le long de chaque frontière de
+    bloc, et ne gardait qu'un fragment par tuile aux bas zooms.
+
+    ``dessus`` (source plus loin dans la liste) est donc posé par-dessus
+    ``dessous`` quand il porte de la transparence. Opaque, illisible (ou
+    Pillow absent) : règle historique, la dernière source gagne.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return dessus
+    try:
+        with Image.open(io.BytesIO(dessus)) as image_haut:
+            if not _a_de_la_transparence(image_haut):
+                return dessus
+            haut = image_haut.convert("RGBA")
+        with Image.open(io.BytesIO(dessous)) as image_bas:
+            bas = image_bas.convert("RGBA")
+    except Exception:
+        return dessus
+    if bas.size != haut.size:
+        return dessus
+    bas.alpha_composite(haut)
+    tampon = io.BytesIO()
+    bas.save(tampon, "PNG", optimize=False, compress_level=6)
+    return tampon.getvalue()
 
 
 @dataclass(frozen=True)
@@ -25,8 +68,10 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
     tuile).
 
     Bounds/zoom de sortie = union des sources. Tuile en collision entre deux
-    sources (zones qui se chevauchent) : la DERNIÈRE source de la liste
-    gagne (même règle que le découpage post-hoc, INSERT OR REPLACE).
+    sources (zones qui se chevauchent, frontières de blocs) : la DERNIÈRE
+    source de la liste gagne si sa tuile est opaque ; si elle porte de la
+    transparence (bord de bloc, bas zoom), elle est composée par-dessus
+    l'existante (cf. composer_tuiles).
 
     Retourne le Path de sortie, ou None si rien à fusionner.
     """
@@ -133,9 +178,23 @@ def fusionner_mbtiles(sources, sortie, ecraser=False, *, dependances):
             rows = cur_src.fetchmany(BATCH)
             if not rows:
                 break
-            # Dernière source gagne sur collision (zones qui se chevauchent).
-            con_out.executemany(
-                "INSERT OR REPLACE INTO tiles VALUES (?,?,?,?)", rows)
+            # Chemin rapide : aucune collision dans le lot (cas général, tout
+            # l'intérieur des blocs) -> un seul executemany.
+            curseur = con_out.executemany(
+                "INSERT OR IGNORE INTO tiles VALUES (?,?,?,?)", rows)
+            if curseur.rowcount != len(rows):
+                # Collision(s) dans ce lot : la ligne en place diffère de la
+                # ligne source exactement pour les tuiles en collision (celles
+                # que ce lot vient d'insérer sont identiques).
+                for z, x, y, donnees in rows:
+                    (en_place,) = con_out.execute(
+                        "SELECT tile_data FROM tiles WHERE zoom_level=? "
+                        "AND tile_column=? AND tile_row=?", (z, x, y)).fetchone()
+                    if en_place != donnees:
+                        con_out.execute(
+                            "UPDATE tiles SET tile_data=? WHERE zoom_level=? "
+                            "AND tile_column=? AND tile_row=?",
+                            (composer_tuiles(en_place, donnees), z, x, y))
             con_out.commit()
             copies += len(rows)
             # \r sur le terminal, ligne de progression "en place" dans le

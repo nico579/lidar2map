@@ -816,6 +816,63 @@ class MergeMbtilesExtractionContractTests(unittest.TestCase):
             self.assertIn("\r", captured)
             self.assertRegex(captured, r"\r\s*[\d,]+ / [\d,]+ tiles\s+\d+%")
 
+    @staticmethod
+    def _demi_tuile_png(cote, couleur):
+        """Tuile 256×256 RGBA : moitié ``cote`` opaque, reste alpha=0, comme
+        une tuile de bord de bloc émise par le tuileur LiDAR (R1#7)."""
+        from PIL import Image
+        image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        boite = (0, 0, 128, 256) if cote == "ouest" else (128, 0, 256, 256)
+        image.paste(Image.new("RGBA", (128, 256), couleur), boite)
+        tampon = io.BytesIO()
+        image.save(tampon, "PNG")
+        return tampon.getvalue()
+
+    def test_tuiles_de_bord_transparentes_se_composent_au_lieu_de_s_ecraser(self):
+        # Deux blocs voisins partagent la tuile (3, 3) de leur frontière :
+        # chacun n'en couvre qu'une moitié. La fusion doit garder les deux
+        # moitiés, pas seulement celle de la dernière source.
+        from PIL import Image
+        rouge, bleu = (200, 0, 0, 255), (0, 0, 200, 255)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ouest, est = root / "ouest.mbtiles", root / "est.mbtiles"
+            self._create_source(ouest, bounds="-1,0,0,1", zoom=7, tiles=[
+                (3, 3, self._demi_tuile_png("ouest", rouge)),
+                (2, 3, self._demi_tuile_png("ouest", rouge))])
+            self._create_source(est, bounds="0,0,1,1", zoom=7, tiles=[
+                (3, 3, self._demi_tuile_png("est", bleu)),
+                (4, 3, self._demi_tuile_png("est", bleu))])
+            sortie = root / "fusion.mbtiles"
+            with contextlib.redirect_stdout(io.StringIO()):
+                resultat = merge_mbtiles.fusionner_mbtiles(
+                    [ouest, est], sortie, dependances=self._deps())
+            self.assertEqual(resultat, sortie)
+            connection = sqlite3.connect(str(sortie))
+            try:
+                (donnees,) = connection.execute(
+                    "SELECT tile_data FROM tiles WHERE tile_column=3 "
+                    "AND tile_row=3").fetchone()
+                n_tuiles = connection.execute(
+                    "SELECT COUNT(*) FROM tiles").fetchone()[0]
+            finally:
+                connection.close()
+            self.assertEqual(n_tuiles, 3)
+            with Image.open(io.BytesIO(donnees)) as tuile:
+                tuile = tuile.convert("RGBA")
+                self.assertEqual(tuile.getpixel((10, 100)), rouge)
+                self.assertEqual(tuile.getpixel((245, 100)), bleu)
+
+    def test_tuile_opaque_de_la_derniere_source_remplace_toujours(self):
+        from PIL import Image
+        opaque = io.BytesIO()
+        Image.new("RGB", (256, 256), (0, 150, 0)).save(opaque, "PNG")
+        self.assertEqual(
+            merge_mbtiles.composer_tuiles(
+                self._demi_tuile_png("ouest", (200, 0, 0, 255)),
+                opaque.getvalue()),
+            opaque.getvalue())
+
 
 class DeliverableLifecycleExtractionContractTests(unittest.TestCase):
     """Contrats du cycle de vie des livrables extrait en phase 15w."""
