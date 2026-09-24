@@ -740,15 +740,15 @@ de traitement inconnues.
 | Option | Défaut / valeurs | Rôle |
 |---|---|---|
 | `--port N` | `8766` | Premier port essayé. Si un serveur lidar2map y répond déjà, un lancement depuis un terminal y demande s’il faut le rejoindre ou en démarrer un autre ; sinon, la question est posée dans la page ouverte. Jusqu’à dix ports consécutifs sont essayés. |
-| `--bind ADRESSE` | `127.0.0.1` | Adresse d’écoute. Utiliser une adresse de VPN maillé avec `--trusted-host` ; jamais `0.0.0.0`. |
-| `--trusted-host HÔTE` | réglage enregistré | Hôte de confiance supplémentaire, en général l’adresse de cette machine sur le VPN maillé. Une fois passé, il est enregistré et repris aux lancements suivants ; la boîte **🌐 Accès distant** du GUI modifie le même réglage. |
+| `--bind ADRESSE` | `127.0.0.1` | Adresse d’écoute. Avec la boucle locale par défaut, l’hôte de confiance est écouté en plus : l’accès distant ne demande pas `--bind`. Une autre adresse remplace la boucle locale, et la page s’y ouvre ; éviter `0.0.0.0`. |
+| `--trusted-host HÔTE` | réglage enregistré | Hôte de confiance supplémentaire, en général l’adresse de cette machine sur le VPN maillé. Le serveur écoute aussi sur son adresse, au même port, dès qu’elle existe sur cette machine (nouvel essai toutes les 30 s). Une fois passé, il est enregistré et repris aux lancements suivants ; la boîte **🌐 Accès distant** du GUI modifie le même réglage. |
 | `--no-browser` | désactivé | Ne pas ouvrir le navigateur. Si un serveur répond déjà sur `--port`, rien n’est démarré. |
 | `--new-instance` | désactivé | Toujours démarrer un nouveau serveur sur le premier port libre, sans question, même si un serveur tourne déjà : traitement en parallèle. Le bouton **➕ Nouvelle instance** du GUI l’utilise. |
-| `--no-tray` | désactivé | Pas d’icône dans la zone de notification ; arrêt par `Ctrl+C`. Obligatoire sous Linux sans affichage. |
+| `--no-tray` | désactivé | Pas d’icône dans la zone de notification ; arrêt par `Ctrl+C`. Appliqué automatiquement quand l’icône ne peut pas être créée (Linux sans affichage). |
 
 ```bash
 python lidar2map.py --serve-gui --no-browser --no-tray
-python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+python lidar2map.py --serve-gui --trusted-host 100.x.y.z
 python lidar2map.py --serve-gui --help
 ```
 

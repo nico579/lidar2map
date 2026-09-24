@@ -135,15 +135,16 @@
   <div style="font-size:.85em;color:var(--dim,#999);margin-bottom:12px" data-i18n="remote.hint">
    Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette
    machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y
-   accéder depuis un téléphone. Ne faites confiance qu'à cette adresse précise ;
-   le serveur doit aussi écouter dessus (--bind au lancement, jamais 0.0.0.0).
+   accéder depuis un téléphone. Le serveur écoute alors aussi sur cette adresse,
+   au même port, dès qu'elle existe sur cette machine. Ne faites confiance qu'à
+   cette adresse précise.
   </div>
   <input type="text" id="remote-trusted-host" placeholder="100.x.y.z"
          data-i18n-placeholder="ph.trustedhost" style="width:100%;box-sizing:border-box">
   <div id="remote-status" style="font-size:.8em;color:var(--dim);margin-top:6px;min-height:1.2em"></div>
   <label style="display:flex;align-items:center;gap:6px;margin-top:14px;cursor:pointer">
    <input type="checkbox" id="remote-autostart" onchange="toggleAutostart(this.checked)">
-   <span data-i18n="remote.autostart">Démarrer avec Windows (icône dans la zone de notification, pour un serveur toujours prêt en accès distant)</span>
+   <span data-i18n="remote.autostart">Démarrer à l'ouverture de session (icône dans la zone de notification ; serveur toujours prêt, y compris pour l'accès distant)</span>
   </label>
   <div id="remote-autostart-status" style="font-size:.8em;color:var(--dim);margin-top:4px;min-height:1.2em"></div>
   <div style="display:flex;align-items:center;margin-top:12px;gap:8px">

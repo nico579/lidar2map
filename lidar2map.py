@@ -78,8 +78,9 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
                   et l'ouvre dans le navigateur ; icône de zone de
                   notification Ouvrir/Redémarrer/Arrêter. Options :
                   --port N, --bind ADRESSE, --trusted-host HOTE (VPN maillé,
-                  enregistré), --no-browser, --no-tray (obligatoire sous
-                  Linux sans affichage ; arrêt par Ctrl+C), --new-instance
+                  enregistré, écouté en plus de 127.0.0.1), --no-browser,
+                  --no-tray (automatique si l'icône est indisponible ;
+                  arrêt par Ctrl+C), --new-instance
                   (serveur parallèle sans question). Si une instance tourne
                   déjà : question dans le terminal s'il est visible, sinon
                   dans la page ouverte (continuer ou nouvelle instance).
@@ -6305,10 +6306,20 @@ def _terminal_interactif(*, stdin=None, plateforme=None,
     return (console_visible or _console_windows_visible)()
 
 
-def _hote_sonde(bind: str) -> str:
-    """Adresse à interroger pour joindre un serveur écoutant sur ``bind`` :
-    une adresse joker (0.0.0.0, ::) ne se contacte pas, la boucle locale si."""
-    return "127.0.0.1" if bind in ("", "0.0.0.0", "::") else bind
+def _bind_boucle_locale(bind: str) -> bool:
+    """Vrai si le serveur principal n'écoute que sur la boucle locale."""
+    return bind in ("localhost", "::1") or bind.startswith("127.")
+
+
+def _hote_url(bind: str) -> str:
+    """Hôte à mettre dans une URL pour joindre, depuis CETTE machine, un
+    serveur qui écoute sur ``bind`` : 127.0.0.1 pour la boucle locale ou une
+    adresse joker (0.0.0.0, ::, qui la couvrent), sinon l'adresse elle-même
+    (entre crochets en IPv6). Avant, l'URL visait toujours 127.0.0.1, où un
+    serveur lancé avec --bind <adresse VPN> n'écoute pas."""
+    if bind in ("", "0.0.0.0", "::") or _bind_boucle_locale(bind):
+        return "127.0.0.1"
+    return f"[{bind}]" if ":" in bind else bind
 
 
 def _port_libre(bind: str, port: int) -> bool:
@@ -6369,7 +6380,7 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
         return {"ok": False, "error": f"Démarrage impossible : {exc}"}
     fin = time.monotonic() + delai_s
     while time.monotonic() < fin:
-        if instance_existante(_hote_sonde(bind), port):
+        if instance_existante(_hote_url(bind), port):
             return {"ok": True, "port": port}
         if processus.poll() is not None:
             return {"ok": False, "error": (
@@ -6402,17 +6413,21 @@ def main_serve_gui():
                              f"nouvelle (jusqu'à {PORT_RANGE_SIZE - 1} ports "
                              "suivants essayés)")
     parser.add_argument("--bind", default="127.0.0.1", metavar="ADRESSE",
-                        help="Adresse d'écoute (défaut 127.0.0.1, boucle locale uniquement)")
+                        help="Adresse d'écoute (défaut 127.0.0.1, boucle locale). L'hôte de "
+                             "confiance est écouté en plus : --bind n'est pas nécessaire à "
+                             "l'accès distant")
     parser.add_argument("--trusted-host", default="", metavar="HOTE",
-                        help="Hôte additionnel de confiance (ex. via un tunnel Tailscale/WireGuard), "
-                             "même usage que --trusted-host dans blink2video. Passé une fois, "
-                             "conservé ensuite comme réglage (aussi modifiable depuis "
+                        help="Hôte additionnel de confiance, en général l'adresse de cette "
+                             "machine sur un VPN maillé (Tailscale/WireGuard) : le serveur écoute "
+                             "aussi sur cette adresse, au même port, dès qu'elle existe. Passé "
+                             "une fois, conservé ensuite comme réglage (aussi modifiable depuis "
                              "l'interface, bouton Accès distant) ; omis, reprend ce réglage")
     parser.add_argument("--no-browser", action="store_true",
                         help="Ne pas ouvrir automatiquement le navigateur (usage scripté)")
     parser.add_argument("--no-tray", action="store_true",
                         help="Pas d'icône dans la zone de notification (usage scripté/serveur "
-                             "headless) ; sans elle, Ctrl+C reste le seul moyen d'arrêter")
+                             "headless) ; sans elle, Ctrl+C reste le seul moyen d'arrêter. "
+                             "Automatique si l'icône est indisponible (Linux sans affichage)")
     parser.add_argument("--new-instance", action="store_true",
                         help="Démarre un nouveau serveur sur le premier port libre même si une "
                              "instance tourne déjà, sans question (calcul en parallèle). Sans "
@@ -6446,7 +6461,15 @@ def main_serve_gui():
         return api.set_ui_zoom((payload or {}).get("z"))
 
     def _set_trusted_host(payload):
-        return api.set_trusted_host((payload or {}).get("host", ""))
+        resultat = api.set_trusted_host((payload or {}).get("host", ""))
+        ecoute = etat_serveur.get("ecoute")
+        if resultat.get("ok") and ecoute is not None:
+            # Écoute sur la nouvelle adresse à chaud, sans redémarrage
+            # (valeur normalisée posée par set_trusted_host).
+            import _serve_web
+            resultat["ecoute"] = ecoute.definir(_serve_web.Handler.trusted_host)
+            resultat["port"] = etat_serveur["port"]
+        return resultat
 
     def _set_autostart(payload):
         return api.set_autostart(bool((payload or {}).get("actif")))
@@ -6457,12 +6480,12 @@ def main_serve_gui():
 
     # Port réel connu seulement après le démarrage du serveur (plus bas) :
     # la route le lit au moment de l'appel.
-    etat_serveur = {"port": None}
+    etat_serveur = {"port": None, "ecoute": None, "sans_icone": False}
 
     def _new_instance(_payload):
         return _demarrer_nouvelle_instance(
             bind=args.bind, port_depart=etat_serveur["port"] + 1,
-            sans_icone=args.no_tray)
+            sans_icone=args.no_tray or etat_serveur.get("sans_icone", False))
 
     api_routes = {
         "init": _api_get_init_data,
@@ -6513,8 +6536,9 @@ def main_serve_gui():
     # propose d'y continuer ou de démarrer une nouvelle instance. Jamais de
     # second serveur démarré en silence (ancien comportement, à l'inverse du
     # choix interactif). --no-browser (démarrage automatique) : rien à faire.
-    if not args.new_instance and _instance_existante(args.bind, port_depart):
-        url_existante = f"http://127.0.0.1:{port_depart}/"
+    hote_url = _hote_url(args.bind)
+    if not args.new_instance and _instance_existante(hote_url, port_depart):
+        url_existante = f"http://{hote_url}:{port_depart}/"
         nouvelle = False
         interactif = not args.no_browser and _terminal_interactif()
         if interactif:
@@ -6546,15 +6570,28 @@ def main_serve_gui():
               f"{port_depart} to {derniere} is already in use.")
         sys.exit(1)
 
-    # Toujours 127.0.0.1 pour l'ouverture, même si --bind écoute ailleurs
-    # (accès LAN) : le navigateur ouvert est celui de CETTE machine, même
-    # convention que blink2video (serve.py, même commentaire).
+    # URL ouverte par le navigateur de CETTE machine : 127.0.0.1 tant que le
+    # serveur y écoute (boucle locale, adresse joker), sinon l'adresse --bind.
     etat_serveur["port"] = port
-    url = f"http://127.0.0.1:{port}/"
+    url = f"http://{hote_url}:{port}/"
     print(f"  lidar2map web GUI: {url}")
+    # Accès distant : le serveur principal reste sur la boucle locale et
+    # écoute EN PLUS sur l'adresse de l'hôte de confiance (réessayée tant que
+    # le VPN n'est pas connecté). Inutile si --bind vise déjà une autre
+    # adresse (joker comprise) : l'utilisateur a choisi lui-même.
+    if _bind_boucle_locale(args.bind):
+        import _serve_web
+        etat_serveur["ecoute"] = _serve_web.EcouteHoteConfiance(port)
+        etat_ecoute = etat_serveur["ecoute"].definir(trusted_host)
+    else:
+        etat_ecoute = "actif"
     if trusted_host:
-        print(f"  Trusted host: {trusted_host} (also reachable through it)")
-    if args.bind not in ("127.0.0.1", "localhost"):
+        if etat_ecoute == "actif":
+            print(f"  Trusted host: {trusted_host} (reachable on port {port})")
+        else:
+            print(f"  Trusted host: {trusted_host} - address not available on "
+                  f"this machine yet (VPN down?), retrying every 30 s")
+    if not _bind_boucle_locale(args.bind):
         print(f"  WARNING: listening on {args.bind} — reachable by other devices "
               f"on the network at http://<this-machine-ip>:{port}/, "
               f"with no login of any kind.")
@@ -6573,24 +6610,15 @@ def main_serve_gui():
                 proc.wait(timeout=20)
             except Exception:
                 pass
+        if etat_serveur.get("ecoute") is not None:
+            etat_serveur["ecoute"].arreter()
         server.shutdown()
         server.server_close()
 
-    if args.no_tray:
-        print("  Ctrl+C to stop.")
-        try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            _arreter_le_job_et_le_serveur()
-            print("\n  Web GUI server stopped.")
-            sys.exit(0)
-
-    # Icône de zone de notification : seul moyen d'arrêter dans ce mode (pas
-    # de garantie qu'un Ctrl+C interrompe proprement la boucle native de
-    # pystray selon l'OS, contrairement à time.sleep() ci-dessus - deux
+    # Icône de zone de notification : moyen d'arrêter dans ce mode (pas de
+    # garantie qu'un Ctrl+C interrompe proprement la boucle native de
+    # pystray selon l'OS, contrairement à time.sleep() ci-dessous - deux
     # chemins complets et séparés plutôt qu'un mélange fragile des deux).
-    print("  Look for the lidar2map icon in the system tray.")
     action = {"quoi": "stop"}
 
     def _on_open(icon, item):
@@ -6605,7 +6633,30 @@ def main_serve_gui():
         action["quoi"] = "stop"
         icon.stop()
 
-    icon = _construire_tray_icon(gui_dir, _on_open, _on_restart, _on_stop)
+    icon = None
+    if not args.no_tray:
+        try:
+            icon = _construire_tray_icon(gui_dir, _on_open, _on_restart, _on_stop)
+        except Exception as exc:
+            # Linux sans affichage (SSH, service systemd lancé avant la
+            # session graphique) : pystray tente une connexion X dès l'import
+            # et lève (Xlib.error.DisplayNameError...). Le serveur tournait
+            # déjà : continuer sans icône plutôt que de s'arrêter.
+            print(f"  System tray icon unavailable ({type(exc).__name__}: {exc})"
+                  f" - running without it.")
+            etat_serveur["sans_icone"] = True
+
+    if icon is None:
+        print("  Ctrl+C to stop.")
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            _arreter_le_job_et_le_serveur()
+            print("\n  Web GUI server stopped.")
+            sys.exit(0)
+
+    print("  Look for the lidar2map icon in the system tray.")
     icon.run()  # bloque jusqu'à icon.stop() (Redémarrer ou Arrêter)
 
     _arreter_le_job_et_le_serveur()

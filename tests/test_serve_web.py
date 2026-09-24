@@ -883,6 +883,86 @@ class TerminalInteractifTests(unittest.TestCase):
         self.assertIn("verifierInstanceDejaOuverte();", app)
 
 
+class EcouteHoteConfianceTests(unittest.TestCase):
+    """Accès distant sans --bind : le serveur reste sur la boucle locale et
+    écoute EN PLUS sur l'adresse de l'hôte de confiance (VPN maillé)."""
+
+    def _serveur_principal(self, trusted_host):
+        server = _serve_web.demarrer(
+            bind="127.0.0.1", port=0, trusted_host=trusted_host,
+            gui_dir=ROOT / "gui", api_routes={"init": L2M._api_get_init_data},
+            post_routes={})
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_address[1]
+
+    def test_ecoute_sur_l_adresse_de_l_hote_puis_s_arrete(self):
+        adresse = L2M._ip_lan()     # adresse locale hors boucle, sans trafic
+        if adresse.startswith("127."):
+            self.skipTest("aucune interface réseau hors boucle locale")
+        port = self._serveur_principal(adresse)
+        ecoute = _serve_web.EcouteHoteConfiance(port)
+        self.addCleanup(ecoute.arreter)
+        self.assertEqual(ecoute.definir(adresse), "actif")
+        with urllib.request.urlopen(f"http://{adresse}:{port}/api/init",
+                                    timeout=5) as reponse:
+            self.assertEqual(json.loads(reponse.read())["app"], "lidar2map")
+        # La boucle locale reste servie par le serveur principal.
+        self.assertTrue(L2M._instance_existante("127.0.0.1", port))
+        ecoute.arreter()
+        self.assertEqual(ecoute.etat, "inactif")
+        with self.assertRaises(OSError):
+            urllib.request.urlopen(f"http://{adresse}:{port}/api/init", timeout=3)
+
+    def test_adresse_absente_mise_en_attente_puis_abandonnee_au_changement(self):
+        import time as _time
+        ecoute = _serve_web.EcouteHoteConfiance(self._serveur_principal(""), delai_s=0.05)
+        self.addCleanup(ecoute.arreter)
+        # 203.0.113.0/24 (TEST-NET-3, documentation) : pas une adresse locale.
+        self.assertEqual(ecoute.definir("203.0.113.77"), "en attente")
+        _time.sleep(0.2)            # quelques nouveaux essais, sans erreur
+        self.assertEqual(ecoute.etat, "en attente")
+        self.assertEqual(ecoute.definir(""), "inactif")
+
+    def test_hote_de_boucle_locale_deja_servi(self):
+        ecoute = _serve_web.EcouteHoteConfiance(self._serveur_principal("localhost"))
+        self.addCleanup(ecoute.arreter)
+        self.assertEqual(ecoute.definir("localhost"), "actif")
+        self.assertEqual(ecoute._serveurs, [])
+
+
+class IconeIndisponibleTests(unittest.TestCase):
+    def test_serveur_continue_sans_icone_si_pystray_echoue(self):
+        # Linux sans affichage : pystray lève dès l'import. Avant, le serveur
+        # déjà démarré s'arrêtait sur cette exception.
+        import contextlib
+        import io
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        argv = ["lidar2map.py", "--serve-gui", "--port", str(port), "--no-browser"]
+        sortie = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(L2M, "_construire_tray_icon",
+                               side_effect=RuntimeError("Bad display name")), \
+             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             contextlib.redirect_stdout(sortie), \
+             self.assertRaises(SystemExit) as fin:
+            L2M.main_serve_gui()
+        self.assertEqual(fin.exception.code, 0)
+        self.assertIn("System tray icon unavailable (RuntimeError: Bad display name)",
+                      sortie.getvalue())
+        self.assertIn("Ctrl+C to stop.", sortie.getvalue())
+
+    def test_intitule_du_demarrage_automatique_sans_windows(self):
+        for fichier in ("index.html", "app.js"):
+            texte = (ROOT / "gui" / fichier).read_text(encoding="utf-8")
+            self.assertNotIn("Démarrer avec Windows", texte, fichier)
+            self.assertNotIn("Start with Windows", texte, fichier)
+            self.assertNotIn("--bind au lancement", texte, fichier)
+
+
 class NouvelleInstanceTests(unittest.TestCase):
     """Bouton « Nouvelle instance » : second serveur détaché, port libre,
     attente de sa réponse (Popen et sonde remplacés : pas de vrai process)."""
@@ -948,10 +1028,16 @@ class NouvelleInstanceTests(unittest.TestCase):
         self.assertIn("--new-instance", r["error"])
         popen.assert_not_called()
 
-    def test_sonde_une_adresse_joker_par_la_boucle_locale(self):
-        self.assertEqual(L2M._hote_sonde("0.0.0.0"), "127.0.0.1")
-        self.assertEqual(L2M._hote_sonde("::"), "127.0.0.1")
-        self.assertEqual(L2M._hote_sonde("100.64.0.7"), "100.64.0.7")
+    def test_hote_d_url_selon_l_adresse_d_ecoute(self):
+        # Boucle locale et adresses joker : 127.0.0.1 (servi) ; sinon
+        # l'adresse --bind elle-même, entre crochets en IPv6. Avant, la page
+        # visait toujours 127.0.0.1, où un --bind <adresse VPN> n'écoute pas.
+        for bind in ("127.0.0.1", "localhost", "::1", "0.0.0.0", "::", ""):
+            self.assertEqual(L2M._hote_url(bind), "127.0.0.1", bind)
+        self.assertEqual(L2M._hote_url("100.64.0.7"), "100.64.0.7")
+        self.assertEqual(L2M._hote_url("fd7a:115c::1"), "[fd7a:115c::1]")
+        self.assertTrue(L2M._bind_boucle_locale("127.0.0.1"))
+        self.assertFalse(L2M._bind_boucle_locale("0.0.0.0"))
 
     def test_bouton_ouvre_l_onglet_pendant_le_clic_puis_vise_le_port(self):
         # L'onglet doit s'ouvrir avant l'appel réseau (geste utilisateur),

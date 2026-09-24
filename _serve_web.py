@@ -22,6 +22,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -246,6 +247,111 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
 
 
+class Server6(Server):
+    address_family = socket.AF_INET6
+
+
+def _classe_serveur(adresse: str):
+    """Serveur IPv4 ou IPv6 selon l'adresse d'écoute (``fd7a::1``...)."""
+    return Server6 if ":" in adresse else Server
+
+
+def _est_boucle_locale(adresse: str) -> bool:
+    try:
+        return ipaddress.ip_address(adresse).is_loopback
+    except ValueError:
+        return adresse == "localhost"
+
+
+class EcouteHoteConfiance:
+    """Écoute supplémentaire sur l'adresse de l'hôte de confiance (VPN maillé
+    type Tailscale/WireGuard), au même port et avec le même Handler que le
+    serveur principal, qui reste sur la boucle locale.
+
+    Sans elle, l'accès distant exigeait --bind <adresse VPN> : la page locale
+    (127.0.0.1) cessait alors de répondre, et un serveur démarré à
+    l'ouverture de session (sans --bind) n'était jamais joignable à distance.
+    L'adresse n'existe pas toujours au démarrage (VPN pas encore connecté) :
+    nouvel essai toutes les ``delai_s`` secondes, jusqu'au succès ou jusqu'à
+    un changement d'hôte. Hôte = nom (MagicDNS) ou adresse : ses adresses
+    résolues sont écoutées, sauf celles de la boucle locale (déjà servies)."""
+
+    def __init__(self, port: int, delai_s: float = 30.0):
+        self.port = port
+        self.delai_s = delai_s
+        self.etat = "inactif"          # inactif | actif | en attente
+        self._verrou = threading.Lock()
+        self._hote = ""
+        self._serveurs = []
+        self._arret = threading.Event()
+
+    def definir(self, hote: str) -> str:
+        """(Re)configure l'écoute pour ``hote`` ('' : aucune) ; rend l'état."""
+        hote = (hote or "").strip()
+        with self._verrou:
+            self._stopper()
+            self._hote = hote
+            self._arret = threading.Event()
+            if not hote:
+                self.etat = "inactif"
+            elif self._essayer(hote):
+                self.etat = "actif"
+            else:
+                self.etat = "en attente"
+                threading.Thread(target=self._reessayer, args=(hote, self._arret),
+                                 daemon=True).start()
+            return self.etat
+
+    def arreter(self) -> None:
+        with self._verrou:
+            self._stopper()
+            self._hote = ""
+            self.etat = "inactif"
+
+    def _adresses(self, hote):
+        try:
+            infos = socket.getaddrinfo(hote, self.port, type=socket.SOCK_STREAM)
+        except (socket.gaierror, UnicodeError, OSError):
+            return []
+        adresses = []
+        for info in infos:
+            adresse = info[4][0]
+            if adresse not in adresses:
+                adresses.append(adresse)
+        return adresses
+
+    def _essayer(self, hote) -> bool:
+        adresses = self._adresses(hote)
+        if adresses and all(_est_boucle_locale(a) for a in adresses):
+            return True                # déjà servi par le serveur principal
+        for adresse in adresses:
+            if _est_boucle_locale(adresse):
+                continue
+            try:
+                serveur = _classe_serveur(adresse)((adresse, self.port), Handler)
+            except OSError:
+                continue               # adresse absente de cette machine (VPN arrêté)
+            threading.Thread(target=serveur.serve_forever, daemon=True).start()
+            self._serveurs.append(serveur)
+        return bool(self._serveurs)
+
+    def _reessayer(self, hote, arret) -> None:
+        while not arret.wait(self.delai_s):
+            with self._verrou:
+                if arret.is_set() or self._hote != hote:
+                    return
+                if self._essayer(hote):
+                    self.etat = "actif"
+                    return
+
+    def _stopper(self) -> None:
+        self._arret.set()
+        for serveur in self._serveurs:
+            serveur.shutdown()
+            serveur.server_close()
+        self._serveurs = []
+
+
 def demarrer(*, bind: str, port: int, trusted_host: str, gui_dir: Path,
              api_routes: dict, post_routes: dict | None = None) -> Server:
     """Crée et démarre le serveur (thread daemon, s'éteint avec le process).
@@ -256,6 +362,6 @@ def demarrer(*, bind: str, port: int, trusted_host: str, gui_dir: Path,
     Handler.gui_dir = gui_dir
     Handler.api_routes = api_routes
     Handler.post_routes = post_routes or {}
-    server = Server((bind, port), Handler)
+    server = _classe_serveur(bind)((bind, port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
