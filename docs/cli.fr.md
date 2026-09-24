@@ -546,8 +546,11 @@ fusionné partiel a pu être écrit.
 Combine plusieurs MBTiles en un seul, par exemple deux zones adjacentes
 produites par des runs séparés. Les bounds et la plage de zoom sont l'union
 de toutes les sources ; les sources doivent partager le même format de tuile
-(jpeg/png/webp). Une tuile en collision est tranchée par la dernière source
-listée dans `--source`.
+(jpeg/png/webp). Quand plusieurs sources contiennent la même tuile, une tuile
+opaque de la source listée en dernier dans `--source` remplace la précédente.
+Une tuile qui porte de la transparence, comme les tuiles de bord et de bas
+zoom de blocs découpés voisins, est composée par-dessus la tuile déjà
+fusionnée : les blocs voisins se raccordent sans trou.
 
 ```bash
 python lidar2map.py --merge \
