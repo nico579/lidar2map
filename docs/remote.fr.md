@@ -41,7 +41,7 @@ embarqués dans chaque release normale de lidar2map.
 
 | Mode | Quand l’utiliser | Préparation de la VM |
 |---|---|---|
-| `lidar2map --remote-gui` | Pour utiliser l’interface complète dans un bureau distant | XFCE, xrdp, Xorg, bibliothèques Qt/XCB et lidar2map |
+| `lidar2map --remote-gui` | Pour utiliser l’interface complète dans un bureau distant | XFCE, xrdp, Xorg, Firefox et lidar2map |
 | `lidar2map --remote-cli` | Pour des traitements sans surveillance, reconnectables et synchronisés localement | Uniquement les outils sans interface nécessaires au mode source ou bundle choisi |
 
 ## Prérequis communs
@@ -139,14 +139,17 @@ ou temporaire. Sous Windows, la fenêtre reste ouverte après une erreur afin de
 lire le diagnostic et l’emplacement du journal.
 
 Le contrôleur retire l’ancienne empreinte SSH de cette IP, accepte la nouvelle,
-copie le script de préparation et l’exécute. Il installe XFCE, xrdp, Xorg, les
-bibliothèques Qt/XCB, la dernière release lidar2map et un raccourci de bureau
-sécurisé. Sous Ubuntu 26.04, il isole aussi les bibliothèques Qt de compatibilité
-nécessaires à la saisie clavier.
+copie le script de préparation et l’exécute. Il installe XFCE, xrdp, Xorg,
+Firefox, la dernière release lidar2map et un raccourci de bureau sécurisé.
+Firefox provient du dépôt APT officiel de Mozilla, en paquet deb dont
+l’empreinte de clé de signature est vérifiée, et non du paquet `firefox`
+d’Ubuntu : celui-ci installe seulement le snap, et les snaps ne démarrent pas
+dans cette session RDP.
 
-Le raccourci utilise la notification de démarrage XFCE : après un double-clic,
-le pointeur reste occupé jusqu’à l’apparition de la fenêtre Qt ou jusqu’au
-délai de sécurité du bureau.
+Le raccourci démarre le serveur de l’interface web de lidar2map, qui ouvre
+l’interface dans Firefox au bout de quelques secondes ; son icône apparaît dans
+le panneau XFCE. Un second double-clic pendant qu’il tourne démarre un autre
+serveur sur le port suivant, pour un traitement en parallèle.
 
 À la fin, le client RDP local s’ouvre automatiquement :
 

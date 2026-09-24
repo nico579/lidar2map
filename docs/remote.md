@@ -40,7 +40,7 @@ lidar2map release.
 
 | Mode | Use it when | VM setup |
 |---|---|---|
-| `lidar2map --remote-gui` | You want the complete GUI through a remote desktop | XFCE, xrdp, Xorg, Qt/XCB libraries, and lidar2map |
+| `lidar2map --remote-gui` | You want the complete GUI through a remote desktop | XFCE, xrdp, Xorg, Firefox, and lidar2map |
 | `lidar2map --remote-cli` | You want unattended, reconnectable jobs and local result synchronization | Only headless tools required by the selected source/bundle mode |
 
 ## Common requirements
@@ -134,12 +134,15 @@ be read.
 
 The controller removes the old SSH fingerprint for the IP, accepts the new
 one, copies the provisioning script, and runs it. It installs XFCE, xrdp, Xorg,
-the Qt/XCB libraries, the latest lidar2map release, and a secured desktop
-shortcut. On Ubuntu 26.04 it also isolates the compatibility Qt libraries
-needed for keyboard input.
+Firefox, the latest lidar2map release, and a secured desktop shortcut. Firefox
+comes as a deb package from Mozilla's official APT repository, whose signing key
+fingerprint is checked, rather than Ubuntu's `firefox` package: that one only
+installs the snap, and snaps do not start in this RDP session.
 
-The shortcut uses XFCE startup notification: after a double-click, the pointer
-remains busy until the Qt window appears or the desktop safety timeout expires.
+The shortcut starts the lidar2map web interface server, which opens the
+interface in Firefox after a few seconds; its tray icon appears in the XFCE
+panel. Double-clicking it again while it runs starts a second server on the
+next port, for a job in parallel.
 
 At the end, the local RDP client opens automatically:
 

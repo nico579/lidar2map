@@ -17,7 +17,8 @@
 #  - actualise la liste des paquets (mise à niveau complète optionnelle)
 #  - crée un utilisateur non-root avec sudo + accès SSH par clé
 #  - installe XFCE + xrdp + xorgxrdp (bureau distant RDP)
-#  - installe les libs Qt/XCB nécessaires à la GUI lidar2map
+#  - installe Firefox (paquet deb du dépôt APT officiel Mozilla) : la GUI
+#    lidar2map est une page web servie en local, affichée par ce navigateur
 #  - télécharge, vérifie et installe la dernière release lidar2map (binaire)
 #  - crée un raccourci sur le bureau
 #
@@ -185,47 +186,53 @@ if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "26.04" && \
     --no-install-recommends
 fi
 
-# XFCE est indépendant de Qt mais exécute parfaitement les applications Qt.
-# Il est stable avec xrdp sur les différentes versions Ubuntu prises en charge.
+# XFCE est léger et stable avec xrdp sur les versions Ubuntu prises en charge.
 run_apt "Bureau XFCE et serveur RDP" install -y --no-install-recommends \
   xfce4 xfce4-terminal xterm dbus-x11 gvfs xdg-utils wmctrl \
   xdg-desktop-portal xdg-desktop-portal-gtk \
   xrdp xorgxrdp xserver-xorg-core
 
-echo "=== 4/7 : Installation des libs Qt/XCB pour lidar2map ==="
-run_apt "Bibliothèques Qt/XCB" install -y \
-  libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
-  libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
-  libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 \
-  wget curl jq ca-certificates
+echo "=== 4/7 : Installation de Firefox pour l'interface lidar2map ==="
+# Depuis la 1.49.0, l'interface lidar2map est une page web servie en HTTP local
+# et affichée par le navigateur de la session : plus aucune bibliothèque Qt.
+# Firefox en paquet deb du dépôt APT officiel de Mozilla, PAS le paquet firefox
+# d'Ubuntu : ce dernier n'est qu'une transition vers le snap, et les snaps ne
+# démarrent pas dans cette session (~/.xsession retire XDG_RUNTIME_DIR, étape 5).
+run_apt "Outils de téléchargement" install -y --no-install-recommends \
+  wget curl jq ca-certificates gnupg
 
-# Ubuntu 26.04 fournit libxkbcommon 1.13, qui provoque un segfault lors de la
-# saisie clavier avec la version de Qt embarquée par lidar2map. On extrait les
-# bibliothèques 1.6 d'Ubuntu 24.04 dans un répertoire isolé : aucun paquet
-# système n'est rétrogradé et seules les exécutions de lidar2map les utilisent.
-QT_COMPAT_DIR=""
-if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "26.04" ]]; then
-  QT_COMPAT_DIR="/opt/lidar2map-qt-compat/usr/lib/x86_64-linux-gnu"
-  QT_COMPAT_ROOT="/opt/lidar2map-qt-compat"
-  XKB_CORE_DEB="$(mktemp /tmp/libxkbcommon0-lidar.XXXXXX.deb)"
-  XKB_X11_DEB="$(mktemp /tmp/libxkbcommon-x11-lidar.XXXXXX.deb)"
-
-  wget -qO "${XKB_CORE_DEB}" \
-    "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon0_1.6.0-1build1_amd64.deb"
-  wget -qO "${XKB_X11_DEB}" \
-    "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxkbcommon/libxkbcommon-x11-0_1.6.0-1build1_amd64.deb"
-  printf '%s  %s\n' \
-    "2b9caeb423efb540296a1cb20b872cc630c23908407ecb5c1c787a617622d664" \
-    "${XKB_CORE_DEB}" | sha256sum -c -
-  printf '%s  %s\n' \
-    "3befe840ce612ddfc0998d8610c6eed295726722a78e75cd08520bbd75065a23" \
-    "${XKB_X11_DEB}" | sha256sum -c -
-
-  install -d -m 755 "${QT_COMPAT_ROOT}"
-  dpkg-deb -x "${XKB_CORE_DEB}" "${QT_COMPAT_ROOT}"
-  dpkg-deb -x "${XKB_X11_DEB}" "${QT_COMPAT_ROOT}"
-  rm -f "${XKB_CORE_DEB}" "${XKB_X11_DEB}"
+MOZILLA_KEYRING="/etc/apt/keyrings/packages.mozilla.org.asc"
+# Empreinte publiée par Mozilla pour la clé de signature de son dépôt APT.
+MOZILLA_KEY_FPR="35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3"
+MOZILLA_KEY_TMP="$(mktemp /tmp/mozilla-apt-key.XXXXXX)"
+wget -qO "${MOZILLA_KEY_TMP}" https://packages.mozilla.org/apt/repo-signing-key.gpg
+MOZILLA_KEY_RECUE="$(gpg --show-keys --with-colons "${MOZILLA_KEY_TMP}" \
+  | awk -F: '/^fpr:/ {print $10; exit}')"
+if [[ "${MOZILLA_KEY_RECUE}" != "${MOZILLA_KEY_FPR}" ]]; then
+  rm -f "${MOZILLA_KEY_TMP}"
+  echo "ERREUR : empreinte de la clé du dépôt Mozilla inattendue" \
+       "(${MOZILLA_KEY_RECUE:-vide}, attendu ${MOZILLA_KEY_FPR})." >&2
+  exit 1
 fi
+install -d -m 755 /etc/apt/keyrings
+install -m 644 "${MOZILLA_KEY_TMP}" "${MOZILLA_KEYRING}"
+rm -f "${MOZILLA_KEY_TMP}"
+# Écrits (pas ajoutés) : une nouvelle exécution du script ne duplique rien.
+echo "deb [signed-by=${MOZILLA_KEYRING}] https://packages.mozilla.org/apt mozilla main" \
+  > /etc/apt/sources.list.d/mozilla.list
+# Priorité au dépôt Mozilla, sinon apt pourrait retenir le paquet de transition
+# vers le snap proposé par Ubuntu sous le même nom.
+cat > /etc/apt/preferences.d/mozilla << 'EOF'
+Package: *
+Pin: origin packages.mozilla.org
+Pin-Priority: 1000
+EOF
+run_apt "Liste des paquets (dépôt Mozilla)" update
+run_apt "Firefox" install -y firefox
+
+# Reliquat d'une préparation antérieure (bibliothèques libxkbcommon de
+# compatibilité pour le Qt autrefois embarqué par lidar2map) : plus utilisé.
+rm -rf /opt/lidar2map-qt-compat
 
 echo "=== 5/7 : Configuration de la session graphique (${USERNAME}) ==="
 # Les répertoires XDG doivent appartenir à l'utilisateur. `install -d` sur un
@@ -363,33 +370,16 @@ Exec=${USER_HOME}/.local/bin/lidar2map-gui
 Path=${INSTALL_DIR}
 Terminal=false
 Categories=Utility;
-StartupNotify=true
-StartupWMClass=lidar2map
+StartupNotify=false
 EOF
 
 cat > "${USER_HOME}/.local/bin/lidar2map-gui" << EOF
 #!/bin/sh
-if [ -n "${QT_COMPAT_DIR}" ]; then
-  export LD_LIBRARY_PATH="${QT_COMPAT_DIR}:\${LD_LIBRARY_PATH:-}"
-fi
-# La taille Linux par défaut de lidar2map (1300x1000) dépasse souvent la
-# résolution d'une session RDP. Ajuster sa géométrie à l'écran, sans la laisser
-# maximisée, garde la barre de titre et le panneau de logs dans la zone visible.
-(
-  sleep 2
-  screen="\$(xrandr --current 2>/dev/null | awk '/\*/ {print \$1; exit}')"
-  screen_w="\${screen%x*}"
-  screen_h="\${screen#*x}"
-  case "\${screen_w}:\${screen_h}" in
-    *[!0-9:]*|:*) screen_w=1364; screen_h=768 ;;
-  esac
-  window_w=\$((screen_w - 80))
-  window_h=\$((screen_h - 140))
-  [ "\${window_w}" -lt 1000 ] && window_w=1000
-  [ "\${window_h}" -lt 600 ] && window_h=600
-  wmctrl -r "lidar2map v" -b remove,maximized_vert,maximized_horz || true
-  wmctrl -r "lidar2map v" -e "0,40,60,\${window_w},\${window_h}" || true
-) >/dev/null 2>&1 &
+# lidar2map démarre son serveur web local, puis ouvre l'interface dans le
+# navigateur : BROWSER, lu en priorité par Python, le désigne sans ambiguïté.
+# Un second double-clic pendant qu'il tourne démarre un autre serveur sur le
+# port suivant, pour un traitement en parallèle.
+export BROWSER=firefox
 exec "${INSTALL_DIR}/lidar2map" "\$@"
 EOF
 

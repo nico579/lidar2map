@@ -5,6 +5,8 @@ import fnmatch
 import importlib.util
 import io
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -149,5 +151,26 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not update._inner_bundle_is_current(
         bundle, new_script, {**small_extras,
                              "_internal/tools/rlidar2map_CLI.py": b"newer"})
+
+# Préparation de VM --remote-gui : depuis la 1.49.0 le GUI est une page web,
+# plus aucune bibliothèque Qt. La VM doit donc fournir un navigateur, en deb
+# du dépôt Mozilla (le paquet firefox d'Ubuntu n'installe que le snap, qui ne
+# démarre pas dans la session xrdp), avec vérification de l'empreinte de clé.
+vm_script = (ROOT / "tools" / "rlidar2map_GUI_vm.sh").read_text(encoding="utf-8")
+for reliquat_qt in ("libxcb-cursor0", "QT_COMPAT_DIR", 'wmctrl -r "lidar2map v"',
+                    "StartupWMClass=lidar2map"):
+    assert reliquat_qt not in vm_script, f"reliquat Qt/pywebview : {reliquat_qt}"
+assert "https://packages.mozilla.org/apt mozilla main" in vm_script
+assert 'MOZILLA_KEY_FPR="35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3"' in vm_script
+assert "Pin: origin packages.mozilla.org" in vm_script
+assert 'run_apt "Firefox" install -y firefox' in vm_script
+assert "export BROWSER=firefox" in vm_script
+# Pas sous Windows : shutil.which peut y trouver le bash.exe de WSL (absent
+# ou non configuré sur un runner) et le checkout peut convertir en CRLF.
+_bash = shutil.which("bash") if sys.platform != "win32" else None
+if _bash:
+    _syntaxe = subprocess.run([_bash, "-n", str(ROOT / "tools" / "rlidar2map_GUI_vm.sh")],
+                              capture_output=True, text=True)
+    assert _syntaxe.returncode == 0, _syntaxe.stderr
 
 print("TOUS OK — contrat de patch des outils distants")
