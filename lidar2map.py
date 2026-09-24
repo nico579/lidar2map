@@ -490,13 +490,12 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   mapwriter      Téléchargé automatiquement (plugin osmosis)
 
   GUI (mode sans arguments) :
-                 Windows : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés)
-                 macOS   : PyQt6 + PyQt6-WebEngine + qtpy, plus les backends
-                           natifs Cocoa/WebKit (auto-installés)
-                 Linux   : PyQt6 + PyQt6-WebEngine + qtpy (auto-installés via pip)
-                           Pré-requis système (Ubuntu/Debian, une seule fois) :
+                 Page web servie en HTTP local, affichée par le navigateur
+                 par défaut (aucune bibliothèque graphique embarquée : ni Qt
+                 ni pywebview depuis la 1.49.0). Icône de zone de
+                 notification : pystray (auto-installé).
+                 Linux : pré-requis système (Ubuntu/Debian, une seule fois) :
                              sudo apt install python3-venv
-                           voir messages au démarrage si import échoue)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   EXEMPLES
@@ -844,8 +843,8 @@ if getattr(sys, "frozen", False):
                                     # POSIX. zip -r (Unix) les stocke dans
                                     # external_attr (16 bits hauts). On les
                                     # réapplique → préserve +x sur tous les
-                                    # binaires bundlés (QtWebEngineProcess,
-                                    # JRE java, osmosis, …).
+                                    # binaires bundlés (JRE java, osmosis,
+                                    # …).
                                     _mode = (_m.external_attr >> 16) & 0xFFFF
                                     if _mode and _sys != "Windows":
                                         try:
@@ -5718,11 +5717,11 @@ _HISTORIQUE_PATH = DOSSIER_TRAVAIL / "historique.json"
 _HISTORIQUE_MAX  = 50   # nombre max d'entrées conservées
 
 # ── Préférences UI (langue, etc.) ─────────────────────────────────────────────
-# Persistées dans l'app data, comme l'historique. Pas en localStorage : sous
-# QtWebEngine packagé, le localStorage peut être éphémère selon le profil du
-# webview — un desktop range ses prefs dans son dossier de données, pas dans le
-# navigateur. La langue est l'override manuel du toggle ; absente = auto-détection
-# par navigator.language côté JS.
+# Persistées dans l'app data, comme l'historique. Pas en localStorage : il est
+# propre à chaque origine, donc à chaque PORT (8766, 8767... selon les instances)
+# et à chaque navigateur, et se perd avec les données de navigation. La langue
+# est l'override manuel du toggle ; absente = auto-détection par
+# navigator.language côté JS.
 _PREFS_PATH = DOSSIER_TRAVAIL / "preferences.json"
 
 
@@ -5839,7 +5838,7 @@ def _lire_historique() -> list:
         return []   # affichage seul : rien n'est réécrit à partir d'ici
 
 # ============================================================
-# INTERFACE GRAPHIQUE (PyWebView)
+# INTERFACE GRAPHIQUE (serveur web local, voir main_serve_gui)
 # ============================================================
 
 # ── Partage LAN (transfert PC → téléphone via QR) ─────────────────────────────
@@ -6841,8 +6840,9 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
-    # Côté JS, fetch() depuis NavigateToString a un Origin "null" que
-    # WebView2 traite mal vis-à-vis du CORS — on relaie ici en Python.
+    # Relayée en Python plutôt qu'appelée par fetch() depuis la page : un
+    # navigateur interdit de fixer User-Agent (exigé identifiant par la
+    # politique Nominatim) et la page ne dépend pas du CORS de ces services.
     # FR : Geoplateforme BAN (rapide, précis pour communes françaises)
     # Hors FR : Nominatim avec countrycodes=<pays> pour scoper à un pays
     def autocomplete_ville(self, prefix, country="fr"):
@@ -7395,9 +7395,9 @@ class Api:
                 # CREATE_NEW_PROCESS_GROUP : indispensable pour envoyer
                 # CTRL_BREAK_EVENT au child (arrêt gracieux). La flag
                 # avait été retirée sur un soupçon de blocage du pipe
-                # stdout avec l'ancien backend WebView2 ; sous Qt
-                # (backend forcé depuis), le pipe fonctionne :
-                # revalidé par test dédié le 2026-07-02.
+                # stdout avec l'ancien backend WebView2 ; le pipe a été
+                # revalidé par test dédié le 2026-07-02, et plus aucune
+                # webview n'est en jeu depuis la 1.49.0.
                 self._process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     bufsize=0, env=env,

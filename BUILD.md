@@ -312,7 +312,7 @@ Unblock-File .\lidar2map_win_build.ps1
 .\lidar2map_win_build.ps1
 ```
 
-Livrables dans `dist\` : `lidar2map.exe` (~14 Mo) + `lidar2map_bundle.zip` (~460 Mo, Qt inclus)
+Livrables dans `dist\` : `lidar2map.exe` (~14 Mo) + `lidar2map_bundle.zip` (runtime Python, dépendances, JRE et osmosis ; plus de Qt depuis la 1.49.0)
 
 ### Deux passes PyInstaller (macOS et Windows)
 
