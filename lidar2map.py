@@ -69,13 +69,17 @@ Plateformes : Windows 10+, macOS 11+, Linux (Debian/Ubuntu testés).
   --ignraster     Tuiles WMTS raster (Scan 25, Ortho, NAIP US…) → MBTiles/RMAP/SQLiteDB
   --ignvecteur    WFS IGN (cadastre, hydrographie…) → GeoJSON(.gz)
   --osm           PBF Geofabrik → carte Mapsforge (.map) + GeoJSON(.gz)
-  --fusionner     Fusion de GeoJSON/GeoJSON.gz en un seul fichier
+  --fusionner     Fusion de plusieurs GeoJSON/GeoJSON.gz, ou de plusieurs
+                  MBTiles (tuiles de bord transparentes composées), en un
+                  seul fichier
   --serve         Sert les livrables d'un projet sur le WiFi (URL + QR)
                   pour import direct sur le téléphone (OsmAnd/Locus)
-  --serve-gui     Sert le GUI sur HTTP local et ouvre le navigateur
-                  (--port/--bind/--trusted-host/--no-browser). Seul mode GUI
-                  (pywebview retiré) ; routes en lecture seule pour
-                  l'instant, launch/stop/pick_dir suivent.
+  --serve-gui     Sert le GUI sur HTTP local (défaut http://127.0.0.1:8766/)
+                  et l'ouvre dans le navigateur ; icône de zone de
+                  notification Ouvrir/Redémarrer/Arrêter. Options :
+                  --port N, --bind ADRESSE, --trusted-host HOTE (VPN maillé,
+                  enregistré), --no-browser, --no-tray (obligatoire sous
+                  Linux sans affichage ; arrêt par Ctrl+C).
 
   Sans argument   → --serve-gui (serveur web + navigateur, voir ci-dessus)
 

@@ -73,7 +73,8 @@ autre pays peut être traité à partir d’un fichier PBF fourni.
    [Releases](https://github.com/nico579/lidar2map/releases/latest).
 2. Décompressez-la en gardant le lanceur à côté de
    `lidar2map_bundle.zip`.
-3. Lancez lidar2map sans argument.
+3. Lancez lidar2map sans argument. L’interface s’ouvre dans votre navigateur
+   et une icône lidar2map apparaît dans la zone de notification.
 4. Choisissez une petite zone, laissez **Télécharger les données manquantes**
    activé et effectuez un premier rendu LRM avant d’agrandir la zone ou
    d’ajouter d’autres visualisations.

@@ -1,4 +1,4 @@
-***English** | [Français](dfm.fr.md) · [Providers](providers.md) · [LiDAR CLI reference](../README.md#31-lidar) · [Visualization guide](shadings.md) · [Back to the main documentation](../README.md#documentation)*
+***English** | [Français](dfm.fr.md) · [Providers](providers.md) · [LiDAR CLI reference](cli.md#lidar-workflow) · [Visualization guide](shadings.md) · [Back to the main documentation](../README.md#documentation)*
 
 # Standing structures with LAZ, DFM, and CSF
 
@@ -314,7 +314,7 @@ lidar2map environment already provides these dependencies.
 ## Related documentation
 
 - [LiDAR providers, coverage, credentials, and DFM-capable sources](providers.md)
-- [LiDAR CLI reference](../README.md#31-lidar)
+- [LiDAR CLI reference](cli.md#lidar-workflow)
 - [Choosing and understanding relief visualizations](shadings.md)
 - [Engineering review log for LAZ/DFM/CSF](dfm_reviews.md), retained as a
   historical decision record rather than a user guide

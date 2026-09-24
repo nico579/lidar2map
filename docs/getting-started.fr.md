@@ -59,8 +59,8 @@ ensemble. Rien n’est installé dans le système.
 
 #### 1.1.3 Premier démarrage du binaire et extraction du runtime
 
-Le premier lancement du binaire extrait une fois le bundle contenant Qt et prend en
-général 30 à 60 secondes. Le runtime extrait est stocké dans :
+Le premier lancement du binaire extrait une fois le bundle et prend en général
+30 à 60 secondes. Le runtime extrait est stocké dans :
 
 - Windows : `%LOCALAPPDATA%\lidar2map\`
 - macOS : `~/Library/Application Support/lidar2map/`
@@ -71,8 +71,10 @@ Les lancements suivants réutilisent cette copie.
 ### 1.2 Script Python
 
 Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les
-dépendances critiques : Pillow, pyproj, numpy, rasterio, pywebview et
-PyQt6/QtWebEngine. L’environnement Python système n’est pas modifié. Utilisez
+dépendances critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
+certifi et pystray (icône de la zone de notification). numba (SVF bien plus
+rapide) et osmium (pipeline OSM) sont installés si possible ; leur échec ne
+bloque pas le lancement. L’environnement Python système n’est pas modifié. Utilisez
 `--bootstrap=none` si vous préférez gérer vous-même les dépendances.
 
 Temurin 21 et osmosis sont téléchargés à la demande. Aucun GDAL système n’est
@@ -108,18 +110,21 @@ cd lidar2map
 python3.12 lidar2map.py
 ```
 
-Les cas Linux/macOS tels que PEP 668, les paquets Qt de la distribution,
-Wayland ou Gatekeeper sur le runtime Java sont traités dans la
-[section Dépannage de BUILD.md](../BUILD.md#9-dépannage).
+Les cas Linux/macOS tels que PEP 668, les distributions sans `apt`, un bureau
+sans zone de notification ou Gatekeeper sur le runtime Java sont traités dans
+la [section Dépannage de BUILD.md](../BUILD.md#9-dépannage).
 
 ## 2. Premier lancement et parcours graphique — binaire ou script
 
 ### 2.1 Ouvrir l’interface graphique
 
 Que lidar2map soit démarré depuis l’application binaire autonome ou depuis le
-script Python, un lancement sans argument ouvre la même interface graphique.
-Fournir des arguments démarre au contraire un traitement en ligne de commande,
-sans fenêtre.
+script Python, un lancement sans argument démarre un petit serveur web local et
+ouvre l’interface dans votre navigateur par défaut, à l’adresse
+`http://127.0.0.1:8766/`. Il n’y a pas de fenêtre d’application séparée : c’est
+le navigateur que vous utilisez déjà qui affiche le formulaire. Fournir des
+arguments démarre au contraire un traitement en ligne de commande, sans
+interface.
 
 | Mode d’exécution | Ouvrir l’interface graphique |
 |---|---|
@@ -128,6 +133,11 @@ sans fenêtre.
 
 L’interface détecte automatiquement le français ou l’anglais et propose aussi
 un sélecteur manuel.
+
+Par défaut, le serveur n’écoute que sur cette machine (`127.0.0.1`) et n’accepte
+que ses requêtes ; il n’y a ni compte ni mot de passe. Fermer l’onglet du
+navigateur n’arrête ni le serveur ni un traitement en cours : rouvrez la page
+depuis l’icône de la zone de notification ou à la même adresse.
 
 ### 2.2 Configurer le premier traitement
 
@@ -150,6 +160,72 @@ Le formulaire suit l’ordre du traitement :
 
 L’interface valide le formulaire avant le départ et affiche un journal en
 direct pendant le traitement.
+
+### 2.4 Icône de la zone de notification, arrêt et second lancement
+
+Tant que le serveur tourne, une icône lidar2map est présente dans la zone de
+notification :
+
+| Entrée du menu | Effet |
+|---|---|
+| **Ouvrir** | Rouvre l’interface dans le navigateur. |
+| **Redémarrer** | Arrête proprement le traitement en cours, puis relance le serveur avec les mêmes options. |
+| **Arrêter** | Arrête proprement le traitement en cours, puis le serveur. |
+
+Un arrêt propre laisse l’opération en cours se terminer et fermer ses
+fichiers ; il est forcé au bout de 15 secondes si le traitement ne s’arrête
+pas.
+
+Si lidar2map est relancé alors qu’un serveur répond déjà sur le port 8766 :
+
+- depuis un terminal, il demande s’il faut rejoindre l’interface existante
+  (défaut : touche Entrée) ou démarrer un second serveur sur le port libre
+  suivant, pour un traitement en parallèle ;
+- sans terminal (par exemple `LIDAR2MAP.app` ouvert depuis le Finder), il
+  démarre un second serveur sur le port libre suivant.
+
+Jusqu’à dix ports consécutifs sont essayés. Chaque serveur exécute un seul
+traitement à la fois.
+
+Sur un bureau sans zone de notification (par exemple GNOME sans l’extension
+AppIndicator) ou sur une machine sans affichage, lancez avec
+`--serve-gui --no-tray`, et ajoutez `--no-browser` si aucun navigateur ne doit
+s’ouvrir ; arrêtez alors le serveur par `Ctrl+C` dans son terminal. Sous Linux
+sans affichage, `--no-tray` est obligatoire. Les options du serveur sont détaillées dans la
+[référence CLI](cli.fr.md#serveur-de-linterface-web).
+
+### 2.5 Démarrage automatique et accès distant
+
+Le bouton **🌐 Accès distant** ouvre deux réglages.
+
+**Démarrage automatique.** La case s’intitule *Démarrer avec Windows* mais
+fonctionne aussi sous macOS et Linux. Elle démarre le serveur en arrière-plan à
+l’ouverture de session, sans ouvrir le navigateur : un script dans le dossier
+Démarrage de Windows, un agent `launchd` sous macOS ou un service
+`systemd --user` sous Linux. L’interface est ensuite accessible depuis l’icône
+de la zone de notification ou à `http://127.0.0.1:8766/`. Avec l’application
+binaire autonome, le serveur démarré automatiquement utilise les mêmes projets,
+cache, historique et préférences qu’un lancement manuel. Si vous aviez activé
+cette option avec une version antérieure, décochez-la puis recochez-la une fois
+pour que l’entrée de démarrage soit réécrite.
+
+**Hôte de confiance.** Pour atteindre l’interface depuis un téléphone via un VPN
+maillé comme Tailscale ou WireGuard, indiquez l’adresse de cette machine sur ce
+réseau (par exemple `100.x.y.z`, donnée par `tailscale ip`). Le réglage est
+enregistré et appliqué immédiatement. Le serveur doit aussi écouter sur cette
+adresse, ce qui est une option de lancement :
+
+```bash
+python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+```
+
+Avec l’application binaire autonome, passez les mêmes options au lanceur.
+
+Ouvrez ensuite `http://100.x.y.z:8766/`, y compris sur cette machine : la page
+ouverte automatiquement au lancement pointe toujours vers `127.0.0.1`, où ce
+serveur n’écoute plus. N’utilisez pas `--bind 0.0.0.0`. Le serveur démarré
+automatiquement n’écoute que sur `127.0.0.1` : il n’est donc pas joignable via
+le VPN.
 
 ## 3. Historique, arrêt propre et file d’attente
 

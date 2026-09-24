@@ -54,8 +54,8 @@ There is no system installation.
 
 #### 1.1.3. First binary startup and runtime
 
-The first launch extracts the Qt-based bundle once and usually takes 30–60
-seconds. The extracted runtime is stored in:
+The first launch extracts the bundle once and usually takes 30–60 seconds.
+The extracted runtime is stored in:
 
 - Windows: `%LOCALAPPDATA%\lidar2map\`
 - macOS: `~/Library/Application Support/lidar2map/`
@@ -66,8 +66,10 @@ Later launches reuse that copy.
 ### 1.2. Python script
 
 On first launch, the script creates `~/.lidar2map/venv` and installs the
-critical dependencies there: Pillow, pyproj, numpy, rasterio, pywebview, and
-PyQt6/QtWebEngine. The system Python environment is not modified. Use
+critical dependencies there: Pillow, pyproj, numpy, scipy, ijson, rasterio,
+fiona, certifi, and pystray (tray icon). numba (much faster SVF) and osmium
+(OSM pipeline) are installed when possible; a failure there does not block the
+launch. The system Python environment is not modified. Use
 `--bootstrap=none` if you prefer to manage the environment yourself.
 
 Temurin 21 and osmosis are downloaded on demand. No system GDAL installation is
@@ -103,8 +105,8 @@ cd lidar2map
 python3.12 lidar2map.py
 ```
 
-Linux/macOS cases such as PEP 668, distribution Qt packages, Wayland, and
-Gatekeeper on the Java runtime are covered in the
+Linux/macOS cases such as PEP 668, distributions without `apt`, a desktop
+without a system tray, and Gatekeeper on the Java runtime are covered in the
 [BUILD.md troubleshooting section](../BUILD.md#9-dépannage).
 
 ## 2. First launch and graphical workflow — binary application or Python script
@@ -112,10 +114,17 @@ Gatekeeper on the Java runtime are covered in the
 ### 2.1. Open the graphical interface
 
 Whether it is started from the standalone binary application or the Python
-script, lidar2map opens the graphical interface when run without arguments.
-Supplying arguments starts a headless command-line job instead. The interface
-detects English or French automatically and also provides a manual language
-toggle.
+script, lidar2map run without arguments starts a small local web server and
+opens the interface in your default web browser at `http://127.0.0.1:8766/`.
+There is no separate application window: the browser you already use displays
+the form. Supplying arguments starts a headless command-line job instead. The
+interface detects English or French automatically and also provides a manual
+language toggle.
+
+By default the server listens only on this computer (`127.0.0.1`) and accepts
+requests only from it; there is no account or password. Closing the browser tab
+stops neither the server nor a running job: reopen the page from the tray icon
+or at the same address.
 
 ### 2.2. Configure the first job
 
@@ -138,6 +147,69 @@ The form follows the processing workflow:
 
 The interface validates the form before starting and shows a live log while a
 job is running.
+
+### 2.4. Tray icon, stopping, and a second launch
+
+While the server runs, a lidar2map icon sits in the system tray (notification
+area):
+
+| Menu entry | Effect |
+|---|---|
+| **Ouvrir** (Open) | Opens the interface in the browser again. |
+| **Redémarrer** (Restart) | Stops a running job cleanly, then restarts the server with the same options. |
+| **Arrêter** (Stop) | Stops a running job cleanly, then stops the server. |
+
+A clean stop lets the current operation finish and close its files; it is
+forced after 15 seconds if the job does not end.
+
+If lidar2map is started again while a server already answers on port 8766:
+
+- from a terminal, it asks whether to join the running interface (default:
+  press Enter) or to start a second server on the next free port, for a job in
+  parallel;
+- without a terminal (for example `LIDAR2MAP.app` opened from the Finder), it
+  starts a second server on the next free port.
+
+Up to ten consecutive ports are tried. Each server runs one job at a time.
+
+On a desktop without a system tray (for example GNOME without the AppIndicator
+extension) or on a machine without a display, start with
+`--serve-gui --no-tray`, and add `--no-browser` if no browser should open; stop
+the server with `Ctrl+C` in its terminal. On Linux without a display,
+`--no-tray` is required. The server
+options are listed in the
+[CLI reference](cli.md#web-interface-server).
+
+### 2.5. Start at login and remote access
+
+The **🌐 Remote access** button opens two settings.
+
+**Start at login.** The checkbox is labelled *Start with Windows* but also works
+on macOS and Linux. It starts the server in the background at login, without
+opening the browser: a script in the Windows Startup folder, a `launchd` agent
+on macOS, or a `systemd --user` service on Linux. The interface is then
+available from the tray icon or at `http://127.0.0.1:8766/`. With the
+standalone application, the automatically started server uses the same
+projects, cache, history, and preferences as a manual launch. If you enabled
+this option with an earlier release, uncheck and re-check it once so that the
+startup entry is rewritten.
+
+**Trusted host.** To reach the interface from a phone over a mesh VPN such as
+Tailscale or WireGuard, enter this computer's address on that network (for
+example `100.x.y.z`, given by `tailscale ip`). The setting is saved and applied
+immediately. The server must also listen on that address, which is a launch
+option:
+
+```bash
+python lidar2map.py --serve-gui --bind 100.x.y.z --trusted-host 100.x.y.z
+```
+
+With the standalone application, pass the same options to the launcher.
+
+Then open `http://100.x.y.z:8766/`, including on this computer: the page opened
+automatically at launch still points to `127.0.0.1`, where this server no
+longer listens. Do not use `--bind 0.0.0.0`. The server started at login
+listens only on `127.0.0.1`, so it is not reachable through the VPN.
 
 ## 3. History, clean stops, and the processing queue
 

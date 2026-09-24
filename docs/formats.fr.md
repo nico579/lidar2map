@@ -100,7 +100,7 @@ n'affichent que les réglages propres à la source ou à l'opération choisie.
 |---|---|
 | <img src="../screenshots/GUI/vector_merge.PNG" alt="Fusion vectorielle" width="440"> | <img src="../screenshots/GUI/raster_split.PNG" alt="Découpage raster" width="440"> |
 
-L'écran LiDAR sur MNT figure dans [Bien démarrer](getting-started.fr.md#premier-lancement-et-parcours-graphique),
+L'écran LiDAR sur MNT figure dans [Bien démarrer](getting-started.fr.md#2-premier-lancement-et-parcours-graphique--binaire-ou-script),
 et les deux variantes LAZ/DFM dans [DFM, LAZ et CSF](dfm.fr.md#activer-le-mode-nuage-de-points).
 
 ## Compatibilité des formats
@@ -140,7 +140,7 @@ prendre un MBTiles existant et convertir chaque morceau obtenu en RMAP ou
 SQLiteDB.
 
 La planche d’assemblage déposée à côté de ces fichiers n’est pas elle-même un
-format cartographique ; voir [Planche d’assemblage](getting-started.fr.md#planche-dassemblage).
+format cartographique ; voir [Planche d’assemblage](getting-started.fr.md#4-planche-dassemblage).
 
 ## Envoyer un projet vers le téléphone
 

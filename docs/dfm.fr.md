@@ -1,4 +1,4 @@
-*[English](dfm.md) | **Français** · [Providers](providers.fr.md) · [Référence CLI LiDAR](../README.fr.md#31-lidar) · [Guide des visualisations](shadings.fr.md) · [Retour à la documentation principale](../README.fr.md#documentation)*
+*[English](dfm.md) | **Français** · [Providers](providers.fr.md) · [Référence CLI LiDAR](cli.fr.md#workflow-lidar) · [Guide des visualisations](shadings.fr.md) · [Retour à la documentation principale](../README.fr.md#documentation)*
 
 # Structures debout avec LAZ, DFM et CSF
 
@@ -335,7 +335,7 @@ l'environnement géré de lidar2map fournit déjà ces dépendances.
 ## Documentation liée
 
 - [Providers LiDAR, couverture, identifiants et sources compatibles DFM](providers.fr.md)
-- [Référence CLI LiDAR](../README.fr.md#31-lidar)
+- [Référence CLI LiDAR](cli.fr.md#workflow-lidar)
 - [Choisir et comprendre les visualisations de relief](shadings.fr.md)
 - [Journal des revues d'ingénierie LAZ/DFM/CSF](dfm_reviews.md), conservé
   comme historique de décisions plutôt que comme guide utilisateur
