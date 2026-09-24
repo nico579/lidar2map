@@ -40,6 +40,34 @@ def _lidar2map_command() -> list:
             "--serve-gui", "--no-browser"]
 
 
+def _lidar2map_environment() -> dict:
+    """Variables a transmettre au lancement automatique.
+
+    Fige, sys.executable est l'exe INTERNE extrait par le launcher (dossier
+    d'application), lance par lui avec LIDAR2MAP_WORK_DIR = dossier de l'exe
+    visible par l'utilisateur. Relance tel quel a l'ouverture de session sans
+    cette variable, il prenait son propre dossier d'extraction comme dossier
+    de travail : Projets/, cache/, historique et preferences separes de ceux
+    de l'utilisateur, et effaces par le launcher (rmtree du dossier
+    d'application) a la mise a jour suivante."""
+    if not frozen():
+        return {}
+    dossier_travail = os.environ.get("LIDAR2MAP_WORK_DIR", "").strip()
+    return {"LIDAR2MAP_WORK_DIR": dossier_travail} if dossier_travail else {}
+
+
+def _systemd_quote(valeur: str) -> str:
+    """Argument ExecStart=/Environment= entre guillemets (espaces dans un
+    chemin) ; % est un specificateur systemd, a doubler."""
+    echappe = valeur.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{echappe}"'
+
+
+def _xml_escape(valeur: str) -> str:
+    return (valeur.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
 def _windows_startup_file() -> Path:
     appdata = os.environ["APPDATA"]
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "lidar2map.vbs"
@@ -90,9 +118,15 @@ def disable() -> None:
 
 def _enable_windows() -> None:
     quoted = " ".join(f'""{part}""' for part in _lidar2map_command())
+    # Environment("PROCESS") : herite par le process que lance shell.Run.
+    env_lignes = "".join(
+        f'shell.Environment("PROCESS")("{nom}") = "{valeur.replace(chr(34), chr(34) * 2)}"\n'
+        for nom, valeur in _lidar2map_environment().items()
+    )
     vbs_content = (
         'Set shell = CreateObject("WScript.Shell")\n'
         f'shell.CurrentDirectory = "{PROJECT_DIR}"\n'
+        + env_lignes +
         f'shell.Run "{quoted}", 0, False\n'
     )
     fichier = _windows_startup_file()
@@ -119,7 +153,9 @@ def _enable_linux() -> None:
         "[Service]\n"
         "Type=simple\n"
         f"WorkingDirectory={PROJECT_DIR}\n"
-        f"ExecStart={' '.join(_lidar2map_command())}\n"
+        + "".join(f"Environment={_systemd_quote(f'{nom}={valeur}')}\n"
+                  for nom, valeur in _lidar2map_environment().items())
+        + f"ExecStart={' '.join(_systemd_quote(p) for p in _lidar2map_command())}\n"
         "Restart=on-failure\n"
         "RestartSec=10\n\n"
         "[Install]\n"
@@ -141,15 +177,27 @@ def _disable_linux() -> None:
 
 
 def _enable_mac() -> None:
+    environnement = _lidar2map_environment()
+    env_plist = ""
+    if environnement:
+        env_plist = (
+            "    <key>EnvironmentVariables</key>\n    <dict>\n"
+            + "".join(f"        <key>{_xml_escape(nom)}</key>\n"
+                      f"        <string>{_xml_escape(valeur)}</string>\n"
+                      for nom, valeur in environnement.items())
+            + "    </dict>\n"
+        )
     plist_content = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         '<plist version="1.0">\n<dict>\n'
         f"    <key>Label</key>\n    <string>{MAC_LABEL}</string>\n"
         "    <key>ProgramArguments</key>\n    <array>\n"
-        + "".join(f"        <string>{part}</string>\n" for part in _lidar2map_command())
+        + "".join(f"        <string>{_xml_escape(part)}</string>\n"
+                  for part in _lidar2map_command())
         + "    </array>\n"
-        f"    <key>WorkingDirectory</key>\n    <string>{PROJECT_DIR}</string>\n"
+        + env_plist +
+        f"    <key>WorkingDirectory</key>\n    <string>{_xml_escape(str(PROJECT_DIR))}</string>\n"
         "    <key>RunAtLoad</key>\n    <true/>\n"
         # Relancer uniquement apres un crash, pas apres un Stop volontaire
         # depuis le tray : meme raison que watch2notif (KeepAlive=true serait
