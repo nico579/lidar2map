@@ -76,9 +76,28 @@ def _warped_3857_valide(chemin):
         return False
 
 
-# Threads de calcul du warp rasterio. num_threads=0 n'a jamais voulu dire
-# « tous les CPUs » : GDAL ramène toute valeur <= 1 au warp mono-thread.
-_WARP_THREADS = os.cpu_count() or 1
+def _gdal_threads(tile_workers):
+    """Threads GDAL du warp, de la compression DEFLATE et des overviews.
+
+    Règle de docs/correctif_parallelisation_warp_overviews_mbtiles.md :
+    valeur numérique explicite, >= 1, bornée par tile_workers ET par les CPU
+    visibles, jamais ALL_CPUS. num_threads=0 (ancien code, commenté « tous
+    les CPUs ») est traité par rasterio comme 1 : warp mono-thread."""
+    try:
+        demande = int(tile_workers)
+    except (TypeError, ValueError):
+        demande = 1
+    return max(1, min(demande, os.cpu_count() or 1))
+
+
+def _gdal_overviews_multithread():
+    """GDAL_NUM_THREADS n'agit sur le calcul des overviews qu'à partir de
+    GDAL 3.2 (version embarquée par rasterio, pas celle du système)."""
+    try:
+        from rasterio.env import GDALVersion
+        return GDALVersion.runtime().at_least("3.2")
+    except Exception:
+        return False
 
 
 def _tile_workers_defaut():
@@ -209,6 +228,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         return x0, y0, x1, y1   # xmin ymin xmax ymax
 
     t0 = time.time()
+    gdal_threads = _gdal_threads(tile_workers)
 
     res_max = 2 * EARTH_CIRC / (TILE_SIZE * 2 ** zoom_max)
 
@@ -484,7 +504,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             # Conserve le -te (target extent) calculé ci-dessus pour ne pas
             # dépendre de proj.db pour la conversion d'étendue.
             print(f"  Warp EPSG:3857  res={res_max:.3f} m/px"
-                  f"  (rasterio, zoom {zoom_max})...", flush=True)
+                  f"  (rasterio, zoom {zoom_max}, threads={gdal_threads}/"
+                  f"{os.cpu_count() or 1} CPU)...", flush=True)
 
             t0_warp = time.time()
             try:
@@ -542,11 +563,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         "blockxsize": 512,
                         "blockysize": 512,
                         "BIGTIFF":    "YES",
-                        # Compression deflate des blocs répartie sur tous les
-                        # cœurs (option de création GTiff) : c'était le goulot
-                        # une fois le warp parallélisé. Octets de pixels
-                        # identiques, seul le temps d'écriture change.
-                        "NUM_THREADS": "ALL_CPUS",
+                        # Compression DEFLATE parallèle (option de création
+                        # GTiff, alternative à GDAL_NUM_THREADS) : le goulot
+                        # une fois le warp parallélisé. Pixels identiques.
+                        "NUM_THREADS": str(gdal_threads),
                     })
 
                     # Écriture dans <warped>.part validé puis replace (#4) :
@@ -563,9 +583,9 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                 dst_transform = dst_transform,
                                 dst_crs       = "EPSG:3857",
                                 resampling    = _Resampling.bilinear,
-                                # PAS 0 : rasterio/GDAL traitent 0 comme 1
+                                # PAS 0 : rasterio le traite comme 1
                                 # (warp mono-thread, mesuré identique à 1).
-                                num_threads   = _WARP_THREADS)
+                                num_threads   = gdal_threads)
 
                     # Masque de couverture (cf. commentaire à la définition de
                     # warped_cov) : reprojette le masque GDAL de la source avec
@@ -601,20 +621,26 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                             src_nodata    = 0,
                             dst_nodata    = 0,
                             resampling    = _Resampling.nearest,
-                            num_threads   = _WARP_THREADS)
+                            num_threads   = gdal_threads)
                     cov_part.replace(warped_cov)
                 # Les overviews font partie du fichier : les construire sur le
                 # .part avant publication. Une interruption ne peut alors pas
                 # altérer l'ancien cache final.
                 if zoom_max > zoom_min and overview_levels:
-                    print(f"  Overviews (gauss) {overview_levels}...", flush=True)
+                    ovr_threads = (gdal_threads if _gdal_overviews_multithread()
+                                   else 1)
+                    print(f"  Overviews (gauss) {overview_levels}  "
+                          f"threads={ovr_threads}  "
+                          f"GDAL={_rio_w.__gdal_version__}...", flush=True)
                     t_addo = time.time()
                     try:
                         import rasterio as _rio_o
                         from rasterio.enums import Resampling as _Res_o
-                        # GDAL_NUM_THREADS : calcul + compression des
-                        # overviews sur tous les cœurs (résultat identique).
-                        with _rio_o.Env(GDAL_NUM_THREADS="ALL_CPUS"), \
+                        # GDAL_NUM_THREADS posé AVANT open() (le pilote GTiff
+                        # lit sa configuration à l'ouverture) : calcul +
+                        # compression des overviews en parallèle, résultat
+                        # identique. Un seul appel, jamais plusieurs writers.
+                        with _rio_o.Env(GDAL_NUM_THREADS=str(ovr_threads)), \
                                 _rio_o.open(str(warped_part), "r+") as ds_o:
                             ds_o.build_overviews(overview_levels, _Res_o.gauss)
                             ds_o.update_tags(

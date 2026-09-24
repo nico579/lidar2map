@@ -170,5 +170,52 @@ class MbtilesLidarAtomicTests(unittest.TestCase):
         self.assertIn("reused", buf.getvalue())
 
 
+class ThreadsGdalTests(unittest.TestCase):
+    """docs/correctif_parallelisation_warp_overviews_mbtiles.md : nombre de
+    threads GDAL explicite, >= 1, borné par tile_workers et les CPU visibles
+    (jamais 0, que rasterio traite comme 1, ni ALL_CPUS)."""
+
+    def setUp(self):
+        self.module = sys.modules["_mbtiles_lidar"]
+
+    def test_table_des_valeurs(self):
+        for tile_workers, cpus, attendu in [(8, 4, 4), (8, 8, 8), (8, 16, 8),
+                                            (1, 8, 1), (0, 8, 1), (-2, 8, 1),
+                                            (None, 8, 1), (8, None, 1)]:
+            with self.subTest(tile_workers=tile_workers, cpus=cpus), \
+                    mock.patch.object(self.module.os, "cpu_count",
+                                      return_value=cpus):
+                self.assertEqual(self.module._gdal_threads(tile_workers), attendu)
+
+    def test_rendu_identique_en_1_et_n_threads_avec_pyramide(self):
+        # zoom 14-16 : warp + overviews [2, 4] réellement construites.
+        tuiles = {}
+        for n in (1, 4):
+            with tempfile.TemporaryDirectory() as td:
+                dossier = Path(td)
+                src = dossier / "zone.tif"
+                bbox = _ecrire_source(src, cote_px=800)
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    resultat = L.generer_mbtiles_lidar(
+                        src, dossier, "zone", zoom_min=14, zoom_max=16,
+                        format_tuiles="png", bbox_natif=bbox,
+                        tile_workers=n, ecraser_tuiles=True)
+                self.assertIsNotNone(resultat)
+                attendu = min(n, os.cpu_count() or 1)
+                self.assertIn(f"threads={attendu}/", buf.getvalue())
+                import sqlite3
+                con = sqlite3.connect(str(resultat))
+                try:
+                    tuiles[n] = sorted(con.execute(
+                        "SELECT zoom_level, tile_column, tile_row, tile_data "
+                        "FROM tiles").fetchall())
+                finally:
+                    con.close()
+        self.assertGreater(len(tuiles[1]), 0)
+        self.assertEqual({z for z, *_ in tuiles[1]}, {14, 15, 16})
+        self.assertEqual(tuiles[1], tuiles[4])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
