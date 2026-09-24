@@ -740,8 +740,16 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         rangees_done += 1
                         _progress_rangee()
                         continue
-                    out_h = max(1, int((py_end - py_clip) / zoom_factor))
-                    dst_y = max(0, int((py_clip - py_off) / zoom_factor))
+                    # Début ET fin en pixels de tuile, arrondis chacun depuis
+                    # py_off (centre de pixel). Avant, out_h tronquait la
+                    # différence après dst_y : une tuile dont le haut sort du
+                    # TIF perdait sa dernière rangée sous le zoom max, ligne
+                    # transparente d'1 px à travers la carte (vrai run, z14).
+                    dst_y = min(TILE_SIZE - 1,
+                                int(round((py_clip - py_off) / zoom_factor)))
+                    dst_y_fin = min(TILE_SIZE,
+                                    int(round((py_end - py_off) / zoom_factor)))
+                    out_h = max(1, dst_y_fin - dst_y)
 
                     # Offset px du début de rangée (colonne tx0), puis fenêtres
                     # de colonnes contiguës par pas entier de tuiles.
@@ -760,12 +768,16 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                         try:
                             # Lecture directe à la résolution tuile (out_shape).
                             win_w = px_end - px_clip
-                            out_w = max(1, int(win_w / zoom_factor))
+                            # Même règle qu'en vertical (cf. dst_y_fin).
+                            dst_x = min(cw_band_w - 1,
+                                        int(round((px_clip - px_off) / zoom_factor)))
+                            dst_x_fin = min(cw_band_w,
+                                            int(round((px_end - px_off) / zoom_factor)))
+                            out_w = max(1, dst_x_fin - dst_x)
                             win = _Win(px_clip, py_clip, win_w, py_end - py_clip)
                             arr = _ds.read(window=win,
                                            out_shape=(_w_count, out_h, out_w),
                                            resampling=_rio.enums.Resampling.bilinear)
-                            dst_x = max(0, int((px_clip - px_off) / zoom_factor))
                             canvas = _np.zeros(
                                 (_w_count, TILE_SIZE, cw_band_w), dtype=_np.uint8)
                             canvas[:, dst_y:dst_y+arr.shape[1],

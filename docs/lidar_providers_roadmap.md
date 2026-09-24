@@ -106,11 +106,12 @@ By access paradigm:
 - **Direct / derivable tiles**: fr-ign (vector TMS), ee-maaamet, at-tirol,
   jp-gsi (XYZ text tiles), gb-scotland (S3 listing).
 - **WFS index → per-tile direct URL** (`common.ign_lidar_hd_dalles`): fr-reunion,
-  fr-guadeloupe (IGN `IGNF_MNT-LIDAR-HD:dalle`; each dalle feature carries its own
-  download `url`, WMS GetMap for Réunion / a direct link+public apikey for
-  Guadeloupe; 0.5 m).
+  fr-guadeloupe (IGN `IGNF_LIDAR-HD_METADONNEE:metadata`, which replaced the
+  per-product `…:dalle` layers in 2026-09; each dalle feature carries one link
+  per product, `url_mnt` here: WMS GetMap for Réunion / a direct link+public
+  apikey for Guadeloupe; 0.5 m).
 - **Classified point cloud → DFM-style model** (`common.las_to_dfm`): fr-ign-laz
-  (IGN COPC LAZ via the same WFS, `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`). The
+  (IGN COPC LAZ via the same WFS index, `url_npl` link). The
   *Digital Feature Model* concept is from Štular et al. 2021 (ground + standing
   archaeological structures in one model); the automatic selection implemented
   here (low non-ground returns 0.4-2.5 m, classes 1/3/4, re-injected only into

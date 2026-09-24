@@ -476,6 +476,65 @@ except Exception as e:
 finally:
     l2m.telecharger_dalle_directe = _saved_directe
 
+print("== 8. ign_lidar_hd_dalles : index METADONNEE, pagination, territoire ==")
+# IGN a retiré IGNF_MNT-LIDAR-HD:dalle et IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle
+# (2026-09) : fr-reunion, fr-guadeloupe et fr-ign-laz ne trouvaient plus rien.
+# Même règles de pagination que telecharger_wfs (section 3).
+sys.path.insert(0, str(_APP.parent))
+from providers import common as _pc  # noqa: E402
+
+def _feat_ign(i, systeme="RGR92UTM40S"):
+    x, y = 300 + i % 60, 7630 + i // 60
+    return {"type": "Feature", "properties": {
+        "coordonnees_nw": f"{x:04d}-{y:04d}", "systeme_planimetrique": systeme,
+        "url_mnt": f"https://mnt.fake/LHD_REU_{x:04d}_{y:04d}_MNT.tif",
+        "url_npl": f"https://npl.fake/LHD_REU_{x:04d}_{y:04d}_PTS.copc.laz"}}
+
+def _ign(feats, page_cap, champ="url_mnt", fail_at=None, stop_at=None,
+         matched=None):
+    requetes = []
+    def fake_urlopen(req, timeout=None, context=None):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(req.full_url).query)
+        requetes.append(q)
+        start = int(q["STARTINDEX"][0])
+        if fail_at is not None and start >= fail_at:
+            raise urllib.error.URLError("panne simulée")
+        fin = min(start + page_cap, len(feats) if stop_at is None else stop_at)
+        return _FakeResp({"type": "FeatureCollection",
+                          "numberMatched": len(feats) if matched is None else matched,
+                          "features": feats[start:fin]})
+    _pc.urllib.request.urlopen = fake_urlopen
+    try:
+        return _pc.ign_lidar_hd_dalles((0, 0, 1, 1), 2975,
+                                       lambda x, y: f"{x}_{y}",
+                                       champ_url=champ), requetes
+    finally:
+        _pc.urllib.request.urlopen = _real_urlopen
+
+reunion = [_feat_ign(i) for i in range(2665)]      # vrai total de l'île entière
+d, req = _ign(reunion, page_cap=2000)
+check("île entière (2665 > une page) → complète, 2 pages triées",
+      d is not None and len(d) == 2665 and len(req) == 2
+      and req[0]["TYPENAMES"] == ["IGNF_LIDAR-HD_METADONNEE:metadata"]
+      and req[0]["SORTBY"] == ["coordonnees_nw ASC"], f"{len(d or {})} dalles")
+check("clé = coordonnees_nw, valeur = url_mnt",
+      d is not None and d.get("300_7630") == "https://mnt.fake/LHD_REU_0300_7630_MNT.tif")
+d, req = _ign(reunion, page_cap=500)
+check("serveur plafonné sous COUNT → complet via numberMatched",
+      d is not None and len(d) == 2665, f"{len(d or {})} dalles, {len(req)} requêtes")
+d, _ = _ign(reunion[:3], page_cap=2000, champ="url_npl")
+check("champ_url=url_npl → liens COPC LAZ (fr-ign-laz)",
+      d is not None and all(u.endswith(".copc.laz") for u in d.values()))
+d, _ = _ign(reunion[:3] + [_feat_ign(3, systeme="LAMB93")], page_cap=2000)
+check("autre territoire (systeme_planimetrique) écarté", d is not None and len(d) == 3)
+d, _ = _ign(reunion, page_cap=2000, fail_at=2000)
+check("panne à la 2e page → None (rejouable, pas de liste partielle)", d is None)
+d, _ = _ign(reunion, page_cap=2000, stop_at=2000)
+check("troncature vs numberMatched → None", d is None)
+d, req = _ign(reunion, page_cap=2000, matched="unknown")
+check("numberMatched inconnu → pages pleines suivies jusqu'à la page courte",
+      d is not None and len(d) == 2665 and len(req) == 2)
+
 time.sleep = _real_sleep
 print()
 print("TOUS OK" if ok_all else "ÉCHECS DÉTECTÉS")

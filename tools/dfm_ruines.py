@@ -63,7 +63,9 @@ except Exception:
 
 UA = "lidar2map-laz/1.0"
 WFS = "https://data.geopf.fr/wfs/ows"
-TN_LAZ = "IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle"
+# Index par dalle (liens de tous les produits) : remplace la couche
+# IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle, retirée par IGN en 2026-09.
+TN_LAZ = "IGNF_LIDAR-HD_METADONNEE:metadata"
 
 
 def wfs_dalles_laz(bbox_l93):
@@ -77,8 +79,9 @@ def wfs_dalles_laz(bbox_l93):
         gj = json.loads(r.read().decode("utf-8", "replace"))
     out = {}
     for f in gj.get("features", []):
-        p = f.get("properties", {})
-        url, name = p.get("url"), p.get("name_download") or p.get("name")
+        url = f.get("properties", {}).get("url_npl")
+        # Nom de fichier = dernier segment du lien (…_PTS_LAMB93_IGN69.copc.laz)
+        name = url.split("?")[0].rsplit("/", 1)[-1] if url else None
         if url and name:
             out[name] = url
     return out

@@ -1816,6 +1816,7 @@ class VmController:
         try:
             completed = subprocess.run(
                 self._direct_ssh_command(remote_command),
+                stdin=subprocess.DEVNULL,   # cf. _remote_results_inventory
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 check=False,
@@ -2727,8 +2728,14 @@ class VmController:
                 state.run_id,
             )
         )
+        # stdin=DEVNULL (équivalent de `ssh -n`) : ssh transmet son stdin à la
+        # commande distante. Hérité du contrôleur (terminal, CI, lanceur de
+        # tests), il pouvait être lu à la place de l'utilisateur, et un stdin
+        # jamais fermé bloquait la synchro à vie (faux transport : lecture
+        # jusqu'à EOF, blocage reproduit à chaque fois avec un stdin ouvert).
         completed = subprocess.run(
             command,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,

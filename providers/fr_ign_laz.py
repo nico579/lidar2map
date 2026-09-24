@@ -29,10 +29,11 @@
 #   cartes. Pour l'analyse fine d'un site : tools/dfm_ruines.py (GeoTIFF à
 #   draper dans QGIS).
 #
-# Paradigme : index WFS `IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle` (chaque dalle
-#   1 km porte son `url` de download direct, comme fr-reunion/fr-guadeloupe ;
-#   découverte mutualisée common.ign_lidar_hd_dalles) → COPC LAZ → post_fetch
-#   common.las_to_dfm → GeoTIFF 0,5 m EPSG:2154.
+# Paradigme : index WFS `IGNF_LIDAR-HD_METADONNEE:metadata` (chaque dalle 1 km
+#   porte son `url_npl` = nuage COPC LAZ en download direct, même index que
+#   fr-reunion/fr-guadeloupe ; découverte mutualisée
+#   common.ign_lidar_hd_dalles) → COPC LAZ → post_fetch common.las_to_dfm →
+#   GeoTIFF 0,5 m EPSG:2154.
 #   Licence : Licence Ouverte 2.0 (Etalab) — © IGN.
 #
 # ARCHITECTURE : la machinerie DFM (réglages, nommage injectif, variant_tag,
@@ -70,11 +71,10 @@ def _bounds_nominaux(x_km, y_km):
     return (x * 1000, (y - 1) * 1000, (x + 1) * 1000, y * 1000)
 
 
-# ── Découverte (WFS IGN LiDAR HD, mutualisée — typename NUAGES-DE-POINTS) ────
+# ── Découverte (WFS IGN LiDAR HD, mutualisée — produit nuage de points) ─────
 def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
     dalles = common.ign_lidar_hd_dalles(
-        bbox_natif, 2154, dalle_filename,
-        typename="IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle")
+        bbox_natif, 2154, dalle_filename, champ_url="url_npl")
     if dalles is None:
         return None
     if dalles:

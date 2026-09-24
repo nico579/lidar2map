@@ -4,9 +4,10 @@
 #   (Lambert-93) ; ce provider ajoute La Réunion (RGR92 / UTM 40S).
 #   Doc : https://geoservices.ign.fr/lidarhd  |  Licence Ouverte 2.0 (Etalab)
 #
-# Paradigme : index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle 1 km porte son
-#   `url` de download direct) → GeoTIFF 0,5 m. Découverte mutualisée dans
-#   providers/common.py::ign_lidar_hd_dalles (jumeau de fr-guadeloupe).
+# Paradigme : index WFS `IGNF_LIDAR-HD_METADONNEE:metadata` (chaque dalle 1 km
+#   porte son `url_mnt` de download direct) → GeoTIFF 0,5 m. Découverte
+#   mutualisée dans providers/common.py::ign_lidar_hd_dalles (jumeau de
+#   fr-guadeloupe).
 #   - CRS déclaré EPSG:2975 (RGR92 / UTM 40S) pour la requête WFS ; les GeoTIFF
 #     servis sont tagués EPSG:32740 (WGS84 / UTM 40S, quasi identique sur l'île),
 #     le warp 3857 lit le tag réel de la dalle → aucun post_fetch.

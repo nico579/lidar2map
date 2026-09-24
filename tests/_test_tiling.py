@@ -183,6 +183,46 @@ with rasterio.open(str(plein)) as ds:
     assert rasterio.enums.MaskFlags.per_dataset not in ds.mask_flag_enums[0]
 print("NODATA-MASK OK (issue #3 : trou transparent, MNT complet intact)")
 
+# ── Couture : pas de ligne transparente à travers la carte ──────────────────
+# Sous le zoom max, une tuile dont le haut (ou la gauche) sort du TIF tronquait
+# DEUX fois sa hauteur lue (départ puis différence) : sa dernière rangée restait
+# vide, ligne d'1 px à la jonction avec la tuile suivante où le fond de carte
+# transparaît (vu à z14 sur un vrai run près de Sens). Raster plein (mbt_j) :
+# sur la mosaïque de chaque zoom, aucune rangée ni colonne entièrement
+# transparente ne doit être prise entre deux lignes couvertes.
+
+
+def _coutures(mbtiles):
+    con_c = sqlite3.connect(str(mbtiles))
+    lignes = con_c.execute("SELECT zoom_level, tile_column, tile_row, tile_data"
+                           " FROM tiles").fetchall()
+    con_c.close()
+    trouvees = []
+    for z in sorted({l[0] for l in lignes}):
+        tuiles = [(x, (2 ** z - 1) - y, b) for zz, x, y, b in lignes if zz == z]
+        x0 = min(t[0] for t in tuiles); y0 = min(t[1] for t in tuiles)
+        nx = max(t[0] for t in tuiles) - x0 + 1
+        ny = max(t[1] for t in tuiles) - y0 + 1
+        couvert = np.zeros((ny * 256, nx * 256), bool)
+        for x, y, blob in tuiles:
+            im = Image.open(io.BytesIO(blob))
+            a = (np.asarray(im.getchannel("A")) > 0 if im.mode in ("RGBA", "LA")
+                 else np.ones((256, 256), bool))
+            couvert[(y - y0) * 256:(y - y0 + 1) * 256,
+                    (x - x0) * 256:(x - x0 + 1) * 256] = a
+        for axe, nom in ((1, "rangée"), (0, "colonne")):
+            pleines = couvert.any(axis=axe)
+            idx = np.flatnonzero(pleines)
+            vides = np.flatnonzero(~pleines[idx[0]:idx[-1] + 1]) + idx[0]
+            trouvees += [(z, nom, int(i)) for i in vides]
+    return trouvees
+
+
+coutures = _coutures(mbt_j)
+print(f"coutures internes (raster plein) : {len(coutures)} {coutures[:3]}")
+assert not coutures, f"{len(coutures)} ligne(s) transparente(s) interne(s)"
+print("SEAM OK (aucune ligne transparente interne sous le zoom max)")
+
 # ── RMAP (CompeGPS/TwoNav) : structure binaire écrite à la main ──────────────
 # Header : magic + 9×int32 (10, 7, 0, w, -h, 24, 1, 256, 256), offset map info
 # (int64), int32 0, n_zooms, n_zooms×int64. Par zoom : w, -h, nx, ny puis

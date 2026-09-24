@@ -84,17 +84,45 @@ def _validate_registry() -> list[str]:
     return errors
 
 
+# Une suite qui ne rend jamais la main gelait tout le lanceur, et le tuer de
+# l'extérieur laissait l'enfant orphelin (un test_serve_web.py a tenu deux
+# ports quatre jours). La suite la plus lente prend ~60 s : 600 s ne coupe
+# qu'un vrai blocage, qui devient un échec lisible au lieu d'une attente.
+SUITE_TIMEOUT_S = 600
+
+
+def _kill_tree(process: subprocess.Popen) -> None:
+    """Tue la suite ET ses descendants (faux ssh, serveurs de test...)."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                       capture_output=True, check=False)
+    else:
+        os.killpg(process.pid, 9)
+    process.wait()
+
+
 def _run(script: str, env: dict[str, str]) -> tuple[int, float]:
     path = TESTS_DIR / script
     started = time.perf_counter()
     print(f"\n{'=' * 72}\nTEST {script}\n{'=' * 72}", flush=True)
-    completed = subprocess.run(
+    process = subprocess.Popen(
         [sys.executable, str(path)],
         cwd=ROOT,
         env=env,
-        check=False,
+        start_new_session=(os.name != "nt"),   # groupe à tuer d'un bloc
     )
-    return completed.returncode, time.perf_counter() - started
+    try:
+        returncode = process.wait(timeout=SUITE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        _kill_tree(process)
+        print(f"TIMEOUT {script}: still running after {SUITE_TIMEOUT_S}s,"
+              " process tree killed", flush=True)
+        returncode = -1
+    except KeyboardInterrupt:
+        # Hors du groupe du terminal, Ctrl+C n'atteint plus la suite.
+        _kill_tree(process)
+        raise
+    return returncode, time.perf_counter() - started
 
 
 def main(argv: list[str] | None = None) -> int:

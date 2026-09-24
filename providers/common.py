@@ -113,49 +113,83 @@ except Exception:
     _CTX = ssl.create_default_context()
 
 _IGN_WFS = "https://data.geopf.fr/wfs/ows"
-_IGN_TN = "IGNF_MNT-LIDAR-HD:dalle"
+# Index LiDAR HD par dalle de 1 km : UNE entité par dalle portant les liens de
+# tous les produits (url_mnt, url_mns, url_mnh, url_npl = nuage COPC LAZ).
+# Remplace IGNF_MNT-LIDAR-HD:dalle et IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle,
+# retirées par IGN (HTTP 400 « Unknown namespace », constaté 2026-09-24 ; le
+# smoke hebdo échouait déjà sur fr-reunion/fr-guadeloupe).
+_IGN_TN = "IGNF_LIDAR-HD_METADONNEE:metadata"
+_IGN_PAGE = 2000
+# systeme_planimetrique de l'index par EPSG du provider (filtre de territoire,
+# ex-champ `projection` des anciennes couches).
+_IGN_SYSTEMES = {2154: "LAMB93", 2975: "RGR92UTM40S", 5490: "RGAF09UTM20N"}
+_IGN_NW_RE = re.compile(r"(\d+)-(\d+)")
 _IGN_NAME_RE = re.compile(r"LHD_[A-Z0-9]+_(\d+)_(\d+)_")
 
 
 def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
-                        typename=_IGN_TN):
-    """Interroge le WFS IGN `IGNF_MNT-LIDAR-HD:dalle` (0,5 m LiDAR HD, tuiles
-    1 km) pour la bbox EN EPSG:`epsg`, et retourne {filename_fn(e_km,n_km): url}.
-    `typename` permet de viser un autre produit LiDAR HD du même WFS : le nuage
-    classé COPC LAZ (`IGNF_NUAGES-DE-POINTS-LIDAR-HD:dalle`, cf. fr-ign-laz).
+                        champ_url="url_mnt"):
+    """Interroge l'index WFS IGN `IGNF_LIDAR-HD_METADONNEE:metadata` (LiDAR HD
+    0,5 m, dalles 1 km) pour la bbox EN EPSG:`epsg`, et retourne
+    {filename_fn(e_km, n_km): url}. `champ_url` choisit le produit : `url_mnt`
+    (GeoTIFF MNT, fr-reunion/fr-guadeloupe) ou `url_npl` (nuage classé COPC
+    LAZ, fr-ign-laz).
 
-    Chaque feature de dalle porte un attribut `url` = le download DIRECT du
-    GeoTIFF (WMS GetMap pour la Réunion, lien de téléchargement + apikey public
-    pour la Guadeloupe ; les deux sont de simples GET → GeoTIFF 0,5 m). On garde
-    l'url telle quelle (toujours fraîche depuis le WFS). Le filtre `projection`
-    évite de mélanger des territoires si la bbox chevauche plusieurs CRS.
-    Retourne None sur échec réseau, {} si aucune dalle. Utilisé par fr-reunion /
-    fr-guadeloupe (mutualisation : mêmes jumeaux, seuls CRS + préfixe changent)."""
+    Les liens sont des downloads DIRECTS (WMS GetMap pour la Réunion, lien de
+    téléchargement + apikey publique fournie par IGN pour la Guadeloupe, COPC
+    LAZ en clair) : on les garde tels quels, toujours frais depuis le WFS.
+    (e_km, n_km) = `coordonnees_nw` (« 0357-7687 », même couple que le nom de
+    dalle). Pagination STARTINDEX triée : une île entière dépasse une page
+    (2665 dalles pour la Réunion), qu'un COUNT unique tronquerait en silence.
+    Retourne None sur échec réseau, {} si aucune dalle."""
     if bbox_natif is None:
         return {}
+    from urllib.parse import urlencode
     x1, y1, x2, y2 = bbox_natif
-    q = (f"{_IGN_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
-         f"&TYPENAMES={typename}&SRSNAME=EPSG:{epsg}"
-         f"&BBOX={x1},{y1},{x2},{y2},EPSG:{epsg}"
-         f"&COUNT=2000&OUTPUTFORMAT=application/json")
-    try:
-        req = urllib.request.Request(q, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
-            gj = json.loads(r.read().decode("utf-8", "replace"))
-    except Exception as e:
-        print(f"  ERROR IGN LiDAR-HD WFS: {type(e).__name__}: {e}")
-        return None
+    systeme = _IGN_SYSTEMES.get(epsg)
     dalles = {}
-    for feat in gj.get("features", []):
-        p = feat.get("properties", {})
-        url = p.get("url")
-        if not url or str(p.get("projection", "")).upper() != f"EPSG:{epsg}":
-            continue
-        m = _IGN_NAME_RE.match(p.get("name_download", "") or p.get("name", "") or "")
-        if not m:
-            continue
-        dalles[filename_fn(int(m.group(1)), int(m.group(2)))] = url
-    return dalles
+    debut = 0
+    while True:
+        q = _IGN_WFS + "?" + urlencode({
+            "SERVICE": "WFS", "VERSION": "2.0.0", "REQUEST": "GetFeature",
+            "TYPENAMES": _IGN_TN, "SRSNAME": f"EPSG:{epsg}",
+            "BBOX": f"{x1},{y1},{x2},{y2},EPSG:{epsg}",
+            "COUNT": _IGN_PAGE, "STARTINDEX": debut,
+            "SORTBY": "coordonnees_nw ASC", "OUTPUTFORMAT": "application/json"})
+        try:
+            req = urllib.request.Request(q, headers={"User-Agent": ua})
+            with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+                gj = json.loads(r.read().decode("utf-8", "replace"))
+        except Exception as e:
+            print(f"  ERROR IGN LiDAR-HD WFS: {type(e).__name__}: {e}")
+            return None
+        features = gj.get("features", [])
+        for feat in features:
+            p = feat.get("properties", {})
+            url = p.get(champ_url)
+            if not url:
+                continue
+            if systeme and str(p.get("systeme_planimetrique", "")).upper() != systeme:
+                continue
+            m = (_IGN_NW_RE.fullmatch(str(p.get("coordonnees_nw") or ""))
+                 or _IGN_NAME_RE.search(url))
+            if not m:
+                continue
+            dalles[filename_fn(int(m.group(1)), int(m.group(2)))] = url
+        debut += len(features)
+        total = gj.get("numberMatched")          # WFS 2.0 : entier ou "unknown"
+        if isinstance(total, int):
+            if debut >= total:
+                return dalles
+            if not features:
+                # À court avant numberMatched : index tronqué, pas « zone
+                # finie » (même règle que telecharger_wfs). None = rejouable,
+                # plutôt que des dalles manquantes en silence.
+                print(f"  ERROR IGN LiDAR-HD WFS: index truncated"
+                      f" ({debut}/{total} tiles)")
+                return None
+        elif len(features) < _IGN_PAGE:
+            return dalles
 
 
 # === Pologne GUGiK (nuage LiDAR ISOK) ========================================

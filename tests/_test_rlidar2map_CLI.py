@@ -1495,5 +1495,40 @@ class EndToEndFakeTransportTests(unittest.TestCase):
             self.assertFalse((root / "PWN").exists())
 
 
+class InheritedStdinTests(unittest.TestCase):
+    def test_sync_does_not_hang_on_an_open_inherited_stdin(self):
+        # L'inventaire et le suivi du log lançaient ssh sans stdin : l'enfant
+        # héritait celui du contrôleur, et ssh le lit (le faux transport
+        # jusqu'à EOF). Un stdin jamais fermé (terminal, lanceur de tests)
+        # bloquait la synchro pour toujours, suite de tests comprise. On
+        # rejoue le bout-en-bout ci-dessus dans un enfant au stdin OUVERT.
+        test = ("_test_rlidar2map_CLI.EndToEndFakeTransportTests."
+                "test_start_follow_and_final_scp_use_real_subprocess_boundaries")
+        with tempfile.TemporaryFile() as output:
+            child = subprocess.Popen(
+                [sys.executable, "-m", "unittest", test],
+                cwd=str(Path(__file__).resolve().parent),
+                stdin=subprocess.PIPE,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=(os.name != "nt"),
+            )
+            try:
+                code = child.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                # Tout l'arbre : un faux ssh bloqué survivrait à son parent.
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(child.pid)],
+                                   capture_output=True, check=False)
+                else:
+                    os.killpg(child.pid, 9)
+                child.wait()
+                self.fail("sync blocked by an open inherited stdin")
+            finally:
+                child.stdin.close()
+            output.seek(0)
+            self.assertEqual(code, 0, output.read().decode("utf-8", "replace"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

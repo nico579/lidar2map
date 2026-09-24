@@ -4,10 +4,10 @@
 #   fr-reunion ; `fr-ign` ne couvre que la métropole.
 #   Doc : https://geoservices.ign.fr/lidarhd  |  Licence Ouverte 2.0 (Etalab)
 #
-# Paradigme : index WFS `IGNF_MNT-LIDAR-HD:dalle` (chaque dalle 1 km porte son
-#   `url` de download direct : ici un lien de téléchargement IGN + apikey public
-#   `interface_catalogue`, GET → GeoTIFF) → 0,5 m. Découverte mutualisée dans
-#   providers/common.py::ign_lidar_hd_dalles.
+# Paradigme : index WFS `IGNF_LIDAR-HD_METADONNEE:metadata` (chaque dalle 1 km
+#   porte son `url_mnt` de download direct : ici un lien de téléchargement IGN
+#   + apikey publique fournie dans la réponse, GET → GeoTIFF) → 0,5 m.
+#   Découverte mutualisée dans providers/common.py::ign_lidar_hd_dalles.
 #   - CRS natif EPSG:5490 (RGAF09 / UTM 20N) ; les GeoTIFF sont tagués 5490,
 #     aucun post_fetch.
 #   - ~4 018 dalles, 0,5 m, GeoTIFF Float32 nodata -9999.
