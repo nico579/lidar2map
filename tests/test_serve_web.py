@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from unittest import mock
@@ -367,6 +368,156 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 403)
+
+
+class ServeurRobustesseTests(unittest.TestCase):
+    """Entrées anormales et routes qui lèvent : le serveur répond toujours
+    (JSON d'erreur), sans couper la connexion ni bloquer un fil."""
+
+    def setUp(self):
+        def _leve(*_args):
+            raise ValueError("panne simulée")
+
+        self.server = _serve_web.demarrer(
+            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+            api_routes={"leve": _leve, "usage": _leve},
+            post_routes={"leve": _leve, "echo": lambda payload: payload},
+        )
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def _erreur(self, req):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req, timeout=5)
+        return ctx.exception.code, ctx.exception.read()
+
+    def test_route_get_qui_leve_repond_500_json(self):
+        for route in ("/api/leve", "/api/usage"):
+            code, corps = self._erreur(urllib.request.Request(self.base + route))
+            self.assertEqual(code, 500)
+            self.assertIn("panne simulée", json.loads(corps)["error"])
+
+    def test_route_post_qui_leve_repond_500_json(self):
+        req = urllib.request.Request(self.base + "/api/leve", data=b"{}",
+                                     method="POST")
+        code, corps = self._erreur(req)
+        self.assertEqual(code, 500)
+        self.assertIn("ValueError", json.loads(corps)["error"])
+
+    def test_corps_non_utf8_repond_400(self):
+        req = urllib.request.Request(self.base + "/api/echo", data=b"\xff\xfe\x00{",
+                                     method="POST")
+        code, _ = self._erreur(req)
+        self.assertEqual(code, 400)
+
+    def test_content_length_negatif_repond_400_sans_bloquer(self):
+        import socket
+        port = self.server.server_address[1]
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+            s.sendall(b"POST /api/echo HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                      b"Content-Length: -1\r\n\r\n")
+            reponse = s.recv(200)
+        self.assertTrue(reponse.startswith(b"HTTP/1.1 400"), reponse)
+
+
+class ApiEtatRunTests(unittest.TestCase):
+    """État du run côté Api, sans subprocess réel."""
+
+    def test_poll_log_ne_signale_pas_la_fin_avant_les_dernieres_lignes(self):
+        # Simule le thread lecteur qui publie sa dernière ligne puis
+        # _done=True PILE entre la vidange de la file et la lecture de _done.
+        import queue as _queue
+        api = L2M.Api()
+        api._hist_saved = True
+
+        class _FileQuiFinit(_queue.Queue):
+            fini = False
+
+            def get_nowait(self):
+                try:
+                    return super().get_nowait()
+                except _queue.Empty:
+                    if not self.fini:
+                        self.fini = True
+                        self.put({"line": "✓ Terminé (code 0)\n", "tag": "ok"})
+                        api._retcode = 0
+                        api._done = True
+                    raise
+
+        api._log_queue = _FileQuiFinit()
+        lignes = []
+        for _ in range(3):
+            r = api.poll_log()
+            lignes += [it.get("line") for it in r["items"]]
+            if r["done"]:
+                break
+        self.assertTrue(r["done"])
+        self.assertIn("✓ Terminé (code 0)\n", lignes)
+
+    def test_launch_relache_le_verrou_si_la_construction_de_commande_leve(self):
+        api = L2M.Api()
+        with mock.patch.object(api, "_build_cmd", side_effect=TypeError("cfg")):
+            with self.assertRaises(TypeError):
+                api.launch({"type": "lidar"})
+        self.assertFalse(api._launching)
+        # Le lancement suivant n'est plus rejeté comme « déjà en cours ».
+        with mock.patch.object(api, "_build_cmd", side_effect=TypeError("cfg")):
+            with self.assertRaises(TypeError):
+                api.launch({"type": "lidar"})
+
+    def test_commande_relance_figee_vise_l_exe_et_pas_le_script(self):
+        # Figé, _loader.py remplace argv[0] par _internal/lidar2map.py :
+        # relancer argv tel quel exécutait un fichier texte.
+        argv = ["/app/_internal/lidar2map.py", "--serve-gui", "--port", "8766"]
+        self.assertEqual(
+            L2M._commande_relance(frozen=True, executable="/app/lidar2map",
+                                  argv=argv),
+            ["/app/lidar2map", L2M._INNER_FLAG, "--serve-gui", "--port", "8766"])
+        self.assertEqual(
+            L2M._commande_relance(frozen=False, executable="/usr/bin/python3",
+                                  argv=["lidar2map.py", "--serve-gui"]),
+            ["/usr/bin/python3", "lidar2map.py", "--serve-gui"])
+
+
+class UsageEtPartageTests(unittest.TestCase):
+    def test_usage_total_egal_fichiers_racine_plus_sous_dossiers(self):
+        with tempfile.TemporaryDirectory() as td:
+            racine = Path(td)
+            (racine / "a" / "b").mkdir(parents=True)
+            (racine / "a" / "b" / "x.tif").write_bytes(b"1" * 300)
+            (racine / "a" / "y.tif").write_bytes(b"2" * 20)
+            (racine / "c").mkdir()
+            (racine / "c" / "z.tif").write_bytes(b"3" * 5)
+            (racine / "racine.txt").write_bytes(b"4" * 7)
+            tiers = L2M._api_get_usage({"cache_dir": td})["tiers"]
+            cache = next(t for t in tiers if t["key"] == "cache")
+            self.assertEqual({c["label"]: c["bytes"] for c in cache["children"]},
+                             {"a": 320, "c": 5})
+            self.assertEqual(cache["bytes"], 332)
+
+    def test_partage_nom_hors_latin1_et_fichier_disparu(self):
+        with tempfile.TemporaryDirectory() as td:
+            livrable = Path(td) / "cœur_山.mbtiles"
+            livrable.write_bytes(b"sqlite-data")
+            disparu = Path(td) / "disparu.mbtiles"
+            disparu.write_bytes(b"x")
+            serveur = L2M._PartageServeur()
+            try:
+                serveur.demarrer([livrable, disparu])
+                disparu.unlink()
+                base = f"http://127.0.0.1:{serveur._httpd.server_address[1]}/"
+                with urllib.request.urlopen(base, timeout=5) as rep:
+                    index = rep.read().decode("utf-8")
+                self.assertNotIn("disparu.mbtiles", index)
+                url = base + urllib.parse.quote(livrable.name)
+                with urllib.request.urlopen(url, timeout=5) as rep:
+                    self.assertEqual(rep.read(), b"sqlite-data")
+                    dispo = rep.headers["Content-Disposition"]
+                self.assertIn("filename*=UTF-8''" + urllib.parse.quote(livrable.name, safe=""),
+                              dispo)
+            finally:
+                serveur.arreter()
 
 
 class ValidationCfgWebTests(unittest.TestCase):

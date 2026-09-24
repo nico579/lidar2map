@@ -2834,8 +2834,30 @@ function executerCfg(cfg, silent) {
       }
       document.getElementById('footer-status').textContent =
         '▶ ' + (res.cmd || '').split(' ').slice(-3).join(' ') + '…';
-      polling = setInterval(async () => {
-        const r = await pywebview.api.poll_log();
+      // Sondage SÉQUENTIEL (setTimeout relancé après chaque réponse), pas
+      // setInterval : un callback async sous setInterval se chevauchait dès
+      // qu'une réponse dépassait 250 ms (machine chargée, VM) — lignes de
+      // log dans le désordre et fin de run traitée deux fois (double alerte,
+      // dossier ouvert deux fois). Un échec réseau (serveur arrêté/relancé)
+      // rejetait la promesse sans jamais résoudre executerCfg : bouton et
+      // file figés sur « En cours ». Quelques échecs consécutifs sont tolérés
+      // (coupure brève), puis le run est rendu en erreur.
+      let echecsPoll = 0;
+      const sonder = async () => {
+        let r;
+        try {
+          r = await pywebview.api.poll_log();
+          if (!r || r.error) throw new Error((r && r.error) || 'poll_log');
+          echecsPoll = 0;
+        } catch (e) {
+          if (++echecsPoll < 20) { polling = setTimeout(sonder, 1000); return; }
+          polling = null;
+          ajouterLigneLog('\n✗ ' + t('apiunavail') + ' : ' + e + '\n', 'err');
+          setLogProgress(100, 'err');
+          resolve({code: -1});
+          return;
+        }
+        if (!r.done) polling = setTimeout(sonder, 250);
         if (r.items) {
           // deferScroll=true partout dans la boucle : un seul reflow/scroll
           // via finaliserLog() pour tout le lot, pas un par ligne (cf.
@@ -2859,7 +2881,7 @@ function executerCfg(cfg, silent) {
           if (r.items.length) finaliserLog();
         }
         if (r.done) {
-          clearInterval(polling); polling = null;
+          polling = null;
           setLogProgress(100, r.code === 0 ? 'ok' : 'err');
           // Footer/statut : le mode simple les pose ici ; le mode file les
           // gère dans lancerFile (ligne « File i/n » puis récap). Idem si
@@ -2897,7 +2919,8 @@ function executerCfg(cfg, silent) {
           }
           resolve({code: r.code, result_dir: r.result_dir});
         }
-      }, 250);
+      };
+      polling = setTimeout(sonder, 250);
     }).catch(e => {
       alert(t('apiunavail') + ' : ' + e);
       resolve({code: -1});
@@ -2979,7 +3002,7 @@ async function lancerFile() {
 async function arreter() {
   // Pose arretDemande AVANT stop() : le job courant sera tué, poll_log verra
   // r.done (code ≠ 0) et résoudra executerCfg — c'est ce qui débloque la
-  // boucle de file. Ne PAS clearInterval ici : sinon la promesse reste
+  // boucle de file. Ne PAS couper le sondage ici : sinon la promesse reste
   // pendante et la file se fige. btnReset est fait par le done handler
   // (mode simple) ou en fin de lancerFile (mode file).
   const stopRemote = cfgEnCours?.remote_choix === 'cli' &&
