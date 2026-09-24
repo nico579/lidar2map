@@ -1,7 +1,13 @@
 # Correctif proposé — parallélisation du warp et des overviews MBTiles
 
 Date : 2026-07-28  
-Statut : spécification technique, non implémentée  
+Statut : étape 1 implémentée (2026-09-24 : `_gdal_threads()` borné par
+`tile_workers` et les CPU visibles, passé au warp, à la compression GTiff et
+aux overviews via `GDAL_NUM_THREADS`, threads et version GDAL journalisés ;
+overviews déjà construites sur le `.part` avant publication). Restent :
+validation des facteurs d'overviews d'un cache réutilisé, verrou par cible,
+benchmark sur VM. NB : `tile_workers` n'est plus dérivé de `--workers`
+(cf. `_tile_workers_defaut`), la « Cause 3 » ci-dessous est donc caduque.  
 Périmètre : étape `STEP: 3/3 MBTiles` de `lidar2map.py`
 
 ## Résumé
