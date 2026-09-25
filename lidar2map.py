@@ -614,6 +614,11 @@ for _std in ("stdout", "stderr"):
         except (AttributeError, OSError):
             pass
 
+# Avant le bloc launcher : les programmes du système lancés depuis le binaire
+# (systemctl, xdg-open, navigateur) doivent recevoir le LD_LIBRARY_PATH
+# d'origine, pas celui que PyInstaller préfixe de ses bibliothèques.
+_bootstrap_runtime_impl.retablir_environnement_systeme()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MODE LAUNCHER (build onefile)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1284,7 +1289,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.53.0"
+VERSION      = "1.53.1"
 VERSION_DATE = "2026-09"
 
 

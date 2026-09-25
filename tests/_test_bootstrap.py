@@ -2141,5 +2141,56 @@ class BootstrapVenvEngineTests(unittest.TestCase):
         relaunch.assert_not_called()
 
 
+class SystemEnvironmentRestoreTests(unittest.TestCase):
+    """Programmes du système lancés depuis le binaire Linux (systemctl,
+    xdg-open) : LD_LIBRARY_PATH d'origine, pas celui que préfixe PyInstaller.
+    tests/exe_smoke.py le vérifie aussi sur le vrai binaire, lanceur compris."""
+
+    BUNDLE = "/tmp/_MEI123/lib"
+
+    def restore(self, environ, fige=True, plateforme="linux"):
+        bootstrap_runtime.retablir_environnement_systeme(
+            fige=fige, plateforme=plateforme, environ=environ)
+        return environ
+
+    def test_original_value_is_restored(self):
+        environ = self.restore({"LD_LIBRARY_PATH": f"{self.BUNDLE}:/usr/local/lib",
+                                "LD_LIBRARY_PATH_ORIG": "/usr/local/lib"})
+        self.assertEqual(environ["LD_LIBRARY_PATH"], "/usr/local/lib")
+
+    def test_variable_unset_before_the_launcher_is_removed(self):
+        environ = self.restore({"LD_LIBRARY_PATH": self.BUNDLE, "PATH": "/usr/bin"})
+        self.assertNotIn("LD_LIBRARY_PATH", environ)
+        self.assertEqual(environ["PATH"], "/usr/bin")
+
+    def test_source_mode_keeps_the_user_value(self):
+        environ = self.restore({"LD_LIBRARY_PATH": "/choix/utilisateur"}, fige=False)
+        self.assertEqual(environ["LD_LIBRARY_PATH"], "/choix/utilisateur")
+
+    def test_windows_and_macos_are_untouched(self):
+        for plateforme in ("win32", "darwin"):
+            with self.subTest(plateforme=plateforme):
+                environ = self.restore({"LD_LIBRARY_PATH": self.BUNDLE,
+                                        "LD_LIBRARY_PATH_ORIG": "/usr/lib"},
+                                       plateforme=plateforme)
+                self.assertEqual(environ["LD_LIBRARY_PATH"], self.BUNDLE)
+
+    def test_defaults_read_the_running_process(self):
+        with mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": self.BUNDLE,
+                                          "LD_LIBRARY_PATH_ORIG": "/usr/lib"}, clear=True), \
+             mock.patch.object(sys, "frozen", True, create=True), \
+             mock.patch.object(sys, "platform", "linux"):
+            bootstrap_runtime.retablir_environnement_systeme()
+            self.assertEqual(os.environ["LD_LIBRARY_PATH"], "/usr/lib")
+
+    def test_called_before_the_launcher_block(self):
+        # Le lanceur doit transmettre un environnement déjà rétabli à l'exe
+        # interne, sans quoi celui-ci garderait comme « origine » la valeur
+        # préfixée par le lanceur.
+        source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+        appel = source.index("_bootstrap_runtime_impl.retablir_environnement_systeme()")
+        self.assertLess(appel, source.index('_INNER_FLAG = "--__lidar2map_inner__"'))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

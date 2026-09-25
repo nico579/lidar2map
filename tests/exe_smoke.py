@@ -6,7 +6,9 @@ figé (menu « Redémarrer », démarrage automatique de la 1.50.0) leur
 échappaient. Ce script lance le binaire tel qu'il sera publié, hors réseau :
 
   1. démarrage par le lanceur (extraction du bundle, puis serveur web) :
-     /api/init répond "app": "lidar2map" et /api/help rend l'aide ;
+     /api/init répond "app": "lidar2map" et /api/help rend l'aide ; sous
+     Linux, un faux systemctl vérifie que les programmes du système reçoivent
+     le LD_LIBRARY_PATH d'origine (issue #23 de blink2video) ;
   2. relance de l'exe interne extrait avec la sentinelle, comme le fait
      « Redémarrer » (_commande_relance dans lidar2map.py). C'est la commande
      qui est vérifiée, pas le menu lui-même : pas d'icône de notification
@@ -60,6 +62,10 @@ DELAI_FUSION_S = 300
 # le dossier d'extraction, remplacé à chaque mise à jour.
 DONNEES_UTILISATEUR = ("historique.json", "preferences.json", "Projets",
                        "logs", "cache", "production")
+
+# Valeur donnée au lanceur (Linux) : les programmes du système doivent la
+# recevoir telle quelle, sans les bibliothèques du binaire devant (étape 1b).
+LD_LIBRARY_PATH_TEMOIN = "/opt/lidar2map-exe-smoke"
 
 
 class Echec(Exception):
@@ -118,6 +124,22 @@ def environnement(racine: Path) -> tuple[dict, Path]:
                LOCALAPPDATA=str(home / "AppData" / "Local"),
                APPDATA=str(home / "AppData" / "Roaming"))
     env.pop("LIDAR2MAP_WORK_DIR", None)
+    if sys.platform.startswith("linux"):
+        # Faux systemctl en tête du PATH (étape 1b) : note le LD_LIBRARY_PATH
+        # que reçoivent les programmes du système lancés par lidar2map.
+        faux = racine / "bin"
+        faux.mkdir(exist_ok=True)
+        systemctl = faux / "systemctl"
+        systemctl.write_text(
+            "#!/bin/sh\n"
+            'printf "%s|%s\\n" "${LD_LIBRARY_PATH-<absent>}" '
+            '"${LD_LIBRARY_PATH_ORIG-<absent>}" >> "$LIDAR2MAP_SONDE"\n',
+            encoding="utf-8")
+        systemctl.chmod(0o755)
+        env.update(PATH=f"{faux}{os.pathsep}{env.get('PATH', '')}",
+                   LD_LIBRARY_PATH=LD_LIBRARY_PATH_TEMOIN,
+                   LIDAR2MAP_SONDE=str(racine / "systemctl.txt"))
+        env.pop("LD_LIBRARY_PATH_ORIG", None)
     return env, home
 
 
@@ -158,6 +180,14 @@ def tuer_arbre(processus: subprocess.Popen) -> None:
 
 def lire_json(url: str, delai_s: float = 10):
     with urllib.request.urlopen(url, timeout=delai_s) as reponse:
+        return json.loads(reponse.read())
+
+
+def poster_json(url: str, donnees: dict, delai_s: float = 30):
+    requete = urllib.request.Request(
+        url, data=json.dumps(donnees).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(requete, timeout=delai_s) as reponse:
         return json.loads(reponse.read())
 
 
@@ -241,6 +271,25 @@ def smoke(archive: Path, racine: Path) -> None:
         if not (isinstance(aide, str) and "lidar2map" in aide):
             raise Echec(f"/api/help inattendu : {str(aide)[:120]!r}")
         print(f"   OK : /api/init et /api/help sur le port {port}", flush=True)
+
+        if sys.platform.startswith("linux"):
+            etape("1b. programmes du système : LD_LIBRARY_PATH d'origine")
+            # Désactiver le démarrage automatique lance systemctl --user (le
+            # faux, ici) depuis l'exe interne, lui-même lancé par le lanceur :
+            # deux binaires PyInstaller, qui préfixent chacun la variable.
+            poster_json(f"http://127.0.0.1:{port}/api/set-autostart", {"actif": False})
+            sonde = racine / "systemctl.txt"
+            recu = (sonde.read_text(encoding="utf-8").splitlines()
+                    if sonde.is_file() else [])
+            attendu = f"{LD_LIBRARY_PATH_TEMOIN}|{LD_LIBRARY_PATH_TEMOIN}"
+            # Le second champ (LD_LIBRARY_PATH_ORIG, posé par le lanceur de
+            # l'exe interne) prouve que la variable avait bien été préfixée,
+            # et que le lanceur lui avait transmis la valeur d'origine.
+            if not recu or any(ligne != attendu for ligne in recu):
+                raise Echec(f"systemctl a reçu {recu}, attendu {attendu!r}"
+                            " (LD_LIBRARY_PATH|LD_LIBRARY_PATH_ORIG)")
+            print(f"   OK : systemctl lancé {len(recu)} fois avec la valeur d'origine",
+                  flush=True)
 
         etape("2. relance de l'exe interne avec la sentinelle (« Redémarrer »)")
         interne = exe_interne(dossier_extraction(home))
