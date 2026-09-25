@@ -1,12 +1,10 @@
 # Plan de refonte de `lidar2map.py`
 
-Dernier lot de bundles déployé : 26 août 2026, **v1.48.2**. La modularisation
-incluse dans ces bundles va jusqu'à 15y ; les versions 1.48.x ajoutent les
-correctifs fonctionnels livrés depuis ce jalon. Les sources de la phase 16a ont
-été poussées sur `main` au commit `f713b18` par `deploy.py --push-only`, sans
-rebuild. Les phases 16b à 16l sont terminées localement. Les quatre bundles Windows,
-Linux, macOS Intel et macOS Apple Silicon de la dernière release avaient été
-reconstruits par `release.yml`.
+Chaque release reconstruit les quatre bundles (Windows, Linux, macOS Intel et
+macOS Apple Silicon) à partir de `main` par `release.yml` : ils contiennent
+toutes les phases terminées ci-dessous. Dernier jalon vérifié : **v1.51.0** du
+25 septembre 2026, qui embarque la phase 16 jusqu'à 16l (tous les modules
+extraits sont présents dans le tag).
 
 Ce document est la source de vérité de la modularisation de `lidar2map.py`.
 Il décrit l’ordre des extractions, leur état réel et les contrôles de
@@ -315,7 +313,7 @@ petits après audit et caractérisation.
 | 14. Runtime Java/Osmosis | exécution, découverte et installations transactionnelles Java/Osmosis/mapwriter | 350–500 lignes | caches, archives sûres, codes de retour, streaming et atomicité |
 | 15. Orchestration terrain restante | `generer_ombrages`, téléchargement de dalles, zones, planches et sources autonomes | 1 600–2 100 lignes | équivalence scientifique, historique, reprise, nettoyage et logs par bloc |
 | 16. CLI et points d'entrée | builders argparse, résolution des modes, `main*` et dispatch applicatif | 1 400–1 800 lignes | surface CLI, valeurs par défaut, codes d'erreur et façades monkeypatchables |
-| 17. GUI | déplacement de `lancer_gui` et de son état vers le paquet `gui` | 1 100–1 350 lignes | commandes générées, persistance, VM, masquages pays et smoke sans affichage |
+| 17. GUI | `lancer_gui` n'existe plus depuis le retrait de pywebview (1.49) et le serveur HTTP vit déjà dans `_serve_web.py`. Reste à extraire la classe `Api` (≈ 1 140 lignes) et `main_serve_gui` (≈ 270 lignes), mesurés le 25 septembre 2026 | 1 300–1 500 lignes | routes GET/POST, état partagé du run (file du journal, verrou), historique, préférences, instances parallèles, façades monkeypatchées par les tests |
 
 La somme indicative dépasse volontairement le besoin minimal : la refonte doit
 s'arrêter dès que `lidar2map.py` entre durablement dans la zone 30–35 % avec une

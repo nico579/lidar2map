@@ -607,6 +607,18 @@ try:
     check("préférence : écriture normale garde les autres clés",
           ok and apres == {**prefs_avant, "trusted_host": "100.64.0.1"}, str(apres))
 
+    # BOM : Bloc-notes (Windows 10 avant 1903), Out-File -Encoding utf8
+    # (PowerShell 5.1). Lu comme corrompu, le fichier était réécrit avec la
+    # seule clé modifiée (preconisations S4).
+    l2m._PREFS_PATH.write_bytes(
+        b"\xef\xbb\xbf" + json.dumps({"lang": "fr", "trusted_host": "x"}).encode("utf-8"))
+    check("préférences avec BOM : lues", l2m._lire_prefs() == {"lang": "fr", "trusted_host": "x"},
+          str(l2m._lire_prefs()))
+    ok = l2m._ecrire_pref("ui_zoom", 1)
+    apres = json.loads(l2m._PREFS_PATH.read_text(encoding="utf-8"))
+    check("préférences avec BOM : écriture garde les autres clés",
+          ok and apres == {"lang": "fr", "trusted_host": "x", "ui_zoom": 1}, str(apres))
+
     hist_avant = [{"id": f"r{i}", "date": "2026-09-24 10:00"} for i in range(3)]
     l2m._HISTORIQUE_PATH.write_text(json.dumps(hist_avant), encoding="utf-8")
     with _refus_sur(l2m._HISTORIQUE_PATH):

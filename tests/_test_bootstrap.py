@@ -38,6 +38,15 @@ import _log_activation as log_activation  # noqa: E402
 import _runtime_paths as runtime_paths  # noqa: E402
 import _disk_guard as disk_guard  # noqa: E402
 
+# Plus aucun paquet GUI réel depuis la 1.49 (GUI servi en HTTP local) : le
+# point d'extension gui_deps_plateforme reste testé avec les anciens paquets,
+# déclarés ici puisque MODULE_PAR_PAQUET ne les connaît plus.
+_PAQUETS_GUI_EXEMPLE = {
+    "pyobjc-framework-WebKit": "WebKit",
+    "pyobjc-framework-Cocoa": "Cocoa",
+    "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
+}
+
 
 class BootstrapModeTests(unittest.TestCase):
     def _resolve(self, argv, env=None):
@@ -1154,6 +1163,7 @@ class BootstrapDependencyTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertEqual(imported, ["PIL"])
 
+    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
     def test_darwin_post_install_validates_pyobjc_module_names(self):
         packages = ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa"]
 
@@ -1201,6 +1211,7 @@ class BootstrapDependencyTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         self.assertEqual(imported, ["WebKit", "Cocoa"])
 
+    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
     def test_critical_retry_revalidates_pyobjc_modules(self):
         packages = ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa"]
 
@@ -1282,7 +1293,6 @@ class BootstrapFullInstallTests(unittest.TestCase):
 
     def test_full_install_uses_the_shared_package_catalog(self):
         self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET["Pillow"], "PIL")
-        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET["pywebview"], "webview")
         self.assertEqual(
             bootstrap_runtime.MODULE_PAR_PAQUET["mapbox-vector-tile"],
             "mapbox_vector_tile",
@@ -1304,6 +1314,7 @@ class BootstrapFullInstallTests(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         self.assertIn("    ERROR Pillow (critical dependency unavailable)", messages)
 
+    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
     def test_full_install_accepts_a_successful_pip_in_a_fresh_subprocess(self):
         ok, imports, commands, messages = self._run(
             missing={"PyQt6.QtWebEngineWidgets"},

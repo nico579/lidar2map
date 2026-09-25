@@ -1654,7 +1654,7 @@ check("bouton Aide : source unique get_help() (docstring module)",
       'id="btn-help"' in _html and 'id="help-modal"' in _html
       and 'id="help-text"' in _html
       and "function afficherAide()" in _appjs
-      and "pywebview.api.get_help()" in _appjs
+      and "api.get_help()" in _appjs
       and "def get_help(self):" in _src
       and "__name__].__doc__" in _src)
 
@@ -1741,9 +1741,9 @@ check("--cleanup-keep-tiles conservé (nécessaire en mode MNT)",
 check("onglet Usage : lecture seule, 3 tiers, open_folder",
       'id="btn-usage"' in _html and 'id="usage-modal"' in _html
       and "function afficherUsage()" in _appjs
-      and "pywebview.api.get_usage(" in _appjs
+      and "api.get_usage(" in _appjs
       and "def get_usage(self" in _src
-      and "pywebview.api.open_folder" in _appjs)
+      and "api.open_folder" in _appjs)
 
 print("== 9j. Contrat CLI minimal : défauts utiles, cache-only explicite ==")
 
@@ -1863,7 +1863,7 @@ check("GUI VM : arrêt et purge sont deux confirmations indépendantes",
       "confirm(t('remote.stop.confirm'))" in _appjs
       and "const purgeRemote = stopRemote && confirm(t('remote.purge.confirm'))"
       in _appjs
-      and "pywebview.api.stop(stopRemote, purgeRemote)" in _appjs)
+      and "api.stop(stopRemote, purgeRemote)" in _appjs)
 check("GUI VM : l'arrêt transmet la session active exacte au contrôleur",
       'argv = ["--session", cfg.get("remote_session") or "lidar", "--stop"]'
       in _src)

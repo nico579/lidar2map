@@ -38,6 +38,7 @@ FAST_SCRIPTS = (
     "_test_atomic_downloads.py",
     "_test_atomic_publications.py",
     "_test_docs_links.py",
+    "test_cli_docs.py",
     "_test_patch_delivery.py",
     "_test_rlidar2map_CLI.py",
     "test_phone_share.py",

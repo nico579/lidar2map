@@ -9,6 +9,11 @@
 #   2. Naviguer dans _internal/
 #   3. Remplacer lidar2map.py
 #   C'est tout — aucun rebuild, aucun accès Mac nécessaire.
+#
+# Limite : ce remplacement ne vaut que si la nouvelle version ne modifie aucun
+# module compilé (les _*.py listés par deploy.is_rebuild_file) ni les specs.
+# Sinon le nouveau lidar2map.py appellerait des modules figés d'une version
+# antérieure : il faut la release complète, reconstruite par release.yml.
 
 import sys
 import runpy

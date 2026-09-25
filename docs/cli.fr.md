@@ -864,8 +864,10 @@ de compatibilité suivants sont acceptés par les parseurs actuels :
 
 Les actions booléennes proposent aussi leur forme négative anglaise, notamment
 `--no-download`, `--no-download-compress`, `--no-svf-sweep` et
-`--no-index-map`. `--shadings all`/`none` et
-`--shadings tous`/`aucun` forment deux paires équivalentes.
+`--no-index-map`. argparse produit la même forme pour leurs alias français :
+`--no-telechargement` et `--no-telechargement-compresser`.
+`--shadings all`/`none` et `--shadings tous`/`aucun` forment deux paires
+équivalentes.
 
 ## Codes de sortie utiles aux scripts
 

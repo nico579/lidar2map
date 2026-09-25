@@ -16,7 +16,9 @@ from pathlib import Path
 
 # Catalogue unique : les noms de paquets pip ne sont pas systématiquement les
 # noms importables. Il est partagé par le bootstrap normal et l'installation
-# explicite ``--installer-deps`` de la façade.
+# explicite ``--installer-deps`` de la façade. Les paquets GUI (pywebview,
+# PyQt6, qtpy, pyobjc) en sont sortis : plus aucune liste d'installation ne
+# les demande depuis la 1.49, le GUI étant servi en HTTP local.
 MODULE_PAR_PAQUET = {
     "Pillow": "PIL",
     "pyproj": "pyproj",
@@ -27,7 +29,6 @@ MODULE_PAR_PAQUET = {
     "fiona": "fiona",
     "certifi": "certifi",
     "pystray": "pystray",
-    "pywebview": "webview",
     "osmium": "osmium",
     "numba": "numba",
     "laspy": "laspy",
@@ -35,11 +36,6 @@ MODULE_PAR_PAQUET = {
     "py7zr": "py7zr",
     "mapbox-vector-tile": "mapbox_vector_tile",
     "cloth-simulation-filter": "CSF",
-    "PyQt6": "PyQt6",
-    "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
-    "qtpy": "qtpy",
-    "pyobjc-framework-WebKit": "WebKit",
-    "pyobjc-framework-Cocoa": "Cocoa",
 }
 
 

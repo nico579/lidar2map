@@ -45,6 +45,7 @@ instructions utilisateur actuelles :
 - [Conception de l’unification de l’exécution distante](evolution_execution_distante.md)
 - [Investigation du bootstrap Python 3.12](correctif_bootstrap_python312_multiplateforme.md)
 - [Parallélisation du warp et des overviews : état et travaux restants](correctif_parallelisation_warp_overviews_mbtiles.md)
+- [Préconisations d’évolution (sécurité, distribution, documentation, code)](preconisations_evolution.md)
 
 En cas de contradiction, les guides utilisateur et l’aide du programme actuel
 font foi.

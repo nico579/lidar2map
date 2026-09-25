@@ -83,6 +83,18 @@ class Handler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    # Fetch Metadata (Chrome 76+, Firefox 90+, Safari 16.4+) : un GET simple
+    # venu d'un autre site (<img src>, fetch no-cors) n'envoie pas Origin, mais
+    # déclenchait les effets de bord des routes /api/* (vider la file du
+    # journal, parcourir un dossier, interroger GitHub). Les clients hors
+    # navigateur n'envoient pas cet en-tête et restent acceptés
+    # (_instance_existante, anciennes versions). Voir preconisations S1.
+    _SITES_ADMIS = ("same-origin", "none")
+
+    def requete_inter_sites(self) -> bool:
+        site = self.headers.get("Sec-Fetch-Site")
+        return site is not None and site.strip().lower() not in self._SITES_ADMIS
+
     # ------------------------------------------------------------- réponses
 
     def send_json(self, data, status: int = 200) -> None:
@@ -106,30 +118,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(corps)
 
     def send_index(self) -> None:
-        try:
-            html = (self.gui_dir / "index.html").read_text(encoding="utf-8")
-        except OSError:
-            self.send_error(404)
-            return
-        # index.html est écrit pour l'inlining pywebview (placeholders
-        # remplacés par le contenu CSS/JS en Python avant html=..., mode
-        # aujourd'hui retiré). En mode navigateur on sert de vrais fichiers
-        # séparés : références externes normales à la place, jamais
-        # d'inlining - index.html/app.js/style.css restent inchangés sur
-        # disque, web_bridge.js est le seul fichier ajouté par ce mode.
-        html = html.replace(
-            "<style>/*__LIDAR2MAP_CSS__*/</style>",
-            '<link rel="stylesheet" href="/style.css">')
-        html = html.replace(
-            "<script>//__LIDAR2MAP_JS__</script>",
-            '<script src="/web_bridge.js"></script>\n'
-            '<script src="/app.js"></script>')
-        corps = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(corps)))
-        self.end_headers()
-        self.wfile.write(corps)
+        # Servi tel quel : index.html référence lui-même style.css,
+        # web_bridge.js puis app.js. Les marqueurs d'inlining de l'époque
+        # pywebview (__LIDAR2MAP_CSS__/__LIDAR2MAP_JS__), remplacés ici à
+        # chaque requête, ont disparu du fichier.
+        self.send_static(self.gui_dir / "index.html", "text/html; charset=utf-8")
 
     # --------------------------------------------------------------- GET
 
@@ -155,6 +148,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if not route.startswith(_PREFIXE_API):
             self.send_error(404)
+            return
+        if self.requete_inter_sites():
+            self.send_error(403)
             return
         clef = route[len(_PREFIXE_API):]
 
@@ -203,6 +199,9 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path).path
         if not route.startswith(_PREFIXE_API):
             self.send_error(404)
+            return
+        if self.requete_inter_sites():
+            self.send_error(403)
             return
         clef = route[len(_PREFIXE_API):]
         gestionnaire = self.post_routes.get(clef)

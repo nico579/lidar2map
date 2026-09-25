@@ -1129,6 +1129,30 @@ class AtomicDownloadTests(unittest.TestCase):
                          ["extract", "validate"])
         self._assert_no_part()
 
+    def test_provider_shading_ignores_provider_tls_context(self):
+        # S5 (docs/preconisations_evolution.md) : fi_maanmittauslaitos
+        # exposait _SSL_CTX (CERT_NONE), lu ici. Il aurait coupé la
+        # vérification en silence, clé API comprise dans l'URL, dès l'ajout
+        # de PROVIDES_SHADINGS à ce provider.
+        import ssl
+        non_verifie = ssl.create_default_context()
+        non_verifie.check_hostname = False
+        non_verifie.verify_mode = ssl.CERT_NONE
+        contextes = []
+
+        def urlopen(_req, **kwargs):
+            contextes.append(kwargs.get("context"))
+            raise OSError("réseau coupé")
+
+        L.PROVIDER = SimpleNamespace(_SSL_CTX=non_verifie)
+        with mock.patch("urllib.request.urlopen", side_effect=urlopen):
+            L._fetch_provider_shadings(
+                ["multi"], (0, 0, 1, 1), self.tmp, "zone", True,
+                {"multi": ("coverage", 1.0, "https://example.invalid/wcs")})
+
+        self.assertTrue(contextes)
+        self.assertEqual(contextes, [None] * len(contextes))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

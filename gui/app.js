@@ -19,7 +19,7 @@ const fmtRes = (r) => (_lang === 'fr' ? String(r).replace('.', ',') : String(r))
 // Le texte FR en dur dans le HTML reste le FALLBACK si une clé manque : pas de
 // page cassée. Variantes d'attribut : data-i18n (textContent), data-i18n-placeholder,
 // data-i18n-title. Détection : navigator.language (l'OS, via QtWebEngine) ;
-// override manuel persisté côté Python (pywebview.api.set_lang), appliqué dans
+// override manuel persisté côté Python (api.set_lang), appliqué dans
 // initAsync après get_init_data.
 // On ne tague que les chaînes qui DIFFÈRENT entre fr et en. Les tokens
 // identiques (cols ×, km, m, JPEG, GPS, SVF, MBTiles, multi, 315°…) ne sont
@@ -387,8 +387,8 @@ function setLang(code, persist){
   // reconstruire pour qu'elles basculent elles aussi immédiatement de langue.
   if (typeof ombRender === 'function')
     ombRender(document.getElementById('omb-liste')?.selectedIndex ?? 0);
-  if (persist && window.pywebview && pywebview.api && pywebview.api.set_lang) {
-    pywebview.api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
+  if (persist) {
+    api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
   }
 }
 
@@ -450,11 +450,11 @@ function viderLog() {
 }
 
 function copierLog() {
-  // navigator.clipboard.writeText ne fonctionne pas dans WebView2/pywebview
-  // hors contexte sécurisé (pas de HTTPS) : la méthode existe mais throw
-  // silencieusement « NotAllowedError » ou ne fait rien selon les versions.
-  // On essaie d'abord l'API moderne puis on retombe sur execCommand qui,
-  // bien que déprécié, reste fonctionnel partout — y compris dans WebView2.
+  // navigator.clipboard.writeText exige un contexte sécurisé (HTTPS ou
+  // localhost) : ouvert par l'hôte de confiance (http://<adresse>:8766/),
+  // il est absent ou lève « NotAllowedError ». On essaie d'abord l'API
+  // moderne puis on retombe sur execCommand qui, bien que déprécié, reste
+  // fonctionnel partout.
   const c = document.getElementById('log-content');
   if (!c) return;
   const text = c.textContent || '';
@@ -645,39 +645,20 @@ function setLogProgress(pct, cls) {
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 // bindAll() est appelé immédiatement au DOMContentLoaded pour l'état initial
-// (sections visibles/cachées selon checkboxes). L'init async (couches, config)
-// est lancée séparément dès que pywebview.api est disponible.
+// (sections visibles/cachées selon checkboxes), puis l'init async (couches,
+// config) : window.api existe déjà, web_bridge.js est chargé avant ce fichier.
 document.addEventListener('DOMContentLoaded', () => {
   setLang(detectLang(), false);   // langue OS immédiate ; override sauvé appliqué dans initAsync
   bindAll();
   _acInstaller();
-  // pywebview émet 'pywebviewready' sur window quand le bridge JS↔Python est
-  // établi. C'est plus fiable que le polling seul (qui peut timeout en
-  // debug=False sur certaines configs WebView2 lentes).
-  if (window.pywebview && window.pywebview.api) {
-    initAsync();
-  } else {
-    window.addEventListener('pywebviewready', initAsync, { once: true });
-    waitForApi();   // fallback polling (au cas où l'event soit raté)
-  }
+  initAsync();
 });
-
-function waitForApi(tries=0) {
-  if (window.pywebview && window.pywebview.api &&
-      typeof window.pywebview.api.get_init_data === 'function') {
-    initAsync();
-  } else if (tries < 600) {   // 600×50ms = 30s (au lieu de 10s)
-    setTimeout(() => waitForApi(tries+1), 50);
-  } else {
-    document.getElementById('footer-status').textContent = t('apiunavail');
-  }
-}
 
 async function initAsync() {
   if (_initialized) return;
   _initialized = true;
   try {
-    const d = await pywebview.api.get_init_data();
+    const d = await api.get_init_data();
     if (d.resolution_m) _resolutionM = d.resolution_m;   // défaut σ LRM/RRIM (provider actif)
     if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
     if (d.ui_zoom) applyUiZoom(d.ui_zoom, false);   // zoom UI sauvé
@@ -703,7 +684,7 @@ async function initAsync() {
     refreshProjets();
     document.getElementById('f-apikey').value = d.apikey_def || '';
     // Charger l'historique via appel dédié
-    pywebview.api.get_historique().then(hist => {
+    api.get_historique().then(hist => {
       if (hist && hist.length) {
         buildHistorique(hist);
         // Préremplissage : la plus récente entrée lancée depuis le GUI
@@ -718,7 +699,7 @@ async function initAsync() {
     }).catch(e => console.error('get_historique init error:', e));
     // Notification de mise à jour : 1 requête GitHub non bloquante,
     // silencieuse hors ligne. Bandeau discret et fermable en bas à droite.
-    pywebview.api.check_update().then(r => {
+    api.check_update().then(r => {
       if (r && r.update) afficherBandeauUpdate(r.latest, r.url);
     }).catch(() => {});
     verifierInstanceDejaOuverte();
@@ -745,7 +726,7 @@ function afficherBandeauUpdate(tag, url) {
   const txt = document.createElement('span');
   txt.textContent = tf('update.dispo', {tag: tag});
   txt.style.cursor = 'pointer';
-  txt.onclick = () => pywebview.api.open_url(url);
+  txt.onclick = () => api.open_url(url);
   const x = document.createElement('span');
   x.textContent = '✕';
   x.style.cssText = 'color:var(--dim);cursor:pointer';
@@ -1300,7 +1281,7 @@ async function viderHistorique() {
     return;
   }
   try {
-    const r = await pywebview.api.clear_historique();
+    const r = await api.clear_historique();
     if (r && r.ok) {
       _historique = [];
       buildHistorique([]);
@@ -1446,9 +1427,9 @@ function buildOsmTags(tags) {
 }
 
 // ── Autocomplete ville (API Adresse data.gouv.fr / BAN, via proxy Python) ───
-// On passe par pywebview.api.autocomplete_ville plutôt qu'un fetch() direct :
-// la page est chargée via NavigateToString → origin "null" → WebView2 bloque
-// le CORS de la BAN. Le proxy Python n'a pas ce problème.
+// On passe par api.autocomplete_ville (le serveur Python interroge le
+// géocodeur du pays) plutôt qu'un fetch() direct : la page ne dépend pas des
+// en-têtes CORS de chaque service.
 // Échec silencieux : si l'API tombe, le champ reste un input texte normal.
 const _AC_DEBOUNCE = 250;
 const _AC_MINLEN  = 3;   // Geoplateforme exige >= 3 caractères (HTTP 400 sinon)
@@ -1526,12 +1507,7 @@ async function _acRequete(prefix) {
   if (_acCache.has(key)) { _acRendre(_acCache.get(key)); return; }
   const myId = ++_acReqId;
   try {
-    if (!(window.pywebview && window.pywebview.api &&
-          typeof window.pywebview.api.autocomplete_ville === 'function')) {
-      _acFermer();
-      return;
-    }
-    const items = await pywebview.api.autocomplete_ville(prefix, country);
+    const items = await api.autocomplete_ville(prefix, country);
     if (myId !== _acReqId) return;
     const list = Array.isArray(items) ? items : [];
     _acCache.set(key, list);
@@ -1693,9 +1669,8 @@ function bindAll() {
 // chaque run réussi (pas au focus : les options ajoutées pendant l'ouverture
 // de la popup n'y apparaîtraient pas).
 function refreshProjets() {
-  if (!(window.pywebview && pywebview.api && pywebview.api.get_projets)) return;
   const dossier = document.getElementById('f-dossier')?.value.trim() || null;
-  pywebview.api.get_projets(dossier).then(list => {
+  api.get_projets(dossier).then(list => {
     const sel = document.getElementById('f-nom-liste');
     if (!sel) return;
     sel.innerHTML = '';
@@ -1718,8 +1693,7 @@ function choisirProjet(sel) {
 
 // ── Partage vers le téléphone (QR + serveur LAN) ────────────────────────────
 function partagerTelephone() {
-  if (!(window.pywebview && pywebview.api && pywebview.api.start_share)) { alert(t('apiunavail')); return; }
-  pywebview.api.start_share(getConfig()).then(r => {
+  api.start_share(getConfig()).then(r => {
     if (!r || !r.ok) { alert((r && r.error) || t('apiunavail')); return; }
     document.getElementById('share-url').textContent = r.url;
     renderQR(r.url, document.getElementById('share-qr'));
@@ -1730,8 +1704,7 @@ function partagerTelephone() {
 }
 function fermerPartage() {
   document.getElementById('share-modal').style.display = 'none';
-  if (window.pywebview && pywebview.api && pywebview.api.stop_share)
-    pywebview.api.stop_share().catch(() => {});
+  api.stop_share().catch(() => {});
 }
 
 // ── Aide ────────────────────────────────────────────────────────────────────
@@ -1743,13 +1716,9 @@ function afficherAide() {
   if (!modal || !pre) return;
   pre.textContent = t('loading');
   modal.style.display = 'flex';
-  if (window.pywebview && pywebview.api && pywebview.api.get_help) {
-    pywebview.api.get_help()
-      .then(txt => { pre.textContent = txt || t('help.empty'); })
-      .catch(() => { pre.textContent = t('help.empty'); });
-  } else {
-    pre.textContent = t('apiunavail');
-  }
+  api.get_help()
+    .then(txt => { pre.textContent = txt || t('help.empty'); })
+    .catch(() => { pre.textContent = t('help.empty'); });
 }
 function fermerAide() {
   const modal = document.getElementById('help-modal');
@@ -1766,8 +1735,9 @@ function _fmtOctets(n) {
   return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
 }
 function _usageOpen(path) {
-  if (window.pywebview && pywebview.api && pywebview.api.open_folder)
-    pywebview.api.open_folder(path);
+  api.open_folder(path).then(r => {
+    if (r && r.ok === false) alert(r.error);
+  }).catch(e => alert(String(e)));
 }
 function afficherUsage() {
   const modal = document.getElementById('usage-modal');
@@ -1775,15 +1745,11 @@ function afficherUsage() {
   if (!modal || !body) return;
   body.textContent = t('loading');
   modal.style.display = 'flex';
-  if (!(window.pywebview && pywebview.api && pywebview.api.get_usage)) {
-    body.textContent = t('apiunavail');
-    return;
-  }
   // Racines custom du formulaire (cache/production) → refléter où sont vraiment
   // les fichiers, pas seulement les défauts.
   const cfg = { cache_dir: document.getElementById('f-cache-dir')?.value.trim(),
                 production_dir: document.getElementById('f-production-dir')?.value.trim() };
-  pywebview.api.get_usage(cfg)
+  api.get_usage(cfg)
     .then(d => renderUsage(d))
     .catch(() => { body.textContent = t('usage.empty'); });
 }
@@ -1848,10 +1814,9 @@ function afficherRemote() {
 // cet onglet, ouvert pour la question, part vers la nouvelle instance au lieu
 // d'en ouvrir un autre, ce qui laisserait deux onglets sur la même instance.
 function nouvelleInstance(dansCetOnglet) {
-  if (!(window.pywebview && pywebview.api && pywebview.api.new_instance)) { alert(t('apiunavail')); return; }
   if (dansCetOnglet) {
     document.getElementById('footer-status').textContent = t('newinst.starting');
-    Promise.resolve(pywebview.api.new_instance()).then(r => {
+    Promise.resolve(api.new_instance()).then(r => {
       if (!r || !r.ok) { alert((r && r.error) || t('apiunavail')); return; }
       location.href = location.protocol + '//' + location.hostname + ':' + r.port + '/';
     }).catch(e => alert(t('apiunavail') + ' : ' + e));
@@ -1862,7 +1827,7 @@ function nouvelleInstance(dansCetOnglet) {
     try { onglet.document.title = 'lidar2map'; onglet.document.body.textContent = t('newinst.starting'); }
     catch (e) { /* page d'attente facultative */ }
   }
-  Promise.resolve(pywebview.api.new_instance()).then(r => {
+  Promise.resolve(api.new_instance()).then(r => {
     if (!r || !r.ok) {
       if (onglet) onglet.close();
       alert((r && r.error) || t('apiunavail'));
@@ -1898,13 +1863,9 @@ function enregistrerHoteConfiance() {
   const champ = document.getElementById('remote-trusted-host');
   const statut = document.getElementById('remote-status');
   if (!champ || !statut) return;
-  if (!(window.pywebview && pywebview.api && pywebview.api.set_trusted_host)) {
-    statut.textContent = t('apiunavail');
-    return;
-  }
   const host = champ.value.trim();
   statut.textContent = t('remote.saving');
-  pywebview.api.set_trusted_host(host)
+  api.set_trusted_host(host)
     .then(r => {
       if (!(r && r.ok)) { statut.textContent = (r && r.error) || t('remote.error'); return; }
       // État de l'écoute sur cette adresse (absent si --bind vise déjà
@@ -1920,13 +1881,8 @@ function toggleAutostart(actif) {
   const statut = document.getElementById('remote-autostart-status');
   const caseAutostart = document.getElementById('remote-autostart');
   if (!statut || !caseAutostart) return;
-  if (!(window.pywebview && pywebview.api && pywebview.api.set_autostart)) {
-    statut.textContent = t('apiunavail');
-    caseAutostart.checked = !actif;  // annule le changement visuel
-    return;
-  }
   statut.textContent = t('remote.saving');
-  pywebview.api.set_autostart(actif)
+  api.set_autostart(actif)
     .then(r => {
       if (r && r.ok) {
         statut.textContent = actif ? t('remote.autostart.on') : t('remote.autostart.off');
@@ -2339,8 +2295,8 @@ function loadConfig(cfg) {
 
   // Re-déclencher les toggles et l'état initial.
   // NB : les fonctions window.apply* sont définies par bindAll() et appelées
-  // directement (au lieu d'un dispatchEvent('change') qui peut échouer
-  // silencieusement selon le timing async d'attache des listeners pywebview).
+  // directement (au lieu d'un dispatchEvent('change'), qui échouait
+  // silencieusement selon l'ordre d'attache des écouteurs sous pywebview).
   if (typeof window.applyMode    === 'function') window.applyMode();
   if (typeof window.applyType    === 'function') window.applyType();
   if (typeof window.applyToggles === 'function') window.applyToggles();
@@ -2561,15 +2517,15 @@ function ombFromSpecs(specs) {
 document.addEventListener('DOMContentLoaded', () => ombRender(0));
 
 // ── Zoom de l'interface (persisté) ───────────────────────────────────────────
-// Remplace le zoomable natif pywebview (invisible côté JS, donc impossible à
-// sauvegarder). body.style.zoom est appliqué/persisté via set_ui_zoom, et
-// restauré au lancement (get_init_data.ui_zoom).
+// Zoom propre à l'interface, indépendant de celui du navigateur :
+// body.style.zoom est appliqué/persisté via set_ui_zoom, et restauré au
+// lancement (get_init_data.ui_zoom).
 let _uiZoom = 1.0;
 function applyUiZoom(z, persist) {
   _uiZoom = Math.min(2.5, Math.max(0.5, Math.round(z * 20) / 20));   // pas de 5 %
   document.body.style.zoom = _uiZoom;
-  if (persist && window.pywebview && pywebview.api && pywebview.api.set_ui_zoom) {
-    pywebview.api.set_ui_zoom(_uiZoom).catch(() => {});
+  if (persist) {
+    api.set_ui_zoom(_uiZoom).catch(() => {});
   }
 }
 window.addEventListener('wheel', e => {
@@ -2882,9 +2838,9 @@ function executerCfg(cfg, silent) {
     viderLog();
     document.getElementById('log-status').textContent = t('running');
     setLogProgress(0, '');
-    // try/catch via .catch : si le bridge pywebview rejette (API bloquée),
-    // la promesse doit quand même se résoudre, sinon la file se fige.
-    Promise.resolve(pywebview.api.launch(cfg)).then(res => {
+    // try/catch via .catch : si le pont rejette (serveur arrêté, réseau
+    // coupé), la promesse doit quand même se résoudre, sinon la file se fige.
+    Promise.resolve(api.launch(cfg)).then(res => {
       if (!res || res.error) {
         const msg = (res && res.error) || t('apiunavail');
         if (!silent) alert(msg); else ajouterLigneLog('\n✗ ' + msg + '\n', 'err');
@@ -2905,7 +2861,7 @@ function executerCfg(cfg, silent) {
       const sonder = async () => {
         let r;
         try {
-          r = await pywebview.api.poll_log();
+          r = await api.poll_log();
           if (!r || r.error) throw new Error((r && r.error) || 'poll_log');
           echecsPoll = 0;
         } catch (e) {
@@ -2956,7 +2912,7 @@ function executerCfg(cfg, silent) {
             if (p && p.classList.contains('hidden')) toggleLogPanel();
             if (!silent && !arretDemande) {
               try {
-                const err = await pywebview.api.get_last_error();
+                const err = await api.get_last_error();
                 if (err && err.msg) alert(tf('fail.detail', {c: err.retcode, msg: err.msg}));
                 else alert(tf('fail.generic', {c: r.code}));
               } catch (e) {
@@ -2967,14 +2923,16 @@ function executerCfg(cfg, silent) {
           }
           if (r.code === 0 && !silent && !arretDemande) {
             refreshProjets();   // le run peut avoir créé un nouveau projet
-            pywebview.api.get_historique().then(hist => {
+            api.get_historique().then(hist => {
               if (hist && hist.length) {
                 buildHistorique(hist);
                 const last = hist[0];
                 if (last && last.params) loadConfig(last.params);
               }
             }).catch(e => console.error('get_historique error:', e));
-            if (r.result_dir) pywebview.api.open_folder(r.result_dir);
+            if (r.result_dir) api.open_folder(r.result_dir).then(o => {
+              if (o && o.ok === false) ajouterLigneLog('\n✗ ' + o.error + '\n', 'err');
+            }).catch(e => console.error('open_folder error:', e));
           }
           resolve({code: r.code, result_dir: r.result_dir});
         }
@@ -3049,7 +3007,7 @@ async function lancerFile() {
   // Récap une seule fois en fin de file (moins de churn qu'un rafraîchissement
   // par job).
   refreshProjets();
-  pywebview.api.get_historique().then(hist => {
+  api.get_historique().then(hist => {
     if (hist && hist.length) buildHistorique(hist);
   }).catch(e => console.error('get_historique error:', e));
   const recap = arretDemande ? t('stopped') : tf('queue.done', {ok: ok, ko: ko});
@@ -3068,7 +3026,7 @@ async function arreter() {
     confirm(t('remote.stop.confirm'));
   const purgeRemote = stopRemote && confirm(t('remote.purge.confirm'));
   arretDemande = true;
-  const result = await pywebview.api.stop(stopRemote, purgeRemote);
+  const result = await api.stop(stopRemote, purgeRemote);
   if (stopRemote && result && result.ok === false) {
     alert(tf('remote.stop.error', {msg: result.error || t('del.unknown')}));
   }

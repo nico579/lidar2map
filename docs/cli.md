@@ -842,8 +842,9 @@ aliases are accepted by the current parsers:
 
 Boolean optional actions also expose their negative English form, notably
 `--no-download`, `--no-download-compress`, `--no-svf-sweep`, and
-`--no-index-map`. `--shadings all`/`none` and `--shadings tous`/`aucun` are
-equivalent pairs.
+`--no-index-map`. argparse generates the same form for their French aliases:
+`--no-telechargement` and `--no-telechargement-compresser`.
+`--shadings all`/`none` and `--shadings tous`/`aucun` are equivalent pairs.
 
 ## Exit codes useful in automation
 

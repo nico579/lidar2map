@@ -24,8 +24,10 @@ name: Release (build 3 OS)
 # cette date, il faudra soit abandonner l'asset Intel, soit builder sur une
 # machine Intel perso.
 #
-# NB : le build lidar2map est lourd (JRE + osmosis + Qt/QtWebEngine + deps géo) :
-# onedir ~1,2 Go, bundle ~450 Mo. Les setup_build_* téléchargent JRE+osmosis
+# NB : le build lidar2map est lourd (JRE + osmosis + deps géo ; plus de Qt
+# depuis le retrait de pywebview en 1.49). Mesuré sur la v1.51.0 : bundle
+# 253 Mio sous Windows (642 Mio extrait, dont JRE 145 Mio), 373 Mio sous Linux
+# (1 028 Mio extrait). Les setup_build_* téléchargent JRE+osmosis
 # (--telecharger-outils). Prévoir des jobs longs (timeout-minutes).
 
 on:
@@ -123,6 +125,17 @@ jobs:
           (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
             Out-File "$zip.sha256" -Encoding ascii -NoNewline
 
+      # Lance l'archive telle qu'elle sera publiée (démarrage, relance de
+      # l'exe interne, fusion MBTiles, dossier de travail) : tous les autres
+      # tests tournent en mode source. continue-on-error le temps que ce
+      # smoke ait passé une fois sur les 4 runners (1.51.1) ; retiré ensuite,
+      # un échec bloquera la publication (le job publish exige tous les builds).
+      - name: Smoke test exe (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: python tests/exe_smoke.py dist\lidar2map-windows-x86_64.zip
+
       # ── Linux ────────────────────────────────────────────────────────────
       - name: Setup machine (Linux)
         if: runner.os == 'Linux'
@@ -146,6 +159,11 @@ jobs:
           sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
             > dist/lidar2map-linux-x86_64.tar.gz.sha256
 
+      - name: Smoke test exe (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: python tests/exe_smoke.py dist/lidar2map-linux-x86_64.tar.gz
+
       # ── macOS ────────────────────────────────────────────────────────────
       - name: Setup machine (macOS)
         if: runner.os == 'macOS'
@@ -163,6 +181,13 @@ jobs:
           # retrouve au glob plutôt que de le coder en dur.
           zip=$(ls dist/lidar2map-macos-*.zip)
           shasum -a 256 "$zip" | awk '{print $1}' > "$zip.sha256"
+
+      # Lancé depuis le shell du runner, le binaire ne passe pas par
+      # Gatekeeper : ce test ne dit rien de la quarantaine.
+      - name: Smoke test exe (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: python tests/exe_smoke.py "$(ls dist/lidar2map-macos-*.zip)"
 
       # ── Upload artefact (asset + .sha256) ────────────────────────────────
       - name: Upload artefact
@@ -201,7 +226,7 @@ jobs:
           set -euo pipefail
           # Collecter les assets (zip/tar.gz) et leurs SHA256
           ASSETS=()
-          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`.\n\n| Fichier | SHA256 |\n|---|---|\n'
+          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour du script sans rebuild via `update_app.py`, seulement vers une version qui ne modifie aucun module compilé (sinon, télécharger la release complète).\n\n| Fichier | SHA256 |\n|---|---|\n'
           while IFS= read -r sha; do
             asset="${sha%.sha256}"
             name="$(basename "$asset")"

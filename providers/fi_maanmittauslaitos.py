@@ -15,18 +15,12 @@
 # librement sans compte. Un DEM 1m existe mais requiert inscription.
 #
 # Self-contained : stdlib uniquement.
-# NB : le serveur NLS Finland présente un certificat auto-signé dans sa chaîne
-# SSL. Le pipeline doit utiliser _SSL_CTX (exposé par ce module) lors du
-# téléchargement, ou passer ssl=False dans les requêtes urllib.
+# TLS vérifié comme les autres providers : le certificat du serveur (autorité
+# Telia) passe la validation stricte, vérifié le 2026-09-25. L'ancien
+# contexte sans vérification (_SSL_CTX, CERT_NONE) a été retiré.
 
 import os
-import ssl
 import urllib.parse
-
-# NLS Finland utilise un certificat auto-signé dans la chaîne SSL → bypass nécessaire
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
 # ── Identification ───────────────────────────────────────────────────────────

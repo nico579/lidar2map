@@ -27,7 +27,11 @@ def lire_json(path, defaut):
     path = Path(path)
     for tentative in range(_TENTATIVES_REFUS):
         try:
-            texte = path.read_text(encoding="utf-8")
+            # utf-8-sig : accepte aussi le BOM qu'ajoutent le Bloc-notes
+            # (Windows 10 avant 1903) et Out-File -Encoding utf8 (PowerShell
+            # 5.1). En utf-8, json.loads le rejetait, le fichier passait pour
+            # corrompu et la réécriture suivante n'en gardait qu'une clé.
+            texte = path.read_text(encoding="utf-8-sig")
             break
         except FileNotFoundError:
             return defaut

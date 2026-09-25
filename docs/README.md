@@ -44,6 +44,7 @@ They are useful to maintainers, but they are not current user instructions:
 - [Remote-execution unification design record](evolution_execution_distante.md)
 - [Python 3.12 bootstrap investigation](correctif_bootstrap_python312_multiplateforme.md)
 - [Warp and overview parallelism: implementation record and remaining work](correctif_parallelisation_warp_overviews_mbtiles.md) *(French)*
+- [Recommended improvements (security, distribution, documentation, code)](preconisations_evolution.md) *(French)*
 
 When an engineering record conflicts with a user guide, the user guide and the
 current program help are authoritative.

@@ -7,7 +7,7 @@ qui blendent plusieurs couches déjà produites par ``_ombrages_pures``
 (``_vat_compose``, ``_mstp_chunked``, ``_e4mstp_compose``).
 
 Contrairement à ``_ombrages_pures`` (couche sans dépendance applicative),
-ce module touche ``PROVIDER`` (WCS_URL, post_fetch, SSL) et la publication
+ce module touche ``PROVIDER`` (WCS_URL, post_fetch) et la publication
 atomique (``_chemin_part``, ``_creer_fichier``) : ses trois points d'entrée
 côté provider (``_extraire_tiff_multipart``, ``_post_fetch_si_besoin``,
 ``_fetch_provider_shadings``) reçoivent leurs coutures par injection, sur le
@@ -213,14 +213,16 @@ def _fetch_provider_shadings(choix, bbox_natif, dossier_ville, nom_zone,
             url = f"{wcs_url}?{params}&subset={ax2}({y1},{y2})"
             chemin_part = dependances.chemin_part(chemin_out)
             try:
-                ssl_ctx = getattr(dependances.provider, "_SSL_CTX", None)
                 req = _urlreq.Request(url, headers={"User-Agent":"lidar2map/1.0"})
                 # R2#43 — écriture en flux par chunks : une réponse WCS
                 # GetCoverage sur un gros département (GeoTIFF plein cadre) peut
                 # peser des centaines de Mo. r.read() la chargeait ENTIÈRE en
                 # RAM avant d'écrire → OOM. On copie chunk par chunk (RAM bornée
                 # à dependances.http_chunk_size), comme le téléchargement de dalles.
-                with _urlreq.urlopen(req, timeout=180, context=ssl_ctx) as r:
+                # Contexte TLS par défaut, vérifié (_bootstrap_tls) : un
+                # provider ne peut plus en fournir un sans vérification
+                # (preconisations S5).
+                with _urlreq.urlopen(req, timeout=180) as r:
                     _headers = getattr(r, "headers", {})
                     _ct = _headers.get("content-type", "").lower()
                     if (not _ct.startswith("multipart")

@@ -189,6 +189,20 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertIn('<script src="/app.js"></script>', html)
         self.assertNotIn("__LIDAR2MAP_CSS__", html)
         self.assertNotIn("__LIDAR2MAP_JS__", html)
+        # Servi tel quel (C1) : c'est le fichier lui-même qui porte les
+        # balises, et app.js appelle window.api dès son chargement.
+        self.assertEqual(body, (ROOT / "gui" / "index.html").read_bytes())
+        self.assertLess(html.index('src="/web_bridge.js"'), html.index('src="/app.js"'))
+
+    def test_pont_window_api_sans_reliquat_pywebview(self):
+        # C1 (docs/preconisations_evolution.md) : pywebview est retiré depuis
+        # la 1.49, le pont s'appelle window.api.
+        pont = (ROOT / "gui" / "web_bridge.js").read_text(encoding="utf-8")
+        app = (ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("window.api = {", pont)
+        self.assertNotIn("window.pywebview", pont + app)
+        self.assertNotIn("pywebview.api", pont + app)
+        self.assertNotIn("pywebviewready", app)
 
     def test_fichiers_statiques_servis_tels_quels(self):
         _, body = self._get("/app.js")
@@ -370,6 +384,71 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 403)
 
 
+class FetchMetadataTests(unittest.TestCase):
+    """S1 (docs/preconisations_evolution.md) : un GET simple venu d'une autre
+    page (<img src>, fetch no-cors) n'envoie pas Origin, hote_autorise() le
+    laissait donc passer et la route s'exécutait (poll-log vidait la file du
+    journal). Sec-Fetch-Site, posé par le navigateur et non modifiable par
+    une page, trahit sa provenance."""
+
+    def setUp(self):
+        self.appels = []
+
+        def _poll_log(*_args):
+            self.appels.append("poll-log")
+            return {"lines": []}
+
+        def _echo(payload):
+            self.appels.append("echo")
+            return payload
+
+        self.server = _serve_web.demarrer(
+            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+            api_routes={"poll-log": _poll_log},
+            post_routes={"echo": _echo},
+        )
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def _code(self, route, site=None, corps=None):
+        entetes = {} if site is None else {"Sec-Fetch-Site": site}
+        req = urllib.request.Request(self.base + route, data=corps, headers=entetes,
+                                     method="GET" if corps is None else "POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return response.status
+        except urllib.error.HTTPError as exc:
+            return exc.code
+
+    def test_api_refusee_a_un_autre_site_sans_executer_la_route(self):
+        for site in ("cross-site", "same-site", "Cross-Site"):
+            with self.subTest(site=site):
+                self.assertEqual(self._code("/api/poll-log", site), 403)
+        self.assertEqual(self.appels, [])
+
+    def test_api_acceptee_depuis_la_page_ou_hors_navigateur(self):
+        # same-origin : l'interface elle-même. none : barre d'adresse ou
+        # favori. Absent : client hors navigateur (_instance_existante,
+        # navigateur trop ancien pour Fetch Metadata).
+        for site in ("same-origin", "none", None):
+            with self.subTest(site=site):
+                self.assertEqual(self._code("/api/poll-log", site), 200)
+        self.assertEqual(self.appels, ["poll-log"] * 3)
+
+    def test_post_api_refuse_a_un_autre_site(self):
+        self.assertEqual(self._code("/api/echo", "cross-site", corps=b"{}"), 403)
+        self.assertEqual(self._code("/api/echo", "same-origin", corps=b"{}"), 200)
+        self.assertEqual(self.appels, ["echo"])
+
+    def test_fichiers_statiques_servis_quelle_que_soit_la_provenance(self):
+        # Un lien depuis un autre site (cross-site) doit toujours afficher
+        # l'interface : seules les routes /api/* ont des effets de bord.
+        for route in ("/", "/app.js", "/style.css", "/web_bridge.js"):
+            with self.subTest(route=route):
+                self.assertEqual(self._code(route, "cross-site"), 200)
+
+
 class ServeurRobustesseTests(unittest.TestCase):
     """Entrées anormales et routes qui lèvent : le serveur répond toujours
     (JSON d'erreur), sans couper la connexion ni bloquer un fil."""
@@ -544,6 +623,66 @@ class ValidationCfgWebTests(unittest.TestCase):
     def test_cfg_non_dict_est_refusee(self):
         self.assertNotEqual(L2M._valider_cfg_web(None), "")
         self.assertNotEqual(L2M._valider_cfg_web("chemin"), "")
+
+
+class OpenFolderTests(unittest.TestCase):
+    """S2 (docs/preconisations_evolution.md) : open_folder n'affiche que des
+    dossiers existants. Avant, un fichier était ouvert avec son application
+    associée, et un exécutable se lançait."""
+
+    def setUp(self):
+        tmp_ctx = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp_ctx.cleanup)
+        self.tmp = Path(tmp_ctx.name)
+        patcher = mock.patch.object(L2M.subprocess, "Popen")
+        self.popen = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.api = L2M.Api()
+
+    def test_dossier_existant_ouvert(self):
+        self.assertEqual(self.api.open_folder(str(self.tmp)), {"ok": True})
+        self.popen.assert_called_once()
+        self.assertEqual(self.popen.call_args[0][0][1], str(self.tmp.resolve()))
+
+    def test_fichier_refuse_sans_lancer_de_programme(self):
+        fichier = self.tmp / "outil.exe"
+        fichier.write_bytes(b"MZ")
+        resultat = self.api.open_folder(str(fichier))
+        self.assertFalse(resultat["ok"])
+        self.assertIn(str(fichier), resultat["error"])
+        self.popen.assert_not_called()
+
+    def test_chemin_inexistant_vide_ou_non_texte_refuse(self):
+        for chemin in (str(self.tmp / "absent"), "", "   ", None, 123, ["x"]):
+            with self.subTest(chemin=chemin):
+                self.assertFalse(self.api.open_folder(chemin)["ok"])
+        self.popen.assert_not_called()
+
+    def test_chemin_reseau_refuse_avant_tout_acces_disque(self):
+        # Path remplacé : le moindre is_dir()/resolve() lèverait. Sous
+        # Windows, il contacterait l'hôte en SMB avec l'identité de
+        # l'utilisateur.
+        with mock.patch.object(L2M.sys, "platform", "win32"), \
+                mock.patch.object(L2M, "Path", side_effect=AssertionError("accès disque")):
+            for chemin in (r"\\hote\partage\x.exe", "//hote/partage",
+                           r"\\?\UNC\hote\partage", "/\\hote\\partage"):
+                with self.subTest(chemin=chemin):
+                    resultat = self.api.open_folder(chemin)
+                    self.assertFalse(resultat["ok"])
+                    self.assertIn("réseau", resultat["error"])
+        self.popen.assert_not_called()
+
+    def test_application_macos_refusee(self):
+        (self.tmp / "Calculette.app").mkdir()
+        with mock.patch.object(L2M.sys, "platform", "darwin"):
+            self.assertFalse(self.api.open_folder(str(self.tmp / "Calculette.app"))["ok"])
+        self.popen.assert_not_called()
+
+    def test_echec_du_lancement_remonte(self):
+        self.popen.side_effect = FileNotFoundError("xdg-open absent")
+        resultat = self.api.open_folder(str(self.tmp))
+        self.assertFalse(resultat["ok"])
+        self.assertIn("xdg-open absent", resultat["error"])
 
 
 class BrowseDirTests(unittest.TestCase):
@@ -1051,7 +1190,7 @@ class NouvelleInstanceTests(unittest.TestCase):
         corps = corps[:corps.index("\nfunction ")]
         # Chemin bouton : onglet ouvert AVANT l'appel réseau.
         chemin_bouton = corps[corps.index("const onglet = window.open('', '_blank');"):]
-        self.assertIn("pywebview.api.new_instance()", chemin_bouton)
+        self.assertIn("api.new_instance()", chemin_bouton)
         self.assertIn("location.hostname + ':' + r.port", chemin_bouton)
         # Chemin question à la relance : cet onglet part vers le nouveau port.
         chemin_relance = corps[corps.index("if (dansCetOnglet)"):

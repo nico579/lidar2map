@@ -654,6 +654,21 @@ _ctx = _ssl._create_default_https_context()
 check("R2#2 contexte TLS strict après restore",
       _ctx.verify_mode == _ssl.CERT_REQUIRED and _ctx.check_hostname)
 
+# S5 (docs/preconisations_evolution.md) : aucun provider ne fabrique de
+# contexte TLS sans vérification (fi_maanmittauslaitos en exposait un).
+# Commentaires ignorés : ils peuvent citer l'ancien contournement.
+import re as _re_s5
+_TLS_AFFAIBLI = _re_s5.compile(
+    r"CERT_NONE|check_hostname\s*=\s*False|_create_unverified_context")
+_affaiblis = [
+    f"{_f.name}:{_n}"
+    for _f in sorted((_APP.parent / "providers").glob("*.py"))
+    for _n, _ligne in enumerate(_f.read_text(encoding="utf-8").splitlines(), 1)
+    if _TLS_AFFAIBLI.search(_ligne.split("#", 1)[0])
+]
+check("S5 aucun provider ne désactive la vérification TLS", not _affaiblis,
+      ", ".join(_affaiblis))
+
 print("== 18. R1#8 : découverte EXACTE vs GRILLE (404 indexé = erreur) ==")
 # Le flag DISCOVER_EXACT distingue un index (WFS/STAC/registre : la dalle est
 # PROMISE → 404 = index périmé/panne = ERREUR) d'une grille synthétique (cellule

@@ -1283,7 +1283,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.51.0"
+VERSION      = "1.51.1"
 VERSION_DATE = "2026-09"
 
 
@@ -4514,16 +4514,9 @@ def _resoudre_zone_wgs84(args):
     )
 
 
-def main_decouper():
-    """
-    Mode --decouper : découpe a posteriori un MBTiles existant.
-    Usage : lidar2map.py --decouper --source fichier.mbtiles
-            [--cols C --rows R | --split-width KM]
-            [--formats-fichier mbtiles rmap sqlitedb]
-            [--tuiles-ecraser]
-    """
-    import argparse
-    t_debut = time.time()
+def _construire_parser_decouper():
+    """Parser du mode --split, hors de main_decouper() pour que
+    tests/test_cli_docs.py relise ses options sans lancer de découpe."""
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --split",
         description="A posteriori splitting of an existing MBTiles.")
@@ -4542,6 +4535,19 @@ def main_decouper():
                         choices=["mbtiles", "rmap", "sqlitedb"], default=["mbtiles"],
                         metavar="FMT")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser")
+    return parser
+
+
+def main_decouper():
+    """
+    Mode --decouper : découpe a posteriori un MBTiles existant.
+    Usage : lidar2map.py --decouper --source fichier.mbtiles
+            [--cols C --rows R | --split-width KM]
+            [--formats-fichier mbtiles rmap sqlitedb]
+            [--tuiles-ecraser]
+    """
+    t_debut = time.time()
+    parser = _construire_parser_decouper()
     args = parser.parse_args()
     _valider_zooms(args, parser)
     _ff = args.formats_fichier
@@ -5411,19 +5417,9 @@ def _executer_fusion_cli(fichiers, sortie, *, formats, simplification=None,
 _executer_fusion_cli.__doc__ = _executer_fusion_cli_impl.__doc__
 
 
-def main_fusionner():
-    """Point d'entrée mode --fusionner : GeoJSON ou MBTiles selon les sources.
-
-    Un seul flag --merge pour les deux : bifurque en interne sur l'extension
-    des sources résolues (même principe que --raster qui bifurque déjà selon
-    qu'un --source .mbtiles existant est fourni). Évite un second flag/onglet
-    dédié pour une opération que l'utilisateur perçoit comme unique ("fusionner
-    plusieurs fichiers en un seul"), au prix d'une simple garde de cohérence :
-    toutes les sources doivent être du même type.
-    """
-    import argparse
-
-    t_debut = time.time()
+def _construire_parser_fusionner():
+    """Parser du mode --merge, hors de main_fusionner() pour que
+    tests/test_cli_docs.py relise ses options sans lancer de fusion."""
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --merge",
         description="Merge several GeoJSON files, or several MBTiles files, into one.",
@@ -5462,6 +5458,21 @@ Examples:
                         help="GeoJSON sources only: Douglas-Peucker epsilon in metres (default: auto from area).")
     parser.add_argument("--tiles-overwrite", "--tuiles-ecraser", action="store_true", dest="tuiles_ecraser",
                         help="MBTiles sources only: overwrite an existing output file.")
+    return parser
+
+
+def main_fusionner():
+    """Point d'entrée mode --fusionner : GeoJSON ou MBTiles selon les sources.
+
+    Un seul flag --merge pour les deux : bifurque en interne sur l'extension
+    des sources résolues (même principe que --raster qui bifurque déjà selon
+    qu'un --source .mbtiles existant est fourni). Évite un second flag/onglet
+    dédié pour une opération que l'utilisateur perçoit comme unique ("fusionner
+    plusieurs fichiers en un seul"), au prix d'une simple garde de cohérence :
+    toutes les sources doivent être du même type.
+    """
+    t_debut = time.time()
+    parser = _construire_parser_fusionner()
     args, _extra = parser.parse_known_args()  # tolère d'éventuels tokens globaux
     # Signaler les options non reconnues (typos) au lieu de les avaler en
     # silence : `--outut-file x` était sinon ignoré et la sortie retombait sur
@@ -6060,10 +6071,9 @@ def _livrables_projet(proj):
         key=lambda p: p.stat().st_mtime, reverse=True)
 
 
-def main_serve():
-    """Mode --serve : sert les livrables d'un projet existant sur le réseau
-    local (URL + QR ASCII) pour import direct sur le téléphone. Ctrl+C arrête."""
-    import argparse
+def _construire_parser_serve():
+    """Parser du mode --serve, hors de main_serve() pour que
+    tests/test_cli_docs.py relise ses options sans démarrer de partage."""
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --serve",
         description="Partage LAN des livrables d'un projet (téléphone via QR).")
@@ -6074,6 +6084,13 @@ def main_serve():
     parser.add_argument("--output-dir", "--dossier", dest="dossier", default=None,
                         metavar="CHEMIN",
                         help="Dossier de sortie custom (défaut : <travail>/Projets)")
+    return parser
+
+
+def main_serve():
+    """Mode --serve : sert les livrables d'un projet existant sur le réseau
+    local (URL + QR ASCII) pour import direct sur le téléphone. Ctrl+C arrête."""
+    parser = _construire_parser_serve()
     args = parser.parse_args()
 
     proj = _dossier_partage_projet(args.zone_nom, args.dossier)
@@ -6392,15 +6409,9 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
         f"après {delai_s:.0f} s.")}
 
 
-def main_serve_gui():
-    """Mode par défaut (lancement sans argument) ainsi que --serve-gui
-    explicite : sert gui/index.html + app.js + style.css sur HTTP local et
-    ouvre le navigateur dessus, comme blink2video (serve.py, --open-browser
-    - ici actif par défaut, --no-browser pour le désactiver). Seul mode GUI :
-    pywebview a été retiré (plus d'import webview/PyQt6/QtWebEngine nulle
-    part). Une seule instance d'Api pour toute la durée du process : launch/
-    stop/poll_log partagent son état (subprocess en cours, queue de log)."""
-    import argparse
+def _construire_parser_serve_gui():
+    """Parser du mode --serve-gui, hors de main_serve_gui() pour que
+    tests/test_cli_docs.py relise ses options sans démarrer de serveur."""
     parser = argparse.ArgumentParser(
         prog="lidar2map.py --serve-gui",
         description="Sert le GUI lidar2map sur HTTP local (navigateur). "
@@ -6432,6 +6443,18 @@ def main_serve_gui():
                         help="Démarre un nouveau serveur sur le premier port libre même si une "
                              "instance tourne déjà, sans question (calcul en parallèle). Sans "
                              "cette option, un lancement rejoint l'instance existante")
+    return parser
+
+
+def main_serve_gui():
+    """Mode par défaut (lancement sans argument) ainsi que --serve-gui
+    explicite : sert gui/index.html + app.js + style.css sur HTTP local et
+    ouvre le navigateur dessus, comme blink2video (serve.py, --open-browser
+    - ici actif par défaut, --no-browser pour le désactiver). Seul mode GUI :
+    pywebview a été retiré (plus d'import webview/PyQt6/QtWebEngine nulle
+    part). Une seule instance d'Api pour toute la durée du process : launch/
+    stop/poll_log partagent son état (subprocess en cours, queue de log)."""
+    parser = _construire_parser_serve_gui()
     args = parser.parse_args()
 
     gui_dir = _resoudre_gui_dir()
@@ -6475,8 +6498,7 @@ def main_serve_gui():
         return api.set_autostart(bool((payload or {}).get("actif")))
 
     def _open_folder(payload):
-        api.open_folder((payload or {}).get("path", ""))
-        return {"ok": True}
+        return api.open_folder((payload or {}).get("path", ""))
 
     # Port réel connu seulement après le démarrage du serveur (plus bas) :
     # la route le lit au moment de l'appel.
@@ -7970,15 +7992,36 @@ class Api:
             pass
 
     def open_folder(self, path):
+        """Affiche un dossier dans le gestionnaire de fichiers du système.
+
+        Refuse tout ce qui n'est pas un dossier existant (voir
+        docs/preconisations_evolution.md, S2) : explorer, open et xdg-open
+        ouvriraient un fichier avec son application associée, et un
+        exécutable se lancerait. Sous Windows, un chemin réseau (UNC) est
+        refusé avant tout accès disque : le simple is_dir() contacterait
+        l'hôte distant en SMB avec l'identité Windows de l'utilisateur.
+        """
+        if not isinstance(path, str) or not path.strip():
+            return {"ok": False, "error": "Aucun dossier indiqué."}
+        brut = path.strip()
+        if sys.platform == "win32" and brut[:1] in ("\\", "/") and brut[1:2] in ("\\", "/"):
+            return {"ok": False, "error": f"Chemin réseau refusé : {brut}"}
         try:
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", Path(path).resolve()])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", path])
-            else:
-                subprocess.Popen(["xdg-open", path])
-        except Exception:
-            pass
+            dossier = Path(brut).expanduser().resolve()
+            est_dossier = dossier.is_dir()
+        except (OSError, RuntimeError, ValueError):
+            est_dossier = False
+        if not est_dossier:
+            return {"ok": False, "error": f"Dossier introuvable : {brut}"}
+        if sys.platform == "darwin" and dossier.suffix.lower() == ".app":
+            # Une application macOS est un dossier : open la lancerait.
+            return {"ok": False, "error": f"Application refusée : {brut}"}
+        commande = {"win32": "explorer", "darwin": "open"}.get(sys.platform, "xdg-open")
+        try:
+            subprocess.Popen([commande, str(dossier)])
+        except OSError as exc:
+            return {"ok": False, "error": f"Ouverture impossible : {exc}"}
+        return {"ok": True}
 
     def get_last_error(self):
         """Retourne le message d'erreur du dernier run (ou chaîne vide).

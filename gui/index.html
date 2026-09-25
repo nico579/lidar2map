@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>lidar2map</title>
 <!-- ═══════════════════════════════ CSS ════════════════════════════════════ -->
-<style>/*__LIDAR2MAP_CSS__*/</style>
+<link rel="stylesheet" href="/style.css">
 </head>
 <!-- ═══════════════════════════════ HTML ═══════════════════════════════════ -->
 <body>
@@ -928,6 +928,8 @@
 </div>
 
 <!-- ═══════════════════════════════ JS ═════════════════════════════════════ -->
-<script>//__LIDAR2MAP_JS__</script>
+<!-- web_bridge.js (window.api) avant app.js, qui l'appelle dès le chargement. -->
+<script src="/web_bridge.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
