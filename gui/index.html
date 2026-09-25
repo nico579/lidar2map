@@ -399,6 +399,10 @@
        <input type="text" id="f-lidar-apikey" style="margin-left:4px;max-width:160px"
               placeholder="clé OpenTopography" data-i18n-placeholder="ph.optopo">
       </span>
+      <!-- Source instable (STATUT = "experimental" côté provider). -->
+      <span id="lidar-exp-note" style="display:none;margin-left:8px;color:var(--red);cursor:help"
+            data-i18n="prov.exp.note" data-i18n-title="tip.prov.exp"
+            title="Le service de cette source a échoué de façon répétée lors de nos vérifications : le téléchargement peut échouer.">⚠ source expérimentale</span>
      </div>
      <!-- Réglages du mode LAZ. Visibles seulement en surface = LAZ ; préremplis
           avec les défauts du jumeau Python (applyProviderLaz). -->

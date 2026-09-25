@@ -1,6 +1,6 @@
 # Tests de régression des calculs scientifiques de lidar2map.py
 # (kernels Horn, nodata, LRM, SVF, openness, RRIM, passe multi-sorties).
-# Usage : python Tests/_test_corrections.py  (depuis n'importe quel cwd)
+# Usage : python tests/_test_corrections.py  (depuis n'importe quel cwd)
 import sys, math, tempfile, importlib.util
 from pathlib import Path
 

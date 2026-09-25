@@ -1,7 +1,7 @@
 """Régressions ciblées : publication atomique des téléchargements.
 
 Usage :
-    python Tests/_test_atomic_downloads.py
+    python tests/_test_atomic_downloads.py
 """
 import importlib.util
 import os

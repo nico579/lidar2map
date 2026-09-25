@@ -6,8 +6,8 @@ Construit la même source lidar2map.py en mode onefile minimal, en excluant
 toutes les deps lourdes (le launcher n'utilise que stdlib).
 
 Le bundle lidar2map_bundle.zip N'EST PAS embarqué dans le binaire : il est
-copié à côté du .exe par lidar2map_win_build.ps1, ce qui le rend remplaçable
-sans rebuilder (cf. update_app.py / 7-Zip).
+copié à côté du .exe par lidar2map_win_build.ps1 (le lanceur le réextrait
+quand il change).
 
 Au runtime, le bloc launcher en tête de lidar2map.py cherche le bundle
 à côté de l'exe, puis spawn l'exe interne avec la sentinelle

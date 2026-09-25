@@ -1,7 +1,7 @@
 # Test tuilage MBTiles : format par tuile (R1#7), metadata bounds/format.
 # Le format de BASE (JPEG/PNG) dépend du mode 'auto' (nom) ou d'un forçage
 # explicite, PAS de la nature de l'analyse — un SVF peut sortir en JPEG.
-# Usage : python Tests/_test_tiling.py  (depuis n'importe quel cwd)
+# Usage : python tests/_test_tiling.py  (depuis n'importe quel cwd)
 import os, sys, sqlite3, tempfile, importlib.util, io
 from pathlib import Path
 import numpy as np

@@ -9,6 +9,10 @@ __pycache__/
 build/
 dist/
 dist_onedir/
+# Builds secondaires (clients distants, VM) et version Windows générée par les specs
+build_*/
+dist_*/
+.version_info.txt
 .venv/
 venv/
 env/
@@ -54,6 +58,9 @@ sortie/
 
 # ─── lidar2map : état utilisateur (perso, jamais public) ────────────
 historique.json
+preferences.json
+# Clés d'API en clair (fichiers de test locaux) : jamais dans le dépôt
+*api_key*.txt
 dep_bbox_cache.json
 ville_bbox_cache.json
 lidar_config.json

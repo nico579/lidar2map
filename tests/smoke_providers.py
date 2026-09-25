@@ -15,8 +15,8 @@ Statuts :
   SKIP  cle API absente, ou dependance LAZ absente (laspy/lazrs/pdal)
 
 Usage :
-  python Tests/smoke_providers.py
-  python Tests/smoke_providers.py --only gb-scotland,lu-act
+  python tests/smoke_providers.py
+  python tests/smoke_providers.py --only gb-scotland,lu-act
 Reseau requis. Pense pour tourner regulierement (cron CI ou manuel).
 Cles API (sinon SKIP) : OPENTOPOGRAPHY_API_KEY, DATAFORDELER_API_KEY, FI_NLS_API_KEY.
 """

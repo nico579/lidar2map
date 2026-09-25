@@ -28,9 +28,9 @@ L’application binaire autonome est le choix normal pour l’utilisateur final.
 Elle embarque son propre Python, ses dépendances, le runtime Java et osmosis,
 sans les installer dans le système.
 
-La publication ou le patch des archives binaires autonomes relève de la
-maintenance. Les scripts de compilation, l’architecture du bundle et le workflow release
-de `update_app.py` sont décrits uniquement dans [BUILD.md](../BUILD.md).
+La publication des archives binaires autonomes relève de la maintenance. Les
+scripts de compilation, l’architecture du bundle et le déploiement d’une
+release sont décrits uniquement dans [BUILD.md](../BUILD.md).
 
 #### 1.1.1 Télécharger et extraire l’application binaire autonome
 

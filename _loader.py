@@ -3,17 +3,10 @@
 # Ce fichier est compilé dans le binaire PyInstaller et NE CHANGE JAMAIS.
 # Il se contente de trouver lidar2map.py dans _internal/ et de l'exécuter.
 #
-# Avantage : lidar2map.py est stocké comme fichier texte dans le zip/bundle.
-# Pour mettre à jour le script depuis Windows (sans accès à la VM Mac) :
-#   1. Ouvrir LIDAR2MAP.app/Contents/Resources/lidar2map_bundle.zip
-#   2. Naviguer dans _internal/
-#   3. Remplacer lidar2map.py
-#   C'est tout — aucun rebuild, aucun accès Mac nécessaire.
-#
-# Limite : ce remplacement ne vaut que si la nouvelle version ne modifie aucun
-# module compilé (les _*.py listés par deploy.is_rebuild_file) ni les specs.
-# Sinon le nouveau lidar2map.py appellerait des modules figés d'une version
-# antérieure : il faut la release complète, reconstruite par release.yml.
+# lidar2map.py est stocké comme fichier texte dans le zip/bundle. Ce choix
+# servait au patch sans reconstruction (update_app.py), retiré en 1.53.0 :
+# toute nouvelle version est désormais une release complète, reconstruite par
+# release.yml.
 
 import sys
 import runpy

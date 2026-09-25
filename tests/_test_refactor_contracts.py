@@ -6646,6 +6646,10 @@ class ProviderContractTests(unittest.TestCase):
                 self.assertEqual(
                     entry["resolution_m"], float(module.RESOLUTION_M)
                 )
+                # M1 : seule valeur de STATUT reconnue, reprise par le GUI.
+                statut = getattr(module, "STATUT", None)
+                self.assertIn(statut, (None, "experimental"))
+                self.assertEqual(entry["experimental"], statut == "experimental")
 
     def test_laz_twins_stay_capabilities_of_their_parent_provider(self):
         expected_keys = {
@@ -6850,7 +6854,11 @@ class ProviderLoadingCharacterizationTests(unittest.TestCase):
         self.assertIs(result, provider)
         self.assertTrue(explicit)
         self.assertEqual(argv, ["lidar2map.py", "--lidar"])
-        importer.assert_called_once_with("providers", "fr_ign_laz")
+        # Le jumeau LAZ est chargé ; son parent n'est relu ensuite que pour
+        # le statut expérimental (M1).
+        self.assertEqual(importer.call_args_list,
+                         [mock.call("providers", "fr_ign_laz"),
+                          mock.call("providers", "fr_ign")])
         setter.assert_called_once_with(
             hmin=-0.5,
             hmax=3.2,
@@ -6896,6 +6904,31 @@ class ProviderLoadingCharacterizationTests(unittest.TestCase):
                     L._load_provider()
                 self.assertEqual(raised.exception.code, 1)
                 self.assertIn(expected, stderr.getvalue())
+
+    def test_load_warns_about_an_experimental_source_and_its_laz_twin(self):
+        # M1 (docs/preconisations_evolution.md) : une source déclarée
+        # STATUT = "experimental" est annoncée en CLI ; son jumeau LAZ, qui
+        # passe par le même service, l'est aussi.
+        parent = SimpleNamespace(STATUT="experimental")
+        cases = (
+            (["--provider", "de-sh"], {"de_sh": parent}, True),
+            (["--provider", "de-sh", "--laz"],
+             {"de_sh_laz": SimpleNamespace(), "de_sh": parent}, True),
+            (["--provider", "fr-ign"], {"fr_ign": SimpleNamespace()}, False),
+        )
+        for options, modules, warned in cases:
+            with self.subTest(options=options):
+                stderr = io.StringIO()
+                importer = mock.Mock(side_effect=lambda _pkg, name: modules[name])
+                with mock.patch.object(L.sys, "argv", ["lidar2map.py", *options]), \
+                        mock.patch.object(L._os, "environ", {}), \
+                        mock.patch.object(L, "_PROVIDER_CLI_EXPLICIT", False), \
+                        mock.patch.object(
+                            L, "_import_patchable_source_module", importer
+                        ), contextlib.redirect_stderr(stderr):
+                    L._load_provider()
+                self.assertEqual("experimental source" in stderr.getvalue(),
+                                 warned, stderr.getvalue())
 
     def test_missing_provider_package_keeps_the_inline_france_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:

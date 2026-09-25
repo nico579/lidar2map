@@ -67,6 +67,12 @@ window through `/vsicurl/`; it does not download each complete source tile.
 
 Resolution is nominal and exact coverage can vary inside the stated area.
 
+**Experimental** sources are flagged in the interface ("experimental" in the
+list, with a note next to it) and by a warning on the command line: their
+service failed repeatedly during our checks, so downloads may fail.
+Currently: `de-sh` (the service returns an HTML page instead of tiles) and
+`es-icgc` (server errors).
+
 | Code | Country | Dataset | Res. | Native CRS | Access & specifics |
 |---|---|---|---|---|---|
 | `fr-ign` | France | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | Vector TMS PBF + WMS GetMap, mainland, rollout still in progress: areas IGN hasn't published yet have no data and stay transparent on the map |

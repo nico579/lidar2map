@@ -56,6 +56,8 @@ const I18N = {
     "req.remotehost":"Indiquez l'hôte de la VM distante.",
     "loading":"Chargement...", "apikey":"Clé API :",
     "tip.provider":"Source LiDAR, par pays. La liste est filtrée par le type de surface choisi au-dessus.",
+    "prov.exp":"expérimental", "prov.exp.note":"⚠ source expérimentale",
+    "tip.prov.exp":"Le service de cette source a échoué de façon répétée lors de nos vérifications : le téléchargement peut échouer. Réessayer plus tard, ou choisir une autre source si le pays en propose une.",
     "sec.source":"Source des données", "f.provider":"Provider", "f.surface":"Surface",
     "f.service":"Service", "f.themes":"Thèmes", "f.couches":"Couches",
     "tip.listedispo":"Entrées disponibles. Sélectionnez puis + (ou double-clic) pour ajouter.",
@@ -220,6 +222,8 @@ const I18N = {
     "req.remotehost":"Enter the remote VM's host.",
     "loading":"Loading...", "apikey":"API key:",
     "tip.provider":"LiDAR source, per country. The list is filtered by the surface type chosen above.",
+    "prov.exp":"experimental", "prov.exp.note":"⚠ experimental source",
+    "tip.prov.exp":"This source's service failed repeatedly during our checks: the download may fail. Try again later, or pick another source if the country has one.",
     "sec.source":"Data source", "f.provider":"Provider", "f.surface":"Surface",
     "f.service":"Service", "f.themes":"Themes", "f.couches":"Layers",
     "tip.listedispo":"Available entries. Select then + (or double-click) to add.",
@@ -776,6 +780,7 @@ function buildProviders(providers, activeCode) {
   if (opt && opt.dataset.res) _resolutionM = parseFloat(opt.dataset.res);   // défaut σ selon provider
   applyProviderCountry(country);
   applyProviderApiKey(opt);
+  applyProviderExperimental(opt);
   applyProviderLaz(sel.value);
   applyZoomCap();
   ombShowParams();   // actualise notamment « auto (15 px = … m) » au démarrage
@@ -803,8 +808,11 @@ function buildProviders(providers, activeCode) {
 // absente du nom officiel (ex. "DEM 5m" ne la duplique pas).
 function _providerOption(p) {
   const hasRes = /\d[\d.,]*\s?(m|cm)\b/i.test(p.name);
-  const label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
-  return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-res="${p.resolution_m ?? 0.5}">${_acEsc(label)}</option>`;
+  let label = hasRes ? p.name : `${p.name} (${fmtRes(p.resolution_m ?? 0.5)})`;
+  // Source instable (STATUT = "experimental" côté provider) : signalée dans la
+  // liste même, un <option> ne pouvant pas porter de badge HTML.
+  if (p.experimental) label += ' · ' + t('prov.exp');
+  return `<option value="${p.code}" data-country="${p.country}" data-apikey-requise="${p.apikey_requise?1:0}" data-experimental="${p.experimental?1:0}" data-res="${p.resolution_m ?? 0.5}">${_acEsc(label)}</option>`;
 }
 
 // Liste de providers GROUPÉE PAR PAYS (<optgroup>). Avec 25+ pays et plusieurs
@@ -842,6 +850,7 @@ function _applyProviderSelection() {
   if (o && o.dataset.res) _resolutionM = parseFloat(o.dataset.res);
   applyProviderCountry(c);
   applyProviderApiKey(o);
+  applyProviderExperimental(o);
   applyProviderLaz(sel.value);
   applyZoomCap();
 }
@@ -1205,6 +1214,14 @@ function applyProviderApiKey(opt) {
   if (!group) return;
   const needs = opt && opt.dataset.apikeyRequise === '1' && !lazActif();
   group.style.display = needs ? 'inline-flex' : 'none';
+}
+
+// Note visible à côté de la liste quand la source choisie est expérimentale
+// (échecs répétés constatés) : l'infobulle dit quoi en attendre.
+function applyProviderExperimental(opt) {
+  const note = document.getElementById('lidar-exp-note');
+  if (!note) return;
+  note.style.display = (opt && opt.dataset.experimental === '1') ? 'inline' : 'none';
 }
 
 // Le provider LiDAR ne pilote PLUS l'onglet raster ni l'onglet IGN Vectoriel

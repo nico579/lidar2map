@@ -957,14 +957,15 @@ if getattr(sys, "frozen", False):
 
 
 def _import_patchable_source_module(package_name, module_name):
-    """Charge explicitement une ressource Python patchable depuis le disque.
+    """Charge explicitement une ressource Python depuis le disque.
 
     Les specs PyInstaller embarquent aussi ces modules dans le PYZ pour que
     leurs dépendances soient détectées au build. Un import normal peut donc
-    préférer cette copie compilée à `_internal/<package>/*.py`, précisément le
-    fichier que `update_app.py` remplace. Le chargeur explicite garantit que
-    les outils distants et providers livrés par un patch sont ceux exécutés.
-    En mode source, il conserve la même sémantique et facilite le test.
+    préférer cette copie compilée à `_internal/<package>/*.py`. Ce chargeur
+    garantissait que les fichiers remplacés par un patch (update_app.py,
+    retiré en 1.53.0) soient ceux exécutés ; sans patch, les deux copies
+    viennent du même build et il ne fait plus que conserver ce comportement.
+    En mode source, il garde la même sémantique et facilite le test.
     """
     import importlib as _runtime_importlib
     import importlib.util as _runtime_importlib_util
@@ -1283,7 +1284,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.52.0"
+VERSION      = "1.53.0"
 VERSION_DATE = "2026-09"
 
 

@@ -21,13 +21,13 @@ les noms de fonctions font foi.
 Conventions du dépôt à respecter :
 
 - **Tests** : `python tests/run_tests.py fast` pendant le travail, `all`
-  (19 suites, dont les tests scientifiques) avant de pousser, et
-  `ruff check .`. Un test qui cible un bug doit échouer sur l'ancien code.
-- **Livraison** : un fichier `_*.py` ou une spec modifiés imposent une
-  reconstruction des exe via `release.yml` (`deploy.py --new-tag`, voir
-  `deploy.is_rebuild_file`). `lidar2map.py`, `providers/`, `gui/` et `tools/`
-  sont patchables par `update_app.py`, mais une release qui mélange les deux
-  exige la reconstruction.
+  (20 suites, dont les tests scientifiques) avant de pousser, et
+  `ruff check .` ; `deploy.py` lance les deux. Un test qui cible un bug doit
+  échouer sur l'ancien code.
+- **Livraison** : depuis la 1.53.0 (D2), toute livraison est une release
+  reconstruite par `release.yml`, que déclenche `deploy.py --new-tag`
+  depuis le dossier de travail, lui-même clone du dépôt. Plus de patch sans
+  reconstruction.
 - **Documentation** : guides utilisateur en anglais et en français
   (`*.md` + `*.fr.md`), documents de travail en français.
 - **Workflows** : modifier `.github/workflows/*` peut exiger que le
@@ -53,8 +53,8 @@ modules ou la CI · **L** restructuration.
 | [C2](#c2-entrées-mortes-du-bootstrap) | Entrées mortes du bootstrap (✅ v1.51.1) | P3 | XS | reconstruction |
 | [P1–P4](#p1p4-parallélisation--travaux-restants) | Parallélisation : travaux restants (✅ P1 à P3 en v1.52.0 ; P4, benchmark sur la VM, à faire par le propriétaire) | P3 | M | reconstruction |
 | [S3](#s3-accès-distant-sans-authentification) | Accès distant sans authentification | **décision** | M | reconstruction |
-| [D2](#d2-architecture-lanceur--bundle--patch) | Architecture lanceur + bundle + patch | **décision** | L | reconstruction |
-| [M1](#m1-statut--expérimental--pour-les-sources-instables) | Statut « expérimental » des sources instables | **décision** | M | reconstruction probable |
+| [D2](#d2-architecture-lanceur--bundle--patch) | Architecture lanceur + bundle + patch (✅ option B en v1.53.0) | **décision** | L | reconstruction |
+| [M1](#m1-statut--expérimental--pour-les-sources-instables) | Statut « expérimental » des sources instables (✅ v1.53.0) | **décision** | M | reconstruction probable |
 | [C3](#c3-façades-et-dataclasses-de-dépendances) | Façades et dataclasses de dépendances | long terme | L | reconstruction |
 | [C4](#c4-commentaires) | Commentaires qui racontent l'histoire | continu | — | — |
 
@@ -355,6 +355,14 @@ quarantaine.
 
 ## D2. Architecture lanceur + bundle + patch
 
+**Statut.** ✅ Option B retenue par le propriétaire le 25 septembre 2026,
+livrée en v1.53.0 : `update_app.py` et `update.yml` supprimés, `deploy.py`
+réécrit sur le modèle de celui de blink2video (le dossier de travail est
+devenu un clone du dépôt : tests, commit, push, tag et suivi du build sur
+place). Lanceur et bundle restent. `_loader.py` (lidar2map.py en texte dans
+le bundle) et `_import_patchable_source_module` ne servent plus le patch mais
+sont conservés : l'option C les retirerait.
+
 **Décision.** C'est un choix de produit.
 
 **Constat chiffré.**
@@ -532,6 +540,17 @@ Commencer par P4 : les autres réglages en dépendent.
 ---
 
 ## M1. Statut « expérimental » pour les sources instables
+
+**Statut.** ✅ v1.53.0, accord du propriétaire le 25 septembre 2026, avec un
+attribut posé à la main plutôt qu'un critère automatique (le smoke
+hebdomadaire n'est pas surveillé). `STATUT = "experimental"` est lu par le
+catalogue (`_provider_runtime.est_experimental`) : mention dans la liste du
+GUI et note à côté, avertissement au chargement en CLI (jumeau LAZ compris).
+Sources marquées après vérification depuis une connexion ordinaire, et pas
+seulement depuis la CI : `de-sh` (page HTML au lieu des dalles) et `es-icgc`
+(HTTP 500). `ca-quebec`, `no-kartverket` et `us-tnm`, en échec sur les runners,
+passent depuis une connexion ordinaire : non marquées. `fi-maanmittauslaitos`
+n'a pas pu être vérifiée sans clé API.
 
 **Décision.** Le propriétaire doit choisir le critère et l'affichage.
 

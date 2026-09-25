@@ -1,19 +1,19 @@
 name: deploy.py cross-platform
 
-# Smoke test manuel : valide que deploy.py (Python pur, stdlib seule) tourne
-# sur Ubuntu et macOS aussi bien que sur Windows.
+# Smoke test : valide que deploy.py (Python pur, stdlib seule) tourne sur
+# Ubuntu et macOS aussi bien que sur Windows.
 #
 # Le test execute :
 #   1. python3 deploy.py --help     (argparse + UTF-8 reconfigure + imports)
 #   2. python3 deploy.py -m ... --dry-run
-#      = clone du repo, copie des fichiers MAP du checkout vers le clone,
-#        diff. Sur un checkout, la plupart des MAP keys sont des noms locaux
-#        absents (README_Github.md vs README.md), donc copy_files les ignore
-#        proprement et le diff est vide ou minimal. Le but est de valider
-#        qu'aucune erreur OS-specifique (path separator, encoding, ctypes
-#        Windows-only, etc.) ne casse l'execution.
+#      = contrôles du dépôt (branche main, remote officiel, HEAD égal à
+#        origin/main, aucun fichier nouveau non suivi), puis diff sur le
+#        checkout lui-même, vide. Le but est de valider qu'aucune erreur
+#        OS-spécifique (encodage, ctypes Windows-only, etc.) ne casse
+#        l'exécution.
 #
-# --dry-run sort AVANT tout commit/push : aucun risque pour main.
+# --dry-run sort AVANT tout commit/push et ne touche pas à l'index : aucun
+# risque pour main.
 
 on:
   push:
@@ -47,5 +47,5 @@ jobs:
       - name: deploy.py --help
         run: python3 deploy.py --help
 
-      - name: deploy.py --dry-run (clone + copie + diff, sort avant commit)
+      - name: deploy.py --dry-run (contrôles du dépôt + diff, sort avant commit)
         run: python3 deploy.py -m "ci dry-run cross-platform" --dry-run

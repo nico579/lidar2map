@@ -28,6 +28,14 @@ class DependancesChargementProvider:
     quitter: Callable = sys.exit
 
 
+def est_experimental(module) -> bool:
+    """Source instable (M1 de docs/preconisations_evolution.md) : le provider
+    déclare ``STATUT = "experimental"``, posé à la main quand le test de fumée
+    hebdomadaire échoue de façon répétée. Affiché par le GUI et annoncé en CLI :
+    une panne de la source devient une limite connue, pas un bug signalé."""
+    return getattr(module, "STATUT", "") == "experimental"
+
+
 def discover_providers(
     providers_dir,
     *,
@@ -67,6 +75,7 @@ def discover_providers(
                     getattr(module, "APIKEY_REQUISE", False)
                 ),
                 "resolution_m": float(getattr(module, "RESOLUTION_M", 0.5)),
+                "experimental": est_experimental(module),
             }
             if (providers_dir / f"{provider_file.stem}_laz.py").exists():
                 try:
@@ -262,6 +271,21 @@ def load_provider(
                     file=dependances.stderr,
                 )
                 dependances.quitter(1)
+        # Un jumeau LAZ passe par le même service que son parent : il en
+        # hérite le statut, comme dans la liste du GUI qui ne montre que lui.
+        parent = None
+        if module_name.endswith("_laz"):
+            try:
+                parent = dependances.importer("providers", module_name[:-4])
+            except ImportError:
+                parent = None
+        if est_experimental(module) or (parent is not None and est_experimental(parent)):
+            dependances.ecrire(
+                f"  WARNING: '{code}' is an experimental source: its service "
+                "failed repeatedly in the weekly provider check, downloads may "
+                "fail.",
+                file=dependances.stderr,
+            )
         return module, cli_explicit
     except ModuleNotFoundError as error:
         missing = getattr(error, "name", "") or ""

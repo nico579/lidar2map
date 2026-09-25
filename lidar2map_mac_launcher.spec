@@ -6,8 +6,8 @@ Construit la même source lidar2map.py en mode onefile minimal, en excluant
 toutes les deps lourdes (le launcher n'utilise que stdlib).
 
 Le bundle lidar2map_bundle.zip N'EST PAS embarqué dans le binaire : il est
-copié dans LIDAR2MAP.app/Contents/Resources/ par lidar2map_mac_build.sh,
-ce qui le rend remplaçable sans rebuilder (cf. update_app.py).
+copié dans LIDAR2MAP.app/Contents/Resources/ par lidar2map_mac_build.sh
+(le lanceur le réextrait quand il change).
 
 Au runtime, le bloc launcher en tête de lidar2map.py cherche le bundle
 dans Contents/Resources/, extrait dans ~/Library/Application Support/lidar2map/,

@@ -615,9 +615,9 @@ important.
 Depuis l’arborescence de développement locale :
 
 ```bash
-python Tests/run_tests.py fast
-python Tests/run_tests.py scientific
-python Tests/run_tests.py all
+python tests/run_tests.py fast
+python tests/run_tests.py scientific
+python tests/run_tests.py all
 ```
 
 Dans le dépôt GitHub déployé, `Tests/` est publié sous `tests/` :
@@ -645,7 +645,7 @@ le préfixe `_test_`. Sans profil, il exécute également la campagne complète.
 | `tests/_test_mbtiles_lidar_atomic.py` | producteur MBTiles LiDAR complet : validation SQLite, encodeur, arrêt coopératif, réutilisation du cache warpé |
 | `tests/_test_atomic_downloads.py` | téléchargements et publications atomiques |
 | `tests/_test_atomic_publications.py` | sorties finales atomiques et reprise après erreur |
-| `tests/_test_patch_delivery.py` | cohérence entre sources, déploiement et bundles ; enregistrement `MAP`/rebuild/CI de tout module extrait, dérivé de l'AST |
+| `tests/_test_packaging.py` | contrat de livraison : tout module extrait (dérivé de l'AST) est suivi par git et couvert par les filtres `paths:` de la CI ; outils embarqués par les specs (ancien `_test_patch_delivery.py`) |
 | `tests/_test_docs_links.py` | intégrité des liens de documentation |
 
 Les autres suites du runner couvrent le partage téléphone et la CLI distante.
@@ -711,25 +711,22 @@ nouveaux sur `telecharger_tuile`/`_lire_zoom_limites_wmts`), `_test_atomic_downl
 
 ## Déploiement et compatibilité des bundles
 
-Les nouveaux modules `_split_*.py`, `_raster_formats.py`, `_mbtiles_*.py`
-(WMTS et LiDAR) et `_ombrages_pures.py` sont copiés vers le dépôt par
-`deploy.py` et surveillés par la CI (filtre `paths:` en glob `_mbtiles_*.py`
-pour ne pas devoir rééditer `ci_github.yml` à chaque nouveau producteur
-`_mbtiles_*` ; entrée explicite pour `_ombrages_pures.py`, hors de ce glob).
-Ils sont
-compilés dans les bundles PyInstaller : leur ajout ou leur modification déclenche
-donc un **rebuild**, pas un patch limité à `_internal/lidar2map.py`. Le garde de
-`deploy.py` empêche de publier un bundle qui contiendrait le nouveau
-`lidar2map.py` sans ses modules.
+Depuis la 1.53.0, le dossier de travail est un clone du dépôt : `deploy.py`
+commit et pousse sur place, et toute livraison est une release reconstruite
+par `release.yml`. Le patch de `_internal/lidar2map.py` sans reconstruction
+(`update_app.py`, `update.yml`) a été retiré, ainsi que la table `deploy.MAP`
+et la notion de fichier « rebuild-gated » qui en protégeaient l'usage
+(décision D2 de [preconisations_evolution.md](preconisations_evolution.md)).
 
-Ce triple enregistrement (`deploy.MAP`, `deploy.is_rebuild_file`, filtres
-`paths:` de `ci_github.yml`) était vérifié par une liste recopiée à la main dans
-`_test_patch_delivery.py` : un module extrait puis oublié dans l'un des trois ne
-faisait échouer aucun test, et le bundle produit importait un fichier absent. La
-liste est désormais **dérivée de l'AST de `lidar2map.py`** : tout import d'un
-module frère doit être présent dans `MAP`, être rebuild-gated et être couvert par
-au moins un motif `paths:`. Les phases 7c à 8 n'ont donc plus rien à ajouter dans
-ce test.
+Les modules extraits (`_split_*.py`, `_raster_formats.py`, `_mbtiles_*.py`,
+`_ombrages_pures.py`…) sont compilés dans les bundles PyInstaller et surveillés
+par la CI (filtre `paths:` en glob `_mbtiles_*.py` pour ne pas devoir rééditer
+`ci.yml` à chaque nouveau producteur `_mbtiles_*` ; entrée explicite pour
+`_ombrages_pures.py`, hors de ce glob).
+
+`tests/_test_packaging.py` dérive de l'AST de `lidar2map.py` la liste des
+modules frères importés, et vérifie que chacun est suivi par git et couvert
+par au moins un motif `paths:`. Une phase future n'a donc rien à y ajouter.
 
 ## Phase 8 : points d'entrée
 

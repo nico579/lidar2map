@@ -7,7 +7,7 @@
 3. [Paramètres CLI spéciaux](#3-paramètres-cli-spéciaux)
 4. [Préparer une machine de build](#4-préparer-une-machine-de-build)
 5. [Builder l'application](#5-builder-lapplication)
-6. [Mettre à jour le script sans rebuilder](#6-mettre-à-jour-le-script-sans-rebuilder)
+6. [Livrer une version](#6-livrer-une-version)
 7. [Lancer l'application](#7-lancer-lapplication)
 8. [Désinstaller](#8-désinstaller)
 9. [Dépannage](#9-dépannage)
@@ -93,12 +93,11 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 
 | Fichier | Rôle |
 |---------|------|
-| `lidar2map.py` | Script principal : façade, bloc launcher, CLI, API du GUI web — patchable sans rebuild (hors bloc launcher) |
-| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…) — compilés dans le bundle : une modification exige un rebuild (`deploy.py` le détecte) |
-| `providers/` | Un fichier par source LiDAR/raster — patchable sans rebuild |
-| `gui/` | Front-end servi par `_serve_web.py` (`index.html`, `app.js`, `style.css`, `web_bridge.js`) — patchable sans rebuild |
-| `_loader.py` | Entry point PyInstaller — chargé dans le binaire, ne change jamais |
-| `update_app.py` | Met à jour `lidar2map.py`, `providers/`, `gui/` et les outils `tools/` embarqués dans le bundle sans rebuild |
+| `lidar2map.py` | Script principal : façade, bloc launcher, CLI, API du GUI web |
+| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…), compilés dans le bundle |
+| `providers/` | Un fichier par source LiDAR/raster |
+| `gui/` | Front-end servi par `_serve_web.py` (`index.html`, `app.js`, `style.css`, `web_bridge.js`) |
+| `_loader.py` | Entry point PyInstaller : exécute `_internal/lidar2map.py` |
 | `lidar2map_mac.spec` | Build interne onedir macOS ARM64 |
 | `lidar2map_mac_launcher.spec` | Launcher `.app` macOS |
 | `lidar2map_mac_build.sh` | Script de build macOS (4 étapes + signature/notarisation optionnelle) |
@@ -109,7 +108,7 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | `setup_build_mac.sh` | Setup machine de build macOS vierge (5 étapes, pile Intel dédiée) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
-| `deploy.py` | **Déploiement unifié en 1 commande** (cross-platform Win/Mac/Linux) : push, détection du diff, patch cloud/local ou tag pour rebuild |
+| `deploy.py` | **Déploiement unifié en 1 commande** (cross-platform Win/Mac/Linux) : tests, commit et push depuis ce dépôt, puis tag et suivi du build de release |
 
 ### Livrables à distribuer
 
@@ -260,7 +259,7 @@ passer `--bootstrap=pip` (install dans l'env courant) ou `--bootstrap=none`
 # Copier les fichiers sur la VM Mac
 # tagmapping-min.xml est optionnel mais améliore le tagging OSM —
 # sans lui, osmosis utilise son tagmapping par défaut (résultat dégradé).
-scp lidar2map.py _loader.py update_app.py tagmapping-min.xml \
+scp lidar2map.py _loader.py tagmapping-min.xml \
     lidar2map_mac.spec lidar2map_mac_launcher.spec \
     lidar2map_mac_build.sh setup_build_mac.sh \
     m1@<ip-vm>:~/Downloads/
@@ -327,179 +326,53 @@ fichier texte non analysé. Les specs lancent donc 2 analyses :
 
 ---
 
-## 6. Mettre à jour le script sans rebuilder
+## 6. Livrer une version
 
-**Procédure normale** pour toute modification de `lidar2map.py`.
-Aucun accès à la VM Mac nécessaire, aucun rebuild.
+Toute livraison passe par une **release reconstruite** : `release.yml`
+construit les 4 archives (Windows, Linux, macOS Apple Silicon et Intel) sur
+des runners neufs, lance chaque binaire (`tests/exe_smoke.py`), puis publie.
+Le patch d'un bundle existant sans reconstruction (`update_app.py`,
+`update.yml`) a été retiré en 1.53.0 : depuis la v1.45.0, toutes les releases
+avaient de toute façon exigé une reconstruction (décision D2 de
+[docs/preconisations_evolution.md](docs/preconisations_evolution.md)).
 
-`update_app.py` propose 3 modes selon le besoin :
+Côté utilisateur, l'application signale la nouvelle version ; il suffit de
+remplacer l'ancienne archive décompressée par la nouvelle. Le lanceur voit que
+le bundle a changé et le réextrait au premier lancement.
 
-| Mode | Commande | Pour quoi |
-|------|----------|-----------|
-| Local | `python update_app.py` | Patcher un seul bundle local (workflow utilisateur) |
-| Archive macOS | `python update_app.py lidar2map-macos-arm64.zip` | Patcher chirurgicalement un `.app` zippé depuis Windows |
-| Release multi-OS | `python update_app.py --release` | Patcher les 3 archives Win/Linux/Mac et re-publier sur GitHub |
+### Déploiement en une commande : `deploy.py`
 
-Tous les modes valident la syntaxe Python (`compile()`) avant écriture —
-un fichier cassé n'est jamais injecté.
-
-### Mode local (utilisateur final)
-
-```bash
-# Placer lidar2map.py modifié dans le même dossier que update_app.py
-python3 update_app.py   # macOS/Linux
-python update_app.py    # Windows
-```
-
-Le script détecte l'OS, trouve le bon bundle, remplace `_internal/lidar2map.py`.
-
-Emplacements recherchés (premier trouvé) :
-- macOS : `LIDAR2MAP.app/Contents/Resources/lidar2map_bundle.zip` puis `dist/LIDAR2MAP.app/...`
-- Windows/Linux : `lidar2map_bundle.zip` à côté du script puis `dist/lidar2map_bundle.zip`
-
-Écriture atomique (tmp + `os.replace`) : un Ctrl+C en cours ne laisse jamais
-le zip dans un état partiel.
-
-### Mode archive macOS (patch chirurgical depuis Windows)
+Ce dossier de travail est un clone du dépôt GitHub. `deploy.py` y lance les
+20 suites de tests et `ruff`, commit, pousse sur `main` et, avec `--new-tag`,
+pose le tag `v<VERSION>` qui déclenche `release.yml`, dont il suit le build.
 
 ```bash
-python update_app.py lidar2map-macos-arm64.zip
+python deploy.py -m "mon correctif"            # tests + push, pas de release
+python deploy.py -m "..." --new-tag            # tests + push + tag v<VERSION> + suivi du build
+python deploy.py -m "..." --dry-run            # voir le diff sans rien pousser
 ```
 
-Permet de patcher un `.app` zippé sans accès à un Mac. Le bundle interne
-`Contents/Resources/lidar2map_bundle.zip` est régénéré, l'archive externe
-recopie verbatim les `ZipInfo` de toutes les autres entrées — donc les
-permissions Unix de `Contents/MacOS/lidar2map` (mode `0o755`, créé par
-`ditto`), les symlinks et les xattrs sont préservés. Impossible
-à obtenir avec un `Compress-Archive` Windows.
+- La version a une **source unique**, la constante `VERSION` de
+  `lidar2map.py` : `--new-tag` en dérive le tag et refuse toute autre valeur.
+- `deploy.py` refuse de partir si la branche n'est pas `main`, si `origin`
+  n'est pas le dépôt officiel ou si `HEAD` diffère de `origin/main` (commit
+  poussé ailleurs, par exemple une PR fusionnée : `git pull` d'abord).
+- Seuls les fichiers déjà suivis partent. Un fichier nouveau non ignoré bloque
+  le déploiement : l'ajouter (`git add`) ou l'ignorer (`.gitignore`, ou
+  `.git/info/exclude` pour un fichier personnel).
 
-### Mode release multi-OS (publication automatique)
+Sous Mac/Linux : `python3 deploy.py ...` ou `./deploy.py ...` (shebang
+`#!/usr/bin/env python3`, `chmod +x deploy.py` la première fois).
 
-```bash
-python update_app.py --release --dry-run    # tester sans toucher GitHub
-python update_app.py --release               # vrai run
-python update_app.py --release --tag v1.2.0  # autre tag
-```
+### Build local
 
-Workflow complet en une commande, depuis n'importe quel OS :
-
-1. **GET** la release GitHub (tag par défaut : `v1.1.0`) → liste les 3 assets
-2. **Télécharge** les 3 archives dans `dist/release/` (cache si la taille match)
-3. **Patche** chaque archive :
-   - Windows `.zip` : surgical (`ZipInfo` recopiés)
-   - Linux `.tar.gz` : `tarfile` préserve mode/owner + **force `0o755` sur le launcher** si trouvé sans bit exécutable (bug de packaging)
-   - macOS `.zip` : surgical (ditto preserves Unix perms)
-4. **DELETE + UPLOAD** chaque asset sur la release
-5. **PATCH** le body markdown : nouveaux SHA256 dans le tableau + bloc de vérification
-
-Auth : `GH_TOKEN`, `GITHUB_TOKEN` ou `git credential helper`. Si l'UPLOAD plante
-après le DELETE, les archives patchées en cache permettent de relancer.
-
-### Manuellement avec 7-Zip (Windows)
-
-1. Ouvrir `lidar2map_bundle.zip` avec 7-Zip
-2. Naviguer dans `_internal/`
-3. Glisser-déposer le nouveau `lidar2map.py`
-4. Enregistrer
-
-Pour macOS : le zip est dans `LIDAR2MAP.app/Contents/Resources/`
-Pour Windows/Linux : le zip est à côté du binaire
-
-Note : le launcher détecte les mises à jour via la **mtime** du zip (puis SHA256
-en confirmation). 7-Zip et `update_app.py` mettent tous deux à jour la mtime
-au moment de l'écriture, donc la ré-extraction se déclenche automatiquement.
-
-### Quand faut-il rebuilder ? (compiler vs patcher)
-
-Deux opérations **distinctes** : **compiler** (PyInstaller, OS-spécifique —
-`.exe` / ELF / `.app` avec libs natives) vs **mettre à jour** le
-`_internal/lidar2map.py` d'un bundle existant (simple manip de zip, faisable
-pour **les 3 OS depuis une seule machine** via `update_app.py --release`).
-`update_app.py` ne patche QUE le code de l'app *inner* (`lidar2map.py`,
-`providers/`, `gui/`, `tools/`) — pas le bloc launcher, ni les modules `_*.py`
-compilés, ni les dépendances, ni les specs.
-
-| Changement | Rebuild ? |
-|------------|-----------|
-| Code app dans `lidar2map.py` (`main`, API du GUI, calcul…) | **Non** — `update_app.py` (3 OS, sans recompiler) |
-| `providers/*.py`, `gui/*`, outils `tools/` embarqués | **Non** — `update_app.py` |
-| Un module `_*.py` (`_serve_web.py`, `_mbtiles_lidar.py`…) | **Oui** — compilé dans le bundle |
-| **Bloc launcher** de `lidar2map.py` (recherche bundle / extraction / **lockfile**) | **Oui** — compilé *dans* l'exe launcher, pas dans le bundle |
-| Ajout / mise à jour d'une **dépendance** (rasterio, numba…) | Oui |
-| Changement d'un **spec** ou de `_loader.py` | Oui |
-| Mise à jour de Python / PyInstaller, nouvel OS | Oui |
-
-### Trois méthodes de livraison — laquelle choisir
-
-| Méthode | Compile ? | Upload ~1,5 Go depuis | Pour |
-|---|---|---|---|
-| ☁️ **`release.yml`** (tag `v*`) | oui (3 OS, clean-room) | réseau GitHub | deps / spec / **bloc launcher** / nouvelle version |
-| ☁️ **`update.yml`** (manuel + tag) | non | réseau GitHub | **fix de code seul (recommandé)** |
-| ⚡ **`update_app.py --release`** (local) | non | **ta** connexion | fix de code hors cloud |
-| 🔧 **build local par-OS** (`lidar2map_*_build.*`) | oui (1 OS) | — | itérer / déboguer |
+Les scripts `lidar2map_*_build.*` servent à itérer et déboguer sur sa propre
+plateforme. Ne jamais publier un build local comme asset : dérive de la
+machine (versions des dépendances) et un seul OS. `release.yml` reste la
+source de vérité des binaires distribués.
 
 L'icône officielle `lidar2map_icon.png` est utilisée par les builds Windows et
 macOS et reste incluse dans l'archive Linux pour les lanceurs de bureau.
-
-Détails :
-- ☁️ **`release.yml`** — **source de vérité des binaires distribués** : runner neuf,
-  reproductible (pas de dérive machine ; ex. un venv local avec une mauvaise
-  version d'une dépendance). Seul moyen d'obtenir Linux/macOS sans la machine.
-  Déclenché par un tag `vX.Y.Z`.
-- ☁️ **`update.yml`** — fait tourner `update_app.py --release` **sur un runner** :
-  download + patch + ré-upload des ~1,5 Go d'assets se font sur le **réseau GitHub**,
-  pas sur ta liaison montante. **La voie idéale pour livrer un fix de code.**
-- ⚡ **`update_app.py --release` en local** — même résultat, mais re-pousse ~1,5 Go
-  depuis **ta** connexion (DELETE+UPLOAD des assets entiers — GitHub ne patche pas
-  partiellement) ; sur upload lent, plus long que le cloud. À réserver au cas
-  hors-ligne / sans accès au repo.
-- 🔧 **Build local** — ne jamais publier un build local comme asset (dérive machine
-  + 1 seul OS) ; sert uniquement à tester sur sa plateforme.
-
-**Règle** : pour livrer, **rester dans le cloud** — `release.yml` si deps/spec/
-launcher changent, sinon `update.yml` (fix de code, sans rebuild ni upload local).
-Le build local n'est que pour itérer/déboguer.
-
-### Déploiement unifié en une commande — `deploy.py`
-
-Un seul script (cross-platform : Windows / macOS / Linux) qui **détecte ce qui
-a changé** et applique la bonne action, sur la voie de ton choix :
-
-```bash
-python deploy.py -m "mon correctif"                         # cloud, dernière release
-python deploy.py -m "..." --patch-tag v1.3.0                # cibler un tag existant
-python deploy.py -m "..." --mode local                      # patch local au lieu de cloud
-python deploy.py -m "..." --new-tag v1.4.0                  # créer un NOUVEAU tag -> release.yml
-python deploy.py -m "..." --skip-push                       # patch direct, sans push ni détection
-python deploy.py -m "..." --dry-run                         # voir le diff sans pousser
-```
-
-Sous Mac/Linux : `python3 deploy.py ...` ou `./deploy.py ...` (le script a un
-shebang `#!/usr/bin/env python3`, faire `chmod +x deploy.py` la 1ère fois).
-
-| `--mode` | Voie | Qui upload les ~1,5 Go ? | Prérequis |
-|---|---|---|---|
-| `cloud` (défaut) | `update.yml` sur runner GitHub | **GitHub** | `gh auth status` |
-| `local` | `python update_app.py --release` ici | **ta connexion** | `python` + `GH_TOKEN`/`GITHUB_TOKEN` (ou `gh auth token`) |
-
-| Ce qui a changé (diff réel) | Action automatique (identique cloud / local) |
-|---|---|
-| `lidar2map.py` seul (code interne) | push **+ patch** (cloud ou local selon `--mode`) sur la dernière release |
-| `.spec` / `_loader.py` / `*_build.*` / `setup_build_*` / `tagmapping-min.xml` | push **puis STOP** : indique de relancer avec `--new-tag` (rebuild ; version = choix humain) |
-| docs / meta seules (README, BUILD, workflows, screenshots) | **push seul** — aucun binaire à toucher |
-
-**Deux sémantiques de tag distinctes** :
-- `--patch-tag vX.Y.Z` = cibler une release **existante** pour le patch (défaut : la dernière).
-- `--new-tag vX.Y.Z` = créer un **nouveau** tag git → déclenche `release.yml` (rebuild complet 3 OS, ~30 min).
-
-`tagmapping-min.xml` est une donnée *bundlée* (non patchable par `update.yml` ni par
-`update_app.py --release`, qui ne touchent que `_internal/lidar2map.py`, `providers/`,
-`gui/` et `tools/`) → classé rebuild.
-
-> ⚠️ **Angle mort** assumé : le bloc launcher et les dépendances vivent *dans*
-> `lidar2map.py`. Si seul `lidar2map.py` change, le script suppose un fix de code
-> interne (→ patch) et **affiche un avertissement** : si tu as touché au
-> bloc launcher ou aux deps, relance avec `--new-tag <vX.Y.Z>` pour un rebuild.
 
 ---
 

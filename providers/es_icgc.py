@@ -30,6 +30,10 @@ import re
 NAME       = "Catalogne (Espagne) — MET (ICGC, LiDAR 2021-2023)"
 CODE       = "es-icgc"
 COUNTRY    = "es"
+# Source expérimentale (M1, docs/preconisations_evolution.md) : exclue du test
+# hebdomadaire (limite les IP des services cloud), et en échec depuis une
+# connexion ordinaire le 25 septembre 2026 (HTTP 500 du serveur ICGC).
+STATUT     = "experimental"
 LICENSE    = "CC BY 4.0 — Institut Cartogràfic i Geològic de Catalunya (ICGC)"
 DOC_URL    = "https://www.icgc.cat/en/Geoinformation-and-Maps/Data-and-products/Digital-twins-Elevations"
 

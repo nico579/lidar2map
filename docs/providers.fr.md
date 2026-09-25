@@ -73,6 +73,13 @@ complète.
 La résolution est nominale et la couverture exacte peut varier à l'intérieur
 de la zone annoncée.
 
+Les sources **expérimentales** sont signalées dans l'interface (mention
+« expérimental » dans la liste, note à côté) et par un avertissement en ligne
+de commande : leur service a échoué de façon répétée lors de nos
+vérifications, le téléchargement peut échouer. Actuellement : `de-sh` (le
+service renvoie une page HTML au lieu des dalles) et `es-icgc` (erreurs du
+serveur).
+
 | Code | Pays | Donnée | Rés. | CRS natif | Accès & particularités |
 |---|---|---|---|---|---|
 | `fr-ign` | France | IGN LiDAR HD | 0.5 m | EPSG:2154 (Lambert-93) | TMS vectoriel PBF + WMS GetMap, métropole, publication encore en cours : les secteurs qu'IGN n'a pas encore publiés n'ont pas de données et restent transparents sur la carte |

@@ -21,7 +21,7 @@
 #      nommages intra-pays (invariant de la purge hors-zone scopée, audit #2).
 # Seams : monkeypatch des globals (_wmts_fetch, urllib.request.urlopen,
 # _planche_depuis_dossier) — aucun refactor de production requis.
-# Usage : python Tests/_test_interactions.py  (depuis n'importe quel cwd)
+# Usage : python tests/_test_interactions.py  (depuis n'importe quel cwd)
 import glob as _glob
 import importlib.util
 import io

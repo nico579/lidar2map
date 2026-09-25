@@ -21,9 +21,9 @@ does not install them system-wide.
 | Distributable | Yes: launcher/application and `lidar2map_bundle.zip` travel together | No: each computer prepares its own Python environment |
 | Best suited to | End users and redistribution | Development, Linux source use, and contribution |
 
-Publishing or patching the standalone archives is a maintainer workflow. The
-build scripts, bundle architecture, and `update_app.py` release workflow are
-covered only in [BUILD.md](../BUILD.md).
+Publishing the standalone archives is a maintainer workflow. The build
+scripts, bundle architecture, and release deployment are covered only in
+[BUILD.md](../BUILD.md).
 
 ### 1.1. Standalone binary application
 
