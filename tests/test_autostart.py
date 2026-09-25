@@ -33,7 +33,10 @@ class _DossierIsole(unittest.TestCase):
     def setUp(self):
         self.tmp_ctx = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp_ctx.cleanup)
-        self.tmp = Path(self.tmp_ctx.name) / "Données é"
+        # Forme longue : sur les runners GitHub, le dossier temporaire passe
+        # par un nom court 8.3 (RUNNER~1), et Windows enregistre puis relit la
+        # cible d'un raccourci sous sa forme longue (runneradmin).
+        self.tmp = Path(self.tmp_ctx.name).resolve() / "Données é"
         self.tmp.mkdir()
         suffixe = ".exe" if platform.system() == "Windows" else ""
         self.lanceur = self.tmp / "Mes Cartes" / f"lidar2map{suffixe}"
