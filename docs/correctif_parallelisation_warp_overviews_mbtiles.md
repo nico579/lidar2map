@@ -159,7 +159,15 @@ arrêt coopératif, réutilisation du cache) sont couvertes par
 
 ## Reste à faire
 
+Les trois premiers points sont traités en v1.52.0 (P1 à P3 de
+[preconisations_evolution.md](preconisations_evolution.md)) ; seul le
+benchmark reste à faire. Les constats d'origine sont conservés ci-dessous.
+
 ### Réglage utilisateur du nombre de threads
+
+**Fait (P1).** `--gdal-threads N` borne les threads du warp, des overviews et
+de la compression, toujours dans la limite des CPU visibles. Sans l'option, le
+comportement ne change pas : tous les CPU visibles, en attendant le benchmark.
 
 Sur une machine partagée ou une grosse VM, prendre tous les CPU visibles n'est
 pas toujours souhaitable. Il faudra aussi respecter approximativement
@@ -172,6 +180,13 @@ règle le réseau :
 ```
 
 ### Facteurs d'overviews d'un cache réutilisé
+
+**Fait (P2).** Au moment de réutiliser le cache, les facteurs manquants sont
+ajoutés sur une copie `.part`, validée puis publiée atomiquement ; sur échec,
+le cache existant sert tel quel. Piège évité : rasterio ne rend pas le
+facteur demandé mais `round(largeur / largeur de l'overview)`, et GDAL arrondit
+cette largeur au-dessus (32 revient en 31 sur 1 700 px). La comparaison suit
+cette règle, sinon chaque réutilisation recopierait le cache.
 
 `warp_deja_fait` ne vérifie que la taille, la fraîcheur, la validité 3857 et
 la présence de `_cov.tif`. Il ne vérifie **pas** les facteurs d'overviews. Le
@@ -192,6 +207,11 @@ lidar2map.
 
 ### Verrou par cible
 
+**Fait (P3).** Le verrou `<warpé>.lock` est pris avant la vérification du
+cache et relâché dès la publication ; un processus qui attend l'annonce, puis
+réutilise le warpé publié entre-temps. Le verrou ne couvre pas le tuilage :
+deux lecteurs du même warpé travaillent en parallèle.
+
 Deux processus visant le même warpé écrivent chacun leur `.part` unique, puis
 publient par `replace` atomique : pas de corruption, seulement du travail en
 double. Sous Windows, le `replace` peut échouer si l'autre processus lit déjà
@@ -204,6 +224,23 @@ faudrait revérifier le cache après l'acquisition.
 Même TIFF réel, même VM, 1, 2, 4 et 8 threads. Mesurer la durée du warp, des
 overviews et du tuilage, le CPU moyen, la RAM maximale et le débit disque.
 Choisir ensuite le défaut de `--gdal-threads`.
+
+Procédure prête à lancer (P4, à faire sur la VM de production) :
+`--tiles-overwrite` impose de refaire le warp à chaque passage, et
+`/usr/bin/time -v` (paquet `time`) donne la durée, le CPU moyen et la RAM
+maximale.
+
+```bash
+for n in 1 2 4 8; do
+  /usr/bin/time -v ./lidar2map --lidar --provider fr-ign \
+    --source <ombrage>.tif --zone-bbox <O,S,E,N> \
+    --file-formats mbtiles --zoom-min 13 --zoom-max 18 \
+    --tiles-overwrite --gdal-threads "$n" \
+    > "run_$n.log" 2> "time_$n.txt"
+done
+grep -h "threads=\|Overviews OK\|100%" run_*.log
+grep -h "Elapsed\|Percent of CPU\|Maximum resident" time_*.txt
+```
 
 ## Références
 

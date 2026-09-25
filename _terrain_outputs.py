@@ -251,6 +251,7 @@ def produire_sorties_terrain(
                     ),
                     ecraser_tuiles=ecraser,
                     tile_workers=d.tile_workers_defaut(),
+                    gdal_threads=getattr(args, "gdal_threads", None),
                 )
             elif mbtiles_path.exists():
                 d.imprimer(

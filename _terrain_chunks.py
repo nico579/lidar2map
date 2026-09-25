@@ -229,6 +229,7 @@ def tuiler_tifs_ombrages(
                 tampon_coin_max_m=tampon_coin_max_m,
                 ecraser_tuiles=args.tuiles_ecraser,
                 tile_workers=dependances.tile_workers_defaut(),
+                gdal_threads=getattr(args, "gdal_threads", None),
             )
         else:
             dependances.imprimer(
@@ -543,6 +544,7 @@ def traiter_bbox_lidar_tuilage(
                         tampon_coin_max_m=tampon_max_m,
                         ecraser_tuiles=args.tuiles_ecraser,
                         tile_workers=dependances.tile_workers_defaut(),
+                        gdal_threads=getattr(args, "gdal_threads", None),
                     )
                 else:
                     dependances.imprimer(

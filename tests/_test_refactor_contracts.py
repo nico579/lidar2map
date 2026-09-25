@@ -3399,6 +3399,7 @@ class TerrainOutputsExtractionContractTests(unittest.TestCase):
                     source_already_warped=True,
                     ecraser_tuiles=False,
                     tile_workers=3,
+                    gdal_threads=None,
                 )
                 seams["convert"].assert_called_once_with(
                     generated,
@@ -11133,6 +11134,7 @@ class TerrainTilingContractTests(unittest.TestCase):
                     "tampon_coin_max_m": 300.0,
                     "ecraser_tuiles": True,
                     "tile_workers": 4,
+                    "gdal_threads": None,
                 },
             )
             conversions = [event for event in events if event[0] == "convert"]

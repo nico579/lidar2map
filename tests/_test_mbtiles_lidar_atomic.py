@@ -216,6 +216,115 @@ class ThreadsGdalTests(unittest.TestCase):
         self.assertEqual({z for z, *_ in tuiles[1]}, {14, 15, 16})
         self.assertEqual(tuiles[1], tuiles[4])
 
+    def test_gdal_threads_explicite_prime_sur_tile_workers(self):
+        # P1 (docs/preconisations_evolution.md) : --gdal-threads borne les
+        # threads GDAL indépendamment du parallélisme d'encodage.
+        with tempfile.TemporaryDirectory() as td:
+            dossier = Path(td)
+            src = dossier / "zone.tif"
+            bbox = _ecrire_source(src)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                resultat = L.generer_mbtiles_lidar(
+                    src, dossier, "zone", zoom_min=15, zoom_max=15,
+                    bbox_natif=bbox, tile_workers=1, gdal_threads=2,
+                    ecraser_tuiles=True)
+            self.assertIsNotNone(resultat)
+            self.assertIn(f"threads={min(2, os.cpu_count() or 1)}/", buf.getvalue())
+
+
+class CacheWarpeTests(unittest.TestCase):
+    """P2 et P3 de docs/preconisations_evolution.md, à travers le producteur
+    complet. Raster bruité au zoom 19 : le cache n'est réutilisé qu'au-delà
+    de 1 Mo (même contrainte que test_full_producer_reuses_warp_cache_on_rerun)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.src = self.tmp / "zone.tif"
+        self.bbox = _ecrire_source(self.src, cote_px=1200, bruit=True)
+        self.warped = self.tmp / "zone_tuilage_z19.tif"
+
+    def _generer(self, zoom_min, **kwargs):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            resultat = L.generer_mbtiles_lidar(
+                self.src, self.tmp, "zone", zoom_min=zoom_min, zoom_max=19,
+                format_tuiles="png", bbox_natif=self.bbox, tile_workers=1,
+                ecraser_tuiles=False, **kwargs)
+        self.assertIsNotNone(resultat, buf.getvalue()[-2000:])
+        resultat.unlink()   # le prochain run régénère, le warpé reste
+        return buf.getvalue()
+
+    def _overviews(self):
+        with rasterio.open(str(self.warped)) as ds:
+            return ds.overviews(1), ds.width
+
+    def test_cache_reutilise_complete_les_overviews_manquantes(self):
+        self._generer(18)                          # overviews [2] seulement
+        self.assertEqual(self._overviews()[0], [2])
+
+        sortie = self._generer(13)                 # facteurs 2 à 64 requis
+        self.assertIn("reused", sortie)
+        self.assertIn("Overviews missing from the cache", sortie)
+        presents, largeur = self._overviews()
+        import math
+        attendus = [round(largeur / math.ceil(largeur / f)) for f in (2, 4, 8, 16, 32, 64)]
+        self.assertEqual(presents, attendus)
+        self.assertEqual(list(self.tmp.glob("*.part")), [])
+
+        # Même plage : rien à compléter. Les facteurs rendus par rasterio
+        # (arrondis, 64 devient 63 selon la largeur) ne doivent pas faire
+        # croire à des overviews absentes et réécrire le cache à chaque run.
+        mtime = self.warped.stat().st_mtime_ns
+        sortie = self._generer(13)
+        self.assertNotIn("Overviews missing", sortie)
+        self.assertEqual(self.warped.stat().st_mtime_ns, mtime)
+
+    def test_deux_fils_meme_source_un_seul_warp(self):
+        # P3 : deux traitements simultanés visant le même warpé. Sans verrou,
+        # chacun le calculait (4 appels à reproject : bandes et masque de
+        # couverture, deux fois). Le reproject ralenti élargit la fenêtre.
+        import threading
+        import time
+        from rasterio import warp as rio_warp
+        vrai_reproject = rio_warp.reproject
+        appels = []
+
+        def reproject_lent(*args, **kwargs):
+            appels.append(threading.current_thread().name)
+            time.sleep(0.5)
+            return vrai_reproject(*args, **kwargs)
+
+        depart = threading.Barrier(2)
+        resultats, erreurs = [], []
+
+        def traiter(nom):
+            depart.wait()
+            try:
+                resultats.append(L.generer_mbtiles_lidar(
+                    self.src, self.tmp, nom, zoom_min=19, zoom_max=19,
+                    format_tuiles="png", bbox_natif=self.bbox, tile_workers=1,
+                    ecraser_tuiles=False))
+            except Exception as exc:  # remonté au fil principal
+                erreurs.append(exc)
+
+        buf = io.StringIO()
+        with mock.patch.object(rio_warp, "reproject", side_effect=reproject_lent), \
+                contextlib.redirect_stdout(buf):
+            fils = [threading.Thread(target=traiter, args=(f"zone_{i}",), name=f"f{i}")
+                    for i in range(2)]
+            for f in fils:
+                f.start()
+            for f in fils:
+                f.join(timeout=300)
+        self.assertEqual(erreurs, [])
+        self.assertEqual(len(resultats), 2)
+        self.assertTrue(all(r is not None for r in resultats), buf.getvalue()[-2000:])
+        self.assertEqual(len(appels), 2, appels)
+        self.assertIn("reused", buf.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

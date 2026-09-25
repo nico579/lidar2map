@@ -307,6 +307,7 @@ dalles sources peut faire diverger deux morceaux de même surface. Voir les
 | `--image-format FMT` | `auto` | `auto`, `jpeg` ou `png` ; les tuiles de bord avec alpha peuvent rester en PNG. |
 | `--image-quality Q` | `85` | Qualité JPEG de 1 à 100. |
 | `--tiles-overwrite` | désactivé | Reconstruit une carte tuilée ou conversion existante. |
+| `--gdal-threads N` | tous les CPU visibles | Threads GDAL du warp MBTiles, des overviews et de la compression. À réduire quand plusieurs instances ou traitements partagent la machine. |
 | `--index-map` / `--no-index-map` | activé | Active ou désactive la planche `<produit>_planche.png` best-effort pour ce parseur. |
 
 La résolution au sol Web Mercator vaut

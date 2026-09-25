@@ -16,9 +16,11 @@ ici).
 
 from __future__ import annotations
 
+import contextlib
 import io
 import math
 import os
+import shutil
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +44,7 @@ class _DependancesMbtilesLidar:
     bbox_enveloppe_transform: Callable
     batch_insert: int
     crs_natif: str
+    verrou_inter_processus: Callable
 
 
 def _bbox_depuis_gdalinfo(chemin):
@@ -80,9 +83,10 @@ def _gdal_threads(tile_workers):
     """Threads GDAL du warp, de la compression DEFLATE et des overviews.
 
     Règle de docs/correctif_parallelisation_warp_overviews_mbtiles.md :
-    valeur numérique explicite, >= 1, bornée par tile_workers ET par les CPU
-    visibles, jamais ALL_CPUS. num_threads=0 (ancien code, commenté « tous
-    les CPUs ») est traité par rasterio comme 1 : warp mono-thread."""
+    valeur numérique explicite, >= 1, bornée par la demande (--gdal-threads,
+    sinon tile_workers) ET par les CPU visibles, jamais ALL_CPUS.
+    num_threads=0 (ancien code, commenté « tous les CPUs ») est traité par
+    rasterio comme 1 : warp mono-thread."""
     try:
         demande = int(tile_workers)
     except (TypeError, ValueError):
@@ -100,6 +104,76 @@ def _gdal_overviews_multithread():
         return False
 
 
+# Attente maximale d'un warp calculé par un autre processus : un warp
+# départemental prend de quelques minutes à une heure.
+_DELAI_VERROU_WARP_S = 6 * 3600
+
+
+def _prendre_verrou_warp(pile, warped, verrou_inter_processus):
+    """Un seul processus calcule un même warpé à la fois (P3 de
+    docs/preconisations_evolution.md). Les autres attendent sa publication
+    puis revérifient le cache : sans verrou, deux instances parallèles
+    refaisaient le même warp, et sous Windows le replace de l'une échouait
+    quand l'autre lisait déjà le fichier pour son tuilage."""
+    try:
+        pile.enter_context(verrou_inter_processus(warped, delai_s=0))
+    except TimeoutError:
+        print(f"  {warped.name}: warp in progress in another process, "
+              "waiting for it...", flush=True)
+        pile.enter_context(
+            verrou_inter_processus(warped, delai_s=_DELAI_VERROU_WARP_S))
+
+
+def _facteurs_overviews_manquants(chemin, facteurs):
+    """Facteurs de ``facteurs`` absents d'au moins une bande de ``chemin``.
+
+    rasterio ne rend pas le facteur demandé mais round(largeur / largeur de
+    l'overview), et GDAL arrondit cette largeur au-dessus : 32 revient en 31
+    sur 1 700 px. Comparer les facteurs bruts redemanderait à chaque
+    réutilisation des overviews déjà présentes."""
+    import rasterio
+    with rasterio.open(str(chemin)) as ds:
+        largeur = ds.width
+        presents = set.intersection(*(set(ds.overviews(b)) for b in ds.indexes))
+    return [f for f in facteurs
+            if int(round(largeur / math.ceil(largeur / f))) not in presents]
+
+
+def _completer_overviews(warped, facteurs, threads, chemin_part):
+    """P2 : le cache warpé n'est nommé que d'après zoom_max. Réutilisé avec un
+    zoom_min plus bas, il lui manquait les facteurs d'overviews de ces zooms :
+    rendu juste, mais bas zooms lus depuis une résolution bien trop fine,
+    donc lents. Les facteurs manquants sont ajoutés sur une copie .part,
+    validée puis publiée atomiquement. Sur échec, le cache existant reste
+    utilisé tel quel."""
+    try:
+        manquants = _facteurs_overviews_manquants(warped, facteurs)
+    except Exception as exc:
+        print(f"  WARNING cache overviews unreadable ({exc}): cache used as is",
+              flush=True)
+        return
+    if not manquants:
+        return
+    print(f"  Overviews missing from the cache {manquants}: adding them...",
+          flush=True)
+    part = chemin_part(warped)
+    try:
+        import rasterio
+        from rasterio.enums import Resampling
+        shutil.copyfile(warped, part)
+        with rasterio.Env(GDAL_NUM_THREADS=str(threads)), \
+                rasterio.open(str(part), "r+") as ds:
+            ds.build_overviews(manquants, Resampling.gauss)
+            ds.update_tags(ns="rio_overview", resampling="gauss")
+        if not _warped_3857_valide(part) or _facteurs_overviews_manquants(part, facteurs):
+            raise RuntimeError("invalid copy after adding overviews")
+        part.replace(warped)
+    except Exception as exc:
+        part.unlink(missing_ok=True)
+        print(f"  WARNING overviews not added ({exc}): cache used as is",
+              flush=True)
+
+
 def _tile_workers_defaut():
     """Parallélisme de l'encodage de tuiles (JPEG/PNG, Pillow libère le GIL,
     cf. le pool dans generer_mbtiles_lidar) : DÉCOUPLÉ de --workers, qui
@@ -115,7 +189,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
                     jpeg_quality=85, bbox_natif=None, tampon_coin_max_m=0,
                     source_already_warped=False, ecraser_tuiles=False,
-                    tile_workers=8, *, dependances):
+                    tile_workers=8, gdal_threads=None, *, dependances):
     """
     Pipeline MBTiles : source unique, pyramide rasterio, tuilage par bandes.
 
@@ -142,6 +216,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
     _bbox_enveloppe_transform = dependances.bbox_enveloppe_transform
     BATCH_MBTILES_INSERT = dependances.batch_insert
     _crs_natif_actif = dependances.crs_natif
+    _verrou_inter_processus = dependances.verrou_inter_processus
 
     from PIL import Image
 
@@ -228,7 +303,8 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         return x0, y0, x1, y1   # xmin ymin xmax ymax
 
     t0 = time.time()
-    gdal_threads = _gdal_threads(tile_workers)
+    # --gdal-threads (P1) : borne dédiée, sinon le parallélisme d'encodage.
+    gdal_threads = _gdal_threads(tile_workers if gdal_threads is None else gdal_threads)
 
     res_max = 2 * EARTH_CIRC / (TILE_SIZE * 2 ** zoom_max)
 
@@ -354,12 +430,15 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         _y_tms = (2 ** _z - 1) - _ty
         return (_z, _tx, _y_tms, _buf.getvalue())
 
-    def _tuiler_source():
+    def _tuiler_source(verrou_warp):
         # Warp → overviews → tuilage de la source. Fonction locale : les
         # `return` court-circuitent le tuilage en cas d'échec du warp ou de
         # bbox introuvable (remplace l'ancienne boucle banding à tranche
         # unique et ses `continue` ; le banding a été retiré car il créait
         # des artefacts de jointure Lambert93/Mercator).
+        # verrou_warp : pile qui tient le verrou du warpé (P3), fermée dès que
+        # le cache est publié ou jugé réutilisable ; l'appelant la ferme aussi
+        # sur retour anticipé ou exception.
         nonlocal total_insere, nb_echecs_tr, _emitted_partial
         # Fichier warped persistant dans dossier_ville — préfixe _ pour
         # être ignoré par le glob MBTiles (not t.name.startswith("_")).
@@ -390,6 +469,9 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             # warped_cov.exists() : un cache warpé écrit AVANT ce fix (masque
             # de couverture séparé) n'a pas de fichier _cov → sans ce test,
             # il serait réutilisé tel quel, coins noirs jamais corrigés.
+            # Vérifié SOUS le verrou : un autre processus a pu publier ce
+            # warpé pendant l'attente.
+            _prendre_verrou_warp(verrou_warp, warped, _verrou_inter_processus)
             warp_deja_fait = (warped.exists() and warped.stat().st_size > 1_000_000
                               and not ecraser_tuiles
                               and warped.stat().st_mtime >= tif_source.stat().st_mtime
@@ -398,6 +480,12 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
             if warp_deja_fait:
                 print(f"  Warped cache: {warped.name}  "
                       f"({warped.stat().st_size/1e6:.0f} MB) reused", flush=True)
+                if zoom_max > zoom_min and overview_levels:
+                    _completer_overviews(
+                        warped, overview_levels,
+                        gdal_threads if _gdal_overviews_multithread() else 1,
+                        _chemin_part)
+                verrou_warp.close()
 
         # ── 1. Warp via rasterio ───────────────────────────────────────────
         # Plus de cmd_warp gdalwarp à construire — voir bloc rasterio.warp
@@ -657,7 +745,13 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     raise RuntimeError("warpé invalide après écriture "
                                        "(CRS/dimensions/lecture)")
                 warped_part.replace(warped)
+                # Masque de couverture et fichier du verrou (P3) déclarés avec
+                # le warpé : --cleanup les emporte ensemble et le dossier du
+                # morceau peut être supprimé (le _cov.tif y restait seul).
                 _creer_fichier(warped)
+                _creer_fichier(warped_cov)
+                _creer_fichier(warped.with_name(warped.name + ".lock"))
+                verrou_warp.close()   # publié : les autres processus peuvent le lire
                 taille_w = warped.stat().st_size / 1e6
                 elap = time.time() - t0_warp
                 print("  " + lbl.ljust(36) + " [" + "█"*30 +
@@ -861,7 +955,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                                     _np.moveaxis(canvas[:3], 0, 2))
                             else:
                                 band_img = Image.fromarray(canvas[0])
-                            alpha_img = Image.fromarray(alpha_band, "L")
+                            # uint8 2D → "L" déduit : le paramètre mode de
+                            # fromarray disparaît avec Pillow 13 (TypeError,
+                            # rattrapée ci-dessous : toutes les tuiles sautées).
+                            alpha_img = Image.fromarray(alpha_band)
                         except Exception as _e_read:
                             nb_echecs_tr += 1
                             if nb_echecs_tr <= 3:
@@ -931,7 +1028,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
               f", delete it manually if not needed")
 
     try:
-        _tuiler_source()
+        # La pile relâche le verrou du warpé sur tout retour anticipé ou
+        # exception de _tuiler_source (P3).
+        with contextlib.ExitStack() as verrou_warp:
+            _tuiler_source(verrou_warp)
     except BaseException:
         # Miroir du finally du jumeau WMTS (ce chemin n'en avait pas) : sur
         # exception/interruption, fermer la connexion AVANT unlink (Windows

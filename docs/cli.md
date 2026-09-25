@@ -297,6 +297,7 @@ tile density can make equally sized chunks differ. See the detailed
 | `--image-format FMT` | `auto` | `auto`, `jpeg`, or `png`; alpha edge tiles can remain PNG. |
 | `--image-quality Q` | `85` | JPEG quality from 1 to 100. |
 | `--tiles-overwrite` | off | Rebuilds an existing tiled map or conversion output. |
+| `--gdal-threads N` | all visible CPUs | GDAL threads for the MBTiles warp, overviews, and compression. Lower it when several instances or jobs share the machine. |
 | `--index-map` / `--no-index-map` | on | Enables or disables the best-effort `<product>_planche.png` index sheet for this parser. |
 
 Web Mercator ground resolution is

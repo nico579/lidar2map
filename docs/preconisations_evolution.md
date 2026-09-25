@@ -44,14 +44,14 @@ modules ou la CI · **L** restructuration.
 | [R0](#r0-publier-la-version-et-la-valider-sur-de-vraies-machines) | Publier la PR #4 et la valider sur de vraies machines (✅ publiée en v1.51.0, validation manuelle à faire) | P0 | S | reconstruction |
 | [S1](#s1-requêtes-get-déclenchées-par-dautres-sites) | Requêtes GET déclenchées par d'autres sites (✅ v1.51.1) | P1 | S | reconstruction |
 | [S2](#s2-open_folder-ouvre-nimporte-quel-chemin) | `open_folder` ouvre n'importe quel chemin (✅ v1.51.1) | P1 | XS | patch |
-| [D1](#d1-tester-lexécutable-construit-dans-releaseyml) | Tester l'exécutable construit dans `release.yml` (✅ v1.51.1, non bloquant jusqu'à un premier passage sur les 4 runners) | P1 | M | CI |
+| [D1](#d1-tester-lexécutable-construit-dans-releaseyml) | Tester l'exécutable construit dans `release.yml` (✅ v1.51.1, bloquant depuis la v1.52.0) | P1 | M | CI |
 | [S4](#s4-json-avec-bom-lu-comme-corrompu) | JSON avec BOM lu comme corrompu (✅ v1.51.1) | P2 | XS | reconstruction |
 | [S5](#s5-contexte-tls-sans-vérification-dans-le-provider-finlandais) | Contexte TLS sans vérification (Finlande) (✅ v1.51.1) | P2 | XS | reconstruction |
 | [Doc1](#doc1-test-de-cohérence-entre-options-cli-et-documentation) | Test de cohérence options CLI ↔ doc (✅ v1.51.1) | P2 | S | tests |
 | [Doc2](#doc2-dérives-documentaires-connues) | Dérives documentaires connues (✅ v1.51.1) | P2 | XS | doc et CI |
 | [C1](#c1-reliquats-pywebview-dans-le-gui-web) | Reliquats pywebview dans le GUI web (✅ v1.51.1) | P3 | M | patch et reconstruction |
 | [C2](#c2-entrées-mortes-du-bootstrap) | Entrées mortes du bootstrap (✅ v1.51.1) | P3 | XS | reconstruction |
-| [P1–P4](#p1p4-parallélisation--travaux-restants) | Parallélisation : travaux restants | P3 | M | reconstruction |
+| [P1–P4](#p1p4-parallélisation--travaux-restants) | Parallélisation : travaux restants (✅ P1 à P3 en v1.52.0 ; P4, benchmark sur la VM, à faire par le propriétaire) | P3 | M | reconstruction |
 | [S3](#s3-accès-distant-sans-authentification) | Accès distant sans authentification | **décision** | M | reconstruction |
 | [D2](#d2-architecture-lanceur--bundle--patch) | Architecture lanceur + bundle + patch | **décision** | L | reconstruction |
 | [M1](#m1-statut--expérimental--pour-les-sources-instables) | Statut « expérimental » des sources instables | **décision** | M | reconstruction probable |
@@ -306,9 +306,8 @@ avec `CERT_NONE` (parcours de `providers/*.py`).
 
 **Statut.** ✅ v1.51.1. `tests/exe_smoke.py` (stdlib seule, dossier personnel
 isolé) couvre les étapes 1 à 4 et tourne après « Package » sur les 4 runners.
-Validé en local sur l'archive Windows de la v1.51.0. Non bloquant
-(`continue-on-error`) jusqu'à un premier passage sur les 4 runners, bloquant
-ensuite. Écarts : l'étape 2 vérifie la commande de `_commande_relance()`, pas
+Validé en local sur l'archive Windows de la v1.51.0, puis sur les 4 runners
+de la release v1.51.1 (8 à 19 s) ; bloquant depuis la v1.52.0. Écarts : l'étape 2 vérifie la commande de `_commande_relance()`, pas
 le menu « Redémarrer » lui-même (pas d'icône sur un runner) ; les MBTiles de
 test sont écrits par le script (PNG en stdlib) plutôt que par un
 `tests/fixtures_exe.py`.
@@ -504,6 +503,16 @@ utiles : ils empêchent une inclusion accidentelle par une dépendance.
 ---
 
 ## P1–P4. Parallélisation : travaux restants
+
+**Statut.** ✅ P1 à P3 en v1.52.0. P1 : `--gdal-threads N`, défaut
+inchangé (tous les CPU visibles) en attendant P4. P2 : facteurs d'overviews
+manquants ajoutés au cache réutilisé, sur une copie `.part` publiée
+atomiquement. P3 : verrou `<warpé>.lock` de la vérification du cache à la
+publication, cache revérifié après l'attente. Tests dans
+`tests/_test_mbtiles_lidar_atomic.py` (`CacheWarpeTests`, dont deux fils sur
+la même source qui ne font plus qu'un warp), en échec sans les correctifs.
+P4 reste à faire sur la VM de production : la procédure est dans le dossier
+de parallélisation, section « Benchmark sur VM ».
 
 Détaillés dans [le dossier de parallélisation](correctif_parallelisation_warp_overviews_mbtiles.md),
 section « Reste à faire » :

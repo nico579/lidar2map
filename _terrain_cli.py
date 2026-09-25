@@ -197,6 +197,13 @@ Examples:
              "VM multi-cœurs ; laisser 1 sur une machine 8 Go.",
     )
     parser.add_argument(
+        "--gdal-threads", type=d.arg_int_positif, default=None, metavar="N",
+        dest="gdal_threads",
+        help="GDAL threads for the MBTiles warp, overviews and compression "
+             "(default: all visible CPUs). Lower it when several lidar2map "
+             "instances or jobs share the machine.",
+    )
+    parser.add_argument(
         "--download-compress", "--telechargement-compresser",
         action=argparse.BooleanOptionalAction, default=True,
         dest="telechargement_compresser",

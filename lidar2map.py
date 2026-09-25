@@ -1283,7 +1283,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.51.1"
+VERSION      = "1.52.0"
 VERSION_DATE = "2026-09"
 
 
@@ -2565,6 +2565,7 @@ def _dependances_mbtiles_lidar():
         bbox_enveloppe_transform=_bbox_enveloppe_transform,
         batch_insert=BATCH_MBTILES_INSERT,
         crs_natif=PROVIDER.CRS_NATIF,
+        verrou_inter_processus=_atomic_files_impl.verrou_inter_processus,
     )
 
 
@@ -2572,7 +2573,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
                     zoom_min=13, zoom_max=17, format_tuiles="auto",
                     jpeg_quality=85, bbox_natif=None, tampon_coin_max_m=0,
                     source_already_warped=False, ecraser_tuiles=False,
-                    tile_workers=8):
+                    tile_workers=8, gdal_threads=None):
     """Façade compatible vers le producteur MBTiles LiDAR extrait."""
     return _generer_mbtiles_lidar_impl(
         tif_source, dossier_ville, nom_ville,
@@ -2581,6 +2582,7 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
         tampon_coin_max_m=tampon_coin_max_m,
         source_already_warped=source_already_warped,
         ecraser_tuiles=ecraser_tuiles, tile_workers=tile_workers,
+        gdal_threads=gdal_threads,
         dependances=_dependances_mbtiles_lidar(),
     )
 
