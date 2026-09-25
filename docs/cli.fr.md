@@ -120,23 +120,27 @@ exception est la conversion directe d’un fichier `.mbtiles` existant.
 | `--zone-width KM` | obligatoire pour `--lidar` avec commune/GPS ; sinon `20` lorsque pertinent | Côté du carré autour d’une commune ou d’un point GPS, et non son rayon. Sans effet sur une bbox, un département ou une région. |
 | `--zone-name NOM` | automatique | Remplace le nom de projet normalisé. Commune, GPS, bbox, département et région ont tous un nom automatique. |
 
-Le dossier de travail est celui du script avec les sources, et celui de
-l’exécutable extérieur avec une release. Chemins par défaut :
+Toutes les sorties partagent une racine, `<sorties>` ci-dessous :
+`Documents/lidar2map` par défaut, ou le dossier où une version 1.53 ou
+antérieure rangeait déjà ses projets, ou `LIDAR2MAP_HOME` quand cette variable
+est définie (voir
+[Où lidar2map range vos données](getting-started.fr.md#13-où-lidar2map-range-vos-données)).
+Chemins par défaut :
 
 ```text
-<travail>/Projets/<zone>/lidar/<pays>/
-<travail>/Projets/<zone>/raster/
-<travail>/Projets/<zone>/osm_vecteur/
-<travail>/Projets/<zone>/ign_vecteur/
-<travail>/cache/
-<travail>/production/
+<sorties>/Projets/<zone>/lidar/<pays>/
+<sorties>/Projets/<zone>/raster/
+<sorties>/Projets/<zone>/osm_vecteur/
+<sorties>/Projets/<zone>/ign_vecteur/
+<sorties>/cache/
+<sorties>/production/
 ```
 
 | Option | Défaut | Rôle |
 |---|---|---|
 | `--output-dir CHEMIN` | chemin propre au mode sous `Projets/<zone>` | Écrit directement dans `CHEMIN` ; c’est le dossier final du mode, pas une racine à laquelle lidar2map ajoute le nom de projet. |
-| `--cache-dir CHEMIN` | `<travail>/cache` | Racine des dalles LiDAR, tuiles WMTS, PBF OSM, index de découverte et autres caches téléchargés persistants. |
-| `--production-dir CHEMIN` | `<travail>/production` | Racine des GeoTIFF calculés depuis un nuage LAZ mais réutilisables. Utile pour le mode nuage de points LiDAR. |
+| `--cache-dir CHEMIN` | `<sorties>/cache` | Racine des dalles LiDAR, tuiles WMTS, PBF OSM, index de découverte et autres caches téléchargés persistants. |
+| `--production-dir CHEMIN` | `<sorties>/production` | Racine des GeoTIFF calculés depuis un nuage LAZ mais réutilisables. Utile pour le mode nuage de points LiDAR. |
 | `--tiles-dir CHEMIN` | politique ci-dessous | Remplace l’emplacement des sources LiDAR uniquement et prend priorité sur `--cache-dir` et `--production-dir`. |
 
 Sans `--tiles-dir`, les MNT téléchargés vont dans `cache/lidar/<pays>`. En mode

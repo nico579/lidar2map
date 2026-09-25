@@ -19,6 +19,10 @@ from unittest import mock
 
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 ROOT = Path(__file__).resolve().parent.parent
 
 # spec_from_file_location n'ajoute pas le dossier du script à sys.path (même
@@ -219,6 +223,17 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertGreater(len(data["couches"]), 0)
         self.assertIn("providers", data)
         self.assertIn("active_provider", data)
+
+    def test_api_init_annonce_version_et_pid_pour_la_barre_du_haut(self):
+        # Affichés comme dans blink2video et watch2notif.
+        data = json.loads(self._get("/api/init")[1])
+        self.assertEqual(data["version"], L2M.VERSION)
+        self.assertEqual(data["pid"], os.getpid())
+        page = (ROOT / "gui" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="server-info"', page)
+        script = (ROOT / "gui" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('"header.pid":"PID serveur {pid}"', script)
+        self.assertIn('"header.pid":"Server PID {pid}"', script)
 
     def test_api_historique_renvoie_une_liste(self):
         status, body = self._get("/api/historique")

@@ -45,20 +45,22 @@ def executer_smoketest(
     executable,
     script_path,
     environnement,
+    sorties,
     lancer=subprocess.run,
     supprimer_arbre=shutil.rmtree,
     maintenant=time.time,
     ecrire=print,
 ):
-    """Exécute les cinq diagnostics et retourne ``True`` en l'absence d'échec."""
+    """Exécute les cinq diagnostics et retourne ``True`` en l'absence d'échec.
+
+    ``sorties`` est la racine des sorties que les modes lancés utiliseront
+    (voir _dossiers.py) : leurs livrables sont cherchés sous Projets/smoke."""
     script_path = Path(script_path).resolve()
     if frozen:
-        work = Path(environnement.get("LIDAR2MAP_WORK_DIR") or Path(executable).resolve().parent)
         cmd_base = [executable]
     else:
-        work = script_path.parent
         cmd_base = [executable, str(script_path)]
-    projets = work / "Projets" / "smoke"
+    projets = Path(sorties) / "Projets" / "smoke"
     zone = ["--zone-ville", "Gareoult", "--zone-width", "2", "--zone-nom", "smoke"]
     env = dict(environnement)
     env["LIDAR2MAP_SKIP_HIST"] = "1"

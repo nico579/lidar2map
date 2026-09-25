@@ -19,25 +19,21 @@ def _verifier_dossier(log_dir):
 def activer_log(
     *,
     sys_module,
-    environnement,
-    script_path,
+    dossier,
     classe_logger,
     rediger_secrets,
     enregistrer_atexit,
     verifier_dossier=_verifier_dossier,
     ecrire=None,
 ):
-    """Installe le logger et retourne son instance, ou ``None`` si inaccessible."""
+    """Installe le logger et retourne son instance, ou ``None`` si inaccessible.
+
+    Les journaux vont dans ``dossier``/logs, ``dossier`` étant le dossier
+    d'état (voir _dossiers.py), figé ou non. Jusqu'à la 1.53, ils allaient à
+    côté du programme."""
     if ecrire is None:
         ecrire = print
-    if getattr(sys_module, "frozen", False):
-        base = Path(
-            environnement.get("LIDAR2MAP_WORK_DIR")
-            or Path(sys_module.executable).resolve().parent
-        )
-    else:
-        base = Path(script_path).resolve().parent
-    log_dir = base / "logs"
+    log_dir = Path(dossier) / "logs"
     try:
         verifier_dossier(log_dir)
     except OSError:

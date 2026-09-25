@@ -32,6 +32,10 @@ from unittest import mock
 
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "lidar2map.py"
 sys.path.insert(0, str(ROOT))
@@ -9095,7 +9099,7 @@ class OsmosisRuntimeContractTests(unittest.TestCase):
         ), mock.patch.multiple(
             L,
             BUNDLE_DIR=Path("current-bundle"),
-            LIDAR2MAP_HOME=Path("current-home"),
+            DOSSIER_OUTILS=Path("current-home"),
             WINDOWS=True,
         ):
             self.assertIs(L._trouver_java(), sentinel)

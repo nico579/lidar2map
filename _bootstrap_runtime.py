@@ -36,6 +36,8 @@ MODULE_PAR_PAQUET = {
     "py7zr": "py7zr",
     "mapbox-vector-tile": "mapbox_vector_tile",
     "cloth-simulation-filter": "CSF",
+    # Dossiers standard de l'OS (_dossiers.py), dont un Documents déplacé.
+    "platformdirs": "platformdirs",
 }
 
 
@@ -526,7 +528,7 @@ def installer_deps(*, gui_deps_plateforme):
     deps = []
     for pkg in [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "pystray", "osmium", "numba",
+        "fiona", "certifi", "pystray", "osmium", "numba", "platformdirs",
     ]:
         mod = MODULE_PAR_PAQUET[pkg]
         if not _module_present(mod):
@@ -722,7 +724,7 @@ def installer_toutes_dependances(
     gui_critiques, gui_optionnelles = gui_deps_plateforme()
     critiques = [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "pystray", *gui_critiques,
+        "fiona", "certifi", "pystray", "platformdirs", *gui_critiques,
     ]
     optionnelles = [
         "osmium", "numba", "laspy", "lazrs", "py7zr",

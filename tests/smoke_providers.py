@@ -30,6 +30,10 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 os.environ.setdefault("LIDAR2MAP_BOOTSTRAP", "none")   # pas de bootstrap/venv
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : ceux d'un lancement local restent intacts.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-smoke-")
 
 ROOT = Path(__file__).resolve().parent.parent
 PROV_DIR = ROOT / "providers"

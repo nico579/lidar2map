@@ -9,6 +9,7 @@ un parser sans sa documentation, ou retirée d'une des deux docs, fait
 
 import importlib.util
 import os
+import tempfile
 import re
 import sys
 import unittest
@@ -16,6 +17,10 @@ from pathlib import Path
 
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 ROOT = Path(__file__).resolve().parent.parent
 
 # Chargé par son chemin, enregistré dans sys.modules avant exec_module :

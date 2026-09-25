@@ -38,6 +38,10 @@ import urllib.request
 from pathlib import Path
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 _ROOT = Path(__file__).resolve().parent.parent
 _APP = _ROOT / "lidar2map.py"
 spec = importlib.util.spec_from_file_location("l2m", str(_APP))

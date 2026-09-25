@@ -223,7 +223,7 @@ jobs:
           set -euo pipefail
           # Collecter les assets (zip/tar.gz) et leurs SHA256
           ASSETS=()
-          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour : remplacer l’ancienne archive décompressée par celle-ci, le lanceur réextrait le bundle.\n\n| Fichier | SHA256 |\n|---|---|\n'
+          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour : décompresser cette archive par-dessus la précédente, le lanceur réextrait le bundle.\n\n| Fichier | SHA256 |\n|---|---|\n'
           while IFS= read -r sha; do
             asset="${sha%.sha256}"
             name="$(basename "$asset")"

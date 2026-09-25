@@ -18,7 +18,7 @@ la même CLI, mais leur installation et leur mise à jour diffèrent.
 |---|---|---|
 | Prérequis | Aucun en dehors d’un OS pris en charge | Python 3.12 |
 | Première préparation | Aucune installation ; le runtime embarqué est extrait au premier lancement | Environ 5 minutes ; bootstrap automatique dans un environnement virtuel privé |
-| Mise à jour | Télécharger et extraire la nouvelle release | `git pull`, puis relancer |
+| Mise à jour | Télécharger la nouvelle release et l’extraire par-dessus la précédente | `git pull`, puis relancer |
 | Distribuable | Oui : lanceur binaire et `lidar2map_bundle.zip` restent ensemble | Non : chaque ordinateur prépare son environnement Python |
 | Recommandé pour | Utilisateur final et redistribution | Développement, usage Linux depuis les sources et contribution |
 
@@ -72,7 +72,8 @@ Les lancements suivants réutilisent cette copie.
 
 Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les
 dépendances critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
-certifi et pystray (icône de la zone de notification). numba (SVF bien plus
+certifi, platformdirs (dossiers standard) et pystray (icône de la zone de
+notification). numba (SVF bien plus
 rapide) et osmium (pipeline OSM) sont installés si possible ; leur échec ne
 bloque pas le lancement. L’environnement Python système n’est pas modifié. Utilisez
 `--bootstrap=none` si vous préférez gérer vous-même les dépendances.
@@ -113,6 +114,36 @@ python3.12 lidar2map.py
 Les cas Linux/macOS tels que PEP 668, les distributions sans `apt`, un bureau
 sans zone de notification ou Gatekeeper sur le runtime Java sont traités dans
 la [section Dépannage de BUILD.md](../BUILD.md#9-dépannage).
+
+### 1.3 Où lidar2map range vos données
+
+lidar2map sépare deux sortes de fichiers. Vos sorties, c’est-à-dire les
+projets, les caches téléchargés et la production calculée, sont de gros
+fichiers que vous voudrez retrouver, copier ou supprimer vous-même : elles vont
+dans `Documents/lidar2map`. Son état, c’est-à-dire les réglages, l’historique,
+le fichier `lidar2map.env` qui porte une clé API IGN, et les journaux, est
+léger et géré pour vous : il va dans le dossier de données standard de votre
+système.
+
+- Windows : `%LOCALAPPDATA%\lidar2map-data\`
+- macOS : `~/Library/Application Support/lidar2map-data/`
+- Linux : `~/.local/share/lidar2map-data/`
+
+Ce dossier s’appelle `lidar2map-data` parce que `lidar2map` est déjà le runtime
+extrait du binaire, que l’on peut supprimer quand une extraction tourne mal :
+vos réglages ne partent pas avec lui.
+
+Jusqu’à la version 1.53, tout était rangé à côté du programme. Extrayez la
+version 1.54 par-dessus la précédente : à son premier lancement, elle copie les
+réglages, l’historique et le fichier de clé API dans le dossier de données, en
+laissant les originaux en place, et continue d’écrire les sorties à côté de
+vos projets existants. Rien ne bouge sur le disque. Chaque traitement peut toujours écrire ailleurs, avec les
+dossiers de sortie, de cache et de production de l’interface ou avec
+`--output-dir`, `--cache-dir` et `--production-dir`.
+
+Pour tout garder dans un seul dossier de votre choix, comme une installation
+portable, définissez la variable d’environnement `LIDAR2MAP_HOME` : l’état et
+les sorties y vont alors tous les deux.
 
 ## 2. Premier lancement et parcours graphique — binaire ou script
 
@@ -304,7 +335,9 @@ python3.12 lidar2map.py --desinstaller
 ### 5.3 Éléments supprimés et conservés
 
 Cette commande supprime l’environnement virtuel privé et les outils/runtime
-installés. Elle ne supprime ni le lanceur ni le script source.
+installés. Elle ne supprime ni le lanceur ni le script source, ni vos sorties
+et votre dossier de données (voir [Où lidar2map range vos données](#13-où-lidar2map-range-vos-données)) :
+supprimez-les vous-même si vous n’en avez plus besoin.
 
 ---
 

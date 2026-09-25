@@ -139,6 +139,7 @@ const I18N = {
     "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
     "zoom.inverted":"⚠ Zooms d'historique inversés — corrigés au chargement",
     "update.dispo":"⬆ {tag} disponible : notes de version",
+    "header.pid":"PID serveur {pid}",
     "fusion.ignored":"Ignoré(s) : {files}\nSeuls {exts} sont acceptés (une fusion ne mélange pas les types).",
     "req.name":"Le nom du projet est obligatoire.",
     "req.source":"Le fichier source MBTiles est obligatoire.",
@@ -291,6 +292,7 @@ const I18N = {
     "del.error":"Error while deleting: ", "del.unknown":"unknown",
     "zoom.inverted":"⚠ History zooms inverted — fixed on load",
     "update.dispo":"⬆ {tag} available: release notes",
+    "header.pid":"Server PID {pid}",
     "fusion.ignored":"Ignored: {files}\nOnly {exts} are accepted (a merge cannot mix file types).",
     "req.name":"Project name is required.",
     "req.source":"Source MBTiles file is required.",
@@ -361,6 +363,17 @@ function applyI18n(){
   // Le badge de source DFM est posé dynamiquement (pas de data-i18n) → le
   // rafraîchir dans la nouvelle langue.
   if (typeof updateLazUI === 'function') updateLazUI();
+  renderServerInfo();
+}
+// Version et PID du serveur dans la barre du haut, comme blink2video et
+// watch2notif : on voit d'un coup d'œil quelle version répond, et quel
+// processus l'héberge. Rempli par /api/init.
+let _serverInfo = null;
+function renderServerInfo(){
+  const el = document.getElementById('server-info');
+  if (!el || !_serverInfo) return;
+  el.textContent = 'lidar2map ' + _serverInfo.version
+                 + ' (' + tf('header.pid', {pid: _serverInfo.pid}) + ')';
 }
 function setLang(code, persist){
   _lang = (code === 'en') ? 'en' : 'fr';
@@ -679,6 +692,8 @@ async function initAsync() {
     filtrerCouchesParPays();
     _majSourcesVecteur();
     _majModesDisponibles();
+    _serverInfo = {version: d.version, pid: d.pid};
+    renderServerInfo();
     buildRegions(d.regions || []);
     buildWfsCouches(d.wfs);
     buildOsmTags(d.osm_tags);

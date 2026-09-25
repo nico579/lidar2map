@@ -17,7 +17,7 @@ does not install them system-wide.
 |---|---|---|
 | Requirements | None beyond a supported OS | Python 3.12 |
 | First setup | No installation; the bundled runtime is extracted on first launch | About 5 minutes; automatic bootstrap into a private virtual environment |
-| Updating | Download and extract the newer release | `git pull`, then launch again |
+| Updating | Download the newer release and extract it over the previous one | `git pull`, then launch again |
 | Distributable | Yes: launcher/application and `lidar2map_bundle.zip` travel together | No: each computer prepares its own Python environment |
 | Best suited to | End users and redistribution | Development, Linux source use, and contribution |
 
@@ -67,7 +67,8 @@ Later launches reuse that copy.
 
 On first launch, the script creates `~/.lidar2map/venv` and installs the
 critical dependencies there: Pillow, pyproj, numpy, scipy, ijson, rasterio,
-fiona, certifi, and pystray (tray icon). numba (much faster SVF) and osmium
+fiona, certifi, platformdirs (standard folders), and pystray (tray icon).
+numba (much faster SVF) and osmium
 (OSM pipeline) are installed when possible; a failure there does not block the
 launch. The system Python environment is not modified. Use
 `--bootstrap=none` if you prefer to manage the environment yourself.
@@ -108,6 +109,34 @@ python3.12 lidar2map.py
 Linux/macOS cases such as PEP 668, distributions without `apt`, a desktop
 without a system tray, and Gatekeeper on the Java runtime are covered in the
 [BUILD.md troubleshooting section](../BUILD.md#9-dépannage).
+
+### 1.3. Where lidar2map keeps your data
+
+lidar2map keeps two kinds of files apart. Your outputs, meaning projects,
+downloaded caches and computed production, are large files you will want to
+find, copy or delete yourself: they go to `Documents/lidar2map`. Its state,
+meaning settings, history, the `lidar2map.env` file holding an IGN API key,
+and logs, is small and looked after for you: it goes to the standard data
+folder of your system.
+
+- Windows: `%LOCALAPPDATA%\lidar2map-data\`
+- macOS: `~/Library/Application Support/lidar2map-data/`
+- Linux: `~/.local/share/lidar2map-data/`
+
+That folder is named `lidar2map-data` because `lidar2map` is already the
+extracted runtime of the binary, which you may delete when an extraction goes
+wrong: your settings do not go with it.
+
+Up to version 1.53, everything lived next to the program. Extract version 1.54
+over the earlier one: on its first launch, it copies the settings, history and
+API key file to the data folder, leaving the originals where they were, and
+keeps writing outputs next to your existing projects. Nothing moves on disk. Each job can still write elsewhere,
+through the output, cache and production folders of the interface or
+`--output-dir`, `--cache-dir` and `--production-dir`.
+
+To keep everything in a single folder of your choice, as a portable install
+would, set the `LIDAR2MAP_HOME` environment variable: state and outputs then
+both go there.
 
 ## 2. First launch and graphical workflow — binary application or Python script
 
@@ -279,7 +308,9 @@ python3.12 lidar2map.py --desinstaller
 ### 5.3. Removed and retained files
 
 This removes the private virtual environment and installed tools/runtime. It
-does not remove the launcher or source script.
+does not remove the launcher or source script, nor your outputs and data
+folder (see [Where lidar2map keeps your data](#13-where-lidar2map-keeps-your-data)):
+delete them yourself if you no longer need them.
 
 ---
 

@@ -18,6 +18,10 @@ from PIL import Image
 
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 

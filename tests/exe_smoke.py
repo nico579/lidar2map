@@ -16,8 +16,9 @@ figé (menu « Redémarrer », démarrage automatique de la 1.50.0) leur
   3. fusion de deux MBTiles avec --merge : sqlite, Pillow et composition
      alpha dans le binaire ;
   4. arrêt de l'arbre de processus, puis contrôle qu'aucune donnée
-     utilisateur n'a été écrite dans le dossier d'extraction : elles vont à
-     côté du binaire (LIDAR2MAP_WORK_DIR).
+     utilisateur n'a été écrite dans le dossier d'extraction ni à côté du
+     binaire : depuis la 1.54, elles vont dans le dossier de données
+     (LIDAR2MAP_HOME ici, voir _dossiers.py).
 
 Appelé par release.yml après « Package » sur chaque runner, et utilisable
 en local :
@@ -58,8 +59,9 @@ DELAI_PREMIER_DEMARRAGE_S = 300
 DELAI_DEMARRAGE_S = 120
 DELAI_FUSION_S = 300
 
-# Doivent aller dans le dossier de travail (à côté du binaire), jamais dans
-# le dossier d'extraction, remplacé à chaque mise à jour.
+# Doivent aller dans le dossier de données (LIDAR2MAP_HOME ici), jamais dans
+# le dossier d'extraction, remplacé à chaque mise à jour, ni à côté du
+# binaire, qui peut être installé en lecture seule (Program Files).
 DONNEES_UTILISATEUR = ("historique.json", "preferences.json", "Projets",
                        "logs", "cache", "production")
 
@@ -122,7 +124,11 @@ def environnement(racine: Path) -> tuple[dict, Path]:
     env = dict(os.environ)
     env.update(HOME=str(home), USERPROFILE=str(home),
                LOCALAPPDATA=str(home / "AppData" / "Local"),
-               APPDATA=str(home / "AppData" / "Roaming"))
+               APPDATA=str(home / "AppData" / "Roaming"),
+               # État et sorties (voir _dossiers.py). Indispensable même avec
+               # les variables ci-dessus : sous Windows, platformdirs
+               # interroge le shell, qui ignore LOCALAPPDATA et USERPROFILE.
+               LIDAR2MAP_HOME=str(racine / "donnees"))
     env.pop("LIDAR2MAP_WORK_DIR", None)
     if sys.platform.startswith("linux"):
         # Faux systemctl en tête du PATH (étape 1b) : note le LD_LIBRARY_PATH
@@ -334,16 +340,18 @@ def smoke(archive: Path, racine: Path) -> None:
         raise Echec("tuile commune non composée : Pillow absent du binaire ?")
     print("   OK : 3 tuiles, tuile commune composée", flush=True)
 
-    etape("4. données utilisateur à côté du binaire, pas dans l'extraction")
+    etape("4. données utilisateur dans le dossier de données, ni à côté du"
+          " binaire ni dans l'extraction")
     extraction = dossier_extraction(home)
-    intrus = [nom for nom in DONNEES_UTILISATEUR if (extraction / nom).exists()]
-    if intrus:
-        raise Echec(f"données utilisateur dans le dossier d'extraction {extraction} :"
-                    f" {', '.join(intrus)}")
-    if not (travail / "logs").is_dir():
-        raise Echec(f"aucun dossier logs/ dans {travail} : LIDAR2MAP_WORK_DIR ignoré ?")
-    print(f"   OK : rien dans {extraction.name}/, journaux dans {travail}/logs",
-          flush=True)
+    for dossier in (extraction, travail):
+        intrus = [nom for nom in DONNEES_UTILISATEUR if (dossier / nom).exists()]
+        if intrus:
+            raise Echec(f"données utilisateur dans {dossier} : {', '.join(intrus)}")
+    donnees = Path(env["LIDAR2MAP_HOME"])
+    if not (donnees / "logs").is_dir():
+        raise Echec(f"aucun dossier logs/ dans {donnees} : LIDAR2MAP_HOME ignoré ?")
+    print(f"   OK : rien dans {extraction.name}/ ni à côté du binaire,"
+          f" journaux dans {donnees}/logs", flush=True)
 
 
 def afficher_journaux(racine: Path) -> None:

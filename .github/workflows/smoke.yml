@@ -50,7 +50,7 @@ jobs:
       - name: Installer les dependances
         # Deps obligatoires de lidar2map (import) + laspy/lazrs pour le post_fetch
         # LAZ (cz/se). Pas de numba : le self-test ne calcule aucun ombrage.
-        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi laspy lazrs
+        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi platformdirs laspy lazrs
 
       - name: Smoke test providers
         # fr-ign-laz / ch-swisstopo-laz exclus : leur smoke téléchargerait un

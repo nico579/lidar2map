@@ -948,6 +948,10 @@ if getattr(sys, "frozen", False):
             import subprocess as _sp
             _env = os.environ.copy()
             _env["LIDAR2MAP_WORK_DIR"] = str(_work_dir)
+            # Le chemin exact du lanceur : c'est lui que le démarrage
+            # automatique doit relancer (_autostart.py), pas l'exe interne,
+            # que seul le lanceur réextrait après une mise à jour.
+            _env["LIDAR2MAP_LANCEUR"] = str(_exe)
             _rc = _sp.call([str(_inner_exe), _INNER_FLAG] + sys.argv[1:], env=_env)
             sys.exit(_rc)
         # Pas de bundle.zip → exe onedir lancé directement → continuer.
@@ -1069,6 +1073,7 @@ import _log_activation as _log_activation_impl
 import _atomic_files as _atomic_files_impl
 import _http_helpers as _http_helpers_impl
 import _runtime_paths as _runtime_paths_impl
+import _dossiers as _dossiers_impl
 import _disk_guard as _disk_guard_impl
 
 # Vérification version Python
@@ -1221,14 +1226,45 @@ def _desinstaller_installation():
 if _DESINSTALLER:
     sys.exit(0 if _desinstaller_installation() else 1)
 
+# ── Dossiers d'état et de sorties (1.54.0) ───────────────────────────────────
+# L'état (préférences, historique, clé API, journaux) vit dans le dossier
+# standard de l'OS, les sorties dans un dossier visible : voir _dossiers.py.
+# La reprise de l'état d'une version <= 1.53 se fait au lancement du
+# programme, jamais à un simple import (tests, outils) : un calcul de chemin
+# ne doit rien copier. Elle précède --smoketest, qui doit voir les mêmes
+# dossiers que les modes qu'il lance.
+def _preparer_etat():
+    """Reprend, une fois, l'état rangé par une version <= 1.53 dans le
+    dossier du programme. Jamais bloquante : en cas d'échec, l'ancien état
+    reste en place et la reprise sera retentée au lancement suivant."""
+    ancien = _runtime_paths_impl.dossier_programme(
+        frozen=getattr(sys, "frozen", False),
+        environnement=os.environ,
+        executable=sys.executable,
+        script_path=__file__,
+    )
+    try:
+        repris = _dossiers_impl.preparer_etat(ancien)
+    except OSError as exc:
+        print(f"  State migration postponed ({exc}).")
+        return
+    if repris:
+        print(f"  State moved from {ancien} to {_dossiers_impl.dossier_etat()}: "
+              f"{', '.join(repris)}.")
+
+
+if __name__ == "__main__":
+    _preparer_etat()
+
 # ── --smoketest ──────────────────────────────────────────────────────────────
 # Exécute les 5 modes du pipeline sur une petite zone (Garéoult 1 km) et
 # vérifie que les outputs existent + non-vides. Présent dans le bundle →
 # testable post-déploiement sur la machine de l'utilisateur.
 #
 # Le test invoque le SAME binaire (sys.executable en frozen, ou `python <ce
-# script>` sinon) pour chaque mode via subprocess. LIDAR2MAP_WORK_DIR est
-# hérité dans l'env → outputs dans <DOSSIER_TRAVAIL>/Projets/smoke/.
+# script>` sinon) pour chaque mode via subprocess. Ils héritent de
+# l'environnement, donc des mêmes dossiers → outputs dans
+# <racine des sorties>/Projets/smoke/.
 #
 # Durée typique : ~1 min sur Windows (caches PBF/dalles présents), ~5 min
 # au premier run (DL Geofabrik 400 MB).
@@ -1239,6 +1275,7 @@ def _executer_smoketest():
         executable=sys.executable,
         script_path=__file__,
         environnement=os.environ,
+        sorties=_dossiers_impl.dossier_sorties(),
     )
 
 
@@ -1252,7 +1289,7 @@ _TeeLogger = _tee_logger_impl.TeeLogger
 # Flags portant un secret : leur valeur est masquée dans tout ce qu'on écrit
 # (log fichier, historique, log GUI). La clé scan25 (IGN pro) ou us-3dep
 # (OpenTopography) apparaissait sinon en clair dans des fichiers partagés
-# pour débuguer. Défini AVANT _activer_log (appelé au chargement du module).
+# pour débuguer. Défini AVANT _activer_log (appelé au lancement du programme).
 _SECRET_FLAGS = _logging_helpers_impl.SECRET_FLAGS
 
 
@@ -1264,14 +1301,17 @@ def _activer_log():
     import atexit
     return _log_activation_impl.activer_log(
         sys_module=sys,
-        environnement=os.environ,
-        script_path=__file__,
+        dossier=_dossiers_impl.dossier_etat(),
         classe_logger=_TeeLogger,
         rediger_secrets=_rediger_secrets,
         enregistrer_atexit=atexit.register,
     )
 
-_activer_log()
+# Au lancement du programme seulement : importé par un test ou un outil, le
+# module n'a ni à détourner sys.stdout ni à écrire un journal dans le dossier
+# d'état de l'utilisateur.
+if __name__ == "__main__":
+    _activer_log()
 
 
 def _definir_chunk_log(cle):
@@ -1289,7 +1329,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.53.1"
+VERSION      = "1.54.0"
 VERSION_DATE = "2026-09"
 
 
@@ -1415,12 +1455,15 @@ class _PrefetchDalles(_PrefetchDallesImpl):
 # ============================================================
 
 # ── Chemins ─────────────────────────────────────────────────────────────────
-# En mode frozen (PyInstaller) : __file__ pointe dans le bundle temporaire
-# (sys._MEIPASS sous --onefile). On utilise sys.executable pour que les
-# Projets/, cache/, logs/ etc. soient créés à côté de l'exe (cwd utilisateur).
-# _MEIPASS reste utilisable séparément pour retrouver les ressources bundlées
-# (tagmapping-min.xml).
-DOSSIER_TRAVAIL, BUNDLE_DIR, LIDAR2MAP_HOME, DOSSIER_CACHE, DOSSIER_PRODUCTION = (
+# Depuis la 1.54 (voir _dossiers.py) : DOSSIER_ETAT reçoit préférences,
+# historique, clé API et journaux ; DOSSIER_TRAVAIL, la racine des sorties,
+# reçoit Projets/, cache/ et production/. Jusqu'à la 1.53, tout allait à côté
+# de l'exe ou du script. En mode frozen, __file__ pointe dans le bundle
+# (sys._MEIPASS), qui reste le chemin des ressources embarquées
+# (tagmapping-min.xml). DOSSIER_OUTILS (~/.lidar2map) garde le venv, osmosis
+# et le JRE, partagés par toutes les versions.
+DOSSIER_ETAT = _dossiers_impl.dossier_etat()
+DOSSIER_TRAVAIL, BUNDLE_DIR, DOSSIER_OUTILS, DOSSIER_CACHE, DOSSIER_PRODUCTION = (
     _runtime_paths_impl.calculer_chemins(
         frozen=getattr(sys, "frozen", False),
         environnement=os.environ,
@@ -1428,6 +1471,7 @@ DOSSIER_TRAVAIL, BUNDLE_DIR, LIDAR2MAP_HOME, DOSSIER_CACHE, DOSSIER_PRODUCTION =
         script_path=__file__,
         meipass=getattr(sys, "_MEIPASS", None),
         home=Path.home(),
+        dossier_travail=_dossiers_impl.dossier_sorties(DOSSIER_ETAT),
     )
 )
 
@@ -2598,9 +2642,10 @@ def generer_mbtiles_lidar(tif_source, dossier_ville, nom_ville,
 # ============================================================
 
 # Clé API IGN — chargée depuis lidar2map.env si présent, sinon valeur par défaut.
-# Pour utiliser votre propre clé, créez lidar2map.env (non versionné) avec :
+# Pour utiliser votre propre clé, créez lidar2map.env (non versionné) dans le
+# dossier d'état (DOSSIER_ETAT, voir _dossiers.py) avec :
 #   IGN_APIKEY=votre_cle
-_apikey_env_path = DOSSIER_TRAVAIL / "lidar2map.env"
+_apikey_env_path = DOSSIER_ETAT / "lidar2map.env"
 if _apikey_env_path.exists():
     for _line in _apikey_env_path.read_text(encoding="utf-8").splitlines():
         _line = _line.strip()
@@ -2819,7 +2864,7 @@ def _bin_outil(racine, pattern):
 def _telecharger_osmosis_local():
     """Télécharge et installe Osmosis localement de façon transactionnelle."""
     return _osmosis_runtime_impl.telecharger_osmosis_local(
-        lidar2map_home=LIDAR2MAP_HOME,
+        lidar2map_home=DOSSIER_OUTILS,
         windows=WINDOWS,
         chemin_part=_chemin_part,
         safe_zip_extractall=_safe_zip_extractall,
@@ -2836,7 +2881,7 @@ def _telecharger_osmosis_local():
 def _telecharger_jre_local():
     """Télécharge et installe un JRE Temurin local de façon transactionnelle."""
     return _osmosis_runtime_impl.telecharger_jre_local(
-        lidar2map_home=LIDAR2MAP_HOME,
+        lidar2map_home=DOSSIER_OUTILS,
         windows=WINDOWS,
         platform_system=platform.system,
         platform_machine=platform.machine,
@@ -2863,7 +2908,7 @@ def _trouver_java():
     return _osmosis_runtime_impl.trouver_java(
         frozen=getattr(sys, "frozen", False),
         bundle_dir=BUNDLE_DIR,
-        lidar2map_home=LIDAR2MAP_HOME,
+        lidar2map_home=DOSSIER_OUTILS,
         windows=WINDOWS,
         telecharger_jre_local=_telecharger_jre_local,
     )
@@ -2879,7 +2924,7 @@ def _trouver_osmosis():
     return _osmosis_runtime_impl.trouver_osmosis(
         frozen=getattr(sys, "frozen", False),
         bundle_dir=BUNDLE_DIR,
-        lidar2map_home=LIDAR2MAP_HOME,
+        lidar2map_home=DOSSIER_OUTILS,
         windows=WINDOWS,
         telecharger_osmosis_local=_telecharger_osmosis_local,
     )
@@ -5764,16 +5809,16 @@ def _historique_depuis_argv(duree_s: int, dossier_resultat: str = "",
 # HISTORIQUE DES TRAITEMENTS
 # ============================================================
 
-_HISTORIQUE_PATH = DOSSIER_TRAVAIL / "historique.json"
+_HISTORIQUE_PATH = DOSSIER_ETAT / "historique.json"
 _HISTORIQUE_MAX  = 50   # nombre max d'entrées conservées
 
 # ── Préférences UI (langue, etc.) ─────────────────────────────────────────────
-# Persistées dans l'app data, comme l'historique. Pas en localStorage : il est
-# propre à chaque origine, donc à chaque PORT (8766, 8767... selon les instances)
-# et à chaque navigateur, et se perd avec les données de navigation. La langue
-# est l'override manuel du toggle ; absente = auto-détection par
+# Persistées dans le dossier d'état, comme l'historique. Pas en localStorage :
+# il est propre à chaque origine, donc à chaque PORT (8766, 8767... selon les
+# instances) et à chaque navigateur, et se perd avec les données de navigation.
+# La langue est l'override manuel du toggle ; absente = auto-détection par
 # navigator.language côté JS.
-_PREFS_PATH = DOSSIER_TRAVAIL / "preferences.json"
+_PREFS_PATH = DOSSIER_ETAT / "preferences.json"
 
 
 def _lire_prefs() -> dict:
@@ -6605,6 +6650,15 @@ def main_serve_gui():
     etat_serveur["port"] = port
     url = f"http://{hote_url}:{port}/"
     print(f"  lidar2map web GUI: {url}")
+    # Démarrage automatique d'une version <= 1.53 (script .vbs) : même
+    # choix, nouveau mécanisme (raccourci .lnk), comme watch2notif. Jamais
+    # bloquant.
+    try:
+        import _autostart
+        if _autostart.migrer_ancien_demarrage():
+            print("  Autostart: .vbs script replaced by a shortcut.")
+    except Exception as exc:
+        print(f"  Autostart: could not replace the .vbs script ({exc}).")
     # Accès distant : le serveur principal reste sur la boucle locale et
     # écoute EN PLUS sur l'adresse de l'hôte de confiance (réessayée tant que
     # le VPN n'est pas connecté). Inutile si --bind vise déjà une autre
@@ -6798,6 +6852,10 @@ def _api_get_init_data():
         # tourne déjà sur ce port » d'« un service tiers occupe ce port par
         # coïncidence », avant de proposer de le rejoindre.
         "app":        "lidar2map",
+        # Affichés dans la barre du haut, comme blink2video et watch2notif :
+        # quelle version répond, et quel processus l'héberge.
+        "version":    VERSION,
+        "pid":        os.getpid(),
     }
 
 

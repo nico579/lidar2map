@@ -76,7 +76,8 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer, repli automatique sans icône si elle ne peut pas être créée |
 | Seconde instance | `_instance_existante()` interroge `/api/init` : question dans le terminal s'il est visible (`_terminal_interactif()`), sinon dans la page (`?deja-ouverte=1`) ; rien avec `--no-browser`. `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
 | Console Windows | Launcher et exe interne restent des applications console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Le launcher la réaffiche pendant une (ré)extraction. Changement de spec : rebuild |
-| Démarrage automatique | `_autostart.py` : script VBS (dossier Démarrage), agent `launchd`, service `systemd --user` ; transmet `LIDAR2MAP_WORK_DIR` en mode figé |
+| Démarrage automatique | `_autostart.py` : raccourci `.lnk` (dossier Démarrage, comme blink2video et watch2notif), agent `launchd`, service `systemd --user`. En mode figé, lance le lanceur (`LIDAR2MAP_LANCEUR`), qui réextrait après une mise à jour ; aucune variable d'environnement à transmettre. Le `.vbs` d'une version ≤ 1.53 est remplacé au démarrage du serveur (exécutable seulement) |
+| Dossiers de données | `_dossiers.py` : état (préférences, historique, `lidar2map.env`, journaux) dans `platformdirs.user_data_dir("lidar2map-data")`, sorties (`Projets/`, `cache/`, `production/`) dans `Documents/lidar2map` ; `LIDAR2MAP_HOME` regroupe les deux. Reprise unique de l'état d'une version ≤ 1.53 au lancement (`_preparer_etat()`, sous `__main__` seulement), sorties laissées en place via le réglage `dossier_sorties` |
 | Accès distant | `--trusted-host` (réglage enregistré) : `_serve_web.EcouteHoteConfiance` écoute en plus sur son adresse (même port, IPv4/IPv6), réessaie toutes les 30 s tant qu'elle n'existe pas (VPN arrêté), suit les changements à chaud ; le serveur principal reste sur 127.0.0.1. `--bind` sur une autre adresse désactive ce complément |
 
 ### Osmosis et JRE
@@ -205,7 +206,8 @@ lidar2map.exe --desinstaller
 ### `--smoketest`
 
 Vérifie que les 5 modes du pipeline fonctionnent end-to-end sur une petite
-zone (Garéoult, rayon 1 km). Outputs dans `Projets/smoke/`. Caches dalles
+zone (Garéoult, rayon 1 km). Outputs dans `Projets/smoke/` sous la racine des
+sorties (`Documents/lidar2map` par défaut, voir `_dossiers.py`). Caches dalles
 LiDAR et tuiles WMTS préservés entre les runs (cf. `cache/`).
 
 ```bash
@@ -491,8 +493,11 @@ et détecte automatiquement `sqlite3`, `ssl`, `xml`, `urllib`, etc.
 ### Fichiers créés à l'intérieur du .app (macOS)
 
 `LIDAR2MAP_WORK_DIR` est calculé en remontant depuis `Contents/MacOS/` jusqu'au
-dossier parent du `.app`. Les fichiers utilisateur (Projets/, logs/, cache/)
-sont créés à côté du `.app`, jamais à l'intérieur.
+dossier parent du `.app`. Jusqu'à la 1.53, les fichiers utilisateur
+(Projets/, logs/, cache/) y étaient créés, à côté du `.app`. Depuis la 1.54,
+ils vont dans `~/Library/Application Support/lidar2map-data/` (état) et
+`~/Documents/lidar2map/` (sorties), jamais dans le `.app` ; ce dossier ne sert
+plus qu'à reprendre l'état d'une version antérieure.
 
 ### PermissionError [Errno 13] au premier lancement (macOS)
 

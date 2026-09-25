@@ -115,23 +115,26 @@ exception is direct conversion of an existing `.mbtiles` file.
 | `--zone-width KM` | required for `--lidar` with a town/GPS point; otherwise `20` where applicable | Side of the square around a town or GPS point, not its radius. It does not alter a bbox, département, or region. |
 | `--zone-name NAME` | automatic | Overrides the normalized project name. City, GPS, bbox, département, and region all have automatic names. |
 
-The working directory is the script directory when running from source and the
-outer executable directory for a release. Default paths are:
+All outputs share one root, `<outputs>` below: `Documents/lidar2map` by
+default, or the folder where a version up to 1.53 already kept its projects,
+or `LIDAR2MAP_HOME` when that variable is set (see
+[Where lidar2map keeps your data](getting-started.md#13-where-lidar2map-keeps-your-data)).
+Default paths are:
 
 ```text
-<work-dir>/Projets/<zone>/lidar/<country>/
-<work-dir>/Projets/<zone>/raster/
-<work-dir>/Projets/<zone>/osm_vecteur/
-<work-dir>/Projets/<zone>/ign_vecteur/
-<work-dir>/cache/
-<work-dir>/production/
+<outputs>/Projets/<zone>/lidar/<country>/
+<outputs>/Projets/<zone>/raster/
+<outputs>/Projets/<zone>/osm_vecteur/
+<outputs>/Projets/<zone>/ign_vecteur/
+<outputs>/cache/
+<outputs>/production/
 ```
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--output-dir PATH` | mode-specific path under `Projets/<zone>` | Writes directly into `PATH`; it is the final mode output directory, not a parent to which lidar2map adds the project name. |
-| `--cache-dir PATH` | `<work-dir>/cache` | Root of persistent LiDAR tiles, WMTS tiles, OSM PBFs, provider discovery indexes, and other downloaded caches. |
-| `--production-dir PATH` | `<work-dir>/production` | Root of computed but reusable LAZ-derived GeoTIFFs. Meaningful for LiDAR point-cloud mode. |
+| `--cache-dir PATH` | `<outputs>/cache` | Root of persistent LiDAR tiles, WMTS tiles, OSM PBFs, provider discovery indexes, and other downloaded caches. |
+| `--production-dir PATH` | `<outputs>/production` | Root of computed but reusable LAZ-derived GeoTIFFs. Meaningful for LiDAR point-cloud mode. |
 | `--tiles-dir PATH` | storage policy below | Overrides the source-tile location for LiDAR only and takes priority over `--cache-dir` and `--production-dir`. |
 
 Without `--tiles-dir`, downloaded DTM tiles live under

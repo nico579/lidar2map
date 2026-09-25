@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -44,6 +46,7 @@ FAST_SCRIPTS = (
     "test_phone_share.py",
     "test_serve_web.py",
     "test_autostart.py",
+    "test_dossiers.py",
 )
 
 SCIENTIFIC_SCRIPTS = (
@@ -162,17 +165,24 @@ def main(argv: list[str] | None = None) -> int:
     env["LIDAR2MAP_BOOTSTRAP"] = "none"
     env["PYTHONUTF8"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
+    # Un dossier d'état et de sorties jetable pour toutes les suites (voir
+    # _dossiers.py), même si LIDAR2MAP_HOME désigne déjà un vrai dossier :
+    # aucun test ne doit écrire dans celui de l'utilisateur.
+    env["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 
     failures = []
     durations = []
     started = time.perf_counter()
-    for script in scripts:
-        returncode, duration = _run(script, env)
-        durations.append((script, duration))
-        if returncode:
-            failures.append((script, returncode))
-            if args.fail_fast:
-                break
+    try:
+        for script in scripts:
+            returncode, duration = _run(script, env)
+            durations.append((script, duration))
+            if returncode:
+                failures.append((script, returncode))
+                if args.fail_fast:
+                    break
+    finally:
+        shutil.rmtree(env["LIDAR2MAP_HOME"], ignore_errors=True)
 
     print(f"\n{'=' * 72}\nSUMMARY ({args.profile})\n{'=' * 72}")
     for script, duration in durations:

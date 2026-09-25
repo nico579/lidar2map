@@ -25,6 +25,10 @@ from unittest import mock
 
 
 os.environ["LIDAR2MAP_BOOTSTRAP"] = "none"
+# Jamais les vrais dossiers d'état et de sorties de l'utilisateur (voir
+# _dossiers.py) : run_tests.py en fournit un, sinon un dossier temporaire.
+if not os.environ.get("LIDAR2MAP_HOME"):
+    os.environ["LIDAR2MAP_HOME"] = tempfile.mkdtemp(prefix="lidar2map-tests-")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -1476,7 +1480,10 @@ class IntegratedSmoketestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             script = root / "lidar2map.py"
-            projects = root / "Projets" / "smoke"
+            # Depuis la 1.54, la racine des sorties n'est plus le dossier du
+            # script : les livrables sont cherchés sous celle qu'on transmet.
+            sorties = root / "Documents" / "lidar2map"
+            projects = sorties / "Projets" / "smoke"
             calls = []
 
             def run(command, **kwargs):
@@ -1504,6 +1511,7 @@ class IntegratedSmoketestTests(unittest.TestCase):
                 executable="python-test",
                 script_path=script,
                 environnement={"KEPT": "yes"},
+                sorties=sorties,
                 lancer=run,
                 maintenant=lambda: 0.0,
                 ecrire=messages.append,
@@ -1523,6 +1531,7 @@ class IntegratedSmoketestTests(unittest.TestCase):
                 executable="python-test",
                 script_path=Path(temp) / "lidar2map.py",
                 environnement={},
+                sorties=Path(temp),
                 lancer=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
                 maintenant=lambda: 0.0,
                 ecrire=messages.append,
@@ -1542,6 +1551,7 @@ class IntegratedSmoketestTests(unittest.TestCase):
                 executable=str(work / "lidar2map.exe"),
                 script_path=work / "lidar2map.py",
                 environnement={"LIDAR2MAP_WORK_DIR": str(work)},
+                sorties=work,
                 lancer=launcher,
                 supprimer_arbre=lambda *_args, **_kwargs: None,
                 ecrire=lambda _message: None,
@@ -1565,6 +1575,7 @@ class IntegratedSmoketestTests(unittest.TestCase):
                 executable="python-test",
                 script_path=Path(temp) / "lidar2map.py",
                 environnement={},
+                sorties=Path(temp),
                 lancer=run,
                 maintenant=lambda: 0.0,
                 ecrire=messages.append,
@@ -1580,6 +1591,10 @@ class IntegratedSmoketestTests(unittest.TestCase):
         ) as execute:
             self.assertTrue(L._executer_smoketest())
         self.assertEqual(execute.call_args.kwargs["script_path"], L.__file__)
+        # Les modes lancés écrivent sous la racine des sorties, que le
+        # diagnostic doit donc connaître (Projets/smoke, voir _dossiers.py).
+        self.assertEqual(execute.call_args.kwargs["sorties"],
+                         L._dossiers_impl.dossier_sorties())
 
 
 class LoggingHelpersTests(unittest.TestCase):
@@ -1628,7 +1643,8 @@ class LogActivationTests(unittest.TestCase):
         def close(self):
             self.closed = True
 
-    def _activate(self, *, frozen=False, env=None, verifier=lambda _path: None):
+    def _activate(self, *, frozen=False, dossier="/etat/lidar2map-data",
+                  verifier=lambda _path: None):
         fake_sys = SimpleNamespace(
             frozen=frozen,
             executable="/bundle/lidar2map.exe",
@@ -1641,8 +1657,7 @@ class LogActivationTests(unittest.TestCase):
         messages = []
         logger = log_activation.activer_log(
             sys_module=fake_sys,
-            environnement=env or {},
-            script_path="/source/lidar2map.py",
+            dossier=dossier,
             classe_logger=self.FakeLogger,
             rediger_secrets=logging_helpers.rediger_secrets,
             enregistrer_atexit=registered.append,
@@ -1655,8 +1670,7 @@ class LogActivationTests(unittest.TestCase):
         logger, fake_sys, registered, messages = self._activate()
         self.assertIs(fake_sys.stdout, logger)
         self.assertIs(fake_sys.stderr, logger)
-        self.assertEqual(logger.path.parent.name, "logs")
-        self.assertEqual(logger.path.parent.parent.name, "source")
+        self.assertEqual(logger.path.parent, Path("/etat/lidar2map-data") / "logs")
         self.assertIn("Commande : lidar2map.py --api-key ***", logger._log.getvalue())
         self.assertEqual(len(registered), 1)
         registered[0]()
@@ -1664,12 +1678,14 @@ class LogActivationTests(unittest.TestCase):
         fake_sys.excepthook(ValueError, ValueError("boom"), None)
         self.assertTrue(any("UNHANDLED EXCEPTION" in line for line in messages))
 
-    def test_frozen_activation_prefers_explicit_work_directory(self):
-        logger, _fake_sys, _registered, _messages = self._activate(
-            frozen=True, env={"LIDAR2MAP_WORK_DIR": "/work"}
-        )
-        self.assertEqual(logger.path.parent.name, "logs")
-        self.assertEqual(logger.path.parent.parent.name, "work")
+    def test_frozen_activation_logs_to_the_state_folder_too(self):
+        # Jusqu'à la 1.53, l'exe figé journalisait à côté du lanceur
+        # (LIDAR2MAP_WORK_DIR) : c'est désormais le dossier d'état, comme
+        # depuis les sources.
+        with mock.patch.dict(os.environ, {"LIDAR2MAP_WORK_DIR": "/work"}):
+            logger, _fake_sys, _registered, _messages = self._activate(
+                frozen=True, dossier="/autre/etat")
+        self.assertEqual(logger.path.parent, Path("/autre/etat") / "logs")
 
     def test_inaccessible_directory_keeps_original_streams(self):
         logger, fake_sys, registered, messages = self._activate(
@@ -1690,6 +1706,13 @@ class LogActivationTests(unittest.TestCase):
             self.assertEqual(L._activer_log(), "logger")
         self.assertIs(activate.call_args.kwargs["classe_logger"], L._TeeLogger)
         self.assertIs(activate.call_args.kwargs["rediger_secrets"], L._rediger_secrets)
+        self.assertEqual(activate.call_args.kwargs["dossier"],
+                         L._dossiers_impl.dossier_etat())
+
+    def test_import_does_not_activate_the_file_log(self):
+        # Chargé comme module (tests, outils), lidar2map ne détourne pas
+        # sys.stdout et n'écrit aucun journal : seul le programme lancé le fait.
+        self.assertNotIsInstance(sys.stdout, L._TeeLogger)
 
 
 class RuntimePathTests(unittest.TestCase):
@@ -1751,6 +1774,58 @@ class RuntimePathTests(unittest.TestCase):
             self.assertFalse(expected.exists())
             self.assertFalse(paths[2].exists())
 
+    def test_explicit_output_root_replaces_the_program_folder(self):
+        # Depuis la 1.54, la racine des sorties vient de _dossiers.py : le
+        # bundle reste celui du programme, cache et production la suivent.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sorties = root / "Documents" / "lidar2map"
+            work, bundle, tools, cache, production = runtime_paths.calculer_chemins(
+                frozen=True,
+                environnement={"LIDAR2MAP_WORK_DIR": str(root / "launcher")},
+                executable=root / "bin" / "lidar2map.exe",
+                script_path=root / "ignored.py",
+                meipass=root / "bundle",
+                home=root / "home",
+                dossier_travail=sorties,
+            )
+        self.assertEqual(work, sorties)
+        self.assertEqual(bundle, root / "bundle")
+        self.assertEqual(tools, root / "home" / ".lidar2map")
+        self.assertEqual(cache, sorties / "cache")
+        self.assertEqual(production, sorties / "production")
+
+    def test_program_folder_is_where_versions_before_1_54_kept_everything(self):
+        self.assertEqual(
+            runtime_paths.dossier_programme(
+                frozen=True, environnement={"LIDAR2MAP_WORK_DIR": "/launcher"},
+                executable="/extract/lidar2map.exe", script_path="/ignored.py"),
+            Path("/launcher"))
+        self.assertEqual(
+            runtime_paths.dossier_programme(
+                frozen=True, environnement={},
+                executable="/extract/lidar2map.exe", script_path="/ignored.py"),
+            Path("/extract/lidar2map.exe").resolve().parent)
+        self.assertEqual(
+            runtime_paths.dossier_programme(
+                frozen=False, environnement={"LIDAR2MAP_WORK_DIR": "/ignored"},
+                executable="/python/python.exe", script_path=ROOT / "lidar2map.py"),
+            ROOT)
+
+    def test_state_preparation_takes_the_program_folder_and_never_blocks(self):
+        with mock.patch.object(L._dossiers_impl, "preparer_etat",
+                               return_value=[]) as preparer:
+            L._preparer_etat()
+        self.assertEqual(preparer.call_args.args[0], ROOT)
+        # Verrou tenu trop longtemps, disque refusé : le lancement continue,
+        # la reprise sera retentée au suivant.
+        sortie = io.StringIO()
+        with mock.patch.object(L._dossiers_impl, "preparer_etat",
+                               side_effect=TimeoutError("verrou occupé")), \
+                contextlib.redirect_stdout(sortie):
+            L._preparer_etat()
+        self.assertIn("postponed", sortie.getvalue())
+
     def test_platform_indicators_are_exact_and_exclusive(self):
         self.assertEqual(
             runtime_paths.indicateurs_plateforme("Windows"), (True, False, False)
@@ -1766,11 +1841,19 @@ class RuntimePathTests(unittest.TestCase):
         )
 
     def test_main_source_constants_use_the_extracted_policy(self):
-        self.assertEqual(L.DOSSIER_TRAVAIL, ROOT)
+        # Les suites tournent avec un LIDAR2MAP_HOME temporaire (en tête de
+        # ce fichier) : état et sorties y sont regroupés, jamais dans les
+        # dossiers réels de l'utilisateur ni dans les sources.
+        home = Path(os.environ["LIDAR2MAP_HOME"]).resolve()
+        self.assertEqual(L.DOSSIER_ETAT, home)
+        self.assertEqual(L.DOSSIER_TRAVAIL, home)
         self.assertEqual(L.BUNDLE_DIR, ROOT)
-        self.assertEqual(L.LIDAR2MAP_HOME, Path.home() / ".lidar2map")
-        self.assertEqual(L.DOSSIER_CACHE, ROOT / "cache")
-        self.assertEqual(L.DOSSIER_PRODUCTION, ROOT / "production")
+        self.assertEqual(L.DOSSIER_OUTILS, Path.home() / ".lidar2map")
+        self.assertEqual(L.DOSSIER_CACHE, home / "cache")
+        self.assertEqual(L.DOSSIER_PRODUCTION, home / "production")
+        self.assertEqual(L._PREFS_PATH, home / "preferences.json")
+        self.assertEqual(L._HISTORIQUE_PATH, home / "historique.json")
+        self.assertEqual(L._apikey_env_path, home / "lidar2map.env")
         self.assertEqual(
             (L.WINDOWS, L.LINUX, L.MACOS),
             runtime_paths.indicateurs_plateforme(L.platform.system()),
