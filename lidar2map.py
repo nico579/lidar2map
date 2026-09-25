@@ -1283,7 +1283,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.50.4"
+VERSION      = "1.51.0"
 VERSION_DATE = "2026-09"
 
 
