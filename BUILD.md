@@ -339,8 +339,10 @@ avaient de toute façon exigé une reconstruction (décision D2 de
 [docs/preconisations_evolution.md](docs/preconisations_evolution.md)).
 
 Côté utilisateur, l'application signale la nouvelle version ; il suffit de
-remplacer l'ancienne archive décompressée par la nouvelle. Le lanceur voit que
-le bundle a changé et le réextrait au premier lancement.
+décompresser la nouvelle archive par-dessus l'ancienne. Le lanceur voit que
+le bundle a changé et le réextrait au premier lancement. Par-dessus, et non à
+côté : la 1.54 reprend l'état d'une version antérieure depuis le dossier du
+programme lancé (voir `_dossiers.py`).
 
 ### Déploiement en une commande : `deploy.py`
 
