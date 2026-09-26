@@ -781,6 +781,29 @@ if getattr(sys, "frozen", False):
                         return True
                     except FileExistsError:
                         return False
+                    except PermissionError:
+                        # Windows : un verrou que l'autre instance vient de
+                        # supprimer, mais qu'un antivirus tient encore ouvert,
+                        # reste « en attente de suppression » ; le recréer est
+                        # refusé au lieu de lever FileExistsError. Il est donc
+                        # encore pris, pour un instant : l'attente ci-dessous le
+                        # verra disparaître. Ailleurs, c'est un vrai refus.
+                        if os.name != "nt":
+                            raise
+                        return False
+
+                def _retirer_lock():
+                    # Même antivirus, côté suppression : sous Windows, unlink()
+                    # échoue (PermissionError) tant qu'il tient le fichier.
+                    # Quelques essais rapprochés, puis on renonce sans planter :
+                    # un verrou resté en place coûte une attente au lancement
+                    # suivant, jamais une installation réussie.
+                    for _essai in range(10):
+                        try:
+                            _lock.unlink(missing_ok=True)
+                            return
+                        except PermissionError:
+                            _time.sleep(0.05)
 
                 _lock_pris = _prendre_lock()
                 if not _lock_pris:
@@ -793,7 +816,7 @@ if getattr(sys, "frozen", False):
                         _stale = True
                     if _stale:
                         print("  Stale lockfile detected - cleaning up and resuming.", flush=True)
-                        _lock.unlink(missing_ok=True)
+                        _retirer_lock()
                         _lock_pris = _prendre_lock()
                 if not _lock_pris:
                     print("Installation in progress in another instance - waiting...",
@@ -927,7 +950,7 @@ if getattr(sys, "frozen", False):
                         print("  Restart the application to try again.", flush=True)
                         sys.exit(1)
                     finally:
-                        _lock.unlink(missing_ok=True)
+                        _retirer_lock()
 
             if _console_a_remasquer:
                 _console_windows("masquer")

@@ -48,6 +48,7 @@ FAST_SCRIPTS = (
     "test_autostart.py",
     "test_dossiers.py",
     "test_provider_de_sh.py",
+    "test_lanceur_verrou.py",
 )
 
 SCIENTIFIC_SCRIPTS = (
