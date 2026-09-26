@@ -175,6 +175,13 @@ def post_fetch(chemin):
 
     with open(chemin, "rb") as fh:
         data = fh.read()
+    # Depuis septembre 2026, le serveur ajoute après les points une page HTML
+    # (un bouton « Zurück zum OpenGBD-Downloadportal ») : les données XYZ
+    # s'arrêtent au premier « < », qu'aucune de leurs lignes ne contient. Une
+    # page d'erreur sans données reste refusée plus bas (0 valeur).
+    fin = data.find(b"<")
+    if fin != -1:
+        data = data[:fin]
     vals = np.array(data.split(), dtype=np.float64)
     if vals.size < 3 or vals.size % 3:
         raise ValueError(f"XYZ SH malformé : {vals.size} valeurs (≠ 3n)")
