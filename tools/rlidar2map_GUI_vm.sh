@@ -329,9 +329,11 @@ else
     echo "https://github.com/${GITHUB_REPO}/releases/tag/${LIDAR2MAP_VERSION}"
   fi
 
-  # Pas de rm -rf de INSTALL_DIR avant l'extraction : Projets/, cache/ et
-  # logs/ vivent DEDANS (cf. logs d'exécution), tar écrase juste les fichiers
-  # du bundle en place et les préserve.
+  # Pas de rm -rf de INSTALL_DIR avant l'extraction : jusqu'à la 1.53,
+  # Projets/, cache/ et logs/ vivaient DEDANS, et la version suivante les y
+  # reprend (voir _dossiers.py). tar écrase juste les fichiers du programme
+  # en place et les préserve ; ce qu'un lanceur <= 1.54 laissait, le
+  # programme le retire lui-même au démarrage.
   echo "=== 6d/7 : Extraction ==="
   su - "${USERNAME}" -c "
     set -e

@@ -1443,9 +1443,48 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
             systeme="Windows",
             home=Path("/home/test"),
             localappdata="/local",
+            executable=None,
         )
 
-    def test_frozen_launcher_uninstalls_before_extraction_or_relaunch(self):
+    def test_frozen_uninstall_facade_names_the_running_program(self):
+        with mock.patch.object(L.sys, "frozen", True, create=True), \
+             mock.patch.object(L.sys, "executable", "/opt/lidar2map/lidar2map"), \
+             mock.patch.object(
+                 L._bootstrap_runtime_impl,
+                 "desinstaller_lidar2map",
+                 return_value=True,
+             ) as uninstall:
+            self.assertTrue(L._desinstaller_installation())
+        self.assertEqual(uninstall.call_args.kwargs["executable"],
+                         "/opt/lidar2map/lidar2map")
+
+    def test_uninstall_keeps_the_folder_the_program_runs_from(self):
+        # Depuis la 1.55, rien n'empêche d'installer le programme là où le
+        # lanceur d'une version <= 1.54 extrayait le sien.
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / "home"
+            targets = bootstrap_runtime.chemins_desinstallation(
+                systeme="Linux", home=home
+            )
+            for path, _label in targets:
+                path.mkdir(parents=True)
+            extraction = targets[0][0]
+            programme = extraction / "lidar2map"
+            programme.write_bytes(b"")
+            messages = []
+            ok = bootstrap_runtime.desinstaller_lidar2map(
+                systeme="Linux", home=home, executable=str(programme),
+                ecrire=messages.append,
+            )
+            self.assertTrue(ok)
+            self.assertTrue(programme.is_file())
+            self.assertTrue(all(not path.exists() for path, _label in targets[1:]))
+            self.assertTrue(any("kept, the running program lives there" in line
+                                for line in messages))
+
+    def test_frozen_uninstall_ignores_a_former_bundle_and_relaunches_nothing(self):
+        # Un lidar2map_bundle.zip resté d'une version <= 1.54 (archive
+        # décompressée par-dessus) ne doit ni être ouvert ni rien relancer.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             fake_executable = root / "lidar2map.exe"
@@ -1473,6 +1512,61 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
             )
             zip_file.assert_not_called()
             popen.assert_not_called()
+
+
+class FormerLauncherCleanupTests(unittest.TestCase):
+    """Depuis la 1.55, le programme est livré tel quel : ce que le lanceur
+    d'une version <= 1.54 a laissé est retiré au lancement."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.programme = self.root / "Programs" / "lidar2map"
+        self.programme.mkdir(parents=True)
+        self.exe = self.programme / "lidar2map.exe"
+        self.exe.write_bytes(b"")
+        self.extraction = self.root / "local" / "lidar2map"
+        (self.extraction / "_internal").mkdir(parents=True)
+        (self.extraction / ".bundle_sha").write_text("abc\n1", encoding="utf-8")
+
+    def nettoyer(self, executable=None):
+        return bootstrap_runtime.nettoyer_ancienne_extraction(
+            systeme="Windows", home=self.root / "home",
+            localappdata=str(self.root / "local"),
+            executable=executable or self.exe)
+
+    def test_extraction_and_leftover_bundle_are_removed(self):
+        zip_voisin = self.programme / "lidar2map_bundle.zip"
+        zip_voisin.write_bytes(b"ancien bundle")
+        corbeille = self.root / "local" / "lidar2map.ancienne-extraction"
+        corbeille.mkdir()   # reste d'un nettoyage interrompu
+
+        self.assertEqual(self.nettoyer(), [zip_voisin, self.extraction])
+
+        self.assertFalse(zip_voisin.exists())
+        self.assertFalse(self.extraction.exists())
+        self.assertFalse(corbeille.exists())
+        self.assertTrue(self.exe.exists())
+
+    def test_folder_without_the_launcher_mark_is_left_alone(self):
+        (self.extraction / ".bundle_sha").unlink()
+        self.assertEqual(self.nettoyer(), [])
+        self.assertTrue((self.extraction / "_internal").is_dir())
+
+    def test_extraction_in_use_waits_for_the_next_launch(self):
+        # Sous Windows, renommer un dossier dont un programme tourne encore
+        # échoue : rien n'est retiré, le lancement suivant retentera.
+        with mock.patch.object(bootstrap_runtime.os, "rename",
+                               side_effect=PermissionError(13, "in use")):
+            self.assertEqual(self.nettoyer(), [])
+        self.assertTrue((self.extraction / ".bundle_sha").is_file())
+
+    def test_program_running_from_the_extraction_is_left_alone(self):
+        interne = self.extraction / "lidar2map.exe"
+        interne.write_bytes(b"")
+        self.assertEqual(self.nettoyer(executable=interne), [])
+        self.assertTrue((self.extraction / ".bundle_sha").is_file())
 
 
 class IntegratedSmoketestTests(unittest.TestCase):
@@ -1737,19 +1831,21 @@ class RuntimePathTests(unittest.TestCase):
         self.assertEqual(cache, work / "cache")
         self.assertEqual(production, work / "production")
 
-    def test_frozen_paths_prefer_launcher_work_dir_and_meipass(self):
+    def test_frozen_paths_follow_the_program_and_meipass(self):
+        # Depuis la 1.55, plus de lanceur : un LIDAR2MAP_WORK_DIR resté dans
+        # l'environnement ne compte plus, seul le dossier du programme.
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            work = root / "portable"
             bundle = root / "bundle"
             paths = runtime_paths.calculer_chemins(
                 frozen=True,
-                environnement={"LIDAR2MAP_WORK_DIR": str(work)},
+                environnement={"LIDAR2MAP_WORK_DIR": str(root / "ancien-lanceur")},
                 executable=root / "bin" / "lidar2map.exe",
                 script_path=root / "ignored.py",
                 meipass=bundle,
                 home=root / "home",
             )
+            work = (root / "bin").resolve()
 
         self.assertEqual(paths[0], work)
         self.assertEqual(paths[1], bundle)
@@ -1796,16 +1892,20 @@ class RuntimePathTests(unittest.TestCase):
         self.assertEqual(production, sorties / "production")
 
     def test_program_folder_is_where_versions_before_1_54_kept_everything(self):
+        # Le programme est livré tel quel depuis la 1.55 : un reste de
+        # LIDAR2MAP_WORK_DIR (posé par le lanceur d'avant) est ignoré.
         self.assertEqual(
             runtime_paths.dossier_programme(
                 frozen=True, environnement={"LIDAR2MAP_WORK_DIR": "/launcher"},
-                executable="/extract/lidar2map.exe", script_path="/ignored.py"),
-            Path("/launcher"))
+                executable="/Programs/lidar2map/lidar2map.exe", script_path="/ignored.py"),
+            Path("/Programs/lidar2map/lidar2map.exe").resolve().parent)
+        # Sous macOS, le dossier qui contient le .app, pas Contents/MacOS.
         self.assertEqual(
             runtime_paths.dossier_programme(
                 frozen=True, environnement={},
-                executable="/extract/lidar2map.exe", script_path="/ignored.py"),
-            Path("/extract/lidar2map.exe").resolve().parent)
+                executable="/Applications/LIDAR2MAP.app/Contents/MacOS/lidar2map",
+                script_path="/ignored.py"),
+            Path("/Applications").resolve())
         self.assertEqual(
             runtime_paths.dossier_programme(
                 frozen=False, environnement={"LIDAR2MAP_WORK_DIR": "/ignored"},
@@ -2227,7 +2327,7 @@ class BootstrapVenvEngineTests(unittest.TestCase):
 class SystemEnvironmentRestoreTests(unittest.TestCase):
     """Programmes du système lancés depuis le binaire Linux (systemctl,
     xdg-open) : LD_LIBRARY_PATH d'origine, pas celui que préfixe PyInstaller.
-    tests/exe_smoke.py le vérifie aussi sur le vrai binaire, lanceur compris."""
+    tests/exe_smoke.py le vérifie aussi sur le vrai binaire."""
 
     BUNDLE = "/tmp/_MEI123/lib"
 
@@ -2241,7 +2341,7 @@ class SystemEnvironmentRestoreTests(unittest.TestCase):
                                 "LD_LIBRARY_PATH_ORIG": "/usr/local/lib"})
         self.assertEqual(environ["LD_LIBRARY_PATH"], "/usr/local/lib")
 
-    def test_variable_unset_before_the_launcher_is_removed(self):
+    def test_variable_unset_before_the_bootloader_is_removed(self):
         environ = self.restore({"LD_LIBRARY_PATH": self.BUNDLE, "PATH": "/usr/bin"})
         self.assertNotIn("LD_LIBRARY_PATH", environ)
         self.assertEqual(environ["PATH"], "/usr/bin")
@@ -2266,13 +2366,13 @@ class SystemEnvironmentRestoreTests(unittest.TestCase):
             bootstrap_runtime.retablir_environnement_systeme()
             self.assertEqual(os.environ["LD_LIBRARY_PATH"], "/usr/lib")
 
-    def test_called_before_the_launcher_block(self):
-        # Le lanceur doit transmettre un environnement déjà rétabli à l'exe
-        # interne, sans quoi celui-ci garderait comme « origine » la valeur
-        # préfixée par le lanceur.
+    def test_called_before_any_process_is_launched(self):
+        # Tout processus lancé ensuite (exécution distante en tête, dès le
+        # dispatch précoce) doit hériter d'un environnement déjà rétabli, sans
+        # le préfixe que PyInstaller pose sur LD_LIBRARY_PATH.
         source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
         appel = source.index("_bootstrap_runtime_impl.retablir_environnement_systeme()")
-        self.assertLess(appel, source.index('_INNER_FLAG = "--__lidar2map_inner__"'))
+        self.assertLess(appel, source.index("# EXÉCUTION DISTANTE (rlidar2map_CLI"))
 
 
 if __name__ == "__main__":

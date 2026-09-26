@@ -6,14 +6,25 @@ name: Release (build 3 OS)
 #
 # Déclenchement :
 #   - push d'un tag v*           (ex: git tag v1.3.0 && git push origin v1.3.0)
-#   - manuel (workflow_dispatch) avec saisie du tag
+#   - manuel (workflow_dispatch) avec saisie du tag ; publier=false construit
+#     et éprouve les 4 binaires sans rien publier, pour valider une branche
+#     qui touche au build avant de l'étiqueter
 #
 # Assets produits (noms attendus par tests/exe_smoke.py, et pour Linux par
 # l'exécution distante : tools/rlidar2map_CLI.py, tools/rlidar2map_GUI_vm.sh) :
-#   lidar2map-windows-x86_64.zip     (dossier : lidar2map.exe + lidar2map_bundle.zip)
-#   lidar2map-linux-x86_64.tar.gz    (dossier : lidar2map   + lidar2map_bundle.zip)
+#   lidar2map-windows-x86_64.zip     (dossier : lidar2map.exe + _internal/)
+#   lidar2map-linux-x86_64.tar.gz    (dossier : lidar2map     + _internal/)
 #   lidar2map-macos-arm64.zip        (LIDAR2MAP.app zippé via ditto, Apple Silicon)
 #   lidar2map-macos-x86_64.zip       (idem, Mac Intel)
+#
+# Depuis la 1.55, chaque archive contient le programme tel quel (dossier
+# onedir de PyInstaller, ou .app), comme celles de blink2video et de
+# watch2notif. Jusqu'à la 1.54, un lanceur l'extrayait d'un bundle zippé au
+# premier lancement. Le nom des archives et de leur dossier racine n'a pas
+# changé : décompressée par-dessus la précédente, une archive met le
+# programme à la place du lanceur, au même chemin (raccourcis, démarrage
+# automatique), et l'exécution distante sur VM lance toujours
+# $HOME/lidar2map-linux-x86_64/lidar2map.
 #
 # L'exécution distante (rlidar2map_CLI / rlidar2map_GUI) est embarquée dans
 # ces mêmes bundles : plus d'archives séparées. Voir --remote-cli /
@@ -26,9 +37,10 @@ name: Release (build 3 OS)
 # machine Intel perso.
 #
 # NB : le build lidar2map est lourd (JRE + osmosis + deps géo ; plus de Qt
-# depuis le retrait de pywebview en 1.49). Mesuré sur la v1.51.0 : bundle
-# 253 Mio sous Windows (642 Mio extrait, dont JRE 145 Mio), 373 Mio sous Linux
-# (1 028 Mio extrait). Les setup_build_* téléchargent JRE+osmosis
+# depuis le retrait de pywebview en 1.49). Mesuré sur la v1.51.0, sur le
+# bundle d'alors, qui avait le contenu de l'archive d'aujourd'hui : 253 Mio
+# sous Windows (642 Mio décompressé, dont JRE 145 Mio), 373 Mio sous Linux
+# (1 028 Mio décompressé). Les setup_build_* téléchargent JRE+osmosis
 # (--telecharger-outils). Prévoir des jobs longs (timeout-minutes).
 
 on:
@@ -40,6 +52,10 @@ on:
       tag:
         description: 'Tag de la release (ex: v1.3.0)'
         required: true
+      publier:
+        description: 'Publier la release (décocher : construire et éprouver seulement)'
+        type: boolean
+        default: true
 
 # Droits minimaux du GITHUB_TOKEN : lecture seule. Un job qui publie
 # déclare lui-même le droit d'écriture dont il a besoin.
@@ -121,20 +137,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Le dossier onedir devient le dossier racine de l'archive, sous le
+          # nom qu'elle a toujours eu (voir l'en-tête).
           $stage = "dist\lidar2map-windows-x86_64"
-          New-Item -ItemType Directory -Force $stage | Out-Null
-          Copy-Item dist\lidar2map.exe          $stage\
-          Copy-Item dist\lidar2map_bundle.zip   $stage\
-          Copy-Item lidar2map_icon.png           $stage\
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          Move-Item dist\lidar2map $stage
+          Copy-Item lidar2map_icon.png $stage\
           $zip = "dist\lidar2map-windows-x86_64.zip"
           Compress-Archive -Path $stage -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
             Out-File "$zip.sha256" -Encoding ascii -NoNewline
 
-      # Lance l'archive telle qu'elle sera publiée (démarrage, relance de
-      # l'exe interne, fusion MBTiles, dossier de travail) : tous les autres
-      # tests tournent en mode source. Bloquant depuis son premier passage
-      # sur les 4 runners (1.51.1) : le job publish exige tous les builds.
+      # Lance l'archive telle qu'elle sera publiée (démarrage, ménage d'un
+      # ancien lanceur, fusion MBTiles, chaîne Java, dossier de travail) :
+      # tous les autres tests tournent en mode source. Bloquant depuis son
+      # premier passage sur les 4 runners (1.51.1) : le job publish exige
+      # tous les builds.
       - name: Smoke test exe (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -143,10 +161,7 @@ jobs:
       # ── Linux ────────────────────────────────────────────────────────────
       - name: Setup machine (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y zip
-          bash setup_build_linux.sh
+        run: bash setup_build_linux.sh
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
@@ -155,10 +170,12 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          mkdir -p dist/lidar2map-linux-x86_64
-          cp dist/lidar2map             dist/lidar2map-linux-x86_64/
-          cp dist/lidar2map_bundle.zip  dist/lidar2map-linux-x86_64/
-          cp lidar2map_icon.png         dist/lidar2map-linux-x86_64/
+          # Le dossier onedir devient le dossier racine de l'archive : c'est
+          # $HOME/lidar2map-linux-x86_64/lidar2map que lance l'exécution
+          # distante (voir l'en-tête).
+          rm -rf dist/lidar2map-linux-x86_64
+          mv dist/lidar2map dist/lidar2map-linux-x86_64
+          cp lidar2map_icon.png dist/lidar2map-linux-x86_64/
           tar czf dist/lidar2map-linux-x86_64.tar.gz -C dist lidar2map-linux-x86_64
           sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
             > dist/lidar2map-linux-x86_64.tar.gz.sha256
@@ -207,6 +224,9 @@ jobs:
   publish:
     name: publish release
     needs: build
+    # Toujours sur un tag poussé ; en lancement manuel, sauf si publier est
+    # décoché (construire et éprouver seulement).
+    if: github.event_name == 'push' || inputs.publier
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -228,7 +248,7 @@ jobs:
           set -euo pipefail
           # Collecter les assets (zip/tar.gz) et leurs SHA256
           ASSETS=()
-          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nPremier lancement de lidar2map : extraction locale (~30-60 s). Mise à jour : décompresser cette archive par-dessus la précédente, le lanceur réextrait le bundle.\n\n| Fichier | SHA256 |\n|---|---|\n'
+          BODY=$'## lidar2map '"$TAG"$'\n\nExécutables lidar2map. Python n’est pas requis sur le PC client. L’exécution distante sur VM (`--remote-cli` / `--remote-gui`) est embarquée, voir tools/README_rlidar2map.md.\n\nL’archive contient le programme lui-même : il démarre sans extraction préalable. Mise à jour : décompresser cette archive par-dessus la précédente (sous macOS, remplacer LIDAR2MAP.app). Ce que le lanceur d’une version 1.54 ou antérieure laissait sur le disque est retiré au démarrage.\n\n| Fichier | SHA256 |\n|---|---|\n'
           while IFS= read -r sha; do
             asset="${sha%.sha256}"
             name="$(basename "$asset")"

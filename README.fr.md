@@ -71,8 +71,8 @@ autre pays peut être traité à partir d’un fichier PBF fourni.
 
 1. Téléchargez l’archive Windows, Ubuntu ou macOS depuis la page
    [Releases](https://github.com/nico579/lidar2map/releases/latest).
-2. Décompressez-la en gardant le lanceur à côté de
-   `lidar2map_bundle.zip`.
+2. Décompressez-la où vous voulez : le dossier extrait, ou `LIDAR2MAP.app`
+   sous macOS, est l’application.
 3. Lancez lidar2map sans argument. L’interface s’ouvre dans votre navigateur
    et une icône lidar2map apparaît dans la zone de notification.
 4. Choisissez une petite zone, laissez **Télécharger les données manquantes**

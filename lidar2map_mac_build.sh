@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# lidar2map_mac_build.sh — Build complet du launcher LIDAR2MAP.app
+# lidar2map_mac_build.sh : build de LIDAR2MAP.app (PyInstaller onedir + .app)
 #
-# 3 étapes (miroir exact de lidar2map_win_build.ps1) :
-#   1. PyInstaller onedir         -> dist_onedir/lidar2map/  (la vraie app)
-#   2. zip                        -> build/lidar2map_bundle.zip
-#   3. PyInstaller launcher .app  -> dist/LIDAR2MAP.app     (livrable final)
+# 3 étapes :
+#   1. PyInstaller                -> dist/LIDAR2MAP.app   (le programme livré)
+#   2. signature du .app complet
+#   3. archive ditto              -> dist/lidar2map-macos-<arch>.zip
+#      (notarisée si LIDAR2MAP_NOTARY_PROFILE est fourni)
+#
+# Jusqu'à la 1.54, LIDAR2MAP.app était un lanceur qui contenait le programme
+# zippé et l'extrayait dans ~/Library/Application Support/lidar2map au
+# premier lancement. Depuis la 1.55, le .app est le programme lui-même, comme
+# les dossiers livrés par blink2video et watch2notif.
 #
 # Usage :
 #   bash lidar2map_mac_build.sh
-#
-# Comportement utilisateur du livrable :
-#   - Premier lancement : extraction dans ~/Library/Application Support/lidar2map/ (~5-10 s, une fois)
-#   - Lancements suivants : skip extract si SHA bundle inchangé (~1 s)
-#   - Mise à jour (nouveau .app livré) : SHA différent -> ré-extraction propre
 
 set -euo pipefail
 
@@ -29,12 +30,9 @@ if [ ! -x "$PYI" ]; then
     exit 1
 fi
 
-ONEDIR_OUT="$ROOT/dist_onedir"
-ONEDIR_ROOT="$ONEDIR_OUT/lidar2map"
+DIST_OUT="$ROOT/dist"
 BUILD_DIR="$ROOT/build"
-BUNDLE_ZIP="$BUILD_DIR/lidar2map_bundle.zip"
-FINAL_OUT="$ROOT/dist"
-FINAL_APP="$FINAL_OUT/LIDAR2MAP.app"
+FINAL_APP="$DIST_OUT/LIDAR2MAP.app"
 # "-" = signature ad hoc gratuite. Pour une release notarisee, fournir le nom
 # exact du certificat, ex. "Developer ID Application: Example (TEAMID)".
 CODESIGN_IDENTITY="${LIDAR2MAP_CODESIGN_IDENTITY:--}"
@@ -54,19 +52,21 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. PyInstaller onedir (la vraie app)
+# 1. PyInstaller : dossier onedir, puis .app (BUNDLE de lidar2map_mac.spec)
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "[1/3] PyInstaller onedir (lidar2map_mac.spec)..."
+echo "[1/3] PyInstaller (lidar2map_mac.spec)..."
 "$PYI" "$ROOT/lidar2map_mac.spec" \
     --noconfirm --clean \
-    --distpath "$ONEDIR_OUT" \
+    --distpath "$DIST_OUT" \
     --workpath "$BUILD_DIR"
 
-if [ ! -f "$ONEDIR_ROOT/lidar2map" ]; then
-    echo "ERREUR : $ONEDIR_ROOT/lidar2map introuvable apres build"
+if [ ! -x "$FINAL_APP/Contents/MacOS/lidar2map" ]; then
+    echo "ERREUR : $FINAL_APP/Contents/MacOS/lidar2map introuvable apres build"
     exit 1
 fi
+# Le dossier onedir intermédiaire, déjà recopié dans le .app.
+rm -rf "$DIST_OUT/lidar2map"
 
 # Les wheels Intel de pyproj et rasterio embarquent chacune un
 # libtiff.6.dylib sous le même install-name. Sur le build Intel observé en
@@ -75,11 +75,20 @@ fi
 # Conserver la copie rasterio qui exerce effectivement l'I/O TIFF, à
 # l'emplacement attendu par pyproj. Le correctif est limité à x86_64 et n'est
 # appliqué que si les deux dylibs existent.
+#
+# Dans le .app, PyInstaller range les bibliothèques sous Contents/Frameworks,
+# où codesign n'admet de point dans un nom de dossier que pour un .framework :
+# .dylibs y devient __dot__dylibs, et un lien symbolique .dylibs y mène. Le
+# vrai fichier est cherché sous les deux noms, sans suivre les liens.
+libtiff_de() {
+    find "$FINAL_APP/Contents/Frameworks" -type f \
+        \( -path "*/$1/.dylibs/libtiff.6.dylib" \
+           -o -path "*/$1/__dot__dylibs/libtiff.6.dylib" \) \
+        -print -quit 2>/dev/null || true
+}
 if [ "$ARCH" = "x86_64" ]; then
-    PYPROJ_TIFF=$(find "$ONEDIR_ROOT/_internal/pyproj/.dylibs" \
-        -name 'libtiff.6.dylib' -type f -print -quit 2>/dev/null || true)
-    RASTERIO_TIFF=$(find "$ONEDIR_ROOT/_internal/rasterio/.dylibs" \
-        -name 'libtiff.6.dylib' -type f -print -quit 2>/dev/null || true)
+    PYPROJ_TIFF=$(libtiff_de pyproj)
+    RASTERIO_TIFF=$(libtiff_de rasterio)
     if [ -n "$PYPROJ_TIFF" ] && [ -n "$RASTERIO_TIFF" ]; then
         echo "  Intel : harmonisation libtiff pyproj <- rasterio"
         cp "$RASTERIO_TIFF" "$PYPROJ_TIFF"
@@ -94,57 +103,16 @@ if [ "$ARCH" = "x86_64" ]; then
     fi
 fi
 
-ONEDIR_SIZE=$(du -sm "$ONEDIR_ROOT" | cut -f1)
-echo "    Onedir : ${ONEDIR_SIZE} Mo"
-
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Zip du onedir
+# 2. Signature du .app complet
 # ─────────────────────────────────────────────────────────────────────────────
+# PyInstaller signe le .app à la fin de BUNDLE, avant le correctif Intel
+# ci-dessus. Toute modification après coup rompt le sceau des ressources, et
+# macOS déclarait alors "LIDAR2MAP.app is damaged" une fois le ZIP marqué
+# com.apple.quarantine par le navigateur. La signature du bundle COMPLET doit
+# donc impérativement être la dernière mutation avant l'archivage.
 echo ""
-echo "[2/3] Compression onedir -> bundle.zip..."
-mkdir -p "$BUILD_DIR"
-rm -f "$BUNDLE_ZIP"
-
-START_TS=$(date +%s)
-# ditto sans --keepParent : zip le CONTENU de lidar2map/ (pas le dossier lui-même)
-# → extraction dans _app_dir donne directement lidar2map + _internal/
-# Identique à Windows : Compress-Archive -Path "$onedirRoot\*"
-cd "$ONEDIR_OUT/lidar2map"
-ditto -c -k . "$BUNDLE_ZIP"
-cd "$ROOT"
-
-END_TS=$(date +%s)
-ELAPSED=$((END_TS - START_TS))
-BUNDLE_SIZE=$(du -sm "$BUNDLE_ZIP" | cut -f1)
-echo "    Bundle : ${BUNDLE_SIZE} Mo en ${ELAPSED}s"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. PyInstaller launcher .app (avec le bundle en data)
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "[3/3] PyInstaller launcher .app (lidar2map_mac_launcher.spec)..."
-"$PYI" "$ROOT/lidar2map_mac_launcher.spec" \
-    --noconfirm --clean \
-    --distpath "$FINAL_OUT" \
-    --workpath "$BUILD_DIR"
-
-if [ ! -d "$FINAL_APP" ]; then
-    echo "ERREUR : $FINAL_APP introuvable apres build launcher"
-    exit 1
-fi
-
-# Copier le bundle zip dans Contents/Resources/
-# → séparé du binaire launcher → remplaçable depuis Windows sans rebuilder
-echo "  Copie du bundle dans Contents/Resources/..."
-mkdir -p "$FINAL_APP/Contents/Resources"
-cp "$BUNDLE_ZIP" "$FINAL_APP/Contents/Resources/lidar2map_bundle.zip"
-echo "  → $FINAL_APP/Contents/Resources/lidar2map_bundle.zip"
-
-# PyInstaller signe le .app avant la copie ci-dessus. Cette copie modifie le
-# resource seal et provoquait "LIDAR2MAP.app is damaged" une fois le ZIP
-# marque com.apple.quarantine par le navigateur. La signature du bundle COMPLET
-# doit donc impérativement être la dernière mutation avant l'archivage.
-echo "  Signature du bundle complet..."
+echo "[2/3] Signature du bundle complet..."
 if [ "$CODESIGN_IDENTITY" = "-" ]; then
     codesign --force --deep --all-architectures --sign - "$FINAL_APP"
 else
@@ -160,17 +128,13 @@ codesign --verify --deep --strict --verbose=2 "$FINAL_APP"
 
 FINAL_SIZE=$(du -sm "$FINAL_APP" | cut -f1)
 
-# Supprimer l'exécutable brut intermédiaire (artefact PyInstaller EXE,
-# déjà embarqué dans LIDAR2MAP.app/Contents/MacOS/lidar2map)
-rm -f "$FINAL_OUT/lidar2map"
-
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Archive zip pour distribution (ditto preserve permissions + symlinks +
+# 3. Archive zip pour distribution (ditto preserve permissions + symlinks +
 #    xattrs, indispensable pour une .app extractable sur un autre Mac)
 # ─────────────────────────────────────────────────────────────────────────────
-RELEASE_ZIP="$FINAL_OUT/lidar2map-macos-$ARCH.zip"
+RELEASE_ZIP="$DIST_OUT/lidar2map-macos-$ARCH.zip"
 echo ""
-echo "[4/4] Archive distribution (ditto)..."
+echo "[3/3] Archive distribution (ditto)..."
 rm -f "$RELEASE_ZIP"
 ditto -c -k --keepParent "$FINAL_APP" "$RELEASE_ZIP"
 

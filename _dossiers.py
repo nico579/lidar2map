@@ -10,9 +10,10 @@ regroupe l'un et l'autre, comme le dossier du programme le faisait jusqu'à la
 1.53.
 
 Le dossier d'état s'appelle lidar2map-data et non lidar2map : sous ce nom-là,
-le dossier standard est déjà celui où le lanceur extrait le programme, et la
-documentation invite à le supprimer quand une extraction tourne mal. Les
-réglages et l'historique ne doivent pas partir avec lui.
+le dossier standard est celui où le lanceur d'une version <= 1.54 extrayait
+le programme, et la 1.55 le supprime au lancement (voir
+_bootstrap_runtime.nettoyer_ancienne_extraction). Les réglages et
+l'historique ne doivent pas partir avec lui.
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ def dossier_sorties(etat=None, environnement=None) -> Path:
 
 def preparer_etat(ancien, *, version="", environnement=None) -> list:
     """Reprend, une fois, l'état qu'une version <= 1.53 rangeait dans son
-    dossier de travail `ancien` (celui du lanceur, ou des sources), et rend
+    dossier de travail `ancien` (celui du programme, ou des sources), et rend
     la liste de ce qui a été repris. Sans effet avec LIDAR2MAP_HOME.
 
     Appelée au démarrage par lidar2map.py, sous __main__ seulement : un

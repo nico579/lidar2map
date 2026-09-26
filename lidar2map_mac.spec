@@ -1,20 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Spec PyInstaller pour lidar2map — macOS ARM64, onedir, JRE+osmosis+mapwriter bundlés.
+Spec PyInstaller pour lidar2map : macOS (arm64 ou x86_64), onedir + .app, JRE, osmosis et mapwriter embarqués.
 
 Usage :
     ~/.lidar2map/venv/bin/pyinstaller lidar2map_mac.spec --clean --noconfirm
 
 Résultat :
-    dist_onedir/lidar2map/lidar2map          (exécutable interne)
-    dist_onedir/lidar2map/_internal/
-        jre/jdk-21.0.10+7-jre/
-        osmosis/osmosis-0.49.2/
-        tagmapping-min.xml
-        ...
+    dist/LIDAR2MAP.app                       (le programme livré)
+        Contents/MacOS/lidar2map
+        Contents/Frameworks/                 (sys._MEIPASS : binaires, et
+                                              liens vers les données)
+        Contents/Resources/                  (données : osmosis, gui, ...)
+    dist/lidar2map/                          (dossier onedir intermédiaire)
 
-Ce build onedir est ensuite zippé et embarqué dans le launcher .app
-par lidar2map_mac_build.sh (étapes 2 et 3).
+PyInstaller range dans Contents/Frameworks tout fichier Mach-O, même ajouté
+comme donnée (le JRE), et le reste dans Contents/Resources, relié par des
+liens symboliques : vu de sys._MEIPASS, l'arborescence reste celle du
+dossier onedir. tests/exe_smoke.py vérifie que la chaîne Java y survit.
+
+Jusqu'à la 1.54, ce dossier onedir était zippé dans un lanceur .app qui
+l'extrayait dans ~/Library/Application Support. Depuis la 1.55, le .app est
+le programme lui-même ; lidar2map_mac_build.sh le signe puis l'archive.
 """
 
 import os, shutil
@@ -155,7 +161,15 @@ if _tools_dir.exists():
         datas += [(str(_vm_script), ".")]
 
 if JRE_SRC and JRE_SRC.exists():
-    datas += _add_tree(JRE_SRC, f"jre/{JRE_SRC.name}")
+    # Le JRE Temurin pour macOS a lui-même une forme de bundle
+    # (Contents/Info.plist, Contents/MacOS/libjli.dylib, un lien) : rangé tel
+    # quel sous Contents/Frameworks du .app, codesign --deep le prend pour un
+    # bundle imbriqué et refuse son exécutable principal, qui n'est pas un
+    # fichier ordinaire. Seul Contents/Home, le JRE proprement dit, est
+    # embarqué ; _osm_runtime.trouver_java y trouve toujours bin/java.
+    _jre_home = JRE_SRC / "Contents" / "Home"
+    datas += _add_tree(_jre_home if _jre_home.is_dir() else JRE_SRC,
+                       f"jre/{JRE_SRC.name}")
 else:
     print("  [WARN] JRE absent, sera telecharge au runtime par le script")
 
@@ -347,4 +361,21 @@ exe = EXE(
 coll = COLLECT(
     exe, a.binaries, a.datas,
     strip=False, upx=False, upx_exclude=[], name=NAME,
+)
+
+# Même nom et même identifiant que le .app du lanceur des versions <= 1.54 :
+# remplacé par celui-ci au même endroit, il garde sa place dans le Dock et
+# les ouvertures de session.
+app = BUNDLE(
+    coll,
+    name="LIDAR2MAP.app",
+    icon=str(APP_ICON),
+    bundle_identifier="fr.nicolas.lidar2map",
+    info_plist={
+        "NSHighResolutionCapable": "True",
+        "NSRequiresAquaSystemAppearance": "No",
+        "NSAppTransportSecurity": {
+            "NSAllowsArbitraryLoads": True,
+        },
+    },
 )

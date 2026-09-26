@@ -66,7 +66,7 @@ ok "Dependances installees dans $VENV"
 
 # -- 3. osmosis + JRE ----------------------------------------------------------
 step "3/4" "Telechargement osmosis + JRE"
-Write-Host "  Necessaires pour les bundler dans lidar2map_bundle.zip..."
+Write-Host "  Necessaires pour les embarquer dans dist\lidar2map..."
 & python "$ScriptDir\lidar2map.py" --telecharger-outils
 ok "Outils disponibles dans $env:USERPROFILE\.lidar2map"
 

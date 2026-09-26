@@ -310,7 +310,10 @@ Validé en local sur l'archive Windows de la v1.51.0, puis sur les 4 runners
 de la release v1.51.1 (8 à 19 s) ; bloquant depuis la v1.52.0. Écarts : l'étape 2 vérifie la commande de `_commande_relance()`, pas
 le menu « Redémarrer » lui-même (pas d'icône sur un runner) ; les MBTiles de
 test sont écrits par le script (PNG en stdlib) plutôt que par un
-`tests/fixtures_exe.py`.
+`tests/fixtures_exe.py`. En v1.55.0, avec l'option C de D2, la relance de
+l'exe interne n'a plus d'objet : l'étape 2 vérifie à la place le ménage de
+ce qu'un lanceur ≤ 1.54 laissait, et une étape de plus fait écrire un `.map`
+à la chaîne Java embarquée (JRE, osmosis, greffon mapwriter).
 
 **Constat.** Tous les tests tournent en mode source. `release.yml` construit,
 empaquette et publie les 4 archives sans jamais les lancer. Les bugs de la
@@ -362,6 +365,16 @@ devenu un clone du dépôt : tests, commit, push, tag et suivi du build sur
 place). Lanceur et bundle restent. `_loader.py` (lidar2map.py en texte dans
 le bundle) et `_import_patchable_source_module` ne servent plus le patch mais
 sont conservés : l'option C les retirerait.
+
+Option C livrée ensuite en v1.55.0, à la demande du propriétaire le 26
+septembre 2026, pour que ses applications s'installent toutes de la même
+façon : l'archive livre le programme tel quel (dossier onedir, ou `.app`
+sous macOS), comme blink2video et watch2notif. Plus de lanceur ni d'extraction ;
+le programme retire au démarrage ce qu'un lanceur ≤ 1.54 a laissé
+(`_bootstrap_runtime.nettoyer_ancienne_extraction`). Archives et dossiers
+racine gardent leur nom. `_loader.py` et `_import_patchable_source_module`
+restent pour l'instant : les retirer changerait le mode d'analyse des specs
+(deux passes), un chantier distinct.
 
 **Décision.** C'est un choix de produit.
 

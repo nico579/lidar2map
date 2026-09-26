@@ -16,13 +16,13 @@ does not install them system-wide.
 | | **Standalone binary application** | **Python script** |
 |---|---|---|
 | Requirements | None beyond a supported OS | Python 3.12 |
-| First setup | No installation; the bundled runtime is extracted on first launch | About 5 minutes; automatic bootstrap into a private virtual environment |
+| First setup | No installation: extract the archive and start the program | About 5 minutes; automatic bootstrap into a private virtual environment |
 | Updating | Download the newer release and extract it over the previous one | `git pull`, then launch again |
-| Distributable | Yes: launcher/application and `lidar2map_bundle.zip` travel together | No: each computer prepares its own Python environment |
+| Distributable | Yes: the extracted folder, or `LIDAR2MAP.app`, is the whole application | No: each computer prepares its own Python environment |
 | Best suited to | End users and redistribution | Development, Linux source use, and contribution |
 
 Publishing the standalone archives is a maintainer workflow. The build
-scripts, bundle architecture, and release deployment are covered only in
+scripts, packaging, and release deployment are covered only in
 [BUILD.md](../BUILD.md).
 
 ### 1.1. Standalone binary application
@@ -37,31 +37,38 @@ extract it without moving files inside the extracted folder.
 |---|---|---|
 | Windows 10/11, x86-64 | `lidar2map-windows-x86_64.zip` | File Explorer or `Expand-Archive` in PowerShell |
 | Ubuntu 24.04+, x86-64 | `lidar2map-linux-x86_64.tar.gz` | `tar xzf lidar2map-linux-x86_64.tar.gz` |
-| macOS 12+, Apple Silicon | `lidar2map-macos-arm64.zip` | `unzip`, then remove quarantine as shown below if Gatekeeper blocks the first launch |
+| macOS 12+, Apple Silicon | `lidar2map-macos-arm64.zip` | Finder (double-click) or `ditto -x -k`, then remove quarantine as shown below if Gatekeeper blocks the first launch |
 | macOS 12+, Intel | `lidar2map-macos-x86_64.zip` | Same |
 
-The extracted directory contains the launcher (`lidar2map.exe`, `lidar2map`,
-or `LIDAR2MAP.app`) and `lidar2map_bundle.zip` side by side. Keep them together.
-There is no system installation.
+The extracted folder is the application itself: `lidar2map.exe` (Windows) or
+`lidar2map` (Linux) next to the `_internal` folder it needs, or
+`LIDAR2MAP.app` on macOS. There is no system installation: put the folder
+wherever you like, for instance in `%LOCALAPPDATA%\Programs` on Windows, and
+`LIDAR2MAP.app` in `/Applications`. On macOS, prefer Finder or `ditto` to
+other unzip tools: the application contains symbolic links that must survive
+extraction.
 
 #### 1.1.2. Launch the binary application
 
 | OS | How to start |
 |---|---|
-| Windows | Double-click `lidar2map.exe`: no console window appears, except during the extraction after an installation or update, to show its progress. Started from a terminal, it keeps showing its log there. |
+| Windows | Double-click `lidar2map.exe`: no console window appears. Started from a terminal, it keeps showing its log there. |
 | Linux | Run `chmod +x lidar2map` once, then `./lidar2map` from the extracted directory. |
 | macOS | Double-click `LIDAR2MAP.app`. If Gatekeeper blocks it, run `xattr -dr com.apple.quarantine LIDAR2MAP.app`, then double-click again. |
 
-#### 1.1.3. First binary startup and runtime
+#### 1.1.3. First binary startup
 
-The first launch extracts the bundle once and usually takes 30–60 seconds.
-The extracted runtime is stored in:
+The program starts straight from the extracted folder, with nothing to unpack
+first. Up to version 1.54, a launcher extracted it on first launch, which took
+30 to 60 seconds, into a second copy:
 
 - Windows: `%LOCALAPPDATA%\lidar2map\`
 - macOS: `~/Library/Application Support/lidar2map/`
 - Linux: `~/.local/share/lidar2map/`
 
-Later launches reuse that copy.
+Version 1.55 deletes that copy the first time it starts, along with the
+`lidar2map_bundle.zip` that the old launcher leaves next to the program when
+you extract the new archive over the old one.
 
 ### 1.2. Python script
 
@@ -123,9 +130,9 @@ folder of your system.
 - macOS: `~/Library/Application Support/lidar2map-data/`
 - Linux: `~/.local/share/lidar2map-data/`
 
-That folder is named `lidar2map-data` because `lidar2map` is already the
-extracted runtime of the binary, which you may delete when an extraction goes
-wrong: your settings do not go with it.
+That folder is named `lidar2map-data` because `lidar2map` was, up to version
+1.54, the launcher's extracted copy of the program, which version 1.55
+deletes: your settings do not go with it.
 
 Up to version 1.53, everything lived next to the program. Extract version 1.54
 over the earlier one: on its first launch, it copies the settings, history and
@@ -283,7 +290,7 @@ The index sheet is enabled by default. `--no-index-map` disables it, and
 
 ## 5. Uninstall
 
-Use `--desinstaller` with the binary launcher or Python script.
+Use `--desinstaller` with the binary application or the Python script.
 
 ### 5.1. Standalone binary application
 
@@ -293,10 +300,16 @@ On Windows:
 lidar2map.exe --desinstaller
 ```
 
-On Linux or macOS:
+On Linux:
 
 ```bash
 ./lidar2map --desinstaller
+```
+
+On macOS:
+
+```bash
+LIDAR2MAP.app/Contents/MacOS/lidar2map --desinstaller
 ```
 
 ### 5.2. Python script
@@ -308,7 +321,7 @@ python3.12 lidar2map.py --desinstaller
 ### 5.3. Removed and retained files
 
 This removes the private virtual environment and installed tools/runtime. It
-does not remove the launcher or source script, nor your outputs and data
+does not remove the program folder, `LIDAR2MAP.app` or the source script, nor your outputs and data
 folder (see [Where lidar2map keeps your data](#13-where-lidar2map-keeps-your-data)):
 delete them yourself if you no longer need them.
 

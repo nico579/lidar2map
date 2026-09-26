@@ -573,8 +573,8 @@ import ssl
 from pathlib import Path
 
 # ``spec_from_file_location`` n'ajoute pas le dossier du script à sys.path.
-# Le TLS est configuré avant le launcher et avant le bootstrap des dépendances :
-# rendre les modules privés importables dès ce point préserve aussi ce scénario.
+# Le TLS est configuré avant le bootstrap des dépendances : rendre les modules
+# privés importables dès ce point préserve aussi ce scénario.
 _MODULE_DIR = str(Path(__file__).resolve().parent)
 while _MODULE_DIR in sys.path:
     sys.path.remove(_MODULE_DIR)
@@ -614,370 +614,21 @@ for _std in ("stdout", "stderr"):
         except (AttributeError, OSError):
             pass
 
-# Avant le bloc launcher : les programmes du système lancés depuis le binaire
+# Dès le démarrage : les programmes du système lancés depuis le binaire
 # (systemctl, xdg-open, navigateur) doivent recevoir le LD_LIBRARY_PATH
 # d'origine, pas celui que PyInstaller préfixe de ses bibliothèques.
 _bootstrap_runtime_impl.retablir_environnement_systeme()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MODE LAUNCHER (build onefile)
+# PROGRAMME LIVRÉ TEL QUEL (1.55.0)
 # ─────────────────────────────────────────────────────────────────────────────
-# Le même lidar2map.py est buildé en DEUX versions :
-#   1) onedir (lidar2map_win.spec)        : la vraie app, ~617 MB, lente à packager
-#      mais rapide à lancer. C'est ce qui tourne au final.
-#   2) onefile (lidar2map_win_launcher.spec) : un petit launcher qui contient le onedir
-#      zippé en ressource. À l'exécution il extrait dans %LOCALAPPDATA%\lidar2map
-#      (avec contrôle SHA pour détecter les mises à jour), puis spawn le vrai exe
-#      onedir avec une sentinelle pour qu'il saute ce bloc.
-#
-# Le launcher se distingue à l'exécution :
-#   - PyInstaller onefile : sys._MEIPASS contient lidar2map_bundle.zip
-#   - L'inner spawné a la sentinelle _INNER_FLAG dans sys.argv
-_INNER_FLAG = "--__lidar2map_inner__"
-if getattr(sys, "frozen", False):
-    if _INNER_FLAG in sys.argv:
-        # On est l'exe interne : retirer la sentinelle puis continuer normalement
-        sys.argv.remove(_INNER_FLAG)
-    else:
-        # On est peut-être le launcher : vérifier la présence du bundle
-        import hashlib, zipfile, platform as _platform
-        from pathlib import Path as _Path
-
-        # Ordre de recherche du bundle :
-        #   1. À côté de l'exe / dans Contents/Resources/ (bundle fichier séparé)
-        #   2. Dans sys._MEIPASS (bundle embarqué, fallback ancienne archi)
-        _exe = _Path(sys.executable).resolve()
-        _sys = _platform.system()   # une seule détection, réutilisée partout
-
-        if _sys == "Darwin" and ".app" in str(_exe):
-            _bundle = _exe.parent.parent / "Resources" / "lidar2map_bundle.zip"
-        else:
-            _bundle = _exe.parent / "lidar2map_bundle.zip"
-
-        # Fallback _MEIPASS — uniquement si non vide (Path("") = cwd, ambigu)
-        if not _bundle.exists():
-            _meipass_str = getattr(sys, "_MEIPASS", None)
-            if _meipass_str:
-                _bundle = _Path(_meipass_str) / "lidar2map_bundle.zip"
-
-        if _bundle.exists():
-            # Dossier d'extraction : chemins système standard par OS.
-            if _sys == "Windows":
-                _app_dir   = _Path(os.environ.get("LOCALAPPDATA",
-                                str(_Path.home() / "AppData" / "Local"))) / "lidar2map"
-                _inner_exe = _app_dir / "lidar2map.exe"
-            elif _sys == "Darwin":
-                _app_dir   = _Path.home() / "Library" / "Application Support" / "lidar2map"
-                _inner_exe = _app_dir / "lidar2map"
-            else:
-                _app_dir   = _Path.home() / ".local" / "share" / "lidar2map"
-                _inner_exe = _app_dir / "lidar2map"
-            _sha_file = _app_dir / ".bundle_sha"
-            _lock     = _app_dir.parent / ".lidar2map_extracting"
-
-            # ── --desinstaller intercepté dans le launcher ────────────────────
-            # Traité ici AVANT tout calcul de SHA ou extraction.
-            # Le launcher supprime tout directement (venv, osmosis, jre, bundle
-            # extrait) sans re-spawner — évite l'infinite loop.
-            if "--desinstaller" in sys.argv:
-                _ok_u = _bootstrap_runtime_impl.desinstaller_lidar2map(
-                    systeme=_sys,
-                    home=_Path.home(),
-                    localappdata=os.environ.get("LOCALAPPDATA"),
-                )
-                sys.exit(0 if _ok_u else 1)
-
-            def _bundle_sha():
-                h = hashlib.sha256()
-                with open(_bundle, "rb") as f:
-                    for chunk in iter(lambda: f.read(1 << 20), b""):
-                        h.update(chunk)
-                return h.hexdigest()
-
-            # ── Détection de mise à jour avec cache mtime ─────────────────────
-            # Calculer le SHA256 d'un zip de 300 MB prend ~0.5-1 s à chaque
-            # lancement. On stocke le mtime du bundle dans le fichier SHA pour
-            # éviter ce calcul quand le bundle n'a pas changé.
-            # Format de _sha_file : "sha256hex\nmtime_float"
-            _need_extract = True
-            if _sha_file.exists() and _inner_exe.exists() and not _inner_exe.is_dir():
-                try:
-                    _sha_lines     = _sha_file.read_text(encoding="utf-8").strip().split("\n")
-                    _saved_sha     = _sha_lines[0]
-                    _saved_mtime   = float(_sha_lines[1]) if len(_sha_lines) > 1 else 0.0
-                    _current_mtime = _bundle.stat().st_mtime
-                    if abs(_current_mtime - _saved_mtime) < 0.01:
-                        # mtime identique → bundle inchangé → pas d'extraction
-                        _need_extract = False
-                    else:
-                        # mtime changé → vérifier SHA pour confirmer
-                        _expected_sha = _bundle_sha()
-                        _need_extract = (_expected_sha != _saved_sha)
-                except Exception:
-                    _need_extract = True   # sha_file corrompu → ré-extraire
-
-            if _need_extract:
-                _expected_sha = _bundle_sha()   # calcul SHA si pas encore fait
-
-            # Windows : un double-clic masque la console dès le bootloader
-            # (hide_console des specs). Une (ré)extraction dure 30-60 s :
-            # la réafficher le temps de la progression, puis la remasquer.
-            # Une console déjà visible (lancement depuis un terminal) n'est
-            # jamais masquée : ce serait la fenêtre de l'utilisateur.
-            def _console_windows(action):
-                if _sys != "Windows":
-                    return False
-                try:
-                    import ctypes as _ct
-                    _hwnd = _ct.windll.kernel32.GetConsoleWindow()
-                    if not _hwnd:
-                        return False
-                    if action == "masquee":
-                        return not _ct.windll.user32.IsWindowVisible(_hwnd)
-                    _ct.windll.user32.ShowWindow(_hwnd, 5 if action == "afficher" else 0)
-                    return True
-                except Exception:
-                    return False
-
-            _console_a_remasquer = (_need_extract
-                                    and _console_windows("masquee"))
-            if _console_a_remasquer:
-                _console_windows("afficher")
-
-            # Détection robuste : si le zip a été créé avec --keepParent,
-            # l'extraction crée un sous-dossier lidar2map/ → l'exe est un niveau
-            # plus bas. On corrige automatiquement.
-            def _resolve_exe(exe):
-                if exe.exists() and exe.is_dir():
-                    deeper = exe / exe.name
-                    if deeper.exists() and not deeper.is_dir():
-                        return deeper
-                return exe
-
-            if _need_extract:
-                # Lockfile contre les extractions simultanées (double-clic).
-                # Prise de verrou ATOMIQUE via os.open(O_CREAT|O_EXCL) : une
-                # seule instance peut créer le fichier ; les autres reçoivent
-                # FileExistsError et basculent en attente. Remplace l'ancien
-                # check-then-act (exists() puis touch()) où deux double-clics
-                # voyaient tous deux « pas de lock », le créaient chacun, puis
-                # extrayaient en parallèle (course TOCTOU).
-                # Durci contre les locks ORPHELINS : si le lock est plus vieux
-                # que _LOCK_STALE_S (instance tuée/plantée pendant l'extraction),
-                # on le considère périmé et on le retire au lieu d'attendre 60 s
-                # puis d'échouer. L'extraction du bundle prend ~30-60 s -> 300 s
-                # est une borne haute sûre (pas de faux positif en cas de double-clic).
-                import time as _time
-                _LOCK_STALE_S = 300
-                _app_dir.parent.mkdir(parents=True, exist_ok=True)
-
-                def _prendre_lock():
-                    # True si on crée le verrou (on extrait), False s'il existe
-                    # déjà (une autre instance l'a pris avant nous).
-                    try:
-                        _fd = os.open(str(_lock),
-                                      os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                        os.close(_fd)
-                        return True
-                    except FileExistsError:
-                        return False
-                    except PermissionError:
-                        # Windows : un verrou que l'autre instance vient de
-                        # supprimer, mais qu'un antivirus tient encore ouvert,
-                        # reste « en attente de suppression » ; le recréer est
-                        # refusé au lieu de lever FileExistsError. Il est donc
-                        # encore pris, pour un instant : l'attente ci-dessous le
-                        # verra disparaître. Ailleurs, c'est un vrai refus.
-                        if os.name != "nt":
-                            raise
-                        return False
-
-                def _retirer_lock():
-                    # Même antivirus, côté suppression : sous Windows, unlink()
-                    # échoue (PermissionError) tant qu'il tient le fichier.
-                    # Quelques essais rapprochés, puis on renonce sans planter :
-                    # un verrou resté en place coûte une attente au lancement
-                    # suivant, jamais une installation réussie.
-                    for _essai in range(10):
-                        try:
-                            _lock.unlink(missing_ok=True)
-                            return
-                        except PermissionError:
-                            _time.sleep(0.05)
-
-                _lock_pris = _prendre_lock()
-                if not _lock_pris:
-                    # Verrou déjà présent : périmé (instance morte) ? Si oui,
-                    # nettoyer puis retenter la prise atomique une fois.
-                    _stale = False
-                    try:
-                        _stale = (_time.time() - _lock.stat().st_mtime) >= _LOCK_STALE_S
-                    except Exception:
-                        _stale = True
-                    if _stale:
-                        print("  Stale lockfile detected - cleaning up and resuming.", flush=True)
-                        _retirer_lock()
-                        _lock_pris = _prendre_lock()
-                if not _lock_pris:
-                    print("Installation in progress in another instance - waiting...",
-                          flush=True)
-                    for _ in range(60):
-                        _time.sleep(1)
-                        if not _lock.exists():
-                            break
-                    # Re-vérifier que l'autre instance a bien terminé : un
-                    # crash mid-extraction laisserait un _inner_exe absent ou
-                    # un _sha_file manquant. Si l'état n'est pas sain, on
-                    # abandonne plutôt que de spawner un binaire incomplet.
-                    _inner_check = _resolve_exe(_inner_exe)
-                    if _inner_check.exists() and _sha_file.exists():
-                        _need_extract = False
-                    else:
-                        print("  ⚠ Concurrent install incomplete or failed.",
-                              flush=True)
-                        print("  Remove the lockfile and relaunch:",
-                              flush=True)
-                        print(f"    {_lock}", flush=True)
-                        sys.exit(1)
-                else:
-                    try:
-                        if _app_dir.exists():
-                            import shutil as _sh
-                            _sh.rmtree(_app_dir, ignore_errors=True)
-                        _app_dir.mkdir(parents=True, exist_ok=True)
-                        _bundle_size = _bundle.stat().st_size
-                        print(f"First launch - installation ({_bundle_size // 1_000_000} MB)...",
-                              flush=True)
-                        # Suivi : ditto sur Mac préserve les permissions
-                        # exécutables, mais zipfile.extractall (utilisé par le
-                        # fallback Darwin et le chemin Linux) les perd → on
-                        # remet le bit +x sur l'exe après extraction si on est
-                        # passé par zipfile.
-                        _used_zipfile = False
-                        if _sys == "Darwin":
-                            import subprocess as _sp_d
-                            _r = _sp_d.run(["ditto", "-x", "-k",
-                                            str(_bundle), str(_app_dir)],
-                                           capture_output=True)
-                            if _r.returncode != 0:
-                                # Fallback zipfile si ditto échoue : validation
-                                # défensive contre zip-slip (le bundle est
-                                # notre artefact, mais on défend par principe).
-                                with zipfile.ZipFile(_bundle) as _z:
-                                    _t = _Path(_app_dir).resolve()
-                                    for _mem in _z.infolist():
-                                        if _mem.filename.startswith(("/", "\\")) \
-                                                or ":" in _mem.filename[:3]:
-                                            raise ValueError(
-                                                f"Bundle suspect : {_mem.filename!r}")
-                                        _d = (_t / _mem.filename).resolve()
-                                        if _d != _t and _t not in _d.parents:
-                                            raise ValueError(
-                                                f"Bundle suspect : {_mem.filename!r}")
-                                    _z.extractall(_app_dir)
-                                _used_zipfile = True
-                            _sp_d.run(["xattr", "-dr", "com.apple.quarantine",
-                                       str(_app_dir)], capture_output=True)
-                        else:
-                            # Extraction avec compteur de progression.
-                            # Validation défensive contre zip-slip.
-                            with zipfile.ZipFile(_bundle) as _z:
-                                _members = _z.infolist()
-                                _n = len(_members)
-                                _t = _Path(_app_dir).resolve()
-                                for _mem in _members:
-                                    if _mem.filename.startswith(("/", "\\")) \
-                                            or ":" in _mem.filename[:3]:
-                                        raise ValueError(
-                                            f"Bundle suspect : {_mem.filename!r}")
-                                    _d = (_t / _mem.filename).resolve()
-                                    if _d != _t and _t not in _d.parents:
-                                        raise ValueError(
-                                            f"Bundle suspect : {_mem.filename!r}")
-                                for _i, _m in enumerate(_members, 1):
-                                    _z.extract(_m, _app_dir)
-                                    # zipfile ne restaure PAS les permissions
-                                    # POSIX. zip -r (Unix) les stocke dans
-                                    # external_attr (16 bits hauts). On les
-                                    # réapplique → préserve +x sur tous les
-                                    # binaires bundlés (JRE java, osmosis,
-                                    # …).
-                                    _mode = (_m.external_attr >> 16) & 0xFFFF
-                                    if _mode and _sys != "Windows":
-                                        try:
-                                            (_Path(_app_dir) / _m.filename).chmod(_mode & 0o777)
-                                        except Exception:
-                                            pass
-                                    if _i % max(1, _n // 20) == 0:
-                                        print(f"  {_i * 100 // _n}%",
-                                              end="\r", flush=True)
-                            print("  100%", flush=True)
-                            _used_zipfile = True
-
-                        # Filet de sécurité : si le zip a été créé sans
-                        # permissions POSIX (external_attr == 0, ex: Windows),
-                        # forcer au moins +x sur l'exe interne pour qu'il
-                        # puisse être spawné.
-                        if _used_zipfile and _sys != "Windows":
-                            import stat as _stat
-                            _inner_exe_resolved = _resolve_exe(_inner_exe)
-                            if _inner_exe_resolved.exists():
-                                _inner_exe_resolved.chmod(
-                                    _inner_exe_resolved.stat().st_mode
-                                    | _stat.S_IXUSR | _stat.S_IXGRP | _stat.S_IXOTH)
-
-                        # Vérifier que l'exe interne existe avant d'écrire le SHA
-                        # (ditto peut retourner 0 avec une extraction incomplète)
-                        _inner_resolved = _resolve_exe(_inner_exe)
-                        if not _inner_resolved.exists():
-                            raise RuntimeError(
-                                f"Extraction incomplète : {_inner_exe} not found")
-
-                        _sha_part = _sha_file.with_name(
-                            f"{_sha_file.name}.{os.getpid()}."
-                            f"{uuid.uuid4().hex[:12]}.part"
-                        )
-                        try:
-                            _sha_part.write_text(
-                                f"{_expected_sha}\n{_bundle.stat().st_mtime}",
-                                encoding="utf-8")
-                            os.replace(_sha_part, _sha_file)
-                        finally:
-                            _sha_part.unlink(missing_ok=True)
-                        print("Installation complete.", flush=True)
-                    except Exception as _e_extract:
-                        print(f"\n  ⚠ Erreur d'extraction : {_e_extract}", flush=True)
-                        print("  Restart the application to try again.", flush=True)
-                        sys.exit(1)
-                    finally:
-                        _retirer_lock()
-
-            if _console_a_remasquer:
-                _console_windows("masquer")
-
-            # Résoudre le vrai chemin de l'exe (gère --keepParent)
-            _inner_exe = _resolve_exe(_inner_exe)
-
-            # ── LIDAR2MAP_WORK_DIR : dossier contenant le .app/.exe ───────────
-            # Sur macOS, sys.executable est dans .app/Contents/MacOS/ →
-            # remonter jusqu'au dossier parent du .app pour que les fichiers
-            # utilisateur (Projets/, logs/, cache/) soient créés à côté du .app.
-            if _sys == "Darwin" and ".app" in str(_exe):
-                _work_dir = _exe.parent.parent.parent.parent
-            else:
-                _work_dir = _exe.parent
-
-            # Spawn l'exe interne avec la sentinelle et les args utilisateur.
-            import subprocess as _sp
-            _env = os.environ.copy()
-            _env["LIDAR2MAP_WORK_DIR"] = str(_work_dir)
-            # Le chemin exact du lanceur : c'est lui que le démarrage
-            # automatique doit relancer (_autostart.py), pas l'exe interne,
-            # que seul le lanceur réextrait après une mise à jour.
-            _env["LIDAR2MAP_LANCEUR"] = str(_exe)
-            _rc = _sp.call([str(_inner_exe), _INNER_FLAG] + sys.argv[1:], env=_env)
-            sys.exit(_rc)
-        # Pas de bundle.zip → exe onedir lancé directement → continuer.
+# Jusqu'à la 1.54, un petit lanceur contenait le programme zippé, l'extrayait
+# dans le dossier de données de l'OS (%LOCALAPPDATA%\lidar2map, etc.), puis le
+# lançait : deux exemplaires sur disque, et 30 à 60 s d'extraction après chaque
+# mise à jour. Depuis la 1.55, l'archive livre directement le programme (dossier
+# onedir, ou .app sous macOS), comme celles de blink2video et de watch2notif.
+# Ce qu'un ancien lanceur a laissé sur disque est retiré au lancement (voir
+# _bootstrap_runtime.nettoyer_ancienne_extraction).
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXÉCUTION DISTANTE (rlidar2map_CLI / rlidar2map_GUI) — dispatch précoce
@@ -1234,15 +885,18 @@ if _INSTALL_ALL_DEPS:
     sys.exit(0 if _installer_toutes_dependances() else 1)
 
 # ── --desinstaller ────────────────────────────────────────────────────────────
-# Supprime le venv (~/.lidar2map/venv) et le dossier d'extraction du bundle
+# Supprime le venv (~/.lidar2map/venv), osmosis, le JRE et, s'il en reste, le
+# dossier où le lanceur d'une version <= 1.54 extrayait le programme
 # (~/Library/Application Support/lidar2map/ sur macOS, etc.).
-# Ne supprime PAS le script lui-même ni le .app/.exe.
+# Ne supprime PAS le script lui-même ni le .app/.exe, même installé dans ce
+# dernier dossier.
 def _desinstaller_installation():
     """Désinstalle les données gérées et signale tout retrait partiel."""
     return _bootstrap_runtime_impl.desinstaller_lidar2map(
         systeme=platform.system(),
         home=Path.home(),
         localappdata=os.environ.get("LOCALAPPDATA"),
+        executable=sys.executable if getattr(sys, "frozen", False) else None,
     )
 
 
@@ -1276,8 +930,29 @@ def _preparer_etat():
               f"{', '.join(repris)}.")
 
 
+def _nettoyer_ancienne_extraction():
+    """Retire ce que le lanceur d'une version <= 1.54 a laissé (voir le
+    bandeau PROGRAMME LIVRÉ TEL QUEL). Figé seulement, et jamais bloquant :
+    un échec laisse les restes en place pour le lancement suivant."""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        retires = _bootstrap_runtime_impl.nettoyer_ancienne_extraction(
+            systeme=platform.system(),
+            home=Path.home(),
+            localappdata=os.environ.get("LOCALAPPDATA"),
+            executable=sys.executable,
+        )
+    except OSError as exc:
+        print(f"  Cleanup of the former launcher's files postponed ({exc}).")
+        return
+    for chemin in retires:
+        print(f"  Removed what the former launcher left: {chemin}")
+
+
 if __name__ == "__main__":
     _preparer_etat()
+    _nettoyer_ancienne_extraction()
 
 # ── --smoketest ──────────────────────────────────────────────────────────────
 # Exécute les 5 modes du pipeline sur une petite zone (Garéoult 1 km) et
@@ -1352,7 +1027,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.54.1"
+VERSION      = "1.55.0"
 VERSION_DATE = "2026-09"
 
 
@@ -6309,11 +5984,9 @@ def _commande_relance(*, frozen, executable, argv):
     Figé, ``argv[0]`` ne désigne PAS l'exécutable : _loader.py le remplace
     par le chemin de ``_internal/lidar2map.py`` (texte, ni exécutable ni
     lançable par CreateProcess sous Windows). On relance donc l'exe courant
-    (``executable``) avec la sentinelle interne, retirée au démarrage comme
-    quand le launcher l'ajoute : aucune ré-extraction, même dossier de
-    travail (LIDAR2MAP_WORK_DIR hérité de l'environnement)."""
+    (``executable``), qui depuis la 1.55 est le programme lui-même."""
     if frozen:
-        return [executable, _INNER_FLAG] + list(argv[1:])
+        return [executable] + list(argv[1:])
     return [executable] + list(argv)
 
 

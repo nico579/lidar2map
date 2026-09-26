@@ -193,11 +193,13 @@ the selected mode, `git`, `python3`, `python3-venv`, `curl`, or `rsync`. It runs
 
 ### Bundle or source
 
-- `--bundle` downloads and uses the published Linux x86-64 lidar2map bundle;
+- `--bundle` downloads and uses the published Linux x86-64 lidar2map program,
+  and updates it when a newer release is out, unless another bundle run is
+  still using it;
 - `--source` clones or updates the source checkout and bootstraps its Python
   environment. It is the default.
 
-The source checkout, virtual environment, bundle runtime, `cache/`, and
+The source checkout, virtual environment, installed program, `cache/`, and
 `production/` are shared resources on the VM. Per-run state, logs, and results
 are isolated by session.
 
@@ -366,7 +368,7 @@ deleted. The operation is recoverable/idempotent if the SSH purge response is
 lost. The complete local copy remains in `vm-results`.
 
 Shared `cache/`, `production/`, the source checkout, virtual environment, and
-bundle runtime are never deleted. They remain available to another run or to a
+installed program are never deleted. They remain available to another run or to a
 future `--resume`.
 
 The final synchronization obeys `--sync-only`. Its default, `tout`, preserves

@@ -206,11 +206,13 @@ et, selon le mode, `git`, `python3`, `python3-venv`, `curl` ou `rsync`. Il lance
 
 ### Bundle ou sources
 
-- `--bundle` télécharge et utilise le bundle Linux x86-64 publié ;
+- `--bundle` télécharge et utilise le programme Linux x86-64 publié, et le
+  met à jour quand une release plus récente paraît, sauf si un autre
+  traitement en mode bundle s’en sert encore ;
 - `--source` clone ou actualise le dépôt source et prépare son environnement
   Python. C’est le mode par défaut.
 
-Le dépôt source, l’environnement virtuel, le runtime du bundle, `cache/` et
+Le dépôt source, l’environnement virtuel, le programme installé, `cache/` et
 `production/` sont des ressources partagées sur la VM. L’état, le journal et
 les résultats de chaque traitement sont isolés par session.
 
@@ -389,7 +391,7 @@ aucune archive n’est supprimé. L’opération est récupérable et idempotent
 réponse SSH de purge se perd. La copie locale complète reste dans `vm-results`.
 
 Les dossiers partagés `cache/`, `production/`, le dépôt source,
-l’environnement virtuel et le runtime du bundle ne sont jamais supprimés. Ils
+l’environnement virtuel et le programme installé ne sont jamais supprimés. Ils
 restent disponibles pour un autre traitement ou un futur `--resume`.
 
 La dernière synchronisation respecte `--sync-only`. Sa valeur par défaut,

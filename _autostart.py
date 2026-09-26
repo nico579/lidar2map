@@ -25,39 +25,19 @@ LINUX_SERVICE_NAME = "lidar2map.service"
 MAC_LABEL = "com.nico.lidar2map"
 
 
-def _lanceur():
-    """Le lanceur visible, celui qui est a cote de lidar2map_bundle.zip.
-
-    C'est lui que le demarrage automatique doit lancer, pas l'exe interne
-    qu'il a extrait : apres une mise a jour, seul le lanceur reextrait le
-    nouveau bundle, et l'exe interne relance tel quel resterait l'ancienne
-    version. Depuis la 1.54.0, le lanceur donne son propre chemin dans
-    LIDAR2MAP_LANCEUR ; avant, seulement son dossier (LIDAR2MAP_WORK_DIR),
-    qui suffit hors macOS, ou le lanceur vit dans le .app."""
-    chemin = os.environ.get("LIDAR2MAP_LANCEUR", "").strip()
-    if chemin:
-        return Path(chemin)
-    dossier = os.environ.get("LIDAR2MAP_WORK_DIR", "").strip()
-    if dossier and platform.system() != "Darwin":
-        suffixe = ".exe" if platform.system() == "Windows" else ""
-        candidat = Path(dossier) / f"lidar2map{suffixe}"
-        if candidat.is_file():
-            return candidat
-    return None
-
-
 def _lidar2map_command() -> list:
     """Commande a lancer au demarrage de session : le serveur web, sans
     ouverture automatique du navigateur (--no-browser - un navigateur qui
     s'ouvre tout seul a l'ouverture de session serait surprenant ; le
     tray/l'acces distant restent la, ouvrir la page reste un choix).
 
-    Plus aucune variable d'environnement a transmettre : l'etat vit dans le
-    dossier standard de l'OS (voir _dossiers.py), et le lanceur pose lui-meme
-    LIDAR2MAP_WORK_DIR pour l'exe interne."""
+    Aucune variable d'environnement a transmettre : l'etat vit dans le
+    dossier standard de l'OS (voir _dossiers.py). Fige, le programme en cours
+    est celui a relancer : depuis la 1.55, l'archive le livre tel quel, sans
+    lanceur qui l'extrairait ailleurs (sous Windows, c'est le meme chemin
+    que celui du lanceur d'avant, l'entree de demarrage reste valable)."""
     if frozen():
-        binaire = _lanceur() or Path(sys.executable)
-        return [str(binaire), "--serve-gui", "--no-browser"]
+        return [str(Path(sys.executable)), "--serve-gui", "--no-browser"]
     if platform.system() == "Windows":
         return [str(Path(sys.executable).with_name("pythonw.exe")),
                 str(PROJECT_DIR / "lidar2map.py"), "--serve-gui", "--no-browser"]
@@ -164,7 +144,7 @@ def _enable_windows() -> None:
     """Raccourci .lnk dans le dossier Demarrage, cree par l'interface COM de
     l'explorateur via PowerShell, present sur tout Windows.
 
-    Le lanceur est un programme console, mais construit avec
+    lidar2map.exe est un programme console, mais construit avec
     hide_console="hide-early" : il cache sa fenetre des son demarrage, et
     WindowStyle 7 la fait naitre reduite, donc sans eclair a l'ecran.
 

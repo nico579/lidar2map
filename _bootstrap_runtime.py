@@ -44,7 +44,7 @@ MODULE_PAR_PAQUET = {
 def retablir_environnement_systeme(*, fige=None, plateforme=None, environ=None):
     """Rend aux programmes du système le LD_LIBRARY_PATH d'origine.
 
-    Sous Linux, le lanceur de PyInstaller préfixe cette variable du dossier
+    Sous Linux, le bootloader de PyInstaller préfixe cette variable du dossier
     de ses bibliothèques et garde l'ancienne valeur dans
     LD_LIBRARY_PATH_ORIG. Tout enfant en hérite : systemctl (démarrage
     automatique), xdg-open ou le navigateur chargeaient alors les
@@ -54,10 +54,11 @@ def retablir_environnement_systeme(*, fige=None, plateforme=None, environ=None):
     PyInstaller pour les programmes externes :
     https://pyinstaller.org/en/stable/runtime-information.html#ld-library-path-libpath-considerations
 
-    Appelée par lidar2map.py avant le bloc lanceur : le lanceur transmet
-    ainsi à l'exe interne un environnement propre, dont celui-ci gardera à
-    son tour la bonne valeur d'origine. Le chargeur d'un processus ne lit
-    la variable qu'à son démarrage : la rétablir ne change rien pour lui.
+    Appelée par lidar2map.py dès son démarrage, avant tout lancement de
+    processus : une relance (« Redémarrer ») reçoit ainsi un environnement
+    propre, dont elle gardera à son tour la bonne valeur d'origine. Le
+    chargeur d'un processus ne lit la variable qu'à son démarrage : la
+    rétablir ne change rien pour lui.
     """
     fige = getattr(sys, "frozen", False) if fige is None else fige
     plateforme = sys.platform if plateforme is None else plateforme
@@ -68,7 +69,7 @@ def retablir_environnement_systeme(*, fige=None, plateforme=None, environ=None):
     if origine is not None:
         environ["LD_LIBRARY_PATH"] = origine
     else:
-        # Variable absente avant le lanceur : il n'a rien gardé à rétablir.
+        # Variable absente avant le bootloader : il n'a rien gardé à rétablir.
         environ.pop("LD_LIBRARY_PATH", None)
 
 
@@ -84,7 +85,7 @@ def chemins_desinstallation(*, systeme, home, localappdata=None):
     else:
         app_data = home / ".local" / "share" / "lidar2map"
     return (
-        (app_data, "dossier d'extraction du bundle"),
+        (app_data, "ancienne extraction du lanceur (<= 1.54)"),
         (lidar2map_home / "venv", "venv Python"),
         (lidar2map_home / "osmosis", "osmosis"),
         (lidar2map_home / "jre", "JRE Java"),
@@ -117,15 +118,22 @@ def desinstaller_lidar2map(
     systeme,
     home,
     localappdata=None,
+    executable=None,
     supprimer_arbre=shutil.rmtree,
     ecrire=print,
 ):
-    """Supprime les seules cibles planifiées et retourne ``True`` si complet."""
+    """Supprime les seules cibles planifiées et retourne ``True`` si complet.
+
+    ``executable`` est le programme figé en cours. Depuis la 1.55, il peut
+    être installé n'importe où, y compris dans le dossier où le lanceur d'une
+    version <= 1.54 extrayait le sien : une cible qui le contient est gardée,
+    sa suppression détruirait le programme lui-même."""
     cibles = chemins_desinstallation(
         systeme=systeme,
         home=home,
         localappdata=localappdata,
     )
+    programme = Path(executable).resolve() if executable else None
     total = 0
     complet = True
     ecrire("")
@@ -134,6 +142,9 @@ def desinstaller_lidar2map(
     for chemin, label in cibles:
         if not chemin.exists() and not chemin.is_symlink():
             ecrire(f"  {label} : absent ({chemin})")
+            continue
+        if programme is not None and chemin.resolve() in programme.parents:
+            ecrire(f"  {label} : kept, the running program lives there ({chemin})")
             continue
         taille = (
             chemin.lstat().st_size
@@ -160,10 +171,50 @@ def desinstaller_lidar2map(
     ecrire("")
     ecrire(f"  {total / 1e6:.0f} MB freed.")
     ecrire("")
-    ecrire("  Note: lidar2map.py, the .app/.exe and the zip are not removed.")
+    ecrire("  Note: lidar2map.py and the program folder (.app/.exe) are not removed.")
     ecrire("  Remove them manually if needed.")
     ecrire("")
     return complet
+
+
+def nettoyer_ancienne_extraction(*, systeme, home, localappdata=None, executable):
+    """Retire ce qu'un lanceur d'une version <= 1.54 a laissé, et rend la
+    liste de ce qui a été retiré.
+
+    Deux restes : le programme qu'il extrayait dans le dossier de données de
+    l'OS (même chemin que chemins_desinstallation), et son bundle zippé resté
+    à côté du programme quand la nouvelle archive a été décompressée
+    par-dessus l'ancienne. Le dossier n'est retiré que s'il porte la marque
+    du lanceur (.bundle_sha) et que le programme ne tourne pas depuis lui. Il
+    est d'abord renommé : sous Windows, le renommage échoue tant qu'une
+    ancienne instance y tourne encore, et le nettoyage attend alors le
+    lancement suivant."""
+    retires = []
+    programme = Path(executable).resolve()
+    zip_voisin = programme.parent / "lidar2map_bundle.zip"
+    if zip_voisin.is_file():
+        try:
+            zip_voisin.unlink()
+            retires.append(zip_voisin)
+        except OSError:
+            pass
+
+    dossier = chemins_desinstallation(
+        systeme=systeme, home=home, localappdata=localappdata)[0][0]
+    corbeille = dossier.with_name(dossier.name + ".ancienne-extraction")
+    if corbeille.exists():   # reste d'un nettoyage interrompu
+        shutil.rmtree(corbeille, ignore_errors=True)
+    if not (dossier / ".bundle_sha").is_file():
+        return retires
+    if dossier.resolve() in programme.parents:
+        return retires
+    try:
+        os.rename(dossier, corbeille)
+    except OSError:
+        return retires
+    shutil.rmtree(corbeille, ignore_errors=True)
+    retires.append(dossier)
+    return retires
 
 
 def verifier_venv_linux():

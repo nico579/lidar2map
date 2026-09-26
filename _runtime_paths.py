@@ -6,11 +6,19 @@ from pathlib import Path
 
 
 def dossier_programme(*, frozen, environnement, executable, script_path):
-    """Dossier du lanceur une fois figé, celui des sources sinon. Jusqu'à la
-    1.53, lidar2map y rangeait tout, état et sorties (voir _dossiers.py)."""
+    """Dossier du programme une fois figé (celui qui contient le .app sous
+    macOS), celui des sources sinon. Jusqu'à la 1.53, lidar2map y rangeait
+    tout, état et sorties (voir _dossiers.py). Jusqu'à la 1.54, le lanceur le
+    transmettait par LIDAR2MAP_WORK_DIR ; depuis la 1.55, le programme est
+    livré tel quel et le trouve lui-même. ``environnement`` reste accepté
+    pour les appelants, mais ne sert plus."""
     if frozen:
-        return Path(environnement.get("LIDAR2MAP_WORK_DIR")
-                    or Path(executable).resolve().parent)
+        chemin = Path(executable).resolve()
+        dossier = chemin.parent
+        if (dossier.name == "MacOS" and dossier.parent.name == "Contents"
+                and dossier.parent.parent.suffix == ".app"):
+            return dossier.parent.parent.parent
+        return dossier
     return Path(script_path).resolve().parent
 
 

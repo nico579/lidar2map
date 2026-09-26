@@ -16,50 +16,58 @@
 
 ## 1. Architecture
 
-### Pattern launcher + bundle
+### Programme livré tel quel
+
+Depuis la 1.55, chaque archive de release contient le programme lui-même,
+comme celles de blink2video et de watch2notif : le dossier onedir de
+PyInstaller sous Windows et Linux, un `.app` sous macOS.
 
 ```
-Launcher (~5 Mo)                     ne change jamais
-lidar2map.py compilé en onefile minimal (deps lourdes excluded)
-bloc `--__lidar2map_inner__` en tête détecte le mode launcher vs inner
-        |
-        | lit
-        v
-lidar2map_bundle.zip                 fichier SÉPARÉ (remplaçable)
-  lidar2map(.exe)   binaire interne (entry point = _loader.py)
+lidar2map-windows-x86_64/          (lidar2map-linux-x86_64/ sous Linux)
+  lidar2map.exe                    entry point = _loader.py
   _internal/
-    lidar2map.py  <── remplaçable depuis Windows sans rebuild
+    lidar2map.py                   exécuté en texte par _loader.py
     rasterio/
     gui/          index.html + app.js + style.css (servis en HTTP local)
-    osmosis/      bundlé si présent au moment du build
-    jre/          bundlé si présent au moment du build
+    osmosis/      embarqué si présent au moment du build
+    jre/          embarqué si présent au moment du build
     ...
-        |
-        | extrait dans (1 seule fois, SHA détecte les mises à jour)
-        v
-Dossier d'installation
-  macOS   ~/Library/Application Support/lidar2map/
-  Windows %LOCALAPPDATA%\lidar2map\
-  Linux   ~/.local/share/lidar2map/
+  lidar2map_icon.png
+
+LIDAR2MAP.app/                     (macOS)
+  Contents/MacOS/lidar2map
+  Contents/Frameworks/             sys._MEIPASS : binaires (dont le JRE),
+                                   liens vers les données
+  Contents/Resources/              données (osmosis, gui, lidar2map.py...)
 ```
 
-### Emplacement du bundle selon l'OS
+Dans le `.app`, PyInstaller range tout fichier Mach-O, même ajouté comme
+donnée, sous `Contents/Frameworks`, le reste sous `Contents/Resources`, et
+relie les deux par des liens symboliques : vu de `sys._MEIPASS`,
+l'arborescence reste celle du dossier onedir. Un nom de dossier à point y
+devient `__dot__` (`.dylibs` → `__dot__dylibs`), ce dont tient compte le
+correctif libtiff du build Intel.
 
-| OS      | Emplacement du zip |
-|---------|--------------------|
-| macOS   | `LIDAR2MAP.app/Contents/Resources/lidar2map_bundle.zip` |
-| Windows | `lidar2map_bundle.zip` à côté de `lidar2map.exe` |
-| Linux   | `lidar2map_bundle.zip` à côté du binaire |
+Jusqu'à la 1.54, un lanceur onefile contenait ce dossier zippé
+(`lidar2map_bundle.zip`) et l'extrayait au premier lancement dans
+`%LOCALAPPDATA%\lidar2map\`, `~/Library/Application Support/lidar2map/` ou
+`~/.local/share/lidar2map/` : deux exemplaires sur disque, 30 à 60 s
+d'attente après chaque mise à jour, et une dualité lanceur / exe interne à
+l'origine des bugs de « Redémarrer » et du démarrage automatique (option C
+de D2, [docs/preconisations_evolution.md](docs/preconisations_evolution.md)).
 
-### Comportement au lancement
+Au démarrage, la 1.55 retire ce qu'un tel lanceur a laissé : son
+extraction, reconnue à sa marque `.bundle_sha`, et le `lidar2map_bundle.zip`
+resté à côté du programme quand l'archive est décompressée par-dessus
+(`_bootstrap_runtime.nettoyer_ancienne_extraction`). Si une ancienne
+instance tourne encore depuis l'extraction, son renommage échoue sous
+Windows et le ménage attend le lancement suivant. Le nom des archives et de
+leur dossier racine n'a pas changé : décompressée par-dessus, une archive
+met le programme au chemin du lanceur, et les raccourcis comme le démarrage
+automatique restent valables.
 
-- **Premier lancement** : calcul SHA + extraction avec progression (`20%... 40%...`) + lockfile anti double-clic
-- **Lancements suivants** : comparaison mtime du zip (quelques ms) → démarrage immédiat si inchangé
-- **Mise à jour** : mtime différent → recalcul SHA → ré-extraction si SHA différent
-- **Double-clic simultané** : lockfile `.lidar2map_extracting` — la deuxième instance attend 60 s que la première termine
-
-Le fichier `.bundle_sha` stocke le SHA256 ET le mtime du zip sur deux lignes.
-Les anciens formats (une seule ligne) déclenchent une ré-extraction propre.
+`_loader.py`, qui exécute `_internal/lidar2map.py` en texte, servait au
+patch sans reconstruction retiré en 1.53 (D2) ; il reste en place.
 
 ### Interface graphique
 
@@ -75,15 +83,15 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Sécurité | `Handler.hote_autorise()` : `Host`, adresse TCP du client et `Origin` vérifiés ; pas de compte |
 | Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer, repli automatique sans icône si elle ne peut pas être créée |
 | Seconde instance | `_instance_existante()` interroge `/api/init` : question dans le terminal s'il est visible (`_terminal_interactif()`), sinon dans la page (`?deja-ouverte=1`) ; rien avec `--no-browser`. `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
-| Console Windows | Launcher et exe interne restent des applications console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Le launcher la réaffiche pendant une (ré)extraction. Changement de spec : rebuild |
-| Démarrage automatique | `_autostart.py` : raccourci `.lnk` (dossier Démarrage, comme blink2video et watch2notif), agent `launchd`, service `systemd --user`. En mode figé, lance le lanceur (`LIDAR2MAP_LANCEUR`), qui réextrait après une mise à jour ; aucune variable d'environnement à transmettre. Le `.vbs` d'une version ≤ 1.53 est remplacé au démarrage du serveur (exécutable seulement) |
+| Console Windows | `lidar2map.exe` reste une application console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Changement de spec : rebuild |
+| Démarrage automatique | `_autostart.py` : raccourci `.lnk` (dossier Démarrage, comme blink2video et watch2notif), agent `launchd`, service `systemd --user`. En mode figé, lance le programme en cours (`sys.executable`) ; aucune variable d'environnement à transmettre, et celles d'un lanceur ≤ 1.54 sont ignorées. Le `.vbs` d'une version ≤ 1.53 est remplacé au démarrage du serveur (exécutable seulement) |
 | Dossiers de données | `_dossiers.py` : état (préférences, historique, `lidar2map.env`, journaux) dans `platformdirs.user_data_dir("lidar2map-data")`, sorties (`Projets/`, `cache/`, `production/`) dans `Documents/lidar2map` ; `LIDAR2MAP_HOME` regroupe les deux. Reprise unique de l'état d'une version ≤ 1.53 au lancement (`_preparer_etat()`, sous `__main__` seulement), sorties laissées en place via le réglage `dossier_sorties` |
 | Accès distant | `--trusted-host` (réglage enregistré) : `_serve_web.EcouteHoteConfiance` écoute en plus sur son adresse (même port, IPv4/IPv6), réessaie toutes les 30 s tant qu'elle n'existe pas (VPN arrêté), suit les changements à chaud ; le serveur principal reste sur 127.0.0.1. `--bind` sur une autre adresse désactive ce complément |
 
 ### Osmosis et JRE
 
-- **Bundlés** si présents dans `~/.lidar2map/` au moment du build (via `setup_build_*.sh/ps1`)
-- **Téléchargés automatiquement** au premier besoin si absents du bundle
+- **Embarqués** si présents dans `~/.lidar2map/` au moment du build (via `setup_build_*.sh/ps1`)
+- **Téléchargés automatiquement** au premier besoin s'ils manquent au programme, sauf le greffon mapwriter, que le programme figé tient pour embarqué : `tests/exe_smoke.py` fait écrire un `.map` à la chaîne Java de chaque binaire avant publication
 - À préparer avant le build : `python3.12 lidar2map.py --telecharger-outils`
 
 ---
@@ -94,18 +102,16 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 
 | Fichier | Rôle |
 |---------|------|
-| `lidar2map.py` | Script principal : façade, bloc launcher, CLI, API du GUI web |
-| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…), compilés dans le bundle |
+| `lidar2map.py` | Script principal : façade, CLI, API du GUI web |
+| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…), compilés dans le programme |
 | `providers/` | Un fichier par source LiDAR/raster |
 | `gui/` | Front-end servi par `_serve_web.py` (`index.html`, `app.js`, `style.css`, `web_bridge.js`) |
 | `_loader.py` | Entry point PyInstaller : exécute `_internal/lidar2map.py` |
-| `lidar2map_mac.spec` | Build interne onedir macOS ARM64 |
-| `lidar2map_mac_launcher.spec` | Launcher `.app` macOS |
-| `lidar2map_mac_build.sh` | Script de build macOS (4 étapes + signature/notarisation optionnelle) |
-| `lidar2map_win.spec` | Build interne onedir Windows (+ Linux) |
-| `lidar2map_win_launcher.spec` | Launcher `.exe` Windows (+ Linux) |
-| `lidar2map_win_build.ps1` | Script de build Windows (3 étapes) |
-| `lidar2map_linux_build.sh` | Script de build Linux (3 étapes, miroir bash) |
+| `lidar2map_mac.spec` | Build macOS (arm64 ou x86_64) : onedir puis `LIDAR2MAP.app` (`BUNDLE`) |
+| `lidar2map_mac_build.sh` | Script de build macOS (3 étapes : PyInstaller, signature du `.app`, archive ditto ; notarisation optionnelle) |
+| `lidar2map_win.spec` | Build onedir Windows (+ Linux) |
+| `lidar2map_win_build.ps1` | Script de build Windows (une passe PyInstaller) |
+| `lidar2map_linux_build.sh` | Script de build Linux (miroir bash) |
 | `setup_build_mac.sh` | Setup machine de build macOS vierge (5 étapes, pile Intel dédiée) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
@@ -115,16 +121,14 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 
 | OS      | Livrables |
 |---------|-----------|
-| macOS   | `LIDAR2MAP.app` (zip dans `Contents/Resources/`) |
-| Windows | `lidar2map.exe` + `lidar2map_bundle.zip` côte à côte |
-| Linux   | `lidar2map` + `lidar2map_bundle.zip` côte à côte |
+| macOS   | `LIDAR2MAP.app` |
+| Windows | dossier `lidar2map` : `lidar2map.exe` + `_internal/` |
+| Linux   | dossier `lidar2map` : `lidar2map` + `_internal/` |
 
 ### `.gitignore` recommandé
 
 ```gitignore
 dist/
-dist_onedir/
-build/*.zip
 build/staging/
 __pycache__/
 *.pyc
@@ -183,23 +187,21 @@ Supprime proprement tous les fichiers créés par lidar2map :
 
 | Élément supprimé | Chemin |
 |------------------|--------|
-| Bundle extrait (macOS) | `~/Library/Application Support/lidar2map/` |
-| Bundle extrait (Windows) | `%LOCALAPPDATA%\lidar2map\` |
-| Bundle extrait (Linux) | `~/.local/share/lidar2map/` |
+| Ancienne extraction d'un lanceur ≤ 1.54 (macOS) | `~/Library/Application Support/lidar2map/` |
+| Ancienne extraction d'un lanceur ≤ 1.54 (Windows) | `%LOCALAPPDATA%\lidar2map\` |
+| Ancienne extraction d'un lanceur ≤ 1.54 (Linux) | `~/.local/share/lidar2map/` |
 | Venv Python | `~/.lidar2map/venv/` |
 | osmosis | `~/.lidar2map/osmosis/` |
 | JRE | `~/.lidar2map/jre/` |
 
-Sur Windows et macOS, le dossier d'extraction est supprimé par le **launcher**
-(avant le spawn de l'exe interne) pour éviter le verrouillage de fichiers.
-
-Mécanisme depuis le `.app`/`.exe` : le launcher gère tout directement sans
-re-spawn (bundle extrait + venv + osmosis + JRE), puis `sys.exit(0)`.
-Pas de re-spawn = pas de boucle infinie possible.
+L'ancienne extraction est d'ordinaire déjà partie : la 1.55 la retire à son
+premier démarrage. Une cible qui contient le programme en cours (installé,
+par exemple, dans `%LOCALAPPDATA%\lidar2map\`) est gardée : le programme ne
+se supprime jamais lui-même, ni son dossier ni son `.app`.
 
 ```bash
 python3.12 lidar2map.py --desinstaller
-# ou depuis le .app/.exe
+# ou depuis le programme livré
 lidar2map.exe --desinstaller
 ```
 
@@ -262,8 +264,7 @@ passer `--bootstrap=pip` (install dans l'env courant) ou `--bootstrap=none`
 # tagmapping-min.xml est optionnel mais améliore le tagging OSM —
 # sans lui, osmosis utilise son tagmapping par défaut (résultat dégradé).
 scp lidar2map.py _loader.py tagmapping-min.xml \
-    lidar2map_mac.spec lidar2map_mac_launcher.spec \
-    lidar2map_mac_build.sh setup_build_mac.sh \
+    lidar2map_mac.spec lidar2map_mac_build.sh setup_build_mac.sh \
     m1@<ip-vm>:~/Downloads/
 
 # Setup (installe Python 3.12 si absent, toutes les deps, osmosis, JRE, PyInstaller)
@@ -297,15 +298,15 @@ Le script le détecte et affiche `sudo apt install python3.12-venv` si absent.
 # Sur la VM Mac
 bash ~/Downloads/lidar2map_mac_build.sh
 
-# Récupérer les livrables depuis Windows
-scp -r m1@<ip-vm>:~/Downloads/dist/LIDAR2MAP.app .
+# Récupérer l'archive depuis Windows, pas le .app lui-même : scp -r suit ses
+# liens symboliques et casserait sa structure comme sa signature
+scp m1@<ip-vm>:~/Downloads/dist/lidar2map-macos-arm64.zip .
 ```
 
 Étapes du script :
-1. `pyinstaller lidar2map_mac.spec` (2 passes : détection deps + build loader)
-2. `ditto -c -k` → `build/lidar2map_bundle.zip`
-3. `pyinstaller lidar2map_mac_launcher.spec` → `dist/LIDAR2MAP.app` (~5 Mo)
-4. Copie du zip dans `LIDAR2MAP.app/Contents/Resources/`
+1. `pyinstaller lidar2map_mac.spec` (2 passes : détection deps + build loader), puis `BUNDLE` → `dist/LIDAR2MAP.app`
+2. Correctif libtiff (Intel seulement), puis signature du `.app` complet, dernière mutation avant l'archive
+3. `ditto -c -k --keepParent` → `dist/lidar2map-macos-<arch>.zip`, notarisé si `LIDAR2MAP_NOTARY_PROFILE` est fourni
 
 ### Windows
 
@@ -314,7 +315,7 @@ Unblock-File .\lidar2map_win_build.ps1
 .\lidar2map_win_build.ps1
 ```
 
-Livrables dans `dist\` : `lidar2map.exe` (~14 Mo) + `lidar2map_bundle.zip` (runtime Python, dépendances, JRE et osmosis ; plus de Qt depuis la 1.49.0)
+Livrable : `dist\lidar2map\`, soit `lidar2map.exe` et `_internal\` (runtime Python, dépendances, JRE et osmosis ; plus de Qt depuis la 1.49.0). `release.yml` en fait le dossier racine de `lidar2map-windows-x86_64.zip`.
 
 ### Deux passes PyInstaller (macOS et Windows)
 
@@ -339,10 +340,18 @@ avaient de toute façon exigé une reconstruction (décision D2 de
 [docs/preconisations_evolution.md](docs/preconisations_evolution.md)).
 
 Côté utilisateur, l'application signale la nouvelle version ; il suffit de
-décompresser la nouvelle archive par-dessus l'ancienne. Le lanceur voit que
-le bundle a changé et le réextrait au premier lancement. Par-dessus, et non à
-côté : la 1.54 reprend l'état d'une version antérieure depuis le dossier du
-programme lancé (voir `_dossiers.py`).
+décompresser la nouvelle archive par-dessus l'ancienne. Par-dessus, et non à
+côté : depuis la 1.54, le programme reprend l'état d'une version antérieure
+depuis son propre dossier (voir `_dossiers.py`), et depuis la 1.55, il retire
+au démarrage ce que l'ancien lanceur laissait.
+
+Une branche qui touche au build se valide avant l'étiquette : `release.yml`
+lancé à la main sur cette branche, `publier` décoché, construit et éprouve
+les 4 binaires sans rien publier.
+
+```bash
+gh workflow run release.yml --ref ma-branche -f tag=essai -f publier=false
+```
 
 ### Déploiement en une commande : `deploy.py`
 
@@ -435,8 +444,9 @@ les contrôles de provenance de `_serve_web.py` l'acceptent sans
 python3.12 lidar2map.py --desinstaller
 ```
 
-Supprime : venv, osmosis, JRE, dossier d'extraction du bundle.
-Ne supprime pas : le script, le `.app`/`.exe`, le zip.
+Supprime : venv, osmosis, JRE et, s'il en reste, l'ancienne extraction d'un
+lanceur ≤ 1.54.
+Ne supprime pas : le script, le dossier du programme, le `.app`.
 
 Après désinstallation, relancer le script repart de zéro (bootstrap complet).
 Utile pour vérifier une installation propre ou libérer de l'espace disque.
@@ -494,30 +504,31 @@ et détecte automatiquement `sqlite3`, `ssl`, `xml`, `urllib`, etc.
 
 ### Fichiers créés à l'intérieur du .app (macOS)
 
-`LIDAR2MAP_WORK_DIR` est calculé en remontant depuis `Contents/MacOS/` jusqu'au
-dossier parent du `.app`. Jusqu'à la 1.53, les fichiers utilisateur
+Le dossier du programme (`_runtime_paths.dossier_programme`) est calculé en
+remontant depuis `Contents/MacOS/` jusqu'au dossier parent du `.app`.
+Jusqu'à la 1.53, les fichiers utilisateur
 (Projets/, logs/, cache/) y étaient créés, à côté du `.app`. Depuis la 1.54,
 ils vont dans `~/Library/Application Support/lidar2map-data/` (état) et
 `~/Documents/lidar2map/` (sorties), jamais dans le `.app` ; ce dossier ne sert
 plus qu'à reprendre l'état d'une version antérieure.
 
-### PermissionError [Errno 13] au premier lancement (macOS)
+### PermissionError [Errno 13] ou slice is not valid mach-o (macOS)
+
+L'archive a été extraite par un outil qui ne restitue ni les liens
+symboliques, ni les bits d'exécution, ni les attributs du `.app` (le module
+`zipfile` de Python, par exemple). Réextraire avec le Finder ou `ditto` :
 
 ```bash
-xattr -dr com.apple.quarantine ~/Library/Application\ Support/lidar2map/
-chmod +x ~/Library/Application\ Support/lidar2map/lidar2map
+ditto -x -k lidar2map-macos-arm64.zip .
 ```
 
-### slice is not valid mach-o (macOS)
+### Ancienne extraction toujours présente (Windows)
 
-Le zip a été extrait avec `zipfile` au lieu de `ditto`. Le launcher utilise
-`ditto -x -k` automatiquement sur macOS.
-
-### _internal/ non supprimé par --desinstaller (Windows)
-
-Résolu. Le launcher traite `--desinstaller` directement (avant tout spawn)
-et supprime bundle extrait + venv + osmosis + JRE en une seule passe.
-Si le problème persiste, supprimer manuellement `%LOCALAPPDATA%\lidar2map\`.
+La 1.55 la retire à son premier démarrage, sauf si une instance d'une
+version ≤ 1.54 y tourne encore : le renommage échoue et le ménage attend le
+lancement suivant. Pour forcer, arrêter toutes les instances de lidar2map,
+puis supprimer `%LOCALAPPDATA%\lidar2map\` (jamais `lidar2map-data`, qui
+contient les réglages et l'historique).
 
 ### Fichiers mbtiles vides (16 Ko, 0 tuiles)
 
@@ -544,8 +555,8 @@ sudo apt install python3.12-venv
 
 ### Gatekeeper bloque le .app (macOS)
 
-Le script resigne toujours le bundle complet après l'ajout de
-`lidar2map_bundle.zip`. Sans certificat Apple, cette signature reste ad hoc et
+Le script signe toujours le `.app` complet en dernier, après le correctif
+libtiff du build Intel. Sans certificat Apple, cette signature reste ad hoc et
 Gatekeeper demande une autorisation au premier téléchargement :
 
 ```bash

@@ -752,15 +752,59 @@ ensure_swap() {
 }
 ensure_swap
 
+# Vrai si un autre run du mode donné tourne encore sur cette VM : il se sert
+# du programme (bundle) ou du checkout (source) partagés, qu'une mise à jour
+# ne doit pas remplacer sous ses pieds.
+other_run_active() {
+  local status_path other_dir other_mode other_status
+  for status_path in "$BASE"/*/status; do
+    [ -e "$status_path" ] || continue
+    other_dir="${status_path%/status}"
+    [ "$other_dir" = "$RUN_DIR" ] && continue
+    other_mode=""
+    other_status=""
+    IFS= read -r other_mode < "$other_dir/mode" 2>/dev/null || true
+    IFS= read -r other_status < "$status_path" 2>/dev/null || true
+    if [ "$other_mode" = "$1" ] &&
+       { [ "$other_status" = "starting" ] || [ "$other_status" = "running" ]; } &&
+       tmux has-session -t "=${other_dir##*/}" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 RESULTS="$RUN_DIR/results"
 COMMAND=()
 if [ "$MODE" = "bundle" ]; then
-  URL="https://github.com/nico579/lidar2map/releases/latest/download/lidar2map-linux-x86_64.tar.gz"
+  RELEASES="https://github.com/nico579/lidar2map/releases"
   BIN="$HOME/lidar2map-linux-x86_64/lidar2map"
-  if [ ! -x "$BIN" ]; then
-    echo "Downloading the lidar2map bundle (~380 MB)..."
+  # Un programme déjà installé n'était jamais remis à jour : la VM gardait
+  # sa première version. La dernière publiée se lit dans la redirection de
+  # releases/latest vers la page de son étiquette (.../tag/v1.55.0) ; hors
+  # réseau, ou si ce format venait à changer, on garde ce qui est installé.
+  latest=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$RELEASES/latest" 2>/dev/null || true)
+  latest="${latest##*/tag/v}"
+  case "$latest" in
+    ""|*[!0-9.]*) latest="" ;;
+  esac
+  installed=""
+  if [ -x "$BIN" ]; then
+    installed=$("$BIN" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)
+  fi
+  if [ -x "$BIN" ] && { [ -z "$latest" ] || [ "$installed" = "$latest" ]; }; then
+    :
+  elif [ -x "$BIN" ] && other_run_active bundle; then
+    echo "A bundle run is active; keeping lidar2map $installed (latest: $latest)."
+  else
+    echo "Downloading lidar2map ${latest:-(latest release)} (~380 MB)..."
     archive="$RUN_DIR/lidar2map-bundle.tgz"
-    curl -fsSL -o "$archive" "$URL"
+    curl -fsSL -o "$archive" "$RELEASES/latest/download/lidar2map-linux-x86_64.tar.gz"
+    # Par-dessus l'installation précédente, comme rlidar2map_GUI_vm.sh : une
+    # version <= 1.53 rangeait ses données dans ce dossier, et la suivante
+    # les y reprend. Ce qu'un lanceur <= 1.54 laissait (son bundle zippé,
+    # son extraction dans ~/.local/share/lidar2map), le programme le retire
+    # lui-même au démarrage.
     tar xzf "$archive" -C "$HOME"
     rm -f -- "$archive"
     chmod +x "$BIN"
@@ -774,24 +818,7 @@ else
     echo "Cloning lidar2map..."
     git clone "$REPO" "$DIR"
   else
-    active_source=0
-    for status_path in "$BASE"/*/status; do
-      [ -e "$status_path" ] || continue
-      other_dir="${status_path%/status}"
-      [ "$other_dir" = "$RUN_DIR" ] && continue
-      other_mode=""
-      other_status=""
-      IFS= read -r other_mode < "$other_dir/mode" 2>/dev/null || true
-      IFS= read -r other_status < "$status_path" 2>/dev/null || true
-      other_session="${other_dir##*/}"
-      if [ "$other_mode" = "source" ] &&
-         { [ "$other_status" = "starting" ] || [ "$other_status" = "running" ]; } &&
-         tmux has-session -t "=$other_session" 2>/dev/null; then
-        active_source=1
-        break
-      fi
-    done
-    if [ "$active_source" -eq 1 ]; then
+    if other_run_active source; then
       echo "A source run is active; keeping its checked-out revision."
     else
       echo "Updating the shared lidar2map source checkout..."

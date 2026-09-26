@@ -577,7 +577,7 @@ class ApiEtatRunTests(unittest.TestCase):
         self.assertEqual(
             L2M._commande_relance(frozen=True, executable="/app/lidar2map",
                                   argv=argv),
-            ["/app/lidar2map", L2M._INNER_FLAG, "--serve-gui", "--port", "8766"])
+            ["/app/lidar2map", "--serve-gui", "--port", "8766"])
         self.assertEqual(
             L2M._commande_relance(frozen=False, executable="/usr/bin/python3",
                                   argv=["lidar2map.py", "--serve-gui"]),

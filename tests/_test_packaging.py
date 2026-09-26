@@ -103,20 +103,42 @@ if _bash:
 
 # Windows : pas de console visible au double-clic, CLI inchangée depuis un
 # terminal (hide_console ne masque que la console dont le programme est le
-# propriétaire). L'exe interne garde une console, même masquée : l'arrêt
+# propriétaire). Le programme garde une console, même masquée : l'arrêt
 # propre des traitements passe par CTRL_BREAK_EVENT.
-lanceur_spec = (ROOT / "lidar2map_win_launcher.spec").read_text(encoding="utf-8")
-interne_spec = (ROOT / "lidar2map_win.spec").read_text(encoding="utf-8")
-assert 'hide_console="hide-early" if sys.platform == "win32" else None' in lanceur_spec
-assert "console=True" in lanceur_spec
-assert 'HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None' in interne_spec
-assert interne_spec.count("hide_console=HIDE_CONSOLE") == 2
-assert "CONSOLE = True" in interne_spec
-# Launcher : console réaffichée pendant une (ré)extraction si elle était
-# masquée, puis remasquée ; jamais masquée si elle était visible (terminal).
-bloc_lanceur = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
-bloc_lanceur = bloc_lanceur[:bloc_lanceur.index("# Pas de bundle.zip → exe onedir lancé directement")]
-assert "IsWindowVisible" in bloc_lanceur and "ShowWindow" in bloc_lanceur
-assert '_console_a_remasquer = (_need_extract\n                                    and _console_windows("masquee"))' in bloc_lanceur
+win_spec = (ROOT / "lidar2map_win.spec").read_text(encoding="utf-8")
+assert 'HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None' in win_spec
+assert win_spec.count("hide_console=HIDE_CONSOLE") == 2
+assert "CONSOLE = True" in win_spec
+
+# Depuis la 1.55, l'archive livre le programme tel quel, comme blink2video et
+# watch2notif : plus de lanceur qui l'extrairait d'un bundle zippé. Une seule
+# passe PyInstaller par OS ; sous macOS, un vrai .app, sous le nom et
+# l'identifiant qu'avait le .app du lanceur.
+for reliquat in ("lidar2map_win_launcher.spec", "lidar2map_mac_launcher.spec"):
+    assert not (ROOT / reliquat).exists(), f"spec du lanceur revenue : {reliquat}"
+for script in ("lidar2map_win_build.ps1", "lidar2map_linux_build.sh",
+               "lidar2map_mac_build.sh"):
+    texte = (ROOT / script).read_text(encoding="utf-8")
+    for reliquat in ("launcher.spec", "lidar2map_bundle.zip", "dist_onedir"):
+        assert reliquat not in texte, f"{script} mentionne encore {reliquat}"
+mac_spec = (ROOT / "lidar2map_mac.spec").read_text(encoding="utf-8")
+assert "app = BUNDLE(\n    coll," in mac_spec
+assert 'name="LIDAR2MAP.app"' in mac_spec
+assert 'bundle_identifier="fr.nicolas.lidar2map"' in mac_spec
+# Dans le .app, .dylibs devient __dot__dylibs sous Contents/Frameworks : le
+# correctif libtiff du build Intel doit chercher sous les deux noms.
+assert "__dot__dylibs" in (ROOT / "lidar2map_mac_build.sh").read_text(encoding="utf-8")
+# Le JRE macOS a lui-même une forme de bundle, dont l'exécutable principal
+# (Contents/MacOS/libjli.dylib) est un lien : embarqué tel quel, codesign
+# --deep refusait le .app. Seul Contents/Home part (échec vu sur la CI).
+assert '_jre_home = JRE_SRC / "Contents" / "Home"' in mac_spec
+# Archives et dossiers racine gardent leur nom : décompressée par-dessus la
+# précédente, l'archive met le programme au chemin du lanceur (raccourcis,
+# démarrage automatique), et l'exécution distante lance
+# $HOME/lidar2map-linux-x86_64/lidar2map.
+release_yml = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+assert "lidar2map_bundle.zip" not in release_yml
+assert "Move-Item dist\\lidar2map $stage" in release_yml
+assert "mv dist/lidar2map dist/lidar2map-linux-x86_64" in release_yml
 
 print("TOUS OK — contrat de livraison")

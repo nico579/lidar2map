@@ -65,7 +65,8 @@ covers France, while another country can be processed from a supplied PBF.
 
 1. Download the archive for Windows, Ubuntu, or macOS from
    [Releases](https://github.com/nico579/lidar2map/releases/latest).
-2. Extract it and keep the launcher next to `lidar2map_bundle.zip`.
+2. Extract it anywhere: the extracted folder, or `LIDAR2MAP.app` on macOS,
+   is the application.
 3. Start lidar2map without arguments. The interface opens in your web browser
    and a lidar2map icon appears in the system tray.
 4. Choose a small area, keep **Download missing data** enabled, and run the

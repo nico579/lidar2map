@@ -5,11 +5,11 @@ est toujours mocké vers un dossier temporaire, comme pour un dossier
 systemd/launchd réel sur les deux autres OS.
 
 Depuis la 1.54.0 : un raccourci .lnk sous Windows (comme blink2video et
-watch2notif), qui lance le LANCEUR visible plutôt que l'exe interne, sans
-aucune variable d'environnement à transmettre.
+watch2notif), sans aucune variable d'environnement à transmettre. Depuis la
+1.55.0, il lance le programme en cours lui-même : l'archive le livre tel
+quel, sans lanceur qui l'extrairait ailleurs.
 """
 import importlib.util
-import os
 import platform
 import plistlib
 import subprocess
@@ -28,7 +28,7 @@ _SPEC.loader.exec_module(_autostart)
 
 class _DossierIsole(unittest.TestCase):
     """APPDATA et le dossier personnel dans un dossier temporaire au nom
-    accentué, avec un faux lanceur, et le programme vu comme figé."""
+    accentué, avec un faux programme, vu comme figé."""
 
     def setUp(self):
         self.tmp_ctx = tempfile.TemporaryDirectory()
@@ -39,13 +39,19 @@ class _DossierIsole(unittest.TestCase):
         self.tmp = Path(self.tmp_ctx.name).resolve() / "Données é"
         self.tmp.mkdir()
         suffixe = ".exe" if platform.system() == "Windows" else ""
-        self.lanceur = self.tmp / "Mes Cartes" / f"lidar2map{suffixe}"
-        self.lanceur.parent.mkdir()
-        self.lanceur.write_bytes(b"")
+        self.programme = self.tmp / "Mes Cartes" / f"lidar2map{suffixe}"
+        self.programme.parent.mkdir()
+        self.programme.write_bytes(b"")
+        # Variables posées par un lanceur <= 1.54 : une instance 1.54 encore
+        # en marche les transmet au programme 1.55 qu'elle relance après une
+        # mise à jour décompressée par-dessus. Il doit les ignorer.
+        ancien = self.tmp / "ancienne extraction" / f"lidar2map{suffixe}"
         for correctif in (
                 mock.patch.object(_autostart.sys, "frozen", True, create=True),
+                mock.patch.object(_autostart.sys, "executable", str(self.programme)),
                 mock.patch.dict("os.environ", {"APPDATA": str(self.tmp),
-                                               "LIDAR2MAP_LANCEUR": str(self.lanceur)}),
+                                               "LIDAR2MAP_LANCEUR": str(ancien),
+                                               "LIDAR2MAP_WORK_DIR": str(ancien.parent)}),
                 mock.patch.object(_autostart.Path, "home", return_value=self.tmp)):
             correctif.start()
             self.addCleanup(correctif.stop)
@@ -71,14 +77,14 @@ class AutostartWindowsTests(_DossierIsole):
     def test_desactive_par_defaut(self):
         self.assertFalse(_autostart.is_enabled())
 
-    def test_raccourci_lance_le_lanceur_en_mode_serveur(self):
+    def test_raccourci_lance_le_programme_en_mode_serveur(self):
         _autostart.enable()
         self.assertTrue(self.lnk.is_file())
         self.assertTrue(_autostart.is_enabled())
         cible, arguments, dossier = self.lire_raccourci()
-        self.assertEqual(Path(cible), self.lanceur)
+        self.assertEqual(Path(cible), self.programme)
         self.assertEqual(arguments, "--serve-gui --no-browser")
-        self.assertEqual(Path(dossier), self.lanceur.parent)
+        self.assertEqual(Path(dossier), self.programme.parent)
 
     def test_disable_supprime_raccourci_et_ancien_vbs(self):
         _autostart.enable()
@@ -110,30 +116,18 @@ class AutostartWindowsTests(_DossierIsole):
         self.assertFalse(self.lnk.exists())
 
 
-class AutostartLanceurTests(_DossierIsole):
+class AutostartCommandeTests(_DossierIsole):
     """Générateurs appelés directement (fichiers en dossier temporaire,
     systemctl/launchctl mockés) : valables sur les 3 OS."""
 
-    def test_commande_lance_le_lanceur(self):
+    def test_commande_lance_le_programme_en_cours(self):
+        # Les variables d'un lanceur <= 1.54, présentes dans l'environnement
+        # (voir _DossierIsole), ne détournent pas la commande.
         self.assertEqual(_autostart._lidar2map_command(),
-                         [str(self.lanceur), "--serve-gui", "--no-browser"])
-        self.assertEqual(_autostart._dossier_lancement(), self.lanceur.parent)
+                         [str(self.programme), "--serve-gui", "--no-browser"])
+        self.assertEqual(_autostart._dossier_lancement(), self.programme.parent)
 
-    def test_lanceur_d_avant_1_54_retrouve_par_son_dossier(self):
-        # Un lanceur <= 1.53 ne donnait que LIDAR2MAP_WORK_DIR.
-        with mock.patch.dict("os.environ", {"LIDAR2MAP_WORK_DIR": str(self.lanceur.parent)}), \
-                mock.patch.object(_autostart.platform, "system", return_value="Windows"):
-            os.environ.pop("LIDAR2MAP_LANCEUR")
-            lanceur = self.lanceur.with_suffix(".exe")
-            lanceur.write_bytes(b"")
-            self.assertEqual(_autostart._lanceur(), lanceur)
-
-    def test_sans_lanceur_connu_l_exe_courant(self):
-        os.environ.pop("LIDAR2MAP_LANCEUR")
-        self.assertIsNone(_autostart._lanceur())
-        self.assertEqual(_autostart._lidar2map_command()[0], sys.executable)
-
-    def test_service_systemd_lance_le_lanceur_sans_environnement(self):
+    def test_service_systemd_lance_le_programme_sans_environnement(self):
         with mock.patch.object(_autostart.subprocess, "run"):
             _autostart._enable_linux()
         contenu = _autostart._linux_service_file().read_text(encoding="utf-8")
@@ -142,16 +136,16 @@ class AutostartLanceurTests(_DossierIsole):
                           if ligne.startswith("ExecStart="))
         self.assertEqual(exec_start, "ExecStart=" + " ".join(
             _autostart._systemd_quote(part) for part in _autostart._lidar2map_command()))
-        self.assertIn(f"WorkingDirectory={self.lanceur.parent}\n", contenu)
+        self.assertIn(f"WorkingDirectory={self.programme.parent}\n", contenu)
 
-    def test_plist_launchd_lance_le_lanceur_sans_environnement(self):
+    def test_plist_launchd_lance_le_programme_sans_environnement(self):
         with mock.patch.object(_autostart.subprocess, "run"):
             _autostart._enable_mac()
         donnees = plistlib.loads(_autostart._mac_plist_file().read_bytes())
         self.assertEqual(donnees["ProgramArguments"],
-                         [str(self.lanceur), "--serve-gui", "--no-browser"])
+                         [str(self.programme), "--serve-gui", "--no-browser"])
         self.assertNotIn("EnvironmentVariables", donnees)
-        self.assertEqual(donnees["WorkingDirectory"], str(self.lanceur.parent))
+        self.assertEqual(donnees["WorkingDirectory"], str(self.programme.parent))
         self.assertEqual(donnees["KeepAlive"], {"SuccessfulExit": False})
 
 

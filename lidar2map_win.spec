@@ -5,9 +5,10 @@ Spec PyInstaller pour lidar2map — Windows, onedir, JRE+osmosis+mapwriter bundl
 Usage :
     %USERPROFILE%\.lidar2map\venv\Scripts\pyinstaller.exe lidar2map_win.spec --clean --noconfirm
 
-Résultat :
-    dist_onedir/lidar2map/lidar2map.exe
-    dist_onedir/lidar2map/_internal/
+Résultat (le programme livré tel quel depuis la 1.55, voir
+lidar2map_win_build.ps1) :
+    dist/lidar2map/lidar2map.exe
+    dist/lidar2map/_internal/
         jre/jdk-21.0.10+7-jre/       JRE Temurin 21
         osmosis/osmosis-0.49.2/       osmosis + mapwriter en lib/
         tagmapping-min.xml
@@ -32,11 +33,11 @@ IS_LINUX = sys.platform.startswith("linux")
 
 ONEFILE = False
 CONSOLE = True
-# Exe interne lancé seul (démarrage automatique, relance) : même règle que le
-# launcher, console masquée seulement si elle lui appartient. Lancé par le
-# launcher, il partage la console (déjà masquée) de celui-ci. Garder une
-# console, même invisible, est nécessaire : l'arrêt propre des traitements
-# passe par CTRL_BREAK_EVENT, qui n'atteint que les processus d'une console.
+# Console masquée dès le démarrage seulement si elle appartient au programme
+# (double-clic, démarrage automatique, relance) : lancé depuis un terminal,
+# il y écrit normalement. Garder une console, même invisible, est
+# nécessaire : l'arrêt propre des traitements passe par CTRL_BREAK_EVENT,
+# qui n'atteint que les processus d'une console.
 HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None
 NAME    = "lidar2map"
 

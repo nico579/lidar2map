@@ -17,9 +17,9 @@ la même CLI, mais leur installation et leur mise à jour diffèrent.
 | | **Application binaire autonome** | **Script Python** |
 |---|---|---|
 | Prérequis | Aucun en dehors d’un OS pris en charge | Python 3.12 |
-| Première préparation | Aucune installation ; le runtime embarqué est extrait au premier lancement | Environ 5 minutes ; bootstrap automatique dans un environnement virtuel privé |
+| Première préparation | Aucune installation : décompresser l’archive et lancer le programme | Environ 5 minutes ; bootstrap automatique dans un environnement virtuel privé |
 | Mise à jour | Télécharger la nouvelle release et l’extraire par-dessus la précédente | `git pull`, puis relancer |
-| Distribuable | Oui : lanceur binaire et `lidar2map_bundle.zip` restent ensemble | Non : chaque ordinateur prépare son environnement Python |
+| Distribuable | Oui : le dossier extrait, ou `LIDAR2MAP.app`, est l’application entière | Non : chaque ordinateur prépare son environnement Python |
 | Recommandé pour | Utilisateur final et redistribution | Développement, usage Linux depuis les sources et contribution |
 
 ### 1.1 Application binaire autonome
@@ -29,8 +29,8 @@ Elle embarque son propre Python, ses dépendances, le runtime Java et osmosis,
 sans les installer dans le système.
 
 La publication des archives binaires autonomes relève de la maintenance. Les
-scripts de compilation, l’architecture du bundle et le déploiement d’une
-release sont décrits uniquement dans [BUILD.md](../BUILD.md).
+scripts de compilation, l’empaquetage et le déploiement d’une release sont
+décrits uniquement dans [BUILD.md](../BUILD.md).
 
 #### 1.1.1 Télécharger et extraire l’application binaire autonome
 
@@ -42,31 +42,38 @@ décompressez-la sans déplacer les fichiers à l’intérieur du dossier extrai
 |---|---|---|
 | Windows 10/11, x86-64 | `lidar2map-windows-x86_64.zip` | Explorateur de fichiers ou `Expand-Archive` dans PowerShell |
 | Ubuntu 24.04+, x86-64 | `lidar2map-linux-x86_64.tar.gz` | `tar xzf lidar2map-linux-x86_64.tar.gz` |
-| macOS 12+, Apple Silicon | `lidar2map-macos-arm64.zip` | `unzip`, puis retirer la quarantaine comme indiqué plus bas si Gatekeeper bloque le premier lancement |
+| macOS 12+, Apple Silicon | `lidar2map-macos-arm64.zip` | Finder (double-clic) ou `ditto -x -k`, puis retirer la quarantaine comme indiqué plus bas si Gatekeeper bloque le premier lancement |
 | macOS 12+, Intel | `lidar2map-macos-x86_64.zip` | Idem |
 
-Le dossier extrait contient le lanceur (`lidar2map.exe`, `lidar2map` ou
-`LIDAR2MAP.app`) et `lidar2map_bundle.zip` côte à côte. Ils doivent rester
-ensemble. Rien n’est installé dans le système.
+Le dossier extrait est l’application elle-même : `lidar2map.exe` (Windows) ou
+`lidar2map` (Linux) à côté du dossier `_internal` dont il a besoin, ou
+`LIDAR2MAP.app` sous macOS. Rien n’est installé dans le système : rangez le
+dossier où bon vous semble, par exemple dans `%LOCALAPPDATA%\Programs` sous
+Windows, et `LIDAR2MAP.app` dans `/Applications`. Sous macOS, préférez le
+Finder ou `ditto` aux autres outils de décompression : l’application contient
+des liens symboliques qui doivent survivre à l’extraction.
 
 #### 1.1.2 Lancer l’application binaire autonome
 
 | OS | Démarrage |
 |---|---|
-| Windows | Double-cliquer sur `lidar2map.exe` : aucune fenêtre de console n’apparaît, sauf pendant l’extraction qui suit une installation ou une mise à jour, pour en montrer la progression. Lancé depuis un terminal, il y affiche toujours son journal. |
+| Windows | Double-cliquer sur `lidar2map.exe` : aucune fenêtre de console n’apparaît. Lancé depuis un terminal, il y affiche toujours son journal. |
 | Linux | Exécuter une fois `chmod +x lidar2map`, puis `./lidar2map` depuis le dossier extrait. |
 | macOS | Double-cliquer sur `LIDAR2MAP.app`. Si Gatekeeper le bloque, exécuter `xattr -dr com.apple.quarantine LIDAR2MAP.app`, puis recommencer. |
 
-#### 1.1.3 Premier démarrage du binaire et extraction du runtime
+#### 1.1.3 Premier démarrage du binaire
 
-Le premier lancement du binaire extrait une fois le bundle et prend en général
-30 à 60 secondes. Le runtime extrait est stocké dans :
+Le programme démarre directement depuis le dossier extrait, sans rien
+décompresser au préalable. Jusqu’à la version 1.54, un lanceur l’extrayait au
+premier lancement, en 30 à 60 secondes, dans une seconde copie :
 
 - Windows : `%LOCALAPPDATA%\lidar2map\`
 - macOS : `~/Library/Application Support/lidar2map/`
 - Linux : `~/.local/share/lidar2map/`
 
-Les lancements suivants réutilisent cette copie.
+La version 1.55 supprime cette copie à son premier démarrage, ainsi que le
+`lidar2map_bundle.zip` que l’ancien lanceur laisse à côté du programme quand on
+décompresse la nouvelle archive par-dessus l’ancienne.
 
 ### 1.2 Script Python
 
@@ -129,9 +136,9 @@ système.
 - macOS : `~/Library/Application Support/lidar2map-data/`
 - Linux : `~/.local/share/lidar2map-data/`
 
-Ce dossier s’appelle `lidar2map-data` parce que `lidar2map` est déjà le runtime
-extrait du binaire, que l’on peut supprimer quand une extraction tourne mal :
-vos réglages ne partent pas avec lui.
+Ce dossier s’appelle `lidar2map-data` parce que `lidar2map` était, jusqu’à la
+version 1.54, la copie du programme extraite par le lanceur, que la version
+1.55 supprime : vos réglages ne partent pas avec elle.
 
 Jusqu’à la version 1.53, tout était rangé à côté du programme. Extrayez la
 version 1.54 par-dessus la précédente : à son premier lancement, elle copie les
@@ -159,7 +166,7 @@ interface.
 
 | Mode d’exécution | Ouvrir l’interface graphique |
 |---|---|
-| Application binaire autonome | Double-cliquer sur le lanceur, ou exécuter `lidar2map.exe`, `./lidar2map` ou `LIDAR2MAP.app` selon la plateforme. |
+| Application binaire autonome | Double-cliquer sur l’application, ou exécuter `lidar2map.exe`, `./lidar2map` ou `LIDAR2MAP.app` selon la plateforme. |
 | Script Python | Exécuter `python lidar2map.py` sous Windows ou `python3.12 lidar2map.py` sous macOS/Linux. |
 
 L’interface détecte automatiquement le français ou l’anglais et propose aussi
@@ -306,7 +313,7 @@ La planche est activée par défaut. `--no-index-map` la désactive et
 
 ### 5.1 Depuis l’application binaire autonome
 
-Utilisez `--desinstaller` avec le lanceur. Sous Windows :
+Utilisez `--desinstaller` avec l’application. Sous Windows :
 
 ```powershell
 lidar2map.exe --desinstaller
@@ -316,6 +323,12 @@ Sous Linux :
 
 ```bash
 ./lidar2map --desinstaller
+```
+
+Sous macOS :
+
+```bash
+LIDAR2MAP.app/Contents/MacOS/lidar2map --desinstaller
 ```
 
 ### 5.2 Depuis le script Python
@@ -335,7 +348,7 @@ python3.12 lidar2map.py --desinstaller
 ### 5.3 Éléments supprimés et conservés
 
 Cette commande supprime l’environnement virtuel privé et les outils/runtime
-installés. Elle ne supprime ni le lanceur ni le script source, ni vos sorties
+installés. Elle ne supprime ni le dossier du programme, ni `LIDAR2MAP.app`, ni le script source, ni vos sorties
 et votre dossier de données (voir [Où lidar2map range vos données](#13-où-lidar2map-range-vos-données)) :
 supprimez-les vous-même si vous n’en avez plus besoin.
 

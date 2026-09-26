@@ -52,8 +52,7 @@ OPTIONS_HORS_PARSER = (
     "--index-sheet", "--planche",
 )
 
-# Volontairement absentes de la documentation utilisateur. La sentinelle
-# interne du lanceur (--__lidar2map_inner__) n'appartient à aucun parser.
+# Volontairement absentes de la documentation utilisateur.
 EXCLUSIONS = {
     "--help": "aide standard ajoutée par argparse",
 }
