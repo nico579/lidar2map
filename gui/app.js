@@ -29,7 +29,7 @@ const I18N = {
   fr: {
     "btn.run":"▶ Lancer", "btn.stop":"■ Arrêter", "btn.hist":"⏱ Historique", "btn.log":"📋 Logs",
     "btn.share":"Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Télécharge le fichier. Dans Locus : Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers. « Ouvrir avec » peut aussi fonctionner selon Android.", "share.close":"Fermer",
-    "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide — ligne de commande", "help.empty":"Aide indisponible.",
+    "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide : ligne de commande", "help.empty":"Aide indisponible.",
     "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
     "btn.remote":"🌐 Accès distant", "tip.remote":"Accès distant (VPN maillé type Tailscale/WireGuard).", "remote.title":"🌐 Accès distant", "remote.hint":"Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y accéder depuis un téléphone. Le serveur écoute alors aussi sur cette adresse, au même port, dès qu'elle existe sur cette machine. Ne faites confiance qu'à cette adresse précise.", "ph.trustedhost":"100.x.y.z", "remote.save":"Enregistrer", "remote.saving":"Enregistrement…", "remote.saved":"Enregistré. Pris en compte immédiatement, sans redémarrage.", "remote.error":"Échec de l'enregistrement.", "remote.autostart":"Démarrer à l'ouverture de session (icône dans la zone de notification ; serveur toujours prêt, y compris pour l'accès distant)", "remote.listen.actif":"Écoute aussi sur {h}, port {p}.", "remote.listen.attente":"Adresse pas encore présente sur cette machine (VPN arrêté ?) : nouvel essai toutes les 30 s.", "remote.autostart.on":"Activé : une icône apparaîtra dans la zone de notification à l'ouverture de session.", "remote.autostart.off":"Désactivé.", "btn.newinst":"➕ Nouvelle instance", "tip.newinst":"Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter.", "newinst.starting":"Démarrage d'une nouvelle instance lidar2map…", "instance.title":"lidar2map est déjà ouvert", "instance.hint":"Une instance tourne déjà et s'affiche dans cet onglet. Pour lancer un calcul en parallèle, démarrez une nouvelle instance (second serveur).", "instance.keep":"Continuer avec cette instance", "instance.new":"➕ Nouvelle instance",
     "browse.title.dir":"📁 Choisir un dossier", "browse.title.file":"📄 Choisir un fichier", "browse.choose":"Choisir ce dossier", "browse.select":"Valider la sélection", "browse.empty":"(dossier vide)", "browse.selected":"sélectionné(s) :",
@@ -63,21 +63,21 @@ const I18N = {
     "tip.listedispo":"Entrées disponibles. Sélectionnez puis + (ou double-clic) pour ajouter.",
     "tip.listechoisi":"Entrées retenues. Double-clic pour retirer.",
     "tip.listeadd":"Ajouter la sélection", "tip.listedel":"Retirer la sélection",
-    "svc.osm":"Geofabrik — extrait PBF régional",
-    "svc.wfs":"IGN Géoplateforme — WFS",
-    "svc.wmts.fr":"IGN Géoplateforme — WMTS",
-    "svc.wmts.us":"USGS National Map — tuiles XYZ",
+    "svc.osm":"Geofabrik (extrait PBF régional)",
+    "svc.wfs":"IGN Géoplateforme (WFS)",
+    "svc.wmts.fr":"IGN Géoplateforme (WMTS)",
+    "svc.wmts.us":"USGS National Map (tuiles XYZ)",
     "f.surf.mnt":"MNT (raster)", "f.surf.laz":"LAZ (nuage)",
     "f.surf.nolaz":"aucune source pour ce pays",
     "z.pays":"Pays",
-    "f.laz":"Mode LAZ — structures debout (nuage classé, expérimental)",
-    "f.zoomcap":"z%d = résolution native (%s) — au-delà, agrandissement sans information",
+    "f.laz":"Mode LAZ : structures debout (nuage classé, expérimental)",
+    "f.zoomcap":"z%d = résolution native (%s) ; au-delà, agrandissement sans information",
     "f.dlcap":"↓ %d max en parallèle (gros nuages LAZ)",
     "f.lazh":"hauteur (m)", "f.lazc":"classes LAS",
     "f.lazg":"Socle", "f.lazg.classes":"classes sol", "f.lazg.csf":"tissu CSF (~3 min/dalle)",
     "f.lazt":"seuil (m)", "f.lazr":"maille (m)", "f.lazrg":"terrain",
     "f.lazrg.1":"pentu (1)", "f.lazrg.2":"relief doux (2)", "f.lazrg.3":"plat (3)",
-    "tip.laz":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi — mouchetis vs lignes continues). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
+    "tip.laz":"Reconstruit le modèle depuis le nuage de points classé (LAZ ~205 Mo/km²) : peut réintroduire les retours compatibles avec des ruines/murs debout que le MNT efface (candidats, pas une classification : le maquis revient aussi, mouchetis vs lignes continues). Socle « classes sol » : 2/9/66 = terrain, les autres classes sont réinjectées dans les trous du sol, filtrées par la tranche de hauteur. Socle « tissu CSF » : un tissu simulé (Zhang 2016) sépare sol et sursol sans les classes ; fond plus propre, ~3 min/dalle, réglages propres seuil/maille/terrain (hauteur/classes ignorés). Zone petite conseillée.",
     // Zone
     "sec.zone":"Zone géographique",
     "z.mode":"Zone", "mode.fronly":"France uniquement",
@@ -93,25 +93,25 @@ const I18N = {
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
     "t.fusion":"Fusion", "t.decoupe":"Découpage raster",
     // Étapes communes
-    "split0":"0 — Découpage à priori (grandes zones)",
+    "split0":"0. Découpage à priori (grandes zones)",
     "grid":"Grille :", "rows":"lignes", "orradius":"ou côté", "rows_orradius":"lignes  ou côté",
     "clean":"Nettoyage intermédiaires",
     "minfree":"Espace disque restant minimum avant arrêt du calcul", "tip.minfree":"Arrêt propre avant un chunk si disque libre < seuil (0 = désactivé)",
-    "split.hint":"1×1 = pas de découpage — reprise automatique via manifeste.json. LiDAR grande zone (SVF/openness) : viser des chunks ≤ 600 km² sur une VM à 32 Go, sous peine d'OOM (~1150 km² veut ~64 Go).",
-    "dl":"1 — Télécharger",
+    "split.hint":"1×1 = pas de découpage ; reprise automatique via manifeste.json. LiDAR grande zone (SVF/openness) : viser des chunks ≤ 600 km² sur une VM à 32 Go, sous peine d'OOM (~1150 km² veut ~64 Go).",
+    "dl":"1. Télécharger",
     "ovr":"Écraser le fichier résultat", "ovr.short":"Écraser",
     "workers":"Nb téléchargements simultanés", "compress":"Compresser",
     "lazpar":"Nb conversions LAZ/TIF simultanées (×3 Go RAM)", "tip.lazpar":"Conversions CSF/DFM simultanées ; ~3 Go RAM chacune (défaut 1)",
     // Un seul nom pour l'étape de production : les sorties sont hétérogènes
     // (tuiles raster mbtiles/rmap/sqlitedb, carte vecteur Mapsforge, GeoJSON).
     // « Calculer les tuiles » n'était exact que pour les sorties raster.
-    "map2":"2 — Générer la carte", "map3":"3 — Générer la carte",
+    "map2":"2. Générer la carte", "map3":"3. Générer la carte",
     "fmt.mapsforge":"Mapsforge (.map)", "fmt.natif":"(natif)",
     "tip.natif":"Écrit directement par le téléchargement WFS : au moins un des deux GeoJSON est toujours produit, et c'est l'Écraser du cadre « Télécharger » qui le régit.",
-    "omb2":"2 — Calculer les ombrages archéologiques",
+    "omb2":"2. Calculer les ombrages archéologiques",
     "zoom":"Zoom :", "imgfmt":"Format de l'image :", "jpegq":"Qualité Jpeg :", "filefmt":"Format du fichier :",
     // SVF
-    "tip.svf":"Sky-View Factor — ouverture de l'hémisphère céleste. Options à droite.",
+    "tip.svf":"Sky-View Factor : ouverture de l'hémisphère céleste. Options à droite.",
     "tip.elev":"Angle solaire des hillshades directionnels. 25° = archéo (micro-relief) ; 45° = usage général.",
     // IGN Raster
     "couche":"Couche :",
@@ -133,11 +133,11 @@ const I18N = {
     "apiunavail":"API non disponible", "initerr":"Erreur init : ",
     "hist.empty":"Aucun traitement enregistré.",
     "hist.alreadyempty":"L'historique est déjà vide.",
-    "hist.confirm":"Supprimer {n} entrée(s) de l'historique ?\n\nCette action est définitive — les commandes passées ne pourront plus être rappelées.",
+    "hist.confirm":"Supprimer {n} entrée(s) de l'historique ?\n\nCette action est définitive : les commandes passées ne pourront plus être rappelées.",
     "hist.cleared":"✓ Historique vidé ({n} entrée(s) removede(s))",
     "hist.recalled":"Paramètres rappelés : {nom} ({date})",
     "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
-    "zoom.inverted":"⚠ Zooms d'historique inversés — corrigés au chargement",
+    "zoom.inverted":"⚠ Zooms d'historique inversés, corrigés au chargement",
     "update.dispo":"⬆ {tag} disponible : notes de version",
     "header.pid":"PID serveur {pid}",
     "fusion.ignored":"Ignoré(s) : {files}\nSeuls {exts} sont acceptés (une fusion ne mélange pas les types).",
@@ -157,9 +157,9 @@ const I18N = {
     "fail.detail":"Le traitement a échoué (code {c}).\n\n{msg}\n\n(détails complets dans le panneau de log ci-dessous)",
     "fail.generic":"Le traitement a échoué (code {c}).\n\nVoir le panneau de log ci-dessous pour les détails.",
     // HTML riche (innerHTML) + infobulles SVF
-    "warn.scanpro":"⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>Une clé API est requise — compte <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> avec SIRET.<br>Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).",
-    "dep.syntax":"Syntaxe : <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; DOM : <code>2A</code> <code>971</code> &nbsp;—&nbsp; Multi-département : un fichier par département",
-    "region.hint":"Region Geofabrik = bbox englobante de ses départements. &nbsp;—&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).",
+    "warn.scanpro":"⚠ Cette couche est réservée aux <strong>professionnels</strong> (CGU IGN).<br>Une clé API est requise : compte <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> avec SIRET.<br>Les particuliers doivent utiliser <strong>planign</strong> ou <strong>ortho</strong> (pas de clé requise).",
+    "dep.syntax":"Syntaxe : <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; DOM : <code>2A</code> <code>971</code> &nbsp;·&nbsp; Multi-département : un fichier par département",
+    "region.hint":"Region Geofabrik = bbox englobante de ses départements. &nbsp;·&nbsp; OSM : une seule carte régionale (PBF complet, sans re-découpe).",
     "tip.sun":"Angle solaire des hillshades directionnels (multi/315/045/135/225). Sans effet sur le SVF.",
     "tip.svftype":"Flux cos²γ : tassé près de 1, contraste à l'œil. RVT 1−sin γ (Kokalj/Hesse) : standard archéo / openness, sensibilité linéaire aux faibles angles.",
     "tip.svfconv":"Flux cos²γ : contraste à l'œil. RVT 1−sin γ : standard archéo / openness.",
@@ -173,7 +173,7 @@ const I18N = {
     "omb.select":"Sélectionnez une instance…", "omb.none":"aucun paramètre",
     "omb.sigma.auto":"auto (15 px = {m} m)",
     "omb.name.e4":"e⁴MSTP (variante lidar2map)",
-    "tip.ombsigma":"Écart-type σ du lissage gaussien, en mètres — ce n'est pas un rayon exact. Défaut = 15 px de la résolution native (≈ 7,5 m à 0,5 m/px). Petit = détails fins et bruit ; grand = structures plus larges et davantage de relief de fond. Vider = auto.",
+    "tip.ombsigma":"Écart-type σ du lissage gaussien, en mètres. Ce n'est pas un rayon exact. Défaut = 15 px de la résolution native (≈ 7,5 m à 0,5 m/px). Petit = détails fins et bruit ; grand = structures plus larges et davantage de relief de fond. Vider = auto.",
     "tip.ombdist":"Rayon maximal de recherche de l'horizon pour le SVF, l'openness et leurs composites. Petit = formes locales et calcul plus rapide ; grand = formes plus larges et calcul plus lent. Dans e⁴MSTP, il ne change pas les échelles MSTP (position topographique multi-échelle) ni les SLRM (modèles de relief local simples) fixes.",
     "tip.ombgamma":"Gamma appliqué après l'étirement : 1 = inchangé, inférieur à 1 = plus clair, supérieur à 1 = tons moyens plus sombres. Il change l'affichage, pas la géométrie calculée.",
     "tip.ombgammafinal":"Gamma appliqué au composite final : 1 = inchangé, inférieur à 1 = plus clair, supérieur à 1 = plus sombre. Il ne change ni les rayons ni les échelles calculées.",
@@ -197,7 +197,7 @@ const I18N = {
   en: {
     "btn.run":"▶ Run", "btn.stop":"■ Stop", "btn.hist":"⏱ History", "btn.log":"📋 Logs",
     "btn.share":"Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Download the file. In Locus: Map Manager → Import map → system file manager. ‘Open with’ may also work, depending on Android.", "share.close":"Close",
-    "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help — command line", "help.empty":"Help unavailable.",
+    "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help: command line", "help.empty":"Help unavailable.",
     "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
     "btn.remote":"🌐 Remote access", "tip.remote":"Remote access (mesh VPN like Tailscale/WireGuard).", "remote.title":"🌐 Remote access", "remote.hint":"On a mesh VPN (Tailscale, WireGuard), enter this machine's address on that network here (e.g. 100.x.y.z, from 'tailscale ip') to reach it from a phone. The server then also listens on that address, on the same port, as soon as it exists on this machine. Only that exact address is trusted.", "ph.trustedhost":"100.x.y.z", "remote.save":"Save", "remote.saving":"Saving…", "remote.saved":"Saved. Takes effect immediately, no restart needed.", "remote.error":"Failed to save.", "remote.autostart":"Start at login (system tray icon; server always ready, including for remote access)", "remote.listen.actif":"Also listening on {h}, port {p}.", "remote.listen.attente":"Address not present on this machine yet (VPN down?): retrying every 30 s.", "remote.autostart.on":"Enabled: an icon will appear in the system tray at login.", "remote.autostart.off":"Disabled.", "btn.newinst":"➕ New instance", "tip.newinst":"Starts a second lidar2map server on the next port, opened in a new tab, to run a job in parallel. Each instance has its own system tray icon to stop it.", "newinst.starting":"Starting a new lidar2map instance…", "instance.title":"lidar2map is already open", "instance.hint":"An instance is already running and is shown in this tab. To run a job in parallel, start a new instance (second server).", "instance.keep":"Continue with this instance", "instance.new":"➕ New instance",
     "browse.title.dir":"📁 Choose a folder", "browse.title.file":"📄 Choose a file", "browse.choose":"Choose this folder", "browse.select":"Confirm selection", "browse.empty":"(empty folder)", "browse.selected":"selected:",
@@ -230,21 +230,21 @@ const I18N = {
     "tip.listedispo":"Available entries. Select then + (or double-click) to add.",
     "tip.listechoisi":"Selected entries. Double-click to remove.",
     "tip.listeadd":"Add the selection", "tip.listedel":"Remove the selection",
-    "svc.osm":"Geofabrik — regional PBF extract",
-    "svc.wfs":"IGN Géoplateforme — WFS",
-    "svc.wmts.fr":"IGN Géoplateforme — WMTS",
-    "svc.wmts.us":"USGS National Map — XYZ tiles",
+    "svc.osm":"Geofabrik (regional PBF extract)",
+    "svc.wfs":"IGN Géoplateforme (WFS)",
+    "svc.wmts.fr":"IGN Géoplateforme (WMTS)",
+    "svc.wmts.us":"USGS National Map (XYZ tiles)",
     "f.surf.mnt":"DTM (raster)", "f.surf.laz":"LAZ (cloud)",
     "f.surf.nolaz":"no source for this country",
     "z.pays":"Country",
-    "f.laz":"LAZ mode — standing structures (classified cloud, experimental)",
-    "f.zoomcap":"z%d = native resolution (%s) — beyond that, upscaling with no extra information",
+    "f.laz":"LAZ mode: standing structures (classified cloud, experimental)",
+    "f.zoomcap":"z%d = native resolution (%s); beyond that, upscaling with no extra information",
     "f.dlcap":"↓ %d max parallel (large LAZ clouds)",
     "f.lazh":"height (m)", "f.lazc":"LAS classes",
     "f.lazg":"Ground base", "f.lazg.classes":"ground classes", "f.lazg.csf":"CSF cloth (~3 min/tile)",
     "f.lazt":"threshold (m)", "f.lazr":"cloth cell (m)", "f.lazrg":"terrain",
     "f.lazrg.1":"steep (1)", "f.lazrg.2":"gentle relief (2)", "f.lazrg.3":"flat (3)",
-    "tip.laz":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier — scrub comes back too: speckle vs continuous lines). \"ground classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
+    "tip.laz":"Rebuilds the model from the classified point cloud (LAZ ~205 MB/km²): can re-introduce returns compatible with standing ruins/walls that the DTM erases (candidates, not a classifier; scrub comes back too: speckle vs continuous lines). \"ground classes\" base: 2/9/66 = terrain, other classes are re-injected into ground gaps, filtered by the height band. \"CSF cloth\" base: a simulated cloth (Zhang 2016) splits ground from off-ground without the classes; cleaner background, ~3 min/tile, its own threshold/cloth-cell/terrain settings (height/classes ignored). Keep the area small.",
     "sec.zone":"Geographic area",
     "z.mode":"Zone", "mode.fronly":"France only",
     "mode.ville":"City", "mode.gps":"GPS", "mode.bbox":"BBox", "mode.dep":"Department", "mode.region":"Region",
@@ -255,21 +255,21 @@ const I18N = {
     "t.vecteur":"IGN Vector", "t.osm":"OSM Vector",
     "vsrc.ign":"IGN Géoplateforme (WFS)", "vsrc.osm":"OSM / Geofabrik (PBF)",
     "t.fusion":"Merge", "t.decoupe":"Raster split",
-    "split0":"0 — A priori split (large areas)",
+    "split0":"0. A priori split (large areas)",
     "grid":"Grid:", "rows":"rows", "orradius":"or side", "rows_orradius":"rows  or side",
     "clean":"Clean intermediates",
     "minfree":"Minimum free disk before halting", "tip.minfree":"Stop cleanly before a chunk if free disk < threshold (0 = off)",
-    "split.hint":"1×1 = no split — automatic resume via manifeste.json. Large-area LiDAR (SVF/openness): aim for chunks ≤ 600 km² on a 32 GB VM, or expect OOM (~1150 km² needs ~64 GB).",
-    "dl":"1 — Download",
+    "split.hint":"1×1 = no split; automatic resume via manifeste.json. Large-area LiDAR (SVF/openness): aim for chunks ≤ 600 km² on a 32 GB VM, or expect OOM (~1150 km² needs ~64 GB).",
+    "dl":"1. Download",
     "ovr":"Overwrite output file", "ovr.short":"Overwrite",
     "workers":"Simultaneous downloads", "compress":"Compress",
     "lazpar":"Simultaneous LAZ→TIF conversions (×3 GB RAM)", "tip.lazpar":"Simultaneous CSF/DFM conversions; ~3 GB RAM each (default 1)",
-    "map2":"2 — Generate the map", "map3":"3 — Generate the map",
+    "map2":"2. Generate the map", "map3":"3. Generate the map",
     "fmt.mapsforge":"Mapsforge (.map)", "fmt.natif":"(native)",
     "tip.natif":"Written directly by the WFS download: at least one of the two GeoJSON files is always produced, and the \"Overwrite\" box of the Download frame governs it.",
-    "omb2":"2 — Compute archaeological shadings",
+    "omb2":"2. Compute archaeological shadings",
     "zoom":"Zoom:", "imgfmt":"Image format:", "jpegq":"Jpeg quality:", "filefmt":"File format:",
-    "tip.svf":"Sky-View Factor — openness of the celestial hemisphere. Options on the right.",
+    "tip.svf":"Sky-View Factor: openness of the celestial hemisphere. Options on the right.",
     "tip.elev":"Sun angle of the directional hillshades. 25° = archaeology (micro-relief); 45° = general use.",
     "couche":"Layer:",
     "tip.max4":"The IGN WFS limits concurrent requests: past 4, layers start failing.",
@@ -286,11 +286,11 @@ const I18N = {
     "apiunavail":"API unavailable", "initerr":"Init error: ",
     "hist.empty":"No saved run.",
     "hist.alreadyempty":"History is already empty.",
-    "hist.confirm":"Delete {n} history entry(ies)?\n\nThis is permanent — past commands can no longer be recalled.",
+    "hist.confirm":"Delete {n} history entry(ies)?\n\nThis is permanent: past commands can no longer be recalled.",
     "hist.cleared":"✓ History cleared ({n} entry(ies) removed)",
     "hist.recalled":"Parameters recalled: {nom} ({date})",
     "del.error":"Error while deleting: ", "del.unknown":"unknown",
-    "zoom.inverted":"⚠ History zooms inverted — fixed on load",
+    "zoom.inverted":"⚠ History zooms inverted, fixed on load",
     "update.dispo":"⬆ {tag} available: release notes",
     "header.pid":"Server PID {pid}",
     "fusion.ignored":"Ignored: {files}\nOnly {exts} are accepted (a merge cannot mix file types).",
@@ -309,9 +309,9 @@ const I18N = {
     "err.code":"✗ Error (code {c})",
     "fail.detail":"Processing failed (code {c}).\n\n{msg}\n\n(full details in the log panel below)",
     "fail.generic":"Processing failed (code {c}).\n\nSee the log panel below for details.",
-    "warn.scanpro":"⚠ This layer is restricted to <strong>professionals</strong> (IGN terms of use).<br>An API key is required — a <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> account with a SIRET.<br>Individuals must use <strong>planign</strong> or <strong>ortho</strong> (no key required).",
-    "dep.syntax":"Syntax: <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; Overseas: <code>2A</code> <code>971</code> &nbsp;—&nbsp; Multi-department: one file per department",
-    "region.hint":"Geofabrik region = bounding box of its departments. &nbsp;—&nbsp; OSM: a single regional map (full PBF, no re-split).",
+    "warn.scanpro":"⚠ This layer is restricted to <strong>professionals</strong> (IGN terms of use).<br>An API key is required: a <a href='https://cartes.gouv.fr' target='_blank' style='color:#e07070'>cartes.gouv.fr</a> account with a SIRET.<br>Individuals must use <strong>planign</strong> or <strong>ortho</strong> (no key required).",
+    "dep.syntax":"Syntax: <code>83</code> &nbsp;·&nbsp; <code>83,06,13</code> &nbsp;·&nbsp; <code>1-10</code> &nbsp;·&nbsp; <code>1-3,75,83</code> &nbsp;·&nbsp; Overseas: <code>2A</code> <code>971</code> &nbsp;·&nbsp; Multi-department: one file per department",
+    "region.hint":"Geofabrik region = bounding box of its departments. &nbsp;·&nbsp; OSM: a single regional map (full PBF, no re-split).",
     "tip.sun":"Sun angle of the directional hillshades (multi/315/045/135/225). No effect on SVF.",
     "tip.svftype":"Flux cos²γ: compressed near 1, contrast to the eye. RVT 1−sin γ (Kokalj/Hesse): archaeology standard / openness, linear sensitivity at low angles.",
     "tip.svfconv":"Flux cos²γ: contrast to the eye. RVT 1−sin γ: archaeology standard / openness.",
@@ -324,7 +324,7 @@ const I18N = {
     "omb.select":"Select an instance…", "omb.none":"no parameters",
     "omb.sigma.auto":"auto (15 px = {m} m)",
     "omb.name.e4":"e⁴MSTP (lidar2map variant)",
-    "tip.ombsigma":"Gaussian smoothing standard deviation σ in metres — not an exact radius. Default = 15 px of native resolution (≈ 7.5 m at 0.5 m/px). Small = fine detail and noise; large = broader structures and more background relief. Clear = auto.",
+    "tip.ombsigma":"Gaussian smoothing standard deviation σ in metres, not an exact radius. Default = 15 px of native resolution (≈ 7.5 m at 0.5 m/px). Small = fine detail and noise; large = broader structures and more background relief. Clear = auto.",
     "tip.ombdist":"Maximum horizon-search radius for SVF, openness, and their composites. Small = local forms and faster calculation; large = broader forms and slower calculation. In e⁴MSTP it does not change the fixed MSTP (Multiscale Topographic Position) or SLRM (Simple Local Relief Model) scales.",
     "tip.ombgamma":"Gamma applied after stretching: 1 = unchanged, below 1 = lighter, above 1 = darker midtones. It changes display, not the computed geometry.",
     "tip.ombgammafinal":"Gamma applied to the final composite: 1 = unchanged, below 1 = lighter, above 1 = darker. It changes neither radii nor computed scales.",
@@ -952,7 +952,7 @@ function _majModesDisponibles() {
     const o = sel.querySelector(`option[value="${val}"]`);
     if (!o) return;
     o.disabled = !fr;
-    o.textContent = t(cle) + (fr ? '' : ' — ' + t('mode.fronly'));
+    o.textContent = t(cle) + (fr ? '' : ' (' + t('mode.fronly') + ')');
   });
   if (!fr && _MODES_FR[sel.value]) sel.value = 'ville';
   onModeChange();
@@ -1081,7 +1081,7 @@ function onSurfaceChange() {
   const dispoLaz = _allProviders.some(p => p.laz && duPays(p));
   if (optLaz) {
     optLaz.disabled = !dispoLaz;
-    optLaz.textContent = t('f.surf.laz') + (dispoLaz ? '' : ' — ' + t('f.surf.nolaz'));
+    optLaz.textContent = t('f.surf.laz') + (dispoLaz ? '' : ' (' + t('f.surf.nolaz') + ')');
     const ssel = document.getElementById('f-surface');
     if (!dispoLaz && ssel && ssel.value === 'laz') ssel.value = 'mnt';
   }
@@ -1285,7 +1285,7 @@ function buildHistorique(hist) {
                         margin-bottom:6px;cursor:pointer;font-size:12px"
                  onclick="rappelHistorique(${i})">
       <div style="display:flex;justify-content:space-between">
-        <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} — ${_acEsc(e.nom||'?')}</strong>
+        <strong><span style="color:${col}">${sym}</span> ${LABELS[e.type]||e.type} · ${_acEsc(e.nom||'?')}</strong>
         <span style="color:var(--dim)">${e.date}</span>
       </div>
       <div style="color:var(--dim);margin-top:3px">${zone}${zone?' · ':''}${e.duree || (st === 'en cours' ? t('status.running') : st)}</div>

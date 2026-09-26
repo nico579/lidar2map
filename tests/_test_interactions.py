@@ -1568,10 +1568,10 @@ check("onglet LiDAR : libellé sans 'MNT' (il traite aussi le LAZ)",
 # .js — un commentaire qui documente l'ancien nom est légitime et ne doit pas
 # faire échouer le test.
 check("étape de production : un seul nom « Générer la carte » partout",
-      '"map2":"2 — Générer la carte"' in _appjs and '"map3"' in _appjs
-      and '"2 — Calculer les tuiles"' not in _appjs
-      and '"3 — Calculer les tuiles"' not in _appjs
-      and '"2 — Compute tiles"' not in _appjs
+      '"map2":"2. Générer la carte"' in _appjs and '"map3"' in _appjs
+      and '"2. Calculer les tuiles"' not in _appjs
+      and '"3. Calculer les tuiles"' not in _appjs
+      and '"2. Compute tiles"' not in _appjs
       and "Calculer les tuiles" not in _html
       and '"gen.map"' not in _appjs and 'data-i18n="gen.map"' not in _html
       and _html.count('data-i18n="map2"') == 3)   # raster + osm + vecteur
