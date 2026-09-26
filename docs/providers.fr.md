@@ -76,9 +76,8 @@ de la zone annoncée.
 Les sources **expérimentales** sont signalées dans l'interface (mention
 « expérimental » dans la liste, note à côté) et par un avertissement en ligne
 de commande : leur service a échoué de façon répétée lors de nos
-vérifications, le téléchargement peut échouer. Actuellement : `de-sh` (le
-service renvoie une page HTML au lieu des dalles) et `es-icgc` (erreurs du
-serveur).
+vérifications, le téléchargement peut échouer. Actuellement : `es-icgc`
+(erreurs du serveur).
 
 | Code | Pays | Donnée | Rés. | CRS natif | Accès & particularités |
 |---|---|---|---|---|---|

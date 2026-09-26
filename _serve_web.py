@@ -192,21 +192,39 @@ class Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------- POST
 
+    # Au-delà, le corps d'une requête refusée n'est pas lu : la connexion est
+    # fermée sans lui, un envoi abusif ne doit pas occuper le serveur.
+    _CORPS_REFUSE_MAX = 1 << 20
+
+    def _refuser(self, code: int) -> None:
+        """Répond une erreur à un POST après avoir lu son corps. Fermée avec
+        des octets non lus, la connexion part en RST sous Windows et le client
+        perd la réponse (WinError 10053) : sur 300 POST vers une route
+        inconnue, 14 réponses 404 perdues, et le test de cette route échouait
+        par intermittence."""
+        try:
+            longueur = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            longueur = 0
+        if 0 < longueur <= self._CORPS_REFUSE_MAX:
+            self.rfile.read(longueur)
+        self.send_error(code)
+
     def do_POST(self) -> None:
         if not self.hote_autorise():
-            self.send_error(403)
+            self._refuser(403)
             return
         route = urlparse(self.path).path
         if not route.startswith(_PREFIXE_API):
-            self.send_error(404)
+            self._refuser(404)
             return
         if self.requete_inter_sites():
-            self.send_error(403)
+            self._refuser(403)
             return
         clef = route[len(_PREFIXE_API):]
         gestionnaire = self.post_routes.get(clef)
         if gestionnaire is None:
-            self.send_error(404)
+            self._refuser(404)
             return
         try:
             longueur = int(self.headers.get("Content-Length") or 0)

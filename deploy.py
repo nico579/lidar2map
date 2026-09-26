@@ -87,8 +87,12 @@ def fail(msg: str) -> NoReturn:
 
 def run(cmd, check=True, capture=False, timeout=120):
     try:
+        # UTF-8 explicite : les suites écrivent en UTF-8 (PYTHONUTF8=1 dans
+        # run_tests.py), et le décodage par défaut en cp1252 plantait le fil
+        # lecteur sur certains octets, en noyant la vraie erreur.
         result = subprocess.run(
             cmd, cwd=str(SRC), check=False, text=True,
+            encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE if capture else None,
             stderr=subprocess.PIPE if capture else None,
             timeout=timeout,

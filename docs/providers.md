@@ -70,8 +70,7 @@ Resolution is nominal and exact coverage can vary inside the stated area.
 **Experimental** sources are flagged in the interface ("experimental" in the
 list, with a note next to it) and by a warning on the command line: their
 service failed repeatedly during our checks, so downloads may fail.
-Currently: `de-sh` (the service returns an HTML page instead of tiles) and
-`es-icgc` (server errors).
+Currently: `es-icgc` (server errors).
 
 | Code | Country | Dataset | Res. | Native CRS | Access & specifics |
 |---|---|---|---|---|---|

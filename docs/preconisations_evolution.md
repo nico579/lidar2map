@@ -550,7 +550,9 @@ Sources marquées après vérification depuis une connexion ordinaire, et pas
 seulement depuis la CI : `de-sh` (page HTML au lieu des dalles) et `es-icgc`
 (HTTP 500). `ca-quebec`, `no-kartverket` et `us-tnm`, en échec sur les runners,
 passent depuis une connexion ordinaire : non marquées. `fi-maanmittauslaitos`
-n'a pas pu être vérifiée sans clé API.
+n'a pas pu être vérifiée sans clé API. `de-sh` est rétablie le 26 septembre :
+le service livrait bien chaque dalle, mais suivie d'une page HTML sur laquelle
+butait le lecteur XYZ, qui l'ignore désormais.
 
 **Décision.** Le propriétaire doit choisir le critère et l'affichage.
 

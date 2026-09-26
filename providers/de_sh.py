@@ -35,10 +35,6 @@ except ModuleNotFoundError:
 NAME       = "Schleswig-Holstein — DGM1 1 m (LVermGeo SH, XYZ)"
 CODE       = "de-sh"
 COUNTRY    = "de"
-# Source expérimentale (M1, docs/preconisations_evolution.md) : échec au test
-# hebdomadaire les 7, 14 et 21 septembre 2026, et depuis une connexion
-# ordinaire le 25 : le service renvoie une page HTML au lieu de la dalle.
-STATUT     = "experimental"
 LICENSE    = "CC BY 4.0 — © GeoBasis-DE/LVermGeoSH"
 DOC_URL    = "https://www.schleswig-holstein.de/DE/landesregierung/ministerien-behoerden/LVERMGEOSH/Service/serviceGeobasisdaten/geodatenService_Geobasisdaten_DGM"
 

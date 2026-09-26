@@ -388,6 +388,16 @@ class RoutesLectureSeuleTests(unittest.TestCase):
             self._post("/api/nope")
         self.assertEqual(ctx.exception.code, 404)
 
+    def test_refus_d_un_post_avec_corps_ne_perd_jamais_la_reponse(self):
+        # Répondre avant d'avoir lu le corps fermait la connexion sur des
+        # octets non lus : RST sous Windows, réponse perdue (WinError 10053)
+        # pour environ 5 % des requêtes, mesuré le 2026-09-26. Cinquante
+        # envois avec un corps conséquent rendent la course presque certaine.
+        for _ in range(50):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self._post("/api/nope", {"donnees": "x" * 20000})
+            self.assertEqual(ctx.exception.code, 404)
+
     def test_post_host_non_autorise_refuse_avec_403(self):
         corps = json.dumps({}).encode("utf-8")
         req = urllib.request.Request(
