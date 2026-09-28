@@ -127,6 +127,12 @@ class AutostartCommandeTests(_DossierIsole):
                          [str(self.programme), "--serve-gui", "--no-browser"])
         self.assertEqual(_autostart._dossier_lancement(), self.programme.parent)
 
+    def test_raccourci_bureau_ouvre_le_navigateur(self):
+        # Même programme que le démarrage automatique, mais on le clique pour
+        # ouvrir lidar2map : sans --no-browser.
+        self.assertEqual(_autostart.raccourci_bureau(),
+                         ([str(self.programme), "--serve-gui"], self.programme.parent))
+
     def test_service_systemd_lance_le_programme_sans_environnement(self):
         with mock.patch.object(_autostart.subprocess, "run"):
             _autostart._enable_linux()

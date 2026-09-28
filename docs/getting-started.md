@@ -188,13 +188,17 @@ job is running.
 ### 2.4. Tray icon, stopping, and a second launch
 
 While the server runs, a lidar2map icon sits in the system tray (notification
-area):
+area). Its menu is the same in the author's four apps (blink2video,
+lidar2map, watch2notif, gpxsolar), in English or French depending on the
+language chosen in the interface:
 
 | Menu entry | Effect |
 |---|---|
-| **Ouvrir** (Open) | Opens the interface in the browser again. |
-| **Redémarrer** (Restart) | Stops a running job cleanly, then restarts the server with the same options. |
-| **Arrêter** (Stop) | Stops a running job cleanly, then stops the server. |
+| **Open** | Opens the interface in the browser again. |
+| **Update to x.y** | Only there when a newer version is published: opens that version's GitHub page. |
+| **Restart** | Stops a running job cleanly, then restarts the server with the same options. |
+| **Stop** | Stops a running job cleanly, then stops the server. |
+| **Create a Desktop shortcut** | Puts a shortcut on the Desktop that starts lidar2map and opens the interface. |
 
 A clean stop lets the current operation finish and close its files; it is
 forced after 15 seconds if the job does not end.

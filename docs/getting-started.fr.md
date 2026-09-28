@@ -203,13 +203,17 @@ direct pendant le traitement.
 ### 2.4 Icône de la zone de notification, arrêt et second lancement
 
 Tant que le serveur tourne, une icône lidar2map est présente dans la zone de
-notification :
+notification. Son menu est le même dans les quatre applications de l’auteur
+(blink2video, lidar2map, watch2notif, gpxsolar), en français ou en anglais
+selon la langue choisie dans l’interface :
 
 | Entrée du menu | Effet |
 |---|---|
 | **Ouvrir** | Rouvre l’interface dans le navigateur. |
+| **Mettre à jour vers x.y** | Présente seulement quand une version plus récente est publiée : ouvre la page de cette version sur GitHub. |
 | **Redémarrer** | Arrête proprement le traitement en cours, puis relance le serveur avec les mêmes options. |
 | **Arrêter** | Arrête proprement le traitement en cours, puis le serveur. |
+| **Créer un raccourci sur le Bureau** | Pose sur le Bureau un raccourci qui lance lidar2map et ouvre l’interface. |
 
 Un arrêt propre laisse l’opération en cours se terminer et fermer ses
 fichiers ; il est forcé au bout de 15 secondes si le traitement ne s’arrête

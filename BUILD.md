@@ -82,7 +82,7 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Élément | Implémentation |
 |---------|----------------|
 | Sécurité | `Handler.hote_autorise()` : `Host`, adresse TCP du client et `Origin` vérifiés ; pas de compte |
-| Icône de zone de notification | `pystray` + Pillow, menu Ouvrir / Redémarrer / Arrêter ; `--no-tray` pour s'en passer, repli automatique sans icône si elle ne peut pas être créée |
+| Icône de zone de notification | [nico579-commons](https://github.com/nico579/nico579-commons) (`pystray` + Pillow), menu commun aux quatre applications : Ouvrir / Mettre à jour vers x.y (page de la release, si une version plus récente est publiée) / Redémarrer / Arrêter / Créer un raccourci sur le Bureau ; `--no-tray` pour s'en passer, repli automatique sans icône si elle ne peut pas être créée |
 | Seconde instance | `_instance_existante()` interroge `/api/init` : question dans le terminal s'il est visible (`_terminal_interactif()`), sinon dans la page (`?deja-ouverte=1`) ; rien avec `--no-browser`. `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
 | Console Windows | `lidar2map.exe` reste une application console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Changement de spec : rebuild |
 | Démarrage automatique | `_autostart.py` : raccourci `.lnk` (dossier Démarrage, comme blink2video et watch2notif), agent `launchd`, service `systemd --user`. En mode figé, lance le programme en cours (`sys.executable`) ; aucune variable d'environnement à transmettre, et celles d'un lanceur ≤ 1.54 sont ignorées. Le `.vbs` d'une version ≤ 1.53 est remplacé au démarrage du serveur (exécutable seulement) |
@@ -170,8 +170,9 @@ python3.12 lidar2map.py --installer-deps
 ```
 
 Installe les critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
-certifi, pystray ; puis les optionnelles (un échec ne bloque pas) : osmium,
-numba, laspy, lazrs, py7zr, mapbox-vector-tile, cloth-simulation-filter.
+certifi, pystray, platformdirs, nico579-commons (en 0.3.x) ; puis les
+optionnelles (un échec ne bloque pas) : osmium, numba, laspy, lazrs, py7zr,
+mapbox-vector-tile, cloth-simulation-filter.
 
 ### `--telecharger-outils`
 

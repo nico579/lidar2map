@@ -611,15 +611,16 @@ class ApiEtatRunTests(unittest.TestCase):
 
     def test_commande_relance_figee_vise_l_exe_et_pas_le_script(self):
         # Figé, _loader.py remplace argv[0] par _internal/lidar2map.py :
-        # relancer argv tel quel exécutait un fichier texte.
+        # relancer argv tel quel exécutait un fichier texte. La relance
+        # passe désormais par nico579_commons.relance, qui garde cette règle.
+        from nico579_commons import relance
         argv = ["/app/_internal/lidar2map.py", "--serve-gui", "--port", "8766"]
         self.assertEqual(
-            L2M._commande_relance(frozen=True, executable="/app/lidar2map",
-                                  argv=argv),
+            relance.commande(fige=True, executable="/app/lidar2map", argv=argv),
             ["/app/lidar2map", "--serve-gui", "--port", "8766"])
         self.assertEqual(
-            L2M._commande_relance(frozen=False, executable="/usr/bin/python3",
-                                  argv=["lidar2map.py", "--serve-gui"]),
+            relance.commande(fige=False, executable="/usr/bin/python3",
+                             argv=["lidar2map.py", "--serve-gui"]),
             ["/usr/bin/python3", "lidar2map.py", "--serve-gui"])
 
 
@@ -1132,6 +1133,77 @@ class EcouteHoteConfianceTests(unittest.TestCase):
         self.addCleanup(ecoute.arreter)
         self.assertEqual(ecoute.definir("localhost"), "actif")
         self.assertEqual(ecoute._serveurs, [])
+
+
+class MenuCommunTests(unittest.TestCase):
+    """Actions données au menu de l'icône, le même dans les quatre
+    applications (nico579_commons.tray), appelées directement : ni icône,
+    ni vraie relance, ni vrai raccourci sur le Bureau, ni réseau."""
+
+    URL = "http://127.0.0.1:8766/"
+    PAGE = "https://github.com/nico579/lidar2map/releases/tag/v1.56.0"
+
+    def setUp(self):
+        self.journal = []
+        self.verificateur = mock.Mock()
+        self.verificateur.disponible.return_value = None
+        self.verificateur.page_des_releases = (
+            "https://github.com/nico579/lidar2map/releases/latest")
+        with mock.patch.object(L2M, "_langue_console", return_value="fr"):
+            self.actions = L2M._actions_tray(
+                self.URL, ROOT / "gui", lambda: self.journal.append("arrete"),
+                self.verificateur)
+
+    def test_menu_commun(self):
+        import types
+        from nico579_commons import tray as apptray
+        faux = types.SimpleNamespace(
+            MenuItem=lambda texte, action, default=False, checked=None: texte)
+        self.assertEqual(apptray.entrees(self.actions, faux, lambda action: None),
+                         ["Ouvrir", "Redémarrer", "Arrêter",
+                          "Créer un raccourci sur le Bureau"])
+        self.verificateur.disponible.return_value = {"version": "1.56.0",
+                                                     "page": self.PAGE}
+        self.assertEqual(apptray.entrees(self.actions, faux, lambda action: None)[1],
+                         "Mettre à jour vers 1.56.0")
+
+    def test_redemarrer_arrete_puis_relance_avec_les_memes_arguments(self):
+        from nico579_commons import relance
+
+        def relancer(commande, **options):
+            self.journal.append(("relance", commande, options))
+            return "processus"
+
+        with mock.patch.object(relance, "relancer", side_effect=relancer), \
+                mock.patch.object(sys, "argv",
+                                  ["lidar2map.py", "--serve-gui", "--port", "8766"]):
+            self.actions.redemarrer()
+        self.assertEqual(self.journal[0], "arrete")
+        _, commande, options = self.journal[1]
+        self.assertEqual(commande[-3:], ["--serve-gui", "--port", "8766"])
+        self.assertEqual(options["nom"], "lidar2map")
+
+    def test_mettre_a_jour_ouvre_la_page_de_la_release(self):
+        import webbrowser
+        self.assertFalse(self.actions.mettre_a_jour_referme)
+        self.assertIsNone(self.actions.version_disponible())
+        self.verificateur.disponible.return_value = {"version": "1.56.0",
+                                                     "page": self.PAGE}
+        self.assertEqual(self.actions.version_disponible(), "1.56.0")
+        with mock.patch.object(webbrowser, "open") as ouvrir:
+            self.actions.mettre_a_jour()
+        ouvrir.assert_called_once_with(self.PAGE)
+
+    def test_raccourci_ouvre_le_navigateur(self):
+        from nico579_commons import raccourci
+        with mock.patch.object(raccourci, "creer", return_value=0) as creer:
+            self.assertEqual(self.actions.creer_raccourci(), 0)
+        args, kwargs = creer.call_args
+        self.assertEqual(args[0], "lidar2map")
+        self.assertIn("--serve-gui", args[1])
+        self.assertNotIn("--no-browser", args[1])
+        self.assertTrue(kwargs["reduit"])
+        self.assertTrue(Path(kwargs["icone"]).is_file())
 
 
 class IconeIndisponibleTests(unittest.TestCase):

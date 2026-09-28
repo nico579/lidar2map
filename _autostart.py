@@ -51,6 +51,14 @@ def _dossier_lancement() -> Path:
     return Path(_lidar2map_command()[0]).parent if frozen() else PROJECT_DIR
 
 
+def raccourci_bureau() -> tuple:
+    """(commande, dossier) du raccourci sur le Bureau que cree le menu de
+    l'icone : ceux du demarrage automatique, sans --no-browser cette fois,
+    puisque c'est pour ouvrir lidar2map qu'on clique dessus."""
+    commande = [a for a in _lidar2map_command() if a != "--no-browser"]
+    return commande, _dossier_lancement()
+
+
 def _systemd_quote(valeur: str) -> str:
     """Argument ExecStart= entre guillemets (espaces dans un chemin) ; % est
     un specificateur systemd, a doubler."""

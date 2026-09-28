@@ -19,6 +19,8 @@ from pathlib import Path
 # explicite ``--installer-deps`` de la façade. Les paquets GUI (pywebview,
 # PyQt6, qtpy, pyobjc) en sont sortis : plus aucune liste d'installation ne
 # les demande depuis la 1.49, le GUI étant servi en HTTP local.
+NICO579_COMMONS = "nico579-commons>=0.3,<0.4"
+
 MODULE_PAR_PAQUET = {
     "Pillow": "PIL",
     "pyproj": "pyproj",
@@ -38,6 +40,11 @@ MODULE_PAR_PAQUET = {
     "cloth-simulation-filter": "CSF",
     # Dossiers standard de l'OS (_dossiers.py), dont un Documents déplacé.
     "platformdirs": "platformdirs",
+    # Briques communes aux quatre applications (menu de l'icône, relance,
+    # raccourci, recherche de version). Fourchette de versions dans la clé
+    # même, passée telle quelle à pip : une version incompatible de la
+    # bibliothèque ne peut pas entrer dans une construction.
+    NICO579_COMMONS: "nico579_commons",
 }
 
 
@@ -443,7 +450,8 @@ def bootstrap_venv_si_besoin(
     # local, plus de Qt ni de pywebview) ; le point d'extension est conservé.
     _gui_crit, _gui_opt = gui_deps_plateforme()
     deps_critiques  = ["Pillow", "pyproj", "numpy", "scipy", "ijson",
-                       "rasterio", "fiona", "certifi", "pystray"] + _gui_crit
+                       "rasterio", "fiona", "certifi", "pystray",
+                       NICO579_COMMONS] + _gui_crit
     deps_optionnelles = ["osmium", "numba"] + _gui_opt
     deps_pip = deps_critiques + deps_optionnelles
     print("  Installing dependencies in the venv (3-5 min)...")
@@ -580,6 +588,7 @@ def installer_deps(*, gui_deps_plateforme):
     for pkg in [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
         "fiona", "certifi", "pystray", "osmium", "numba", "platformdirs",
+        NICO579_COMMONS,
     ]:
         mod = MODULE_PAR_PAQUET[pkg]
         if not _module_present(mod):
@@ -775,7 +784,8 @@ def installer_toutes_dependances(
     gui_critiques, gui_optionnelles = gui_deps_plateforme()
     critiques = [
         "Pillow", "pyproj", "numpy", "scipy", "ijson", "rasterio",
-        "fiona", "certifi", "pystray", "platformdirs", *gui_critiques,
+        "fiona", "certifi", "pystray", "platformdirs", NICO579_COMMONS,
+        *gui_critiques,
     ]
     optionnelles = [
         "osmium", "numba", "laspy", "lazrs", "py7zr",

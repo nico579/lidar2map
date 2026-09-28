@@ -5960,58 +5960,78 @@ def _premier_port_libre(bind: str, port_depart: int, trusted_host: str,
     return None, None
 
 
-def _construire_tray_icon(gui_dir: Path, on_open, on_restart, on_stop):
-    """Icône de zone de notification (Ouvrir/Redémarrer/Arrêter) pendant que
-    le serveur web tourne dans son thread de fond. pystray + Pillow
-    seulement (pas de framework GUI complet) : Pillow est déjà une
-    dépendance critique de lidar2map (traitement raster), et pystray parle
-    directement l'API native de chaque OS - c'est exactement l'inverse de
-    pywebview/Qt qu'on vient de retirer, pas une régression sur la
-    réduction de dépendances menée pendant la migration."""
-    import pystray
-    from PIL import Image
-    image = Image.open(_fichier_icone(gui_dir))
-    menu = pystray.Menu(
-        pystray.MenuItem("Ouvrir", on_open, default=True),
-        pystray.MenuItem("Redémarrer", on_restart),
-        pystray.MenuItem("Arrêter", on_stop),
+def _verificateur_de_version():
+    """Dernière release publiée de lidar2map, demandée à GitHub au plus une
+    fois par heure par un fil de fond (nico579_commons.maj) : le menu de
+    l'icône la lit sans jamais attendre le réseau."""
+    from nico579_commons import maj
+    return maj.Verificateur("nico579/lidar2map", VERSION)
+
+
+def _actions_tray(url: str, gui_dir: Path, arreter, verificateur):
+    """Ce que lidar2map donne au menu de l'icône, le même dans les quatre
+    applications (nico579_commons.tray) : Ouvrir, « Mettre à jour vers
+    x.y » quand une version plus récente est publiée (ouvre la page de la
+    release, lidar2map ne s'installe pas lui-même), Redémarrer, Arrêter,
+    Créer un raccourci sur le Bureau. Tout le reste passe par la page.
+
+    ``arreter`` : arrête le job en cours et libère le port."""
+    import webbrowser
+    from nico579_commons import relance
+    from nico579_commons import tray as apptray
+
+    def _redemarrer():
+        # Mêmes arguments (port, --bind, hôte de confiance), port libéré
+        # avant. Sous le service systemd du démarrage automatique, c'est
+        # systemd qui relance : un processus lancé d'ici y serait tué avec
+        # celui-ci (issue #35 de blink2video, voir nico579_commons.relance).
+        arreter()
+        relance.relancer(relance.commande(), nom="lidar2map", cwd=os.getcwd())
+
+    def _mettre_a_jour():
+        info = verificateur.disponible()
+        webbrowser.open(info["page"] if info else verificateur.page_des_releases)
+
+    return apptray.Actions(
+        ouvrir=lambda: webbrowser.open(url),
+        redemarrer=_redemarrer,
+        arreter=arreter,
+        version_disponible=lambda: (verificateur.disponible() or {}).get("version"),
+        mettre_a_jour=_mettre_a_jour,
+        mettre_a_jour_referme=False,
+        creer_raccourci=lambda: _creer_raccourci_bureau(gui_dir),
+        langue=_langue_console,
     )
-    return pystray.Icon("lidar2map", image, "lidar2map", menu)
 
 
-def _commande_relance(*, frozen, executable, argv):
-    """Commande qui relance ce même serveur avec les mêmes arguments.
+def _creer_raccourci_bureau(gui_dir: Path) -> int:
+    """Raccourci « lidar2map » sur le Bureau : la commande du démarrage
+    automatique, navigateur compris (_autostart.raccourci_bureau)."""
+    import _autostart
+    from nico579_commons import raccourci
+    commande, dossier = _autostart.raccourci_bureau()
+    icone = _fichier_icone(gui_dir)
+    if sys.platform != "win32":
+        # Fichier .desktop : un PNG se lit partout, un ICO pas toujours.
+        icone = icone.with_suffix(".png")
+    # reduit : programme console qui cache sa fenêtre dès son démarrage
+    # (hide-early) ; née réduite, elle ne fait pas d'éclair à l'écran, comme
+    # pour le raccourci du démarrage automatique.
+    return raccourci.creer("lidar2map", commande, dossier, icone=icone,
+                           description="lidar2map", reduit=True,
+                           langue=_langue_console())
 
-    Figé, ``argv[0]`` ne désigne PAS l'exécutable : _loader.py le remplace
-    par le chemin de ``_internal/lidar2map.py`` (texte, ni exécutable ni
-    lançable par CreateProcess sous Windows). On relance donc l'exe courant
-    (``executable``), qui depuis la 1.55 est le programme lui-même."""
-    if frozen:
-        return [executable] + list(argv[1:])
-    return [executable] + list(argv)
 
-
-def _relancer_process():
-    """Relance un nouveau process avec les mêmes arguments (même port/bind/
-    trusted-host demandés), pour un Redémarrer depuis le tray. Le process
-    courant doit avoir déjà libéré le port (server.server_close()) avant cet
-    appel, sinon le nouveau échouerait à écouter dessus.
-
-    CREATE_NO_WINDOW seul, jamais combiné à DETACHED_PROCESS : la
-    combinaison rendait le lancement erratique (parfois 15s à démarrer,
-    parfois un retour immédiat sans que le script n'ait rien exécuté),
-    constaté en réel sur watch2notif/self_update.py (2026-09-07) pour ce
-    même besoin (un process qui doit survivre à son parent, lancé sans
-    fenêtre visible)."""
-    commande = _commande_relance(
-        frozen=getattr(sys, "frozen", False),
-        executable=sys.executable,
-        argv=sys.argv,
-    )
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    subprocess.Popen(
-        commande, cwd=os.getcwd(), close_fds=True, creationflags=flags,
-    )
+def _construire_tray_icon(gui_dir: Path, actions):
+    """Icône de zone de notification pendant que le serveur web tourne dans
+    son thread de fond : nico579_commons.tray (pystray + Pillow), le même
+    menu dans les quatre applications, reconstruit toutes les 5 s pour
+    « Mettre à jour » et la langue. construire() importe pystray, qui lève
+    sans affichage (Linux) : l'appelant continue alors sans icône."""
+    from nico579_commons import tray as apptray
+    tray = apptray.Tray("lidar2map", _fichier_icone(gui_dir), actions)
+    tray.construire()
+    return tray
 
 
 def _langue_console() -> str:
@@ -6114,7 +6134,7 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
     son propre nom d'hôte (accès local ou via l'hôte de confiance).
 
     Processus détaché, sans fenêtre ni console (mêmes drapeaux que
-    _relancer_process) : il vit indépendamment de celui-ci et s'arrête par
+    nico579_commons.relance) : il vit indépendamment de celui-ci et s'arrête par
     sa propre icône de zone de notification : refusé quand ce serveur tourne
     lui-même sans icône (--no-tray), l'instance ne pourrait pas être arrêtée."""
     if sans_icone:
@@ -6400,24 +6420,14 @@ def main_serve_gui():
     # garantie qu'un Ctrl+C interrompe proprement la boucle native de
     # pystray selon l'OS, contrairement à time.sleep() ci-dessous - deux
     # chemins complets et séparés plutôt qu'un mélange fragile des deux).
-    action = {"quoi": "stop"}
-
-    def _on_open(icon, item):
-        import webbrowser
-        webbrowser.open(url)
-
-    def _on_restart(icon, item):
-        action["quoi"] = "restart"
-        icon.stop()
-
-    def _on_stop(icon, item):
-        action["quoi"] = "stop"
-        icon.stop()
-
-    icon = None
+    # Vérificateur créé même sans icône : il importe nico579_commons, dont
+    # l'absence dans un binaire fait ainsi échouer le smoke (--no-tray).
+    verificateur = _verificateur_de_version()
+    tray = None
     if not args.no_tray:
         try:
-            icon = _construire_tray_icon(gui_dir, _on_open, _on_restart, _on_stop)
+            tray = _construire_tray_icon(gui_dir, _actions_tray(
+                url, gui_dir, _arreter_le_job_et_le_serveur, verificateur))
         except Exception as exc:
             # Linux sans affichage (SSH, service systemd lancé avant la
             # session graphique) : pystray tente une connexion X dès l'import
@@ -6427,7 +6437,7 @@ def main_serve_gui():
                   f" - running without it.")
             etat_serveur["sans_icone"] = True
 
-    if icon is None:
+    if tray is None:
         print("  Ctrl+C to stop.")
         try:
             while True:
@@ -6437,12 +6447,14 @@ def main_serve_gui():
             print("\n  Web GUI server stopped.")
             sys.exit(0)
 
+    verificateur.veiller(tray.arret)
     print("  Look for the lidar2map icon in the system tray.")
-    icon.run()  # bloque jusqu'à icon.stop() (Redémarrer ou Arrêter)
+    # Bloque jusqu'à Redémarrer ou Arrêter, dont l'action (job arrêté, port
+    # libéré, relance) tourne hors de la boucle de l'icône ; executer()
+    # l'attend avant de rendre la main.
+    tray.executer()
 
-    _arreter_le_job_et_le_serveur()
-    if action["quoi"] == "restart":
-        _relancer_process()
+    _arreter_le_job_et_le_serveur()   # déjà fait par l'action : sans effet
     print("\n  Web GUI server stopped.")
     sys.exit(0)
 

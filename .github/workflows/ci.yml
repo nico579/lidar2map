@@ -158,7 +158,9 @@ jobs:
         # _installer_deps) : depuis le refactor rasterio, ijson/rasterio/
         # fiona/certifi sont requis à l'import — l'ancienne ligne (pyproj
         # Pillow numpy scipy) est la raison des échecs CI d'avril 2026.
-        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi platformdirs
+        # nico579-commons : menu de l'icône, relance, raccourci (entre
+        # guillemets, < et > seraient des redirections du shell).
+        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi platformdirs "nico579-commons>=0.3,<0.4"
 
       - name: Syntaxe Python
         run: python -c "import ast; ast.parse(open('lidar2map.py', encoding='utf-8').read()); print('OK')"
