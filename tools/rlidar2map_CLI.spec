@@ -5,7 +5,7 @@ from pathlib import Path
 
 tools_dir = Path(SPECPATH)
 client = tools_dir / "rlidar2map_CLI.py"
-app_icon = tools_dir.parent / "lidar2map_icon.png"
+app_icon = tools_dir.parent / "assets" / "lidar2map.png"
 
 a = Analysis(
     [str(client)],

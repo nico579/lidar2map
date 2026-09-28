@@ -543,7 +543,7 @@ par OS/architecture et l’exécution distante est incluse dans chaque archive
 Les fichiers dédiés `tools/rlidar2map_CLI.spec` et
 `tools/rlidar2map_GUI.spec` restent disponibles pour les builds standalone de
 développement, mais le workflow de release ne les invoque plus.
-`lidar2map_icon.png` est intégré à l’exécutable Windows et macOS et installé sur
+`assets/lidar2map.png` est intégré à l’exécutable Windows et macOS et installé sur
 le raccourci XFCE. Chaque page de release publie la somme SHA-256 de chaque
 archive.
 

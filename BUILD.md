@@ -29,10 +29,11 @@ lidar2map-windows-x86_64/          (lidar2map-linux-x86_64/ sous Linux)
     lidar2map.py                   exécuté en texte par _loader.py
     rasterio/
     gui/          index.html + app.js + style.css (servis en HTTP local)
+    assets/       lidar2map.png + lidar2map.ico (zone de notification, onglet)
     osmosis/      embarqué si présent au moment du build
     jre/          embarqué si présent au moment du build
     ...
-  lidar2map_icon.png
+  lidar2map.png
 
 LIDAR2MAP.app/                     (macOS)
   Contents/MacOS/lidar2map
@@ -384,8 +385,11 @@ plateforme. Ne jamais publier un build local comme asset : dérive de la
 machine (versions des dépendances) et un seul OS. `release.yml` reste la
 source de vérité des binaires distribués.
 
-L'icône officielle `lidar2map_icon.png` est utilisée par les builds Windows et
-macOS et reste incluse dans l'archive Linux pour les lanceurs de bureau.
+L'icône officielle `assets/lidar2map.png` est utilisée par les builds Windows et
+macOS et reste incluse, sous le nom `lidar2map.png`, dans les archives Windows
+et Linux pour les lanceurs de bureau. `assets/lidar2map.ico`, tiré d'elle aux
+neuf tailles de celui de blink2video, sert à la zone de notification et à
+l'onglet (`/favicon.ico`). Les quatre applications rangent ainsi leur icône.
 
 ---
 

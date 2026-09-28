@@ -42,7 +42,7 @@ HIDE_CONSOLE = "hide-early" if sys.platform == "win32" else None
 NAME    = "lidar2map"
 
 SRC               = Path(SPECPATH)
-APP_ICON          = SRC / "lidar2map_icon.png"
+APP_ICON          = SRC / "assets" / "lidar2map.png"
 STAGING           = SRC / "build" / "staging"
 LIDAR2MAP_HOME    = Path.home() / ".lidar2map"
 MAPWRITER_JAR_SRC = (Path.home() / ".openstreetmap" / "osmosis" / "plugins"
@@ -187,8 +187,13 @@ datas         = []
 binaries      = []
 hiddenimports = []
 
-if APP_ICON.exists():
-    datas += [(str(APP_ICON), ".")]
+# Icônes rangées comme celles de blink2video, watch2notif et gpxsolar, sous
+# _internal/assets/ : lidar2map.png (icône de l'exécutable, que --remote-gui
+# copie aussi vers la machine distante) et lidar2map.ico (zone de
+# notification, onglet).
+for _icone in (APP_ICON, APP_ICON.with_suffix(".ico")):
+    if _icone.exists():
+        datas += [(str(_icone), "assets")]
 
 # ── Ressources statiques ──────────────────────────────────────────────────────
 if (SRC / "tagmapping-min.xml").exists():

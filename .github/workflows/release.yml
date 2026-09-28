@@ -142,7 +142,7 @@ jobs:
           $stage = "dist\lidar2map-windows-x86_64"
           if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
           Move-Item dist\lidar2map $stage
-          Copy-Item lidar2map_icon.png $stage\
+          Copy-Item assets\lidar2map.png $stage\
           $zip = "dist\lidar2map-windows-x86_64.zip"
           Compress-Archive -Path $stage -DestinationPath $zip -Force
           (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() |
@@ -175,7 +175,7 @@ jobs:
           # distante (voir l'en-tête).
           rm -rf dist/lidar2map-linux-x86_64
           mv dist/lidar2map dist/lidar2map-linux-x86_64
-          cp lidar2map_icon.png dist/lidar2map-linux-x86_64/
+          cp assets/lidar2map.png dist/lidar2map-linux-x86_64/
           tar czf dist/lidar2map-linux-x86_64.tar.gz -C dist lidar2map-linux-x86_64
           sha256sum dist/lidar2map-linux-x86_64.tar.gz | awk '{print $1}' \
             > dist/lidar2map-linux-x86_64.tar.gz.sha256

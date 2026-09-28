@@ -509,7 +509,7 @@ per OS/architecture, and remote execution is included in every
 
 The dedicated `tools/rlidar2map_CLI.spec` and
 `tools/rlidar2map_GUI.spec` remain available for standalone development builds,
-but the release workflow no longer invokes them. `lidar2map_icon.png` is
+but the release workflow no longer invokes them. `assets/lidar2map.png` is
 embedded in the Windows and macOS executable and installed on the XFCE desktop
 shortcut. Every release page publishes the SHA-256 checksum of each archive.
 

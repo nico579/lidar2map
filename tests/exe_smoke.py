@@ -393,7 +393,14 @@ def smoke(archive: Path, racine: Path) -> None:
         aide = lire_json(f"http://127.0.0.1:{port}/api/help", 30)
         if not (isinstance(aide, str) and "lidar2map" in aide):
             raise Echec(f"/api/help inattendu : {str(aide)[:120]!r}")
-        print(f"   OK : /api/init et /api/help sur le port {port}", flush=True)
+        # Icône de l'onglet, lue sous _internal/assets/ comme celle de la
+        # zone de notification.
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/favicon.ico",
+                                    timeout=30) as reponse:
+            if (reponse.headers.get("Content-Type") != "image/x-icon"
+                    or reponse.read(4) != b"\x00\x00\x01\x00"):
+                raise Echec("/favicon.ico : icône de l'onglet absente ou illisible")
+        print(f"   OK : /api/init, /api/help et /favicon.ico sur le port {port}", flush=True)
 
         if sys.platform.startswith("linux"):
             etape("1b. programmes du système : LD_LIBRARY_PATH d'origine")

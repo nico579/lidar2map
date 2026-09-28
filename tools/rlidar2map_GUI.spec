@@ -6,13 +6,13 @@ from pathlib import Path
 tools_dir = Path(SPECPATH)
 client = tools_dir / "rlidar2map_GUI.py"
 server_script = tools_dir / "rlidar2map_GUI_vm.sh"
-app_icon = tools_dir.parent / "lidar2map_icon.png"
+app_icon = tools_dir.parent / "assets" / "lidar2map.png"
 
 a = Analysis(
     [str(client)],
     pathex=[str(tools_dir)],
     binaries=[],
-    datas=[(str(server_script), "."), (str(app_icon), ".")],
+    datas=[(str(server_script), "."), (str(app_icon), "assets")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

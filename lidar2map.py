@@ -1027,7 +1027,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.55.0"
+VERSION      = "1.55.1"
 VERSION_DATE = "2026-09"
 
 
@@ -5952,6 +5952,7 @@ def _premier_port_libre(bind: str, port_depart: int, trusted_host: str,
             server = _serve_web.demarrer(
                 bind=bind, port=port, trusted_host=trusted_host,
                 gui_dir=gui_dir, api_routes=api_routes, post_routes=post_routes,
+                favicon=_fichier_icone(gui_dir),
             )
             return server, port
         except OSError:
@@ -5969,7 +5970,7 @@ def _construire_tray_icon(gui_dir: Path, on_open, on_restart, on_stop):
     réduction de dépendances menée pendant la migration."""
     import pystray
     from PIL import Image
-    image = Image.open(gui_dir / "lidar2map_icon.png")
+    image = Image.open(_fichier_icone(gui_dir))
     menu = pystray.Menu(
         pystray.MenuItem("Ouvrir", on_open, default=True),
         pystray.MenuItem("Redémarrer", on_restart),
@@ -6680,6 +6681,14 @@ def _resoudre_gui_dir() -> Path:
     if _gui_dir is None:
         raise RuntimeError("GUI : gui/index.html introuvable (assets non bundles ?)")
     return _gui_dir
+
+
+def _fichier_icone(gui_dir: Path) -> Path:
+    """assets/lidar2map.ico, voisin de gui/ (dans _internal/ une fois figé) :
+    icône de la zone de notification et de l'onglet. Rangée comme celles de
+    blink2video, watch2notif et gpxsolar : assets/<app>.png pour
+    l'exécutable, assets/<app>.ico pour le reste."""
+    return gui_dir.parent / "assets" / "lidar2map.ico"
 
 
 

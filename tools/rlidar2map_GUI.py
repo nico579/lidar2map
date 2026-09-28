@@ -26,7 +26,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 REMOTE_SCRIPT_NAME = "rlidar2map_GUI_vm.sh"
-ICON_FILE_NAME = "lidar2map_icon.png"
+ICON_FILE_NAME = "lidar2map.png"
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*$")
 LOG_CHILD_ENV = "RLIDAR2MAP_GUI_LOGGED_CHILD"
 LOG_FILE_NAME = "rlidar2map_GUI.log"
@@ -36,12 +36,12 @@ def bundled_resource(name: str) -> Path:
     """Retourne une ressource voisine, y compris dans un onefile PyInstaller.
 
     En mode source (non frozen), le script vit dans tools/ mais certaines
-    ressources (l'icône commune) sont à la racine du projet, un niveau
-    au-dessus : repli sur ce parent si le fichier n'est pas à côté du
-    script. Sans ce repli, --remote-gui échouait en mode source avec
-    « Icône introuvable » (bug vécu 2026-08-04) : le fichier n'a jamais été
-    copié dans tools/, il n'existe qu'à la racine du dépôt et dans le
-    bundle frozen, où le .spec le place explicitement à côté de l'exe."""
+    ressources (l'icône commune, assets/lidar2map.png) partent de la racine
+    du projet, un niveau au-dessus : repli sur ce parent si le fichier n'est
+    pas à côté du script. Sans ce repli, --remote-gui échouait en mode
+    source avec « Icône introuvable » (bug vécu 2026-08-04) : le fichier n'a
+    jamais été copié dans tools/, il n'existe que sous assets/ du dépôt et
+    du bundle frozen, où le .spec le range explicitement."""
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS) / name
     here = Path(__file__).resolve().parent
@@ -208,7 +208,7 @@ def deploy(
     ssh_keygen = require_command("ssh-keygen")
 
     local_script = bundled_resource("rlidar2map_GUI_vm.sh")
-    local_icon = bundled_resource(ICON_FILE_NAME)
+    local_icon = bundled_resource(f"assets/{ICON_FILE_NAME}")
     if not local_script.is_file():
         raise SystemExit(f"Script Linux introuvable : {local_script}")
     if not local_icon.is_file():

@@ -157,6 +157,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 "set-trusted-host": lambda payload: self.api.set_trusted_host((payload or {}).get("host", "")),
                 "set-autostart": lambda payload: self.api.set_autostart(bool((payload or {}).get("actif"))),
             },
+            favicon=L2M._fichier_icone(ROOT / "gui"),
         )
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
 
@@ -189,6 +190,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         html = body.decode("utf-8")
         self.assertEqual(status, 200)
         self.assertIn('<link rel="stylesheet" href="/style.css">', html)
+        self.assertIn('<link rel="icon" href="/favicon.ico">', html)
         self.assertIn('<script src="/web_bridge.js"></script>', html)
         self.assertIn('<script src="/app.js"></script>', html)
         self.assertNotIn("__LIDAR2MAP_CSS__", html)
@@ -215,6 +217,15 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertEqual(body, (ROOT / "gui" / "style.css").read_bytes())
         _, body = self._get("/web_bridge.js")
         self.assertEqual(body, (ROOT / "gui" / "web_bridge.js").read_bytes())
+
+    def test_icone_de_l_onglet(self):
+        # Comme blink2video : /favicon.ico, gardé une semaine par le navigateur.
+        with urllib.request.urlopen(self.base + "/favicon.ico", timeout=10) as reponse:
+            self.assertEqual(reponse.headers["Content-Type"], "image/x-icon")
+            self.assertEqual(reponse.headers["Cache-Control"], "public, max-age=604800")
+            self.assertEqual(reponse.read(),
+                             (ROOT / "assets" / "lidar2map.ico").read_bytes())
+
 
     def test_api_init_renvoie_les_donnees_reelles(self):
         status, body = self._get("/api/init")
@@ -407,6 +418,34 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 403)
+
+
+class IconesTests(unittest.TestCase):
+    """Rangées comme celles de blink2video, watch2notif et gpxsolar :
+    assets/<app>.png de 1254 px pour l'exécutable, assets/<app>.ico aux neuf
+    tailles de celui de blink2video pour la zone de notification et
+    l'onglet."""
+
+    def test_png_et_ico_sous_assets(self):
+        png = (ROOT / "assets" / "lidar2map.png").read_bytes()
+        self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(png[16:24], (1254).to_bytes(4, "big") * 2)
+        ico = (ROOT / "assets" / "lidar2map.ico").read_bytes()
+        self.assertEqual(ico[:4], b"\x00\x00\x01\x00")
+        self.assertEqual(int.from_bytes(ico[4:6], "little"), 9)
+        self.assertEqual(L2M._fichier_icone(ROOT / "gui"),
+                         ROOT / "assets" / "lidar2map.ico")
+
+    def test_remote_gui_trouve_l_icone_depuis_les_sources(self):
+        # --remote-gui copie l'icône vers la machine distante et s'arrête
+        # net s'il ne la trouve pas (bug vécu le 2026-08-04).
+        spec = importlib.util.spec_from_file_location(
+            "rlidar2map_GUI_icone", ROOT / "tools" / "rlidar2map_GUI.py")
+        outil = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(outil)
+        icone = outil.bundled_resource(f"assets/{outil.ICON_FILE_NAME}")
+        self.assertEqual(icone, ROOT / "assets" / "lidar2map.png")
+        self.assertTrue(icone.is_file())
 
 
 class FetchMetadataTests(unittest.TestCase):
