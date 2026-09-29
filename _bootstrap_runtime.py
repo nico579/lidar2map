@@ -19,7 +19,7 @@ from pathlib import Path
 # explicite ``--installer-deps`` de la façade. Les paquets GUI (pywebview,
 # PyQt6, qtpy, pyobjc) en sont sortis : plus aucune liste d'installation ne
 # les demande depuis la 1.49, le GUI étant servi en HTTP local.
-NICO579_COMMONS = "nico579-commons>=0.3,<0.4"
+NICO579_COMMONS = "nico579-commons>=0.3.1,<0.4"
 
 MODULE_PAR_PAQUET = {
     "Pillow": "PIL",

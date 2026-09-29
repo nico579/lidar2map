@@ -170,7 +170,7 @@ python3.12 lidar2map.py --installer-deps
 ```
 
 Installe les critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
-certifi, pystray, platformdirs, nico579-commons (en 0.3.x) ; puis les
+certifi, pystray, platformdirs, nico579-commons (0.3.1 ou plus, avant 0.4) ; puis les
 optionnelles (un échec ne bloque pas) : osmium, numba, laspy, lazrs, py7zr,
 mapbox-vector-tile, cloth-simulation-filter.
 

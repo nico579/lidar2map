@@ -1279,6 +1279,30 @@ class NouvelleInstanceTests(unittest.TestCase):
             self.assertTrue(options["start_new_session"])
         self.assertEqual(sondes[-1], ("127.0.0.1", r["port"]))
 
+    def test_sous_le_service_systemd_instance_dans_une_unite_a_part(self):
+        # Sous le service du démarrage automatique, la seconde instance
+        # mourait avec la première : elle part dans une unité à part. Vraie
+        # fonction de la bibliothèque, dans un faux environnement systemd
+        # (service détecté, systemd-run qui répond).
+        import types
+        from nico579_commons import relance
+        vraie = relance.hors_du_service
+
+        def sous_le_service(commande, **options):
+            return vraie(commande, unite="lidar2map.service", plateforme="linux",
+                         lancer=lambda c, **k: types.SimpleNamespace(returncode=0),
+                         **options)
+
+        popen = mock.Mock(return_value=self._processus())
+        with mock.patch.object(relance, "hors_du_service", side_effect=sous_le_service):
+            r = L2M._demarrer_nouvelle_instance(
+                bind="127.0.0.1", port_depart=0, popen=popen,
+                instance_existante=lambda _h, _p: True, attendre=lambda _s: None)
+        self.assertTrue(r["ok"], r)
+        commande = popen.call_args.args[0]
+        self.assertEqual(commande[:len(relance.PORTEE_SYSTEMD)], relance.PORTEE_SYSTEMD)
+        self.assertIn("--new-instance", commande)
+
     def test_instance_arretee_au_demarrage_signalee(self):
         r = L2M._demarrer_nouvelle_instance(
             bind="127.0.0.1", port_depart=0,

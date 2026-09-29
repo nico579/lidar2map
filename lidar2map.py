@@ -6136,7 +6136,12 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
     Processus détaché, sans fenêtre ni console (mêmes drapeaux que
     nico579_commons.relance) : il vit indépendamment de celui-ci et s'arrête par
     sa propre icône de zone de notification : refusé quand ce serveur tourne
-    lui-même sans icône (--no-tray), l'instance ne pourrait pas être arrêtée."""
+    lui-même sans icône (--no-tray), l'instance ne pourrait pas être arrêtée.
+
+    Sous le service systemd du démarrage automatique, la seconde instance
+    naissait dans le cgroup du service, quel que soit son parent : arrêter
+    ou redémarrer la première la tuait aussi. relance.hors_du_service() la
+    lance alors dans une unité à part (systemd-run --user --scope)."""
     if sans_icone:
         return {"ok": False, "error": (
             "Sans icône de zone de notification (--no-tray), une instance "
@@ -6152,8 +6157,10 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
             f"{port_depart + PORT_RANGE_SIZE - 1}.")}
     base = ([str(SCRIPT)] if getattr(sys, "frozen", False)
             else [sys.executable, str(SCRIPT)])
-    commande = base + ["--serve-gui", "--new-instance", "--port", str(port),
-                       "--bind", bind, "--no-browser"]
+    from nico579_commons import relance
+    commande = relance.hors_du_service(
+        base + ["--serve-gui", "--new-instance", "--port", str(port),
+                "--bind", bind, "--no-browser"], nom="lidar2map")
     options = {"cwd": os.getcwd(), "close_fds": True,
                "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                "stderr": subprocess.DEVNULL}
