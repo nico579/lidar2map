@@ -5,10 +5,10 @@
 # --telecharger-outils suit deja platform.machine() (aarch64 ou x64).
 #
 # 1. Installe Python 3.12 si absent (depuis python.org)
-# 2. Sur Intel, installe libomp et les versions Python encore publiees en x64
-# 3. Lance lidar2map.py --installer-deps -> installe toutes les dependances
+# 2. Sur Intel, installe libomp (la pile Python Intel vient du verrou)
+# 3. Lance lidar2map.py --installer-deps -> installe le verrou requirements.txt
 # 4. Telecharge osmosis + JRE via lidar2map.py --telecharger-outils
-# 5. Installe PyInstaller
+# 5. Installe PyInstaller (requirements-build.txt, versions figees)
 #
 # Usage : bash setup_build_mac.sh
 
@@ -80,13 +80,11 @@ if [[ ! -f "$VENV/bin/pip" ]]; then
 fi
 ok "Dependances installees dans $VENV"
 
-# Numba 0.61+ ne publie plus de wheels macOS x86_64. Reposer explicitement la
-# derniere pile Intel connue, après le bootstrap générique qui peut avoir
-# installé une version arm64-only ou supprimé numba lors de son retry.
+# Numba 0.61+ ne publie plus de roue macOS x86_64 : le verrou y fixe la
+# derniere pile qui en a (numba 0.60, llvmlite 0.43, numpy 2.0, voir
+# requirements.in), que ce script reposait a la main avant lui. Trace dans le
+# journal de construction.
 if [[ "$_arch" == "x86_64" ]]; then
-    echo "  Alignement de la pile numerique Intel..."
-    "$VENV/bin/pip" install --quiet --disable-pip-version-check \
-        "numpy>=2.0,<2.1" "llvmlite==0.43.0" "numba==0.60.0"
     "$VENV/bin/python" -c \
         'import numpy, numba, llvmlite; print("  Intel Python stack:", numpy.__version__, numba.__version__, llvmlite.__version__)'
 fi
@@ -99,7 +97,7 @@ ok "Outils disponibles dans ~/.lidar2map/"
 
 # -- 5. PyInstaller ------------------------------------------------------------
 step "5/5" "PyInstaller"
-"$VENV/bin/pip" install --quiet --disable-pip-version-check pyinstaller
+"$VENV/bin/python" -m pip install --quiet --disable-pip-version-check --require-hashes -r "$SCRIPT_DIR/requirements-build.txt"
 ok "PyInstaller $("$VENV/bin/pyinstaller" --version)"
 
 echo ""

@@ -1,0 +1,6 @@
+# Construction du programme (setup_build_*) : les dépendances de lidar2map,
+# aux versions exactes de requirements.txt (contrainte -c), plus PyInstaller,
+# qui ne sert qu'à construire et n'entre pas dans le programme livré.
+-c requirements.txt
+-r requirements.in
+pyinstaller

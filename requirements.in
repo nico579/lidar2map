@@ -1,0 +1,51 @@
+# Dépendances directes de lidar2map, déclarées ici et nulle part ailleurs.
+# Tout le reste s'en déduit : le mode sources (bootstrap), la construction
+# du programme (requirements-build.in) et la CI installent le verrou
+# requirements.txt, qui fixe la version exacte et les empreintes SHA-256 de
+# chaque paquet, dépendances indirectes comprises, pour Windows, macOS et
+# Linux à la fois. Après toute modification ici, régénérer les deux verrous
+# (voir BUILD.md, « Dépendances ») :
+#
+#   uv pip compile requirements.in --universal --python-version 3.9 --generate-hashes -o requirements.txt
+#   uv pip compile requirements-build.in --universal --python-version 3.9 --generate-hashes -o requirements-build.txt
+
+# Pipeline LiDAR et raster
+Pillow
+pyproj
+numpy
+scipy
+ijson
+rasterio
+fiona
+certifi
+
+# Icône de zone de notification et dossiers standard de l'OS
+pystray
+platformdirs
+
+# Briques communes aux quatre applications (menu de l'icône, relance,
+# raccourci, recherche de version). Fourchette : une version incompatible
+# de la bibliothèque ne peut pas entrer dans le verrou.
+nico579-commons>=0.3.1,<0.4
+
+# Accélération du calcul SVF (x15 à x50). numba ne publie plus de roue pour
+# les Mac Intel depuis la 0.61 : ceux-ci gardent la dernière pile qui en a
+# (numba 0.60, d'où llvmlite 0.43 et numpy 2.0), celle que
+# setup_build_mac.sh posait à la main avant le verrou ; faute de roue pour
+# Python 3.13, les Mac Intel s'en passent à partir de lui.
+numba ; sys_platform != 'darwin' or platform_machine != 'x86_64'
+numba==0.60.0 ; sys_platform == 'darwin' and platform_machine == 'x86_64' and python_version < '3.13'
+
+# Pipeline OSM vers GeoJSON
+osmium
+
+# Nuages de points LAZ et filtre du sol (DFM). Pas de roue du filtre CSF pour
+# les Mac Intel : pip l'y compile depuis ses sources, dont l'empreinte est
+# aussi dans le verrou.
+laspy
+lazrs
+cloth-simulation-filter
+
+# Archives .7z des fournisseurs, tuiles vectorielles
+py7zr
+mapbox-vector-tile

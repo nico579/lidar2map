@@ -78,11 +78,13 @@ décompresse la nouvelle archive par-dessus l’ancienne.
 ### 1.2 Script Python
 
 Au premier lancement, le script crée `~/.lidar2map/venv` et y installe les
-dépendances critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
-certifi, platformdirs (dossiers standard) et pystray (icône de la zone de
-notification). numba (SVF bien plus
-rapide) et osmium (pipeline OSM) sont installés si possible ; leur échec ne
-bloque pas le lancement. L’environnement Python système n’est pas modifié. Utilisez
+dépendances de `requirements.txt`, à ces versions exactes et avec vérification
+de leurs empreintes SHA-256 (numba pour un SVF bien plus rapide, osmium pour le
+pipeline OSM, et les autres). L’installation est tout ou rien : avec une
+version de Python trop récente pour l’un des paquets, pip s’arrête sur son
+message, et Python 3.12 est le choix sûr. Une version ultérieure de lidar2map
+qui apporte un autre `requirements.txt` met le venv à jour à son lancement
+suivant. L’environnement Python système n’est pas modifié. Utilisez
 `--bootstrap=none` si vous préférez gérer vous-même les dépendances.
 
 Temurin 21 et osmosis sont téléchargés à la demande. Aucun GDAL système n’est

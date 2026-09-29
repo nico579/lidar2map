@@ -72,13 +72,15 @@ you extract the new archive over the old one.
 
 ### 1.2. Python script
 
-On first launch, the script creates `~/.lidar2map/venv` and installs the
-critical dependencies there: Pillow, pyproj, numpy, scipy, ijson, rasterio,
-fiona, certifi, platformdirs (standard folders), and pystray (tray icon).
-numba (much faster SVF) and osmium
-(OSM pipeline) are installed when possible; a failure there does not block the
-launch. The system Python environment is not modified. Use
-`--bootstrap=none` if you prefer to manage the environment yourself.
+On first launch, the script creates `~/.lidar2map/venv` and installs there the
+dependencies listed in `requirements.txt`, at those exact versions with their
+SHA-256 hashes checked (numba for a much faster SVF, osmium for the OSM
+pipeline, and the others). The installation is all or nothing: on a Python
+version too recent for one of the packages, pip stops with its message, and
+Python 3.12 is the safe choice. A later version of lidar2map that brings a new
+`requirements.txt` updates the venv on its next launch. The system Python
+environment is not modified. Use `--bootstrap=none` if you prefer to manage the
+environment yourself.
 
 Temurin 21 and osmosis are downloaded on demand. No system GDAL installation is
 required because rasterio wheels include their own GDAL. Allow roughly 400 MB

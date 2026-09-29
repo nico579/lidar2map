@@ -7,7 +7,7 @@
 #       la création de venv est impossible)
 #   2. --installer-deps → toutes les dépendances Python dans ~/.lidar2map/venv
 #   3. --telecharger-outils → osmosis + JRE dans ~/.lidar2map/
-#   4. PyInstaller dans ce venv
+#   4. PyInstaller dans ce venv (requirements-build.txt, versions figées)
 #
 # Usage : bash setup_build_linux.sh
 
@@ -46,7 +46,7 @@ ok "Outils disponibles dans ~/.lidar2map/"
 
 # ── 4. PyInstaller ────────────────────────────────────────────────────────────
 step "4/4" "PyInstaller"
-"$VENV/bin/pip" install --quiet --disable-pip-version-check pyinstaller
+"$VENV/bin/python" -m pip install --quiet --disable-pip-version-check --require-hashes -r "$SCRIPT_DIR/requirements-build.txt"
 ok "PyInstaller $("$VENV/bin/pyinstaller" --version)"
 
 echo ""

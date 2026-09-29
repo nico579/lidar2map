@@ -51,11 +51,14 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Installer les dependances
-        # Deps obligatoires de lidar2map (import) + laspy/lazrs pour le post_fetch
-        # LAZ (cz/se). Pas de numba : le self-test ne calcule aucun ombrage.
-        run: pip install pyproj Pillow numpy scipy ijson rasterio fiona certifi platformdirs laspy lazrs
+        # Le verrou, comme la CI et les binaires livres : l'import de
+        # lidar2map sous LIDAR2MAP_BOOTSTRAP=none verifie toutes ses
+        # dependances inconditionnelles.
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Smoke test providers
         # fr-ign-laz / ch-swisstopo-laz exclus : leur smoke téléchargerait un

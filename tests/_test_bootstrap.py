@@ -10,10 +10,10 @@ from __future__ import annotations
 import ast
 import builtins
 import contextlib
-import importlib.util
 import inspect
 import io
 import os
+import re
 import runpy
 import subprocess
 import sys
@@ -41,15 +41,6 @@ import _logging_helpers as logging_helpers  # noqa: E402
 import _log_activation as log_activation  # noqa: E402
 import _runtime_paths as runtime_paths  # noqa: E402
 import _disk_guard as disk_guard  # noqa: E402
-
-# Plus aucun paquet GUI réel depuis la 1.49 (GUI servi en HTTP local) : le
-# point d'extension gui_deps_plateforme reste testé avec les anciens paquets,
-# déclarés ici puisque MODULE_PAR_PAQUET ne les connaît plus.
-_PAQUETS_GUI_EXEMPLE = {
-    "pyobjc-framework-WebKit": "WebKit",
-    "pyobjc-framework-Cocoa": "Cocoa",
-    "PyQt6-WebEngine": "PyQt6.QtWebEngineWidgets",
-}
 
 
 class BootstrapModeTests(unittest.TestCase):
@@ -784,46 +775,6 @@ class BootstrapRelaunchTests(unittest.TestCase):
 
 
 class BootstrapDependencyTests(unittest.TestCase):
-    def test_gui_dependencies_for_each_platform(self):
-        # GUI servi en HTTP (main_serve_gui, pywebview retiré) : aucun
-        # backend graphique dédié n'est plus requis, sur aucun OS.
-        expected = {
-            "Darwin":  ([], []),
-            "Linux":   ([], []),
-            "Windows": ([], []),
-            "Plan9":   ([], []),
-        }
-        for system_name, dependencies in expected.items():
-            with self.subTest(system=system_name), mock.patch.object(
-                L.platform,
-                "system",
-                return_value=system_name,
-            ):
-                self.assertEqual(L._gui_deps_plateforme(), dependencies)
-
-    def test_gui_policy_returns_fresh_lists_and_facade_reads_platform_late(self):
-        self.assertEqual(str(inspect.signature(L._gui_deps_plateforme)), "()")
-        self.assertEqual(
-            str(inspect.signature(bootstrap_policy.dependances_gui_plateforme)),
-            "(systeme: 'str') -> 'tuple[list[str], list[str]]'",
-        )
-        self.assertIs(
-            L._dependances_gui_plateforme,
-            bootstrap_policy.dependances_gui_plateforme,
-        )
-        first = bootstrap_policy.dependances_gui_plateforme("Linux")
-        first[0].append("local-only")
-        self.assertEqual(
-            bootstrap_policy.dependances_gui_plateforme("Linux"),
-            ([], []),
-        )
-        with mock.patch.object(
-            L.platform,
-            "system",
-            side_effect=RuntimeError("platform probe failed"),
-        ), self.assertRaisesRegex(RuntimeError, "platform probe failed"):
-            L._gui_deps_plateforme()
-
     def test_main_import_by_spec_works_from_isolated_cwd(self):
         app_literal = repr(str(ROOT / "lidar2map.py"))
         code = (
@@ -833,11 +784,10 @@ class BootstrapDependencyTests(unittest.TestCase):
             "module = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(module)\n"
             # Sonde de fumée : exercer un appel qui traverse vers
-            # _bootstrap_policy (module frère) confirme que l'auto-fixup de
-            # sys.path a fonctionne depuis ce cwd isole, meme si la reponse
-            # elle-meme (plus de backend GUI dedie, pywebview retire) est
-            # desormais vide sur toute plateforme.
-            "assert module._gui_deps_plateforme() == ([], [])\n"
+            # _bootstrap_runtime (module frère) confirme que l'auto-fixup de
+            # sys.path a fonctionne depuis ce cwd isole, et que le module
+            # retrouve requirements.in a cote de lui, pas dans ce cwd.
+            "assert 'rasterio' in module._bootstrap_runtime_impl.dependances_directes()\n"
         )
         with self.subTest(mode="spec_from_file_location"):
             with tempfile.TemporaryDirectory() as directory:
@@ -927,8 +877,8 @@ class BootstrapDependencyTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 1)
 
     def test_install_dependencies_is_noop_when_everything_is_present(self):
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", return_value=object()), \
+        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=[]), \
              mock.patch.object(L.subprocess, "run") as run:
             L._installer_deps()
         run.assert_not_called()
@@ -990,383 +940,167 @@ class BootstrapDependencyTests(unittest.TestCase):
         )
 
     def test_install_dependencies_uses_standard_strategy_first(self):
-        def find_spec(name):
-            return None if name == "PIL" else object()
-
         completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run:
-            L._installer_deps()
-        command = run.call_args.args[0]
-        self.assertEqual(command[-1], "Pillow")
-        self.assertNotIn("--user", command)
-        self.assertNotIn("--break-system-packages", command)
-        self.assertEqual(run.call_count, 1)
-
-    def test_install_dependencies_tries_three_system_strategies(self):
-        def find_spec(name):
-            return None if name == "PIL" else object()
-
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             contextlib.redirect_stdout(io.StringIO()), \
-             self.assertRaises(SystemExit) as raised:
-            L._installer_deps()
-        self.assertEqual(raised.exception.code, 1)
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 3)
-        self.assertNotIn("--break-system-packages", commands[0])
-        self.assertIn("--break-system-packages", commands[1])
-        self.assertIn("--user", commands[2])
-
-    def test_optional_dependency_failure_is_non_fatal(self):
-        def find_spec(name):
-            return None if name == "osmium" else object()
-
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
+        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=["Pillow"]), \
              mock.patch.object(L.sys, "prefix", "system"), \
              mock.patch.object(L.sys, "base_prefix", "system"), \
              mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
              contextlib.redirect_stdout(io.StringIO()):
             L._installer_deps()
-        self.assertEqual(run.call_count, 3)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0],
+                         bootstrap_runtime.commande_installation(L.sys.executable))
 
-    def test_system_retry_installs_critical_dependencies_without_optionals(self):
-        def find_spec(name):
-            return None if name in {"PIL", "osmium"} else object()
-
-        real_import = builtins.__import__
-
-        def importing(name, *args, **kwargs):
-            if name == "PIL":
-                return object()
-            return real_import(name, *args, **kwargs)
-
-        failed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
+    def test_install_dependencies_tries_three_system_strategies(self):
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
+        output = io.StringIO()
+        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=["Pillow"]), \
              mock.patch.object(L.sys, "prefix", "system"), \
              mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 side_effect=[failed, failed, failed, succeeded],
-             ) as run, contextlib.redirect_stdout(io.StringIO()):
+             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
+             contextlib.redirect_stdout(output), \
+             self.assertRaises(SystemExit) as raised:
             L._installer_deps()
-        self.assertEqual(run.call_count, 4)
+        self.assertEqual(raised.exception.code, 1)
         commands = [call.args[0] for call in run.call_args_list]
-        for command in commands[:3]:
-            self.assertIn("Pillow", command)
-            self.assertIn("osmium", command)
-        self.assertIn("Pillow", commands[3])
-        self.assertNotIn("osmium", commands[3])
+        self.assertEqual(len(commands), 3)
+        for command in commands:
+            self.assertIn("--require-hashes", command)
+            self.assertIn(str(bootstrap_runtime.VERROU), command)
+        self.assertNotIn("--break-system-packages", commands[0])
+        self.assertIn("--break-system-packages", commands[1])
+        self.assertIn("--user", commands[2])
+        self.assertIn("Missing packages: Pillow", output.getvalue())
+        self.assertIn(f"pip install -r {bootstrap_runtime.VERROU}", output.getvalue())
 
-    def test_system_critical_retry_keeps_pep668_strategies(self):
-        def find_spec(name):
-            return None if name in {"PIL", "osmium"} else object()
-
-        real_import = builtins.__import__
-
-        def importing(name, *args, **kwargs):
-            if name == "PIL":
-                return object()
-            return real_import(name, *args, **kwargs)
-
-        failed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 side_effect=[failed, failed, failed, failed, succeeded],
-             ) as run, contextlib.redirect_stdout(io.StringIO()):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 5)
-        retry_standard = run.call_args_list[3].args[0]
-        retry_pep668 = run.call_args_list[4].args[0]
-        self.assertNotIn("osmium", retry_standard)
-        self.assertNotIn("--break-system-packages", retry_standard)
-        self.assertNotIn("osmium", retry_pep668)
-        self.assertIn("--break-system-packages", retry_pep668)
-
-    def test_system_critical_retry_reaches_user_strategy(self):
-        def find_spec(name):
-            return None if name in {"PIL", "osmium"} else object()
-
-        real_import = builtins.__import__
-
-        def importing(name, *args, **kwargs):
-            if name == "PIL":
-                return object()
-            return real_import(name, *args, **kwargs)
-
-        failed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 side_effect=[failed, failed, failed, failed, failed, succeeded],
-             ) as run, contextlib.redirect_stdout(io.StringIO()):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 6)
-        retry_user = run.call_args_list[5].args[0]
-        self.assertNotIn("osmium", retry_user)
-        self.assertIn("Pillow", retry_user)
-        self.assertIn("--user", retry_user)
-
-    def test_post_install_validates_a_package_name_different_from_its_module(self):
-        # Pillow -> PIL est la paire pip-name != module-name qui reste dans
-        # MODULE_PAR_PAQUET une fois pywebview -> webview retiree (GUI
-        # servi en HTTP, plus de backend graphique dedie a installer).
-        def find_spec(name):
-            return None if name == "PIL" else object()
-
-        real_import = builtins.__import__
-        imported = []
-
-        def importing(name, *args, **kwargs):
-            if name == "PIL":
-                imported.append(name)
-                return object()
-            if name == "Pillow":
-                raise ImportError(name)
-            return real_import(name, *args, **kwargs)
-
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(importlib.util, "find_spec", side_effect=find_spec), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
+    def test_install_dependencies_in_a_venv_tries_only_the_standard_strategy(self):
+        completed = SimpleNamespace(returncode=1, stdout="", stderr="no network")
+        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=["numba"]), \
              mock.patch.object(L.sys, "prefix", "venv"), \
              mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 return_value=succeeded,
-             ) as run, contextlib.redirect_stdout(io.StringIO()):
+             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
+             contextlib.redirect_stdout(io.StringIO()), \
+             self.assertRaises(SystemExit):
             L._installer_deps()
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(imported, ["PIL"])
 
-    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
-    def test_darwin_post_install_validates_pyobjc_module_names(self):
-        packages = ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa"]
 
-        def find_spec(name):
-            return None if name in {"WebKit", "Cocoa"} else object()
+class VerrouTests(unittest.TestCase):
+    """Dépendances déclarées une fois (requirements.in), verrouillées pour
+    les trois systèmes (requirements.txt), plus PyInstaller pour construire
+    (requirements-build.txt)."""
 
-        real_import = builtins.__import__
-        imported = []
+    @staticmethod
+    def _pins(fichier):
+        pins = {}
+        for ligne in (ROOT / fichier).read_text(encoding="utf-8").splitlines():
+            if ligne[:1].isalnum() and "==" in ligne:
+                nom, reste = ligne.split("==", 1)
+                version, _, marqueur = reste.partition(";")
+                pins[(bootstrap_runtime.nom_normalise(nom),
+                      marqueur.replace("\\", "").strip())] = version.strip()
+        return pins
 
-        def importing(name, *args, **kwargs):
-            if name in {"WebKit", "Cocoa"}:
-                imported.append(name)
-                return object()
-            if name.startswith("pyobjc-framework-"):
-                raise ImportError(name)
-            return real_import(name, *args, **kwargs)
+    def test_direct_dependencies_are_read_without_versions_or_markers(self):
+        noms = bootstrap_runtime.dependances_directes(conditionnelles=True)
+        for attendu in ("Pillow", "rasterio", "pystray", "platformdirs",
+                        "nico579-commons", "numba", "cloth-simulation-filter"):
+            self.assertIn(attendu, noms)
+        for nom in noms:
+            self.assertRegex(nom, r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(
-            L,
-            "_gui_deps_plateforme",
-            return_value=(packages, []),
-        ), mock.patch.object(
-            importlib.util,
-            "find_spec",
-            side_effect=find_spec,
-        ), mock.patch.object(
-            builtins,
-            "__import__",
-            side_effect=importing,
-        ), mock.patch.object(
-            L.sys,
-            "prefix",
-            "venv",
-        ), mock.patch.object(
-            L.sys,
-            "base_prefix",
-            "system",
-        ), mock.patch.object(
-            L.subprocess,
-            "run",
-            return_value=succeeded,
-        ) as run, contextlib.redirect_stdout(io.StringIO()):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(imported, ["WebKit", "Cocoa"])
+    def test_conditional_dependencies_are_not_required_at_startup(self):
+        # numba porte un marqueur (pas de roue pour Python 3.13 sur les Mac
+        # Intel) : absent à bon droit de certains systèmes, le contrôle au
+        # démarrage ne l'exige pas, sans quoi pip serait relancé à chaque
+        # démarrage. Le filtre CSF, compilé depuis ses sources sur Mac
+        # Intel, est inconditionnel et donc exigé partout.
+        requises = bootstrap_runtime.dependances_directes()
+        self.assertIn("rasterio", requises)
+        self.assertNotIn("numba", requises)
+        self.assertIn("cloth-simulation-filter", requises)
+        with tempfile.TemporaryDirectory() as dossier:
+            fichier = Path(dossier) / "requirements.in"
+            fichier.write_text("# commentaire\n-c contraintes.txt\nPillow>=10  # image\n"
+                               "numba ; sys_platform != 'darwin'\nlaspy[lazrs]\n",
+                               encoding="utf-8")
+            self.assertEqual(bootstrap_runtime.dependances_directes(fichier),
+                             ["Pillow", "laspy"])
+            self.assertEqual(
+                bootstrap_runtime.dependances_directes(fichier, conditionnelles=True),
+                ["Pillow", "numba", "laspy"])
 
-    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
-    def test_critical_retry_revalidates_pyobjc_modules(self):
-        packages = ["pyobjc-framework-WebKit", "pyobjc-framework-Cocoa"]
+    def test_every_direct_dependency_is_in_both_locks(self):
+        for fichier in ("requirements.txt", "requirements-build.txt"):
+            verrouilles = {nom for nom, _ in self._pins(fichier)}
+            with self.subTest(verrou=fichier):
+                for nom in bootstrap_runtime.dependances_directes(conditionnelles=True):
+                    self.assertIn(bootstrap_runtime.nom_normalise(nom), verrouilles)
 
-        def find_spec(name):
-            return None if name in {"WebKit", "Cocoa", "osmium"} else object()
+    def test_build_lock_adds_pyinstaller_at_the_same_versions(self):
+        execution = self._pins("requirements.txt")
+        construction = self._pins("requirements-build.txt")
+        self.assertEqual({k: construction.get(k) for k in execution}, execution)
+        self.assertIn("pyinstaller", {nom for nom, _ in construction})
+        self.assertNotIn("pyinstaller", {nom for nom, _ in execution})
 
-        real_import = builtins.__import__
-        imported = []
+    def test_every_locked_package_carries_its_hashes(self):
+        # Chaque entrée commence par son nom en début de ligne ; les lignes
+        # d'empreintes et de commentaires qui la suivent sont indentées.
+        for fichier in ("requirements.txt", "requirements-build.txt"):
+            texte = (ROOT / fichier).read_text(encoding="utf-8")
+            entrees = [e for e in re.split(r"\n(?=[A-Za-z0-9])", texte)
+                       if e[:1].isalnum()]
+            self.assertGreater(len(entrees), 20)
+            for entree in entrees:
+                with self.subTest(verrou=fichier, paquet=entree.split("==", 1)[0]):
+                    self.assertIn("--hash=sha256:", entree)
 
-        def importing(name, *args, **kwargs):
-            if name in {"WebKit", "Cocoa"}:
-                imported.append(name)
-                return object()
-            return real_import(name, *args, **kwargs)
+    def test_absent_packages_are_found_from_metadata_with_normalised_names(self):
+        installees = [SimpleNamespace(metadata={"Name": n})
+                      for n in ("pillow", "cloth_simulation_filter", "Rasterio")]
+        self.assertEqual(
+            bootstrap_runtime.dependances_absentes(
+                ["Pillow", "cloth-simulation-filter", "rasterio", "numba"],
+                distributions=installees),
+            ["numba"])
 
-        failed = SimpleNamespace(returncode=1, stdout="", stderr="optional failed")
-        succeeded = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(
-            L,
-            "_gui_deps_plateforme",
-            return_value=(packages, []),
-        ), mock.patch.object(
-            importlib.util,
-            "find_spec",
-            side_effect=find_spec,
-        ), mock.patch.object(
-            builtins,
-            "__import__",
-            side_effect=importing,
-        ), mock.patch.object(
-            L.sys,
-            "prefix",
-            "venv",
-        ), mock.patch.object(
-            L.sys,
-            "base_prefix",
-            "system",
-        ), mock.patch.object(
-            L.subprocess,
-            "run",
-            side_effect=[failed, succeeded],
-        ) as run, contextlib.redirect_stdout(io.StringIO()):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual(imported, ["WebKit", "Cocoa"])
+    def test_install_command_verifies_hashes_of_the_lock(self):
+        self.assertEqual(
+            bootstrap_runtime.commande_installation("python", "--user"),
+            ["python", "-m", "pip", "install", "-q", "--disable-pip-version-check",
+             "--require-hashes", "-r", str(bootstrap_runtime.VERROU), "--user"])
 
 
 class BootstrapFullInstallTests(unittest.TestCase):
-    def _run(self, *, missing=(), casse_environnement=(), returncode=0, gui=()):
-        missing = set(missing)
-        casse_environnement = set(casse_environnement)
-        imports = []
+    def _run(self, returncode=0, stderr=""):
         commands = []
         messages = []
 
-        def importer(module):
-            imports.append(module)
-            if module in missing:
-                raise ImportError(module)
-            if module in casse_environnement:
-                # Simule pystray sous Linux sans X11 : Xlib lève une
-                # exception A L'IMPORT (pas une ImportError) quand aucun
-                # affichage n'est disponible - le module est bien installé,
-                # juste inutilisable dans cet environnement précis.
-                raise RuntimeError(f"pas d'affichage disponible pour {module}")
-
         def lancer(command, **kwargs):
             commands.append((command, kwargs))
-            return SimpleNamespace(returncode=returncode)
+            return SimpleNamespace(returncode=returncode, stderr=stderr, stdout="")
 
         ok = bootstrap_runtime.installer_toutes_dependances(
-            gui_deps_plateforme=lambda: (list(gui), []),
-            importer=importer,
-            lancer=lancer,
-            executable="python-test",
-            ecrire=messages.append,
-        )
-        return ok, imports, commands, messages
+            lancer=lancer, executable="python-test", ecrire=messages.append)
+        return ok, commands, messages
 
-    def test_full_install_uses_the_shared_package_catalog(self):
-        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET["Pillow"], "PIL")
-        self.assertEqual(
-            bootstrap_runtime.MODULE_PAR_PAQUET["mapbox-vector-tile"],
-            "mapbox_vector_tile",
-        )
-        self.assertEqual(
-            bootstrap_runtime.MODULE_PAR_PAQUET["cloth-simulation-filter"], "CSF"
-        )
-
-    def test_bibliotheque_commune_critique_en_fourchette(self):
-        spec = bootstrap_runtime.NICO579_COMMONS
-        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET[spec], "nico579_commons")
-        self.assertEqual(bootstrap_runtime.nom_du_paquet(spec), "nico579-commons")
-        # Collée dans un terminal, la fourchette reste un seul argument au
-        # lieu de devenir une redirection.
-        self.assertEqual(bootstrap_runtime.pour_le_terminal(["Pillow", spec]),
-                         f'Pillow "{spec}"')
-        # Critique : absente et impossible à installer, elle bloque, et pip
-        # reçoit la fourchette telle quelle.
-        ok, _imports, commands, _messages = self._run(
-            missing={"nico579_commons"}, returncode=1)
-        self.assertFalse(ok)
-        self.assertEqual(commands[0][0][-1], spec)
-
-    def test_full_install_does_not_call_pip_for_importable_packages(self):
-        ok, _imports, commands, messages = self._run()
+    def test_full_install_installs_the_whole_lock(self):
+        ok, commands, messages = self._run()
         self.assertTrue(ok)
-        self.assertEqual(commands, [])
+        self.assertEqual(commands[0][0],
+                         bootstrap_runtime.commande_installation("python-test"))
         self.assertIn("  All dependencies installed.", messages)
 
-    def test_full_install_fails_for_a_missing_critical_dependency(self):
-        ok, _imports, commands, messages = self._run(missing={"PIL"}, returncode=1)
+    def test_full_install_failure_is_reported_and_returns_false(self):
+        ok, commands, messages = self._run(returncode=1, stderr="hash mismatch")
         self.assertFalse(ok)
-        self.assertEqual(commands[0][0], ["python-test", "-m", "pip", "install", "-q", "Pillow"])
         self.assertEqual(len(commands), 1)
-        self.assertIn("    ERROR Pillow (critical dependency unavailable)", messages)
-
-    @mock.patch.dict(bootstrap_runtime.MODULE_PAR_PAQUET, _PAQUETS_GUI_EXEMPLE)
-    def test_full_install_accepts_a_successful_pip_in_a_fresh_subprocess(self):
-        ok, imports, commands, messages = self._run(
-            missing={"PyQt6.QtWebEngineWidgets"},
-            returncode=0,
-            gui=("PyQt6-WebEngine",),
-        )
-        self.assertTrue(ok)
-        self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0][0][-1], "PyQt6-WebEngine")
-        self.assertEqual(imports.count("PyQt6.QtWebEngineWidgets"), 1)
-        self.assertIn("    ✓ PyQt6-WebEngine", messages)
-
-    def test_full_install_keeps_an_optional_failure_non_fatal(self):
-        ok, _imports, commands, messages = self._run(missing={"osmium"}, returncode=1)
-        self.assertTrue(ok)
-        self.assertEqual(commands[0][0][-1], "osmium")
-        self.assertEqual(len(commands), 1)
-        self.assertIn("    ⚠ osmium (optional - skipped)", messages)
-
-    def test_full_install_survives_an_import_time_environment_error(self):
-        # Régression du build Linux v1.50.0 : pystray, déjà installé, levait
-        # Xlib.error.DisplayNameError (pas ImportError) à l'import sur un
-        # runner sans X11, non rattrapée par le seul `except ImportError`
-        # d'alors - tout le bootstrap plantait. pip est quand même invoqué
-        # (retry idempotent, sûr même si le paquet est déjà là) et returncode=0
-        # ici simule ce cas exact (déjà installé, pip ne fait rien de plus).
-        ok, imports, commands, messages = self._run(
-            casse_environnement={"pystray"}, returncode=0,
-        )
-        self.assertTrue(ok)
-        self.assertIn("pystray", imports)
-        self.assertEqual(commands[0][0][-1], "pystray")
-        self.assertIn("    ✓ pystray", messages)
+        self.assertIn("    ERROR: pip could not install the lock:", messages)
+        self.assertIn("hash mismatch", messages[-1])
 
 
 class BootstrapUninstallPlanningTests(unittest.TestCase):
@@ -2035,17 +1769,6 @@ class DiskGuardTests(unittest.TestCase):
 
 
 class BootstrapVenvEngineTests(unittest.TestCase):
-    CRITICAL_IMPORTS = {
-        "PIL",
-        "pyproj",
-        "numpy",
-        "scipy",
-        "ijson",
-        "rasterio",
-        "fiona",
-        "certifi",
-    }
-
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
@@ -2056,23 +1779,51 @@ class BootstrapVenvEngineTests(unittest.TestCase):
     def _venv_paths(self, system_name="Linux"):
         root = self.root / ".lidar2map" / "venv"
         if system_name == "Windows":
-            return root, root / "Scripts" / "python.exe", root / "Scripts" / "pip.exe"
-        return root, root / "bin" / "python", root / "bin" / "pip"
+            return root, root / "Scripts" / "python.exe"
+        return root, root / "bin" / "python"
 
     @staticmethod
     def _completed(returncode=0, stderr="", stdout=""):
         return SimpleNamespace(returncode=returncode, stderr=stderr, stdout=stdout)
 
-    def test_none_mode_with_all_imports_present_has_no_external_effect(self):
-        real_import = builtins.__import__
+    def _existing_venv(self, marque=None):
+        venv_path, venv_python = self._venv_paths()
+        venv_python.parent.mkdir(parents=True)
+        venv_python.touch()
+        if marque is not None:
+            (venv_path / bootstrap_runtime.MARQUE_VERROU).write_text(marque + "\n")
+        return venv_path, venv_python
 
-        def importing(name, *args, **kwargs):
-            if name in self.CRITICAL_IMPORTS:
-                return object()
-            return real_import(name, *args, **kwargs)
+    def _run_auto(self, run, system_name="Linux", executable=None, output=None):
+        """Lance le moteur en mode auto, dossier personnel temporaire, aucun
+        environnement actif, hors du venv géré ; ``run`` : options du faux
+        subprocess.run. Rend (relance, garde venv linux, code de sortie)."""
+        code = None
+        with contextlib.ExitStack() as pile:
+            for correctif in (
+                mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"),
+                mock.patch.object(L.platform, "system", return_value=system_name),
+                mock.patch.object(Path, "home", return_value=self.root),
+                mock.patch.object(L.sys, "prefix", str(self.root / "system")),
+                mock.patch.dict(L.os.environ, {}, clear=True),
+                mock.patch.object(L.subprocess, "run", **run),
+            ):
+                pile.enter_context(correctif)
+            if executable is not None:
+                pile.enter_context(mock.patch.object(L.sys, "executable", executable))
+            relaunch = pile.enter_context(mock.patch.object(L, "_relancer_dans_venv"))
+            guard = pile.enter_context(mock.patch.object(L, "_verifier_venv_linux"))
+            pile.enter_context(contextlib.redirect_stdout(output or io.StringIO()))
+            try:
+                L._bootstrap_venv_si_besoin()
+            except SystemExit as fin:
+                code = fin.code
+        return relaunch, guard, code
 
+    def test_none_mode_with_all_packages_present_has_no_external_effect(self):
         with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="none"), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
+             mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=[]) as absentes, \
              mock.patch.object(
                  L.subprocess,
                  "run",
@@ -2080,28 +1831,20 @@ class BootstrapVenvEngineTests(unittest.TestCase):
              ) as run:
             L._bootstrap_venv_si_besoin()
         run.assert_not_called()
+        absentes.assert_called_once_with(bootstrap_runtime.dependances_directes())
 
-    def test_none_mode_reports_every_missing_import_and_exits_one(self):
-        real_import = builtins.__import__
-        missing = {"ijson", "rasterio"}
-
-        def importing(name, *args, **kwargs):
-            if name in missing:
-                raise ImportError(f"forced missing {name}")
-            if name in self.CRITICAL_IMPORTS:
-                return object()
-            return real_import(name, *args, **kwargs)
-
+    def test_none_mode_reports_every_missing_package_and_exits_one(self):
         output = io.StringIO()
         with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="none"), \
-             mock.patch.object(builtins, "__import__", side_effect=importing), \
+             mock.patch.object(bootstrap_runtime, "dependances_absentes",
+                               return_value=["ijson", "rasterio"]), \
              mock.patch.object(L.subprocess, "run") as run, \
              contextlib.redirect_stdout(output), \
              self.assertRaises(SystemExit) as raised:
             L._bootstrap_venv_si_besoin()
         self.assertEqual(raised.exception.code, 1)
-        self.assertIn("Missing Python modules: ijson, rasterio", output.getvalue())
-        self.assertIn("pip install Pillow", output.getvalue())
+        self.assertIn("Missing Python packages: ijson, rasterio", output.getvalue())
+        self.assertIn(f"pip install -r {bootstrap_runtime.VERROU}", output.getvalue())
         run.assert_not_called()
 
     def test_pip_mode_delegates_without_touching_venv_or_subprocess(self):
@@ -2113,7 +1856,7 @@ class BootstrapVenvEngineTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_auto_mode_returns_when_already_inside_managed_venv(self):
-        venv_path, _python, _pip = self._venv_paths()
+        venv_path, _python = self._venv_paths()
         with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
              mock.patch.object(L.platform, "system", return_value="Linux"), \
              mock.patch.object(Path, "home", return_value=self.root), \
@@ -2177,91 +1920,69 @@ class BootstrapVenvEngineTests(unittest.TestCase):
                 self.assertIn(str(expected), output.getvalue())
                 run.assert_not_called()
 
-    def test_existing_healthy_venv_is_relaunched_without_install(self):
-        venv_path, venv_python, _venv_pip = self._venv_paths()
-        venv_python.parent.mkdir(parents=True)
-        venv_python.touch()
-        completed = self._completed(returncode=0)
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             mock.patch.object(
-                 L,
-                 "_relancer_dans_venv",
-                 side_effect=RuntimeError("relaunch sentinel"),
-             ) as relaunch, \
-             mock.patch.object(L, "_verifier_venv_linux") as guard, \
-             mock.patch.object(L, "_gui_deps_plateforme") as gui, \
-             self.assertRaisesRegex(RuntimeError, "relaunch sentinel"):
-            L._bootstrap_venv_si_besoin()
-        run.assert_called_once_with(
-            [
-                str(venv_python),
-                "-c",
-                "import PIL, pyproj, numpy, scipy, ijson, rasterio, fiona, certifi",
-            ],
-            capture_output=True,
-        )
+    def test_venv_installed_from_the_same_lock_is_relaunched_without_install(self):
+        _venv_path, venv_python = self._existing_venv(
+            marque=bootstrap_runtime.empreinte_verrou())
+        relaunch, guard, _code = self._run_auto({"side_effect": AssertionError("pas de pip")})
         relaunch.assert_called_once_with(venv_python, False)
         guard.assert_not_called()
-        gui.assert_not_called()
-        self.assertEqual(venv_path, self.root / ".lidar2map" / "venv")
+
+    def test_venv_from_an_older_lock_is_reinstalled_then_relaunched(self):
+        # Nouvelle version de lidar2map, verrou changé : le venv existant est
+        # remis aux versions du verrou actuel, sans être recréé.
+        venv_path, venv_python = self._existing_venv(marque="ancienne-empreinte")
+        run = mock.Mock(return_value=self._completed())
+        relaunch, guard, _code = self._run_auto({"new": run})
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0],
+                         bootstrap_runtime.commande_installation(venv_python))
+        self.assertEqual(
+            (venv_path / bootstrap_runtime.MARQUE_VERROU).read_text().strip(),
+            bootstrap_runtime.empreinte_verrou())
+        relaunch.assert_called_once_with(venv_python, False)
+        guard.assert_not_called()
 
     def test_new_venv_is_created_installed_and_relaunched(self):
-        venv_path, venv_python, venv_pip = self._venv_paths()
-        completed = self._completed(returncode=0)
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.object(L.sys, "executable", str(self.root / "python")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             mock.patch.object(L, "_verifier_venv_linux") as guard, \
-             mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
-             contextlib.redirect_stdout(io.StringIO()):
-            L._bootstrap_venv_si_besoin()
-        self.assertEqual(run.call_count, 2)
-        run.assert_any_call(
-            [str(self.root / "python"), "-m", "venv", str(venv_path)],
-            check=True,
-        )
-        install_command = run.call_args_list[1].args[0]
-        self.assertEqual(install_command[:4], [str(venv_pip), "install", "-q", "--disable-pip-version-check"])
-        self.assertIn("Pillow", install_command)
-        self.assertIn("osmium", install_command)
+        venv_path, venv_python = self._venv_paths()
+
+        def run(command, **kwargs):
+            if command[1:3] == ["-m", "venv"]:
+                venv_python.parent.mkdir(parents=True)
+                venv_python.touch()
+            return self._completed()
+
+        appels = mock.Mock(side_effect=run)
+        relaunch, guard, _code = self._run_auto({"new": appels},
+                                         executable=str(self.root / "python"))
+        self.assertEqual(appels.call_count, 2)
+        self.assertEqual(appels.call_args_list[0].args[0],
+                         [str(self.root / "python"), "-m", "venv", str(venv_path)])
+        self.assertEqual(appels.call_args_list[1].args[0],
+                         bootstrap_runtime.commande_installation(venv_python))
+        self.assertTrue((venv_path / bootstrap_runtime.MARQUE_VERROU).exists())
         relaunch.assert_called_once_with(venv_python, False)
         guard.assert_called_once_with()
 
     def test_windows_new_venv_uses_scripts_executables(self):
-        venv_path, venv_python, venv_pip = self._venv_paths("Windows")
-        completed = self._completed(returncode=0)
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Windows"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.object(L.sys, "executable", str(self.root / "python.exe")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             mock.patch.object(L, "_verifier_venv_linux") as guard, \
-             mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
-             contextlib.redirect_stdout(io.StringIO()):
-            L._bootstrap_venv_si_besoin()
-        run.assert_any_call(
-            [str(self.root / "python.exe"), "-m", "venv", str(venv_path)],
-            check=True,
-        )
-        self.assertEqual(run.call_args_list[1].args[0][0], str(venv_pip))
+        venv_path, venv_python = self._venv_paths("Windows")
+
+        def run(command, **kwargs):
+            if command[1:3] == ["-m", "venv"]:
+                venv_python.parent.mkdir(parents=True)
+                venv_python.touch()
+            return self._completed()
+
+        appels = mock.Mock(side_effect=run)
+        relaunch, guard, _code = self._run_auto({"new": appels}, system_name="Windows",
+                                         executable=str(self.root / "python.exe"))
+        self.assertEqual(appels.call_args_list[0].args[0],
+                         [str(self.root / "python.exe"), "-m", "venv", str(venv_path)])
+        self.assertEqual(appels.call_args_list[1].args[0][0], str(venv_python))
         relaunch.assert_called_once_with(venv_python, True)
         guard.assert_called_once_with()
 
     def test_venv_creation_failure_exits_one_without_install_or_relaunch(self):
-        venv_path, _venv_python, _venv_pip = self._venv_paths()
+        venv_path, _venv_python = self._venv_paths()
         error = subprocess.CalledProcessError(2, ["python", "-m", "venv"])
         output = io.StringIO()
         with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
@@ -2271,7 +1992,6 @@ class BootstrapVenvEngineTests(unittest.TestCase):
              mock.patch.dict(L.os.environ, {}, clear=True), \
              mock.patch.object(L.subprocess, "run", side_effect=error) as run, \
              mock.patch.object(L, "_verifier_venv_linux"), \
-             mock.patch.object(L, "_gui_deps_plateforme") as gui, \
              mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
              contextlib.redirect_stdout(output), \
              self.assertRaises(SystemExit) as raised:
@@ -2280,63 +2000,19 @@ class BootstrapVenvEngineTests(unittest.TestCase):
         self.assertIn("ERROR creating venv", output.getvalue())
         self.assertEqual(run.call_count, 1)
         self.assertEqual(run.call_args.args[0][-1], str(venv_path))
-        gui.assert_not_called()
         relaunch.assert_not_called()
 
-    def test_failed_bulk_install_retries_critical_then_each_optional(self):
-        _venv_path, venv_python, venv_pip = self._venv_paths()
-        venv_python.parent.mkdir(parents=True)
-        venv_python.touch()
-        results = [
-            self._completed(returncode=1, stderr="broken existing env"),
-            self._completed(returncode=1, stderr="optional wheel failed"),
-            self._completed(returncode=0),
-            self._completed(returncode=1, stderr="osmium unavailable"),
-            self._completed(returncode=0),
-        ]
+    def test_failed_install_exits_one_without_marker_or_relaunch(self):
+        venv_path, _venv_python = self._existing_venv()
         output = io.StringIO()
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", side_effect=results) as run, \
-             mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
-             contextlib.redirect_stdout(output):
-            L._bootstrap_venv_si_besoin()
-        self.assertEqual(run.call_count, 5)
-        commands = [call.args[0] for call in run.call_args_list[1:]]
-        self.assertIn("osmium", commands[0])
-        self.assertNotIn("osmium", commands[1])
-        self.assertEqual(commands[2], [str(venv_pip), "install", "-q", "--disable-pip-version-check", "osmium"])
-        self.assertEqual(commands[3], [str(venv_pip), "install", "-q", "--disable-pip-version-check", "numba"])
-        self.assertIn("Optional deps not installed: osmium", output.getvalue())
-        relaunch.assert_called_once_with(venv_python, False)
-
-    def test_failed_critical_install_exits_one_without_relaunch(self):
-        _venv_path, venv_python, _venv_pip = self._venv_paths()
-        venv_python.parent.mkdir(parents=True)
-        venv_python.touch()
-        results = [
-            self._completed(returncode=1, stderr="broken existing env"),
-            self._completed(returncode=1, stderr="bulk failed"),
-            self._completed(returncode=1, stderr="critical failed"),
-        ]
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", side_effect=results) as run, \
-             mock.patch.object(L, "_gui_deps_plateforme", return_value=([], [])), \
-             mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
-             contextlib.redirect_stdout(io.StringIO()), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_venv_si_besoin()
-        self.assertEqual(raised.exception.code, 1)
-        self.assertEqual(run.call_count, 3)
+        relaunch, _guard, code = self._run_auto(
+            {"return_value": self._completed(returncode=1, stderr="hash mismatch")},
+            output=output)
+        self.assertEqual(code, 1)
         relaunch.assert_not_called()
+        self.assertIn("hash mismatch", output.getvalue())
+        self.assertIn("--require-hashes", output.getvalue())
+        self.assertFalse((venv_path / bootstrap_runtime.MARQUE_VERROU).exists())
 
 
 class SystemEnvironmentRestoreTests(unittest.TestCase):

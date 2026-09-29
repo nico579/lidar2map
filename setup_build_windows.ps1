@@ -1,9 +1,9 @@
 # setup_build_windows.ps1 — Prepare un PC Windows pour builder lidar2map.exe
 #
 # 1. Installe Python 3.12 si absent (via winget ou python.org)
-# 2. Lance lidar2map.py --installer-deps -> installe toutes les dependances
+# 2. Lance lidar2map.py --installer-deps -> installe le verrou requirements.txt
 # 3. Telecharge osmosis + JRE via lidar2map.py --telecharger-outils
-# 4. Installe PyInstaller
+# 4. Installe PyInstaller (requirements-build.txt, versions figees)
 #
 # Usage (PowerShell) :
 #   Unblock-File .\setup_build_windows.ps1
@@ -71,8 +71,11 @@ Write-Host "  Necessaires pour les embarquer dans dist\lidar2map..."
 ok "Outils disponibles dans $env:USERPROFILE\.lidar2map"
 
 # -- 4. PyInstaller ------------------------------------------------------------
+# Version figée, empreintes vérifiées, comme toutes les dépendances : le
+# verrou de construction reprend celui de lidar2map, plus PyInstaller.
 step "4/4" "PyInstaller"
-& "$VENV\Scripts\pip.exe" install --quiet pyinstaller
+& "$VENV\Scripts\python.exe" -m pip install --quiet --require-hashes -r "$ScriptDir\requirements-build.txt"
+if ($LASTEXITCODE -ne 0) { Write-Host "  ERREUR : installation de requirements-build.txt" -ForegroundColor Red; exit 1 }
 $pyiVer = & "$VENV\Scripts\pyinstaller.exe" --version
 ok "PyInstaller $pyiVer"
 

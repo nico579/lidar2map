@@ -81,19 +81,3 @@ def resoudre_mode_bootstrap(
             args.remove(flag)
 
     return ResolutionModeBootstrap(mode, tuple(args))
-
-
-def dependances_gui_plateforme(systeme: str) -> tuple[list[str], list[str]]:
-    """Retourne ``(critiques, optionnelles)`` pour le systeme indique.
-
-    Le GUI est servi en HTTP local et consulte depuis un navigateur (voir
-    main_serve_gui() dans lidar2map.py) : aucun backend graphique dedie
-    (l'ancien pywebview + Qt/Cocoa selon l'OS) n'est plus necessaire, sur
-    aucune plateforme.
-
-    De nouvelles listes sont creees a chaque appel pour que l'appelant puisse
-    les completer sans modifier une politique globale partagee (``systeme``
-    n'influence plus le resultat, mais reste au signature pour ne pas
-    perturber ses appelants).
-    """
-    return ([], [])

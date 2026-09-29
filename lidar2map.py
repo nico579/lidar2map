@@ -739,7 +739,6 @@ import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import _bootstrap_policy as _bootstrap_policy_impl
-from _bootstrap_policy import dependances_gui_plateforme as _dependances_gui_plateforme
 import _smoketest as _smoketest_impl
 import _logging_helpers as _logging_helpers_impl
 import _tee_logger as _tee_logger_impl
@@ -781,11 +780,6 @@ def _resoudre_mode_bootstrap():
     return resolution.mode
 
 
-def _gui_deps_plateforme():
-    """Façade historique relisant la plateforme à chaque appel."""
-    return _dependances_gui_plateforme(platform.system())
-
-
 def _verifier_venv_linux():
     return _bootstrap_runtime_impl.verifier_venv_linux()
 
@@ -796,7 +790,6 @@ _verifier_venv_linux.__doc__ = _bootstrap_runtime_impl.verifier_venv_linux.__doc
 def _bootstrap_venv_si_besoin():
     return _bootstrap_runtime_impl.bootstrap_venv_si_besoin(
         resoudre_mode=_resoudre_mode_bootstrap,
-        gui_deps_plateforme=_gui_deps_plateforme,
         verifier_venv_linux=_verifier_venv_linux,
         relancer_dans_venv=_relancer_dans_venv,
     )
@@ -825,9 +818,7 @@ _bootstrap_pip.__doc__ = _bootstrap_runtime_impl.bootstrap_pip.__doc__
 
 
 def _installer_deps():
-    return _bootstrap_runtime_impl.installer_deps(
-        gui_deps_plateforme=_gui_deps_plateforme,
-    )
+    return _bootstrap_runtime_impl.installer_deps()
 
 
 _installer_deps.__doc__ = _bootstrap_runtime_impl.installer_deps.__doc__
@@ -870,15 +861,13 @@ _SMOKETEST          = "--smoketest"          in sys.argv  # exécuté après boo
 _bootstrap_environnement()
 
 # ── --installer-deps ─────────────────────────────────────────────────────────
-# Force l'installation de TOUTES les dépendances (critiques + optionnelles +
-# lazy) puis quitte. Utilisé par les scripts setup_build_*.
+# Installe le verrou complet (requirements.txt) puis quitte. Utilisé par les
+# scripts setup_build_*, qui y ajoutent PyInstaller (requirements-build.txt).
 # Le flag est préservé dans sys.argv lors du re-exec dans le venv, ce qui
 # garantit que l'install complète se fait bien DANS le venv cible.
 def _installer_toutes_dependances():
     """Installe les dépendances de maintenance via le runtime testable."""
-    return _bootstrap_runtime_impl.installer_toutes_dependances(
-        gui_deps_plateforme=_gui_deps_plateforme,
-    )
+    return _bootstrap_runtime_impl.installer_toutes_dependances()
 
 
 if _INSTALL_ALL_DEPS:

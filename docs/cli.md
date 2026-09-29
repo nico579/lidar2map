@@ -817,7 +817,7 @@ These options are consumed before the mode parser:
 |---|---|
 | `--bootstrap auto\|pip\|none` | `auto`; use lidar2map's private venv, install into the active environment, or do no dependency installation. `LIDAR2MAP_BOOTSTRAP` supplies a lower-priority default. |
 | `--help-bootstrap` | Prints bootstrap help and exits. |
-| `--installer-deps` | Installs critical and optional build/runtime dependencies, then exits. |
+| `--installer-deps` | Installs the locked dependencies (`requirements.txt`, hashes checked), then exits. |
 | `--telecharger-outils` | Downloads the Temurin JRE, osmosis, and mapwriter, then exits. |
 | `--desinstaller` | Removes lidar2map's extracted runtime, private venv, JRE, and osmosis; it does not remove the script, executable, release archive, projects, or shared user data outside those runtime locations. |
 | `--smoketest` | Runs the built-in small validation pipelines. It downloads real data and can take several minutes on an empty cache. |

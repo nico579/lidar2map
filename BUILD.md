@@ -11,6 +11,7 @@
 7. [Lancer l'application](#7-lancer-lapplication)
 8. [Désinstaller](#8-désinstaller)
 9. [Dépannage](#9-dépannage)
+10. [Dépendances](#10-dépendances)
 
 ---
 
@@ -113,9 +114,12 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | `lidar2map_win.spec` | Build onedir Windows (+ Linux) |
 | `lidar2map_win_build.ps1` | Script de build Windows (une passe PyInstaller) |
 | `lidar2map_linux_build.sh` | Script de build Linux (miroir bash) |
-| `setup_build_mac.sh` | Setup machine de build macOS vierge (5 étapes, pile Intel dédiée) |
+| `setup_build_mac.sh` | Setup machine de build macOS vierge (5 étapes) |
 | `setup_build_windows.ps1` | Setup machine de build Windows vierge (4 étapes) |
 | `setup_build_linux.sh` | Setup machine de build Linux vierge |
+| `requirements.in` | Les dépendances directes de lidar2map, noms seuls : **la seule déclaration**, voir « Dépendances » |
+| `requirements.txt` | Le verrou : version exacte et empreintes SHA-256 de chaque paquet, indirects compris, pour Windows, macOS et Linux |
+| `requirements-build.in`, `requirements-build.txt` | Le même verrou, plus PyInstaller : pour construire le programme |
 | `deploy.py` | **Déploiement unifié en 1 commande** (cross-platform Win/Mac/Linux) : tests, commit et push depuis ce dépôt, puis tag et suivi du build de release |
 
 ### Livrables à distribuer
@@ -162,17 +166,17 @@ Ils fonctionnent aussi bien depuis le script Python que depuis le `.app`/`.exe`.
 
 ### `--installer-deps`
 
-Installe TOUTES les dépendances Python (critiques + optionnelles + lazy)
-sans ouvrir la GUI. Utilisé par les scripts `setup_build_*`.
+Installe le verrou complet des dépendances Python (`requirements.txt`, voir
+« Dépendances » plus bas) sans ouvrir la GUI. Utilisé par les scripts
+`setup_build_*`.
 
 ```bash
 python3.12 lidar2map.py --installer-deps
 ```
 
-Installe les critiques : Pillow, pyproj, numpy, scipy, ijson, rasterio, fiona,
-certifi, pystray, platformdirs, nico579-commons (0.3.1 ou plus, avant 0.4) ; puis les
-optionnelles (un échec ne bloque pas) : osmium, numba, laspy, lazrs, py7zr,
-mapbox-vector-tile, cloth-simulation-filter.
+Une seule commande, `pip install --require-hashes -r requirements.txt` : pip
+vérifie l'empreinte SHA-256 de chaque paquet téléchargé, et l'installation est
+tout ou rien.
 
 ### `--telecharger-outils`
 
@@ -412,8 +416,10 @@ python3.12 lidar2map.py --help     # liste des modes CLI
 python3.12 lidar2map.py --ignlidar --help   # aide d'un mode précis
 ```
 
-Premier lancement : crée `~/.lidar2map/venv` et installe les dépendances critiques.
-Lancements suivants : re-exec direct dans le venv (~1 s).
+Premier lancement : crée `~/.lidar2map/venv` et y installe le verrou
+`requirements.txt`. Lancements suivants : re-exec direct dans le venv (~1 s),
+tant que le verrou n'a pas changé ; une nouvelle version de lidar2map qui en
+apporte un autre remet le venv aux nouvelles versions, sans le recréer.
 
 ### Application buildée — macOS (ou Linux) à distance, en SSH
 
@@ -618,3 +624,74 @@ workflow GitHub configure automatiquement ces variables lorsque les secrets
   ```
   Si non, soit lancer en arm64 forcé (`arch -arm64 python3 lidar2map.py ...`),
   soit réinstaller Python depuis python.org / Homebrew ARM.
+
+---
+
+## 10. Dépendances
+
+Les dépendances de lidar2map sont déclarées **une seule fois**, dans
+`requirements.in` (les noms, sans versions), et verrouillées dans
+`requirements.txt` : la version exacte et l'empreinte SHA-256 de chacun des
+paquets, indirects compris, pour Windows, macOS et Linux à la fois. Tout le
+reste l'installe, sans liste à tenir :
+
+| Qui | Comment |
+|---|---|
+| Mode sources (`python lidar2map.py`) | crée `~/.lidar2map/venv` et y installe le verrou, réinstallé quand un verrou plus récent arrive avec une mise à jour |
+| Construction (`setup_build_*`) | le même, puis `requirements-build.txt` (le même verrou plus PyInstaller) |
+| CI | `pip install --require-hashes -r requirements.txt` |
+
+Avant ce verrou, quatre listes de paquets codées en dur dans
+`_bootstrap_runtime.py` divergeaient entre elles, deux autres vivaient dans la
+CI, et aucune version n'était figée : deux constructions du même commit, à un
+mois d'écart, n'embarquaient pas les mêmes bibliothèques.
+
+### Ajouter, retirer ou mettre à jour un paquet
+
+Modifier `requirements.in` (ou demander une mise à jour d'un paquet), puis
+régénérer les deux verrous avec [uv](https://docs.astral.sh/uv/) (0.9 ou plus ;
+`pip install uv`) :
+
+```bash
+uv pip compile requirements.in --universal --python-version 3.9 --generate-hashes -o requirements.txt
+uv pip compile requirements-build.in --universal --python-version 3.9 --generate-hashes -o requirements-build.txt
+# une seule mise à jour, sans toucher au reste :
+uv pip compile requirements.in --universal --python-version 3.9 --generate-hashes \
+    --upgrade-package rasterio -o requirements.txt
+```
+
+`--universal` produit un seul fichier valable pour tous les systèmes et toutes
+les versions de Python depuis 3.9 : les versions qui diffèrent (numpy, scipy…)
+portent un marqueur d'environnement, que pip évalue à l'installation.
+`pip-compile` de pip-tools ne le sait pas faire (il résout pour la machine où
+il tourne), d'où uv. Le fichier produit est un `requirements.txt` ordinaire,
+que le pip d'un Python nu comprend : le bootstrap n'a pas besoin d'uv.
+
+Le job « Verrous des dependances » de la CI vérifie, à chaque changement, que
+les deux verrous s'installent en roues seules pour les quatre systèmes de
+construction de `release.yml` (Windows, Linux, macOS Apple Silicon et Intel) :
+un verrou régénéré qui choisirait une version sans roue pour l'un d'eux
+casserait sa construction le jour de la release.
+
+### Trois points à connaître
+
+- **Mac Intel** : numba ne publie plus de roue macOS x86_64 depuis la 0.61.
+  Les Mac Intel gardent la dernière pile qui en a (numba 0.60, llvmlite 0.43,
+  numpy 2.0), déclarée dans `requirements.in` sous un marqueur ; c'est ce que
+  `setup_build_mac.sh` posait à la main avant le verrou. Le filtre du sol
+  `cloth-simulation-filter` n'a pas de roue macOS Intel non plus : pip le
+  compile depuis ses sources (empreinte de l'archive source dans le verrou),
+  comme avant.
+- **Tout ou rien** : `pip install --require-hashes -r` n'installe rien si un
+  seul paquet échoue. Avant le verrou, un paquet facultatif qui ne s'installait
+  pas (osmium, numba) était laissé de côté et lidar2map démarrait sans lui.
+  Désormais, un paquet sans roue pour votre version de Python (une 3.13 ou
+  3.14 trop récente, par exemple) bloque l'installation, avec le message de
+  pip. La CI garantit les roues pour Python 3.12 sur les quatre systèmes ;
+  pour une autre version de Python, en cas d'échec, utiliser 3.12.
+- Au démarrage, `python lidar2map.py` ne relance pas pip tant que les
+  paquets de `requirements.in` sont installés ; ceux qui portent un marqueur
+  (numba) n'y sont pas exigés, car ils manquent à bon droit sur certains
+  systèmes. `--bootstrap=pip` installe le verrou dans l'environnement
+  courant, **quitte à changer la version de paquets déjà installés** :
+  préférer le venv par défaut, ou `--bootstrap=none` pour gérer soi-même.
