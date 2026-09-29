@@ -48,6 +48,22 @@ MODULE_PAR_PAQUET = {
 }
 
 
+def pour_le_terminal(paquets) -> str:
+    """Paquets pip à coller dans un terminal : une fourchette de versions
+    entre guillemets doubles (compris par cmd, PowerShell et sh), sans quoi
+    < et > deviendraient des redirections."""
+    return " ".join(f'"{p}"' if any(c in p for c in "<>|&") else p
+                    for p in paquets)
+
+
+def nom_du_paquet(spec: str) -> str:
+    """« nico579-commons>=0.3,<0.4 » donne « nico579-commons »."""
+    for i, c in enumerate(spec):
+        if c in "<>=!~; ":
+            return spec[:i]
+    return spec
+
+
 def retablir_environnement_systeme(*, fige=None, plateforme=None, environ=None):
     """Rend aux programmes du système le LD_LIBRARY_PATH d'origine.
 
@@ -742,21 +758,22 @@ def installer_deps(*, gui_deps_plateforme):
         print("    1. Install in a venv:")
         print("       python3 -m venv ~/mon-venv-lidar")
         print("       source ~/mon-venv-lidar/bin/activate")
-        print(f"       pip install {' '.join(deps_crit)}")
+        print(f"       pip install {pour_le_terminal(deps_crit)}")
         print("       Then relaunch: python lidar2map.py --bootstrap=none")
         print()
         print("    2. Force a system install (not recommended):")
-        print(f"       pip install --break-system-packages {' '.join(deps)}")
+        print(f"       pip install --break-system-packages {pour_le_terminal(deps)}")
     elif _is_linux:
         print("    1. Install via the package manager:")
-        print(f"       sudo apt install python3-{' python3-'.join(d.lower() for d in deps)}")
+        paquets_apt = " python3-".join(nom_du_paquet(d).lower() for d in deps)
+        print(f"       sudo apt install python3-{paquets_apt}")
         print()
         print("    2. Use a venv:")
         print("       python3 -m venv ~/mon-venv-lidar")
         print("       source ~/mon-venv-lidar/bin/activate")
-        print(f"       pip install {' '.join(deps)}")
+        print(f"       pip install {pour_le_terminal(deps)}")
     else:
-        print(f"    pip install {' '.join(deps)}")
+        print(f"    pip install {pour_le_terminal(deps)}")
     print()
     sys.exit(1)
 

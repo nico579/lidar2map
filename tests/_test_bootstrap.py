@@ -1305,6 +1305,21 @@ class BootstrapFullInstallTests(unittest.TestCase):
             bootstrap_runtime.MODULE_PAR_PAQUET["cloth-simulation-filter"], "CSF"
         )
 
+    def test_bibliotheque_commune_critique_en_fourchette(self):
+        spec = bootstrap_runtime.NICO579_COMMONS
+        self.assertEqual(bootstrap_runtime.MODULE_PAR_PAQUET[spec], "nico579_commons")
+        self.assertEqual(bootstrap_runtime.nom_du_paquet(spec), "nico579-commons")
+        # Collée dans un terminal, la fourchette reste un seul argument au
+        # lieu de devenir une redirection.
+        self.assertEqual(bootstrap_runtime.pour_le_terminal(["Pillow", spec]),
+                         f'Pillow "{spec}"')
+        # Critique : absente et impossible à installer, elle bloque, et pip
+        # reçoit la fourchette telle quelle.
+        ok, _imports, commands, _messages = self._run(
+            missing={"nico579_commons"}, returncode=1)
+        self.assertFalse(ok)
+        self.assertEqual(commands[0][0][-1], spec)
+
     def test_full_install_does_not_call_pip_for_importable_packages(self):
         ok, _imports, commands, messages = self._run()
         self.assertTrue(ok)
