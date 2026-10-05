@@ -26,7 +26,13 @@ platformdirs
 # Briques communes aux quatre applications (menu de l'icône, relance,
 # raccourci, recherche de version). Fourchette : une version incompatible
 # de la bibliothèque ne peut pas entrer dans le verrou.
-nico579-commons>=0.3.1,<0.4
+nico579-commons>=0.4.0,<0.5
+
+# Linux : l'icône parle le protocole StatusNotifierItem par D-Bus quand le
+# bureau a un hôte (GNOME avec l'extension AppIndicator, KDE), faute de quoi
+# pystray n'ouvre aucun menu sous Wayland. jeepney (Python pur) est le
+# complément Linux de l'extra « tray » de nico579-commons.
+jeepney; sys_platform == "linux"
 
 # Accélération du calcul SVF (x15 à x50). numba ne publie plus de roue pour
 # les Mac Intel depuis la 0.61 : ceux-ci gardent la dernière pile qui en a
