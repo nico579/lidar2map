@@ -29,6 +29,14 @@ _SPEC.loader.exec_module(L2M)
 from nico579_commons import maj_archive, maj_install  # noqa: E402
 
 
+def _systeme_onedir():
+    """Un dossier PyInstaller « onedir » (Windows, Linux) quel que soit le système
+    des tests : sous macOS, le bundle publié est une .app, autre disposition."""
+    nom = "Windows" if sys.platform == "win32" else "Linux"
+    return mock.patch.multiple(maj_install.platform, system=lambda: nom,
+                               machine=lambda: "x86_64")
+
+
 class AutoTest(unittest.TestCase):
     def lancer(self, *argv):
         return L2M._auto_test_version(list(argv))
@@ -90,7 +98,7 @@ class Description(unittest.TestCase):
             (general / "_internal").mkdir(parents=True)
             (general / nom_exe).write_bytes(b"x")
             (general / "photo.jpg").write_bytes(b"x")
-            with mock.patch.object(sys, "frozen", True, create=True):
+            with mock.patch.object(sys, "frozen", True, create=True), _systeme_onedir():
                 with mock.patch.object(sys, "executable", str(ok / nom_exe)):
                     disposition = L2M._disposition_installation()
                 with mock.patch.object(sys, "executable", str(general / nom_exe)):
