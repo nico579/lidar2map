@@ -156,7 +156,7 @@ class AtomicPublicationTests(unittest.TestCase):
     def test_atomic_file_facades_delegate_to_the_extracted_module(self):
         marker = object()
         with mock.patch.object(
-                L._atomic_files_impl, "chemin_part", return_value=marker
+                L.atomique, "chemin_part", return_value=marker
         ) as chemin, mock.patch.object(
                 L._atomic_files_impl, "nettoyer_sqlite_part"
         ) as nettoyer, mock.patch.object(

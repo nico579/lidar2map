@@ -41,6 +41,7 @@ _SPEC_L2M.loader.exec_module(L2M)
 _SPEC_SW = importlib.util.spec_from_file_location("l2m_serve_web_module", ROOT / "_serve_web.py")
 _serve_web = importlib.util.module_from_spec(_SPEC_SW)
 _SPEC_SW.loader.exec_module(_serve_web)
+from nico579_commons import serveweb  # noqa: E402
 
 
 class HoteAutoriseTests(unittest.TestCase):
@@ -137,8 +138,8 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 return {"error": erreur}
             return self.api.launch(cfg or {})
 
-        self.server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host="",
+        self.server = serveweb.demarrer(
+            handler=_serve_web.Handler, bind="127.0.0.1", port=0, trusted_host="",
             gui_dir=ROOT / "gui",
             api_routes={
                 "init": L2M._api_get_init_data,
@@ -448,71 +449,6 @@ class IconesTests(unittest.TestCase):
         self.assertTrue(icone.is_file())
 
 
-class FetchMetadataTests(unittest.TestCase):
-    """S1 (docs/preconisations_evolution.md) : un GET simple venu d'une autre
-    page (<img src>, fetch no-cors) n'envoie pas Origin, hote_autorise() le
-    laissait donc passer et la route s'exécutait (poll-log vidait la file du
-    journal). Sec-Fetch-Site, posé par le navigateur et non modifiable par
-    une page, trahit sa provenance."""
-
-    def setUp(self):
-        self.appels = []
-
-        def _poll_log(*_args):
-            self.appels.append("poll-log")
-            return {"lines": []}
-
-        def _echo(payload):
-            self.appels.append("echo")
-            return payload
-
-        self.server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
-            api_routes={"poll-log": _poll_log},
-            post_routes={"echo": _echo},
-        )
-        self.addCleanup(self.server.server_close)
-        self.addCleanup(self.server.shutdown)
-        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
-
-    def _code(self, route, site=None, corps=None):
-        entetes = {} if site is None else {"Sec-Fetch-Site": site}
-        req = urllib.request.Request(self.base + route, data=corps, headers=entetes,
-                                     method="GET" if corps is None else "POST")
-        try:
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return response.status
-        except urllib.error.HTTPError as exc:
-            return exc.code
-
-    def test_api_refusee_a_un_autre_site_sans_executer_la_route(self):
-        for site in ("cross-site", "same-site", "Cross-Site"):
-            with self.subTest(site=site):
-                self.assertEqual(self._code("/api/poll-log", site), 403)
-        self.assertEqual(self.appels, [])
-
-    def test_api_acceptee_depuis_la_page_ou_hors_navigateur(self):
-        # same-origin : l'interface elle-même. none : barre d'adresse ou
-        # favori. Absent : client hors navigateur (_instance_existante,
-        # navigateur trop ancien pour Fetch Metadata).
-        for site in ("same-origin", "none", None):
-            with self.subTest(site=site):
-                self.assertEqual(self._code("/api/poll-log", site), 200)
-        self.assertEqual(self.appels, ["poll-log"] * 3)
-
-    def test_post_api_refuse_a_un_autre_site(self):
-        self.assertEqual(self._code("/api/echo", "cross-site", corps=b"{}"), 403)
-        self.assertEqual(self._code("/api/echo", "same-origin", corps=b"{}"), 200)
-        self.assertEqual(self.appels, ["echo"])
-
-    def test_fichiers_statiques_servis_quelle_que_soit_la_provenance(self):
-        # Un lien depuis un autre site (cross-site) doit toujours afficher
-        # l'interface : seules les routes /api/* ont des effets de bord.
-        for route in ("/", "/app.js", "/style.css", "/web_bridge.js"):
-            with self.subTest(route=route):
-                self.assertEqual(self._code(route, "cross-site"), 200)
-
-
 class ServeurRobustesseTests(unittest.TestCase):
     """Entrées anormales et routes qui lèvent : le serveur répond toujours
     (JSON d'erreur), sans couper la connexion ni bloquer un fil."""
@@ -521,8 +457,8 @@ class ServeurRobustesseTests(unittest.TestCase):
         def _leve(*_args):
             raise ValueError("panne simulée")
 
-        self.server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+        self.server = serveweb.demarrer(
+            handler=_serve_web.Handler, bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
             api_routes={"leve": _leve, "usage": _leve},
             post_routes={"leve": _leve, "echo": lambda payload: payload},
         )
@@ -803,17 +739,14 @@ class BrowseDirTests(unittest.TestCase):
         self.assertIsNone(data["parent"])
 
 
-class InstanceExistanteEtPortLibreTests(unittest.TestCase):
-    """Régression du 2026-09-19 : avant la migration, relancer l'exe ouvrait
-    toujours une fenêtre indépendante (calcul possible en parallèle) ; un
-    serveur unique par port ne le permet plus tout seul. _instance_existante
-    distingue « un lidar2map tourne déjà ici » d'un service tiers qui
-    occuperait le port par coïncidence ; _premier_port_libre fournit le port
-    une fois la décision (rejoindre ou lancer en parallèle) prise ailleurs."""
+class InstanceExistanteTests(unittest.TestCase):
+    """La reconnaissance d'une instance (route /api/init, champ « app ») est celle de
+    nico579_commons.serveweb, éprouvée là. Ici, seulement que la vraie route
+    /api/init de lidar2map répond bien « lidar2map »."""
 
     def _demarrer_lidar2map(self):
-        server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+        server = serveweb.demarrer(
+            handler=_serve_web.Handler, bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
             api_routes={"init": L2M._api_get_init_data}, post_routes={},
         )
         self.addCleanup(server.server_close)
@@ -822,89 +755,7 @@ class InstanceExistanteEtPortLibreTests(unittest.TestCase):
 
     def test_detecte_une_vraie_instance_lidar2map(self):
         port = self._demarrer_lidar2map()
-        self.assertTrue(L2M._instance_existante("127.0.0.1", port))
-
-    def test_rien_n_ecoute_sur_un_port_libre(self):
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            port_libre = s.getsockname()[1]
-        self.assertFalse(L2M._instance_existante("127.0.0.1", port_libre))
-
-    def test_ignore_un_service_tiers_qui_repond_autre_chose(self):
-        # Un port occupé par un autre programme ne doit jamais être proposé
-        # comme « instance lidar2map à rejoindre ».
-        import http.server
-        import threading as _threading
-
-        class _Autre(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                corps = json.dumps({"app": "autre-chose"}).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(corps)
-
-            def log_message(self, *a):
-                pass
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), _Autre)
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        _threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.assertFalse(L2M._instance_existante("127.0.0.1", server.server_address[1]))
-
-    def test_premier_port_libre_retourne_le_port_de_depart_si_libre(self):
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            depart = s.getsockname()[1]
-        server, port = L2M._premier_port_libre(
-            "127.0.0.1", depart, "", ROOT / "gui", {}, {},
-        )
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        self.assertEqual(port, depart)
-
-    def test_premier_port_libre_saute_les_ports_deja_pris(self):
-        import socket
-        occupant = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        occupant.bind(("127.0.0.1", 0))
-        occupant.listen(1)
-        depart = occupant.getsockname()[1]
-        self.addCleanup(occupant.close)
-        try:
-            server, port = L2M._premier_port_libre(
-                "127.0.0.1", depart, "", ROOT / "gui", {}, {},
-            )
-            self.addCleanup(server.server_close)
-            self.addCleanup(server.shutdown)
-            self.assertNotEqual(port, depart)
-            self.assertGreater(port, depart)
-        finally:
-            pass
-
-    def test_premier_port_libre_rend_none_si_toute_la_plage_est_prise(self):
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            depart = s.getsockname()[1]
-        occupants = []
-        try:
-            for p in range(depart, depart + L2M.PORT_RANGE_SIZE):
-                occ = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                occ.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                occ.bind(("127.0.0.1", p))
-                occ.listen(1)
-                occupants.append(occ)
-            server, port = L2M._premier_port_libre(
-                "127.0.0.1", depart, "", ROOT / "gui", {}, {},
-            )
-            self.assertIsNone(server)
-            self.assertIsNone(port)
-        finally:
-            for occ in occupants:
-                occ.close()
+        self.assertTrue(serveweb.instance_existante("lidar2map", "127.0.0.1", port))
 
 
 class MainServeGuiRejoindreTests(unittest.TestCase):
@@ -916,8 +767,8 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
     pour exercer cette branche en CI."""
 
     def setUp(self):
-        self.server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
+        self.server = serveweb.demarrer(
+            handler=_serve_web.Handler, bind="127.0.0.1", port=0, trusted_host="", gui_dir=ROOT / "gui",
             api_routes={"init": L2M._api_get_init_data}, post_routes={},
         )
         self.addCleanup(self.server.server_close)
@@ -948,7 +799,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         # d'ouverture sur un port voisin, signe qu'aucun second serveur n'a
         # été tenté.
         for voisin in range(self.port + 1, self.port + L2M.PORT_RANGE_SIZE):
-            self.assertFalse(L2M._instance_existante("127.0.0.1", voisin))
+            self.assertFalse(serveweb.instance_existante("lidar2map", "127.0.0.1", voisin))
 
     def test_reponse_n_ne_rejoint_pas(self):
         # --no-browser volontairement ABSENT : c'est justement la branche
@@ -984,7 +835,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
 
     def _aucun_serveur_voisin(self):
         for voisin in range(self.port + 1, self.port + L2M.PORT_RANGE_SIZE):
-            self.assertFalse(L2M._instance_existante("127.0.0.1", voisin))
+            self.assertFalse(serveweb.instance_existante("lidar2map", "127.0.0.1", voisin))
 
     def test_sans_terminal_la_question_passe_par_la_page(self):
         # Double-clic Windows (console masquée), app macOS, raccourci Linux :
@@ -1085,54 +936,6 @@ class TerminalInteractifTests(unittest.TestCase):
         self.assertIn("has('deja-ouverte')", corps)
         self.assertIn("history.replaceState", corps)
         self.assertIn("verifierInstanceDejaOuverte();", app)
-
-
-class EcouteHoteConfianceTests(unittest.TestCase):
-    """Accès distant sans --bind : le serveur reste sur la boucle locale et
-    écoute EN PLUS sur l'adresse de l'hôte de confiance (VPN maillé)."""
-
-    def _serveur_principal(self, trusted_host):
-        server = _serve_web.demarrer(
-            bind="127.0.0.1", port=0, trusted_host=trusted_host,
-            gui_dir=ROOT / "gui", api_routes={"init": L2M._api_get_init_data},
-            post_routes={})
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        return server.server_address[1]
-
-    def test_ecoute_sur_l_adresse_de_l_hote_puis_s_arrete(self):
-        adresse = L2M._ip_lan()     # adresse locale hors boucle, sans trafic
-        if adresse.startswith("127."):
-            self.skipTest("aucune interface réseau hors boucle locale")
-        port = self._serveur_principal(adresse)
-        ecoute = _serve_web.EcouteHoteConfiance(port)
-        self.addCleanup(ecoute.arreter)
-        self.assertEqual(ecoute.definir(adresse), "actif")
-        with urllib.request.urlopen(f"http://{adresse}:{port}/api/init",
-                                    timeout=5) as reponse:
-            self.assertEqual(json.loads(reponse.read())["app"], "lidar2map")
-        # La boucle locale reste servie par le serveur principal.
-        self.assertTrue(L2M._instance_existante("127.0.0.1", port))
-        ecoute.arreter()
-        self.assertEqual(ecoute.etat, "inactif")
-        with self.assertRaises(OSError):
-            urllib.request.urlopen(f"http://{adresse}:{port}/api/init", timeout=3)
-
-    def test_adresse_absente_mise_en_attente_puis_abandonnee_au_changement(self):
-        import time as _time
-        ecoute = _serve_web.EcouteHoteConfiance(self._serveur_principal(""), delai_s=0.05)
-        self.addCleanup(ecoute.arreter)
-        # 203.0.113.0/24 (TEST-NET-3, documentation) : pas une adresse locale.
-        self.assertEqual(ecoute.definir("203.0.113.77"), "en attente")
-        _time.sleep(0.2)            # quelques nouveaux essais, sans erreur
-        self.assertEqual(ecoute.etat, "en attente")
-        self.assertEqual(ecoute.definir(""), "inactif")
-
-    def test_hote_de_boucle_locale_deja_servi(self):
-        ecoute = _serve_web.EcouteHoteConfiance(self._serveur_principal("localhost"))
-        self.addCleanup(ecoute.arreter)
-        self.assertEqual(ecoute.definir("localhost"), "actif")
-        self.assertEqual(ecoute._serveurs, [])
 
 
 class MenuCommunTests(unittest.TestCase):
@@ -1313,7 +1116,7 @@ class NouvelleInstanceTests(unittest.TestCase):
 
     def test_aucun_port_libre(self):
         popen = mock.Mock()
-        with mock.patch.object(L2M, "_port_libre", return_value=False):
+        with mock.patch.object(L2M.serveweb, "port_libre", return_value=False):
             r = L2M._demarrer_nouvelle_instance(
                 bind="127.0.0.1", port_depart=20000, popen=popen)
         self.assertFalse(r["ok"])
