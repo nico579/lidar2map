@@ -819,7 +819,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
              mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input", return_value="n"), \
              mock.patch.object(L2M.threading, "Timer") as m_timer, \
-             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             _ctrl_c_apres_demarrage(), \
              self.assertRaises(SystemExit):
             L2M.main_serve_gui()
 
@@ -877,7 +877,7 @@ class MainServeGuiRejoindreTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(L2M, "_terminal_interactif", return_value=True), \
              mock.patch("builtins.input") as m_input, \
-             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             _ctrl_c_apres_demarrage(), \
              contextlib.redirect_stdout(sortie), \
              self.assertRaises(SystemExit):
             L2M.main_serve_gui()
@@ -1009,6 +1009,20 @@ class MenuCommunTests(unittest.TestCase):
         self.assertTrue(Path(kwargs["icone"]).is_file())
 
 
+def _ctrl_c_apres_demarrage():
+    """Ctrl+C simulé une fois le serveur démarré : sans icône, main_serve_gui
+    attend son arrêt (Ctrl+C, ou fin demandée par une mise à jour installée)
+    par tranches d'une heure sur un Event."""
+    vrai_wait = L2M.threading.Event.wait
+
+    def attente(evenement, timeout=None):
+        if timeout == 3600:
+            raise KeyboardInterrupt
+        return vrai_wait(evenement, timeout)
+
+    return mock.patch.object(L2M.threading.Event, "wait", attente)
+
+
 class IconeIndisponibleTests(unittest.TestCase):
     def test_serveur_continue_sans_icone_si_pystray_echoue(self):
         # Linux sans affichage : pystray lève dès l'import. Avant, le serveur
@@ -1024,7 +1038,7 @@ class IconeIndisponibleTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", argv), \
              mock.patch.object(L2M, "_construire_tray_icon",
                                side_effect=RuntimeError("Bad display name")), \
-             mock.patch.object(L2M.time, "sleep", side_effect=KeyboardInterrupt), \
+             _ctrl_c_apres_demarrage(), \
              contextlib.redirect_stdout(sortie), \
              self.assertRaises(SystemExit) as fin:
             L2M.main_serve_gui()
