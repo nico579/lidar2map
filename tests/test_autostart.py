@@ -25,6 +25,8 @@ _autostart = importlib.util.module_from_spec(_SPEC)
 sys.modules[_SPEC.name] = _autostart
 _SPEC.loader.exec_module(_autostart)
 
+from nico579_commons import demarrage  # noqa: E402
+
 
 class _DossierIsole(unittest.TestCase):
     """APPDATA et le dossier personnel dans un dossier temporaire au nom
@@ -52,11 +54,15 @@ class _DossierIsole(unittest.TestCase):
                 mock.patch.dict("os.environ", {"APPDATA": str(self.tmp),
                                                "LIDAR2MAP_LANCEUR": str(ancien),
                                                "LIDAR2MAP_WORK_DIR": str(ancien.parent)}),
-                mock.patch.object(_autostart.Path, "home", return_value=self.tmp)):
+                mock.patch.object(_autostart.Path, "home", return_value=self.tmp),
+                # Jamais le vrai dossier Démarrage (nico579_commons.demarrage).
+                mock.patch.object(demarrage, "dossier_demarrage",
+                                  return_value=self.tmp / "Startup")):
             correctif.start()
             self.addCleanup(correctif.stop)
-        self.lnk = _autostart._windows_startup_file()
-        self.vbs = _autostart._windows_legacy_file()
+        self.startup = self.tmp / "Startup"
+        self.lnk = self.startup / "lidar2map.lnk"
+        self.vbs = self.startup / "lidar2map.vbs"
 
 
 @unittest.skipUnless(platform.system() == "Windows", "raccourci .lnk : Windows seulement")
@@ -66,7 +72,7 @@ class AutostartWindowsTests(_DossierIsole):
         # console, et le « é » du dossier de test revient déformé.
         script = ("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;"
                   " $s = (New-Object -ComObject WScript.Shell).CreateShortcut("
-                  + _autostart._chaine_ps(str(self.lnk))
+                  + "'" + str(self.lnk).replace("'", "''") + "'"
                   + "); Write-Output $s.TargetPath; Write-Output $s.Arguments;"
                   " Write-Output $s.WorkingDirectory")
         sortie = subprocess.run(["powershell", "-NoProfile", "-NonInteractive",
@@ -134,25 +140,35 @@ class AutostartCommandeTests(_DossierIsole):
                          ([str(self.programme), "--serve-gui"], self.programme.parent))
 
     def test_service_systemd_lance_le_programme_sans_environnement(self):
-        with mock.patch.object(_autostart.subprocess, "run"):
-            _autostart._enable_linux()
-        contenu = _autostart._linux_service_file().read_text(encoding="utf-8")
+        demarrage.activer(_autostart._entree(), plateforme="linux", accueil=self.tmp,
+                          lancer=mock.Mock(return_value=subprocess.CompletedProcess([], 0)),
+                          env={"XDG_RUNTIME_DIR": "/run/user/1"})
+        contenu = (self.tmp / ".config" / "systemd" / "user" / "lidar2map.service"
+                   ).read_text(encoding="utf-8")
         self.assertNotIn("Environment=", contenu)
         exec_start = next(ligne for ligne in contenu.splitlines()
                           if ligne.startswith("ExecStart="))
         self.assertEqual(exec_start, "ExecStart=" + " ".join(
-            _autostart._systemd_quote(part) for part in _autostart._lidar2map_command()))
+            demarrage.argument_systemd(part) for part in _autostart._lidar2map_command()))
         self.assertIn(f"WorkingDirectory={self.programme.parent}\n", contenu)
+        # Une application à icône : après la session graphique.
+        self.assertIn("After=graphical-session.target", contenu)
 
     def test_plist_launchd_lance_le_programme_sans_environnement(self):
-        with mock.patch.object(_autostart.subprocess, "run"):
-            _autostart._enable_mac()
-        donnees = plistlib.loads(_autostart._mac_plist_file().read_bytes())
+        demarrage.activer(_autostart._entree(), plateforme="darwin", accueil=self.tmp,
+                          lancer=mock.Mock(return_value=subprocess.CompletedProcess([], 0)))
+        fichier = self.tmp / "Library" / "LaunchAgents" / "com.nico.lidar2map.plist"
+        donnees = plistlib.loads(fichier.read_bytes())
+        self.assertEqual(donnees["Label"], _autostart.MAC_LABEL)
         self.assertEqual(donnees["ProgramArguments"],
                          [str(self.programme), "--serve-gui", "--no-browser"])
         self.assertNotIn("EnvironmentVariables", donnees)
         self.assertEqual(donnees["WorkingDirectory"], str(self.programme.parent))
         self.assertEqual(donnees["KeepAlive"], {"SuccessfulExit": False})
+
+    def test_noms_connus_du_reste_de_lidar2map(self):
+        # maj_install relance le service par son nom (lidar2map.py).
+        self.assertEqual(_autostart.LINUX_SERVICE_NAME, f"{_autostart._entree().nom}.service")
 
 
 class AutostartWindowsLogiqueTests(_DossierIsole):
@@ -164,39 +180,35 @@ class AutostartWindowsLogiqueTests(_DossierIsole):
             if reussi:
                 self.lnk.write_bytes(b"raccourci")
             return subprocess.CompletedProcess(commande, 0 if reussi else 1, stderr="refus")
-        return mock.patch.object(_autostart.subprocess, "run", side_effect=lancer)
+        return mock.Mock(side_effect=lancer)
 
-    def setUp(self):
-        super().setUp()
-        correctif = mock.patch.object(_autostart.platform, "system", return_value="Windows")
-        correctif.start()
-        self.addCleanup(correctif.stop)
-        self.vbs.parent.mkdir(parents=True, exist_ok=True)
+    def activer(self, lancer):
+        demarrage.activer(_autostart._entree(), plateforme="win32", dossier=self.startup,
+                          lancer=lancer)
 
-    def test_enable_retire_l_ancien_vbs_et_cache_powershell(self):
+    def test_enable_retire_l_ancien_vbs(self):
+        self.startup.mkdir(parents=True, exist_ok=True)
         self.vbs.write_text("ancien", encoding="utf-8")
-        with self.powershell() as lancer:
-            _autostart.enable()
+        self.activer(self.powershell())
         self.assertTrue(self.lnk.exists())
         self.assertFalse(self.vbs.exists())
-        self.assertEqual(lancer.call_args.kwargs["creationflags"],
-                         getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def test_echec_signale_sans_perdre_l_ancien_demarrage(self):
+        self.startup.mkdir(parents=True, exist_ok=True)
         self.vbs.write_text("ancien", encoding="utf-8")
-        with self.powershell(reussi=False):
-            with self.assertRaisesRegex(RuntimeError, "refus"):
-                _autostart.enable()
+        with self.assertRaisesRegex(RuntimeError, "refus"):
+            self.activer(self.powershell(reussi=False))
         self.assertTrue(self.vbs.exists())
 
     def test_migration_ignoree_depuis_les_sources(self):
         # Un lancement depuis les sources a cote d'une installation ne doit
         # pas repointer le demarrage automatique de celle-ci vers python.
+        self.startup.mkdir(parents=True, exist_ok=True)
         self.vbs.write_text("ancien", encoding="utf-8")
         with mock.patch.object(_autostart.sys, "frozen", False), \
-                self.powershell() as lancer:
+                mock.patch.object(demarrage, "_activer_windows") as activer:
             self.assertFalse(_autostart.migrer_ancien_demarrage())
-        lancer.assert_not_called()
+        activer.assert_not_called()
         self.assertTrue(self.vbs.exists())
         self.assertFalse(self.lnk.exists())
 
