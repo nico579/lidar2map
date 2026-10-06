@@ -617,7 +617,11 @@ for _std in ("stdout", "stderr"):
 # Dès le démarrage : les programmes du système lancés depuis le binaire
 # (systemctl, xdg-open, navigateur) doivent recevoir le LD_LIBRARY_PATH
 # d'origine, pas celui que PyInstaller préfixe de ses bibliothèques.
-_bootstrap_runtime_impl.retablir_environnement_systeme()
+if getattr(sys, "frozen", False):
+    # Depuis les sources la fonction ne fait rien ; l'exécutable embarque la
+    # bibliothèque commune, qu'il peut donc importer dès son démarrage.
+    from nico579_commons import environnement
+    environnement.retablir_environnement_systeme()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PROGRAMME LIVRÉ TEL QUEL (1.55.0)
@@ -743,10 +747,8 @@ import _smoketest as _smoketest_impl
 import _logging_helpers as _logging_helpers_impl
 import _tee_logger as _tee_logger_impl
 import _log_activation as _log_activation_impl
-import _atomic_files as _atomic_files_impl
 import _http_helpers as _http_helpers_impl
 import _runtime_paths as _runtime_paths_impl
-import _dossiers as _dossiers_impl
 import _disk_guard as _disk_guard_impl
 
 # Vérification version Python
@@ -860,6 +862,12 @@ _SMOKETEST          = "--smoketest"          in sys.argv  # exécuté après boo
 
 _bootstrap_environnement()
 
+# Modules qui s'appuient sur nico579-commons, que le bootstrap vient
+# d'installer en mode sources : importés après lui, jamais avant.
+from nico579_commons import atomique, serveweb
+import _atomic_files as _atomic_files_impl   # primitives SQLite propres à lidar2map
+import _dossiers as _dossiers_impl
+
 # ── --installer-deps ─────────────────────────────────────────────────────────
 # Installe le verrou complet (requirements.txt) puis quitte. Utilisé par les
 # scripts setup_build_*, qui y ajoutent PyInstaller (requirements-build.txt).
@@ -910,12 +918,12 @@ def _preparer_etat():
         script_path=__file__,
     )
     try:
-        repris = _dossiers_impl.preparer_etat(ancien)
+        repris = _dossiers_impl.DOSSIERS.preparer_etat(ancien)
     except OSError as exc:
         print(f"  State migration postponed ({exc}).")
         return
     if repris:
-        print(f"  State moved from {ancien} to {_dossiers_impl.dossier_etat()}: "
+        print(f"  State moved from {ancien} to {_dossiers_impl.DOSSIERS.dossier_etat()}: "
               f"{', '.join(repris)}.")
 
 
@@ -962,7 +970,7 @@ def _executer_smoketest():
         executable=sys.executable,
         script_path=__file__,
         environnement=os.environ,
-        sorties=_dossiers_impl.dossier_sorties(),
+        sorties=_dossiers_impl.DOSSIERS.dossier_sorties(),
     )
 
 
@@ -988,7 +996,7 @@ def _activer_log():
     import atexit
     return _log_activation_impl.activer_log(
         sys_module=sys,
-        dossier=_dossiers_impl.dossier_etat(),
+        dossier=_dossiers_impl.DOSSIERS.dossier_etat(),
         classe_logger=_TeeLogger,
         rediger_secrets=_rediger_secrets,
         enregistrer_atexit=atexit.register,
@@ -1016,7 +1024,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.57.0"
+VERSION      = "1.57.1"
 VERSION_DATE = "2026-09"
 
 
@@ -1149,7 +1157,7 @@ class _PrefetchDalles(_PrefetchDallesImpl):
 # (sys._MEIPASS), qui reste le chemin des ressources embarquées
 # (tagmapping-min.xml). DOSSIER_OUTILS (~/.lidar2map) garde le venv, osmosis
 # et le JRE, partagés par toutes les versions.
-DOSSIER_ETAT = _dossiers_impl.dossier_etat()
+DOSSIER_ETAT = _dossiers_impl.DOSSIERS.dossier_etat()
 DOSSIER_TRAVAIL, BUNDLE_DIR, DOSSIER_OUTILS, DOSSIER_CACHE, DOSSIER_PRODUCTION = (
     _runtime_paths_impl.calculer_chemins(
         frozen=getattr(sys, "frozen", False),
@@ -1158,7 +1166,7 @@ DOSSIER_TRAVAIL, BUNDLE_DIR, DOSSIER_OUTILS, DOSSIER_CACHE, DOSSIER_PRODUCTION =
         script_path=__file__,
         meipass=getattr(sys, "_MEIPASS", None),
         home=Path.home(),
-        dossier_travail=_dossiers_impl.dossier_sorties(DOSSIER_ETAT),
+        dossier_travail=_dossiers_impl.DOSSIERS.dossier_sorties(DOSSIER_ETAT),
     )
 )
 
@@ -1431,7 +1439,7 @@ def _ecrire_json_atomique(path, data, indent=None):
             except (OSError, AttributeError):
                 pass  # fsync indisponible (ramdisk, certains FS) — non critique
         # Refus Windows passager (un lecteur tient la cible) : retenté.
-        _atomic_files_impl.remplacer(tmp, path)
+        atomique.remplacer(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -1471,7 +1479,7 @@ def _chemin_part(path):
     Le nom unique empêche deux processus visant le même cache partagé de
     supprimer ou d'écraser le staging l'un de l'autre.
     """
-    return _atomic_files_impl.chemin_part(path)
+    return atomique.chemin_part(path)
 
 
 def _nettoyer_sqlite_part(path):
@@ -2302,7 +2310,7 @@ def _dependances_mbtiles_lidar():
         bbox_enveloppe_transform=_bbox_enveloppe_transform,
         batch_insert=BATCH_MBTILES_INSERT,
         crs_natif=PROVIDER.CRS_NATIF,
-        verrou_inter_processus=_atomic_files_impl.verrou_inter_processus,
+        verrou_inter_processus=atomique.verrou_inter_processus,
     )
 
 
@@ -5510,7 +5518,7 @@ _PREFS_PATH = DOSSIER_ETAT / "preferences.json"
 
 def _lire_prefs() -> dict:
     try:
-        d = _atomic_files_impl.lire_json(_PREFS_PATH, {})
+        d = atomique.lire_json(_PREFS_PATH, {})
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -5523,8 +5531,8 @@ def _ecrire_pref(cle: str, valeur) -> bool:
     # préférences en n'en gardant qu'une (même défaut mesuré dans blink2video :
     # 4 lectures sur 70 969 en échec sous forte concurrence, 2026-09-24).
     try:
-        with _atomic_files_impl.verrou_inter_processus(_PREFS_PATH):
-            prefs = _atomic_files_impl.lire_json(_PREFS_PATH, {})
+        with atomique.verrou_inter_processus(_PREFS_PATH):
+            prefs = atomique.lire_json(_PREFS_PATH, {})
             prefs = prefs if isinstance(prefs, dict) else {}
             prefs[cle] = valeur
             _ecrire_json_atomique(_PREFS_PATH, prefs, indent=2)
@@ -5581,8 +5589,8 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
     # renoncer à CETTE sauvegarde : l'ancien `except: []` réécrivait un
     # historique réduit à la seule entrée courante.
     try:
-        with _atomic_files_impl.verrou_inter_processus(_HISTORIQUE_PATH):
-            historique = _atomic_files_impl.lire_json(_HISTORIQUE_PATH, [])
+        with atomique.verrou_inter_processus(_HISTORIQUE_PATH):
+            historique = atomique.lire_json(_HISTORIQUE_PATH, [])
             if not isinstance(historique, list):
                 historique = []
             # Update si entrée existante (même run_id), sinon insert en tête.
@@ -5615,7 +5623,7 @@ def _sauver_historique(cfg: dict, duree_s: int, dossier_resultat: str = "",
 def _lire_historique() -> list:
     """Retourne la liste des entrées d'historique (liste vide si absent/corrompu)."""
     try:
-        historique = _atomic_files_impl.lire_json(_HISTORIQUE_PATH, [])
+        historique = atomique.lire_json(_HISTORIQUE_PATH, [])
         return historique if isinstance(historique, list) else []
     except Exception:
         return []   # affichage seul : rien n'est réécrit à partir d'ici
@@ -5911,7 +5919,7 @@ def _valider_cfg_web(cfg: dict) -> str:
 # migration pywebview->web). Avant, double-cliquer l'exe plusieurs fois
 # ouvrait autant de fenêtres/process indépendants, donc autant de calculs
 # possibles en parallèle ; un serveur sur port fixe ne le permet plus, un
-# second lancement échouait juste (port déjà pris). _instance_existante()
+# second lancement échouait juste (port déjà pris). serveweb.instance_existante()
 # détecte ce cas précis pour proposer un choix (rejoindre ou lancer en
 # parallèle) plutôt que de trancher à sa place ; une petite plage de ports
 # consécutifs ensuite (même pattern que Jupyter Notebook) fournit le port
@@ -5919,36 +5927,7 @@ def _valider_cfg_web(cfg: dict) -> str:
 PORT_RANGE_SIZE = 10
 
 
-def _instance_existante(bind: str, port: int, timeout: float = 1.0) -> bool:
-    """Vrai si un serveur lidar2map (et pas un service tiers qui occuperait
-    ce port par coïncidence) répond déjà sur bind:port."""
-    try:
-        with urllib.request.urlopen(
-                f"http://{bind}:{port}/api/init", timeout=timeout) as reponse:
-            return json.loads(reponse.read()).get("app") == "lidar2map"
-    except Exception:
-        return False
-
-
-def _premier_port_libre(bind: str, port_depart: int, trusted_host: str,
-                         gui_dir: Path, api_routes: dict, post_routes: dict):
-    """Essaie port_depart puis les suivants dans PORT_RANGE_SIZE, retourne
-    (server, port) sur le premier qui accepte, ou (None, None) si toute la
-    plage est prise."""
-    import _serve_web
-    for port in range(port_depart, port_depart + PORT_RANGE_SIZE):
-        try:
-            server = _serve_web.demarrer(
-                bind=bind, port=port, trusted_host=trusted_host,
-                gui_dir=gui_dir, api_routes=api_routes, post_routes=post_routes,
-                favicon=_fichier_icone(gui_dir),
-            )
-            return server, port
-        except OSError:
-            continue
-    return None, None
-
-
+@_functools.lru_cache(maxsize=1)
 def _verificateur_de_version():
     """Dernière release publiée de lidar2map, demandée à GitHub au plus une
     fois par heure par un fil de fond (nico579_commons.maj) : le menu de
@@ -6098,21 +6077,6 @@ def _hote_url(bind: str) -> str:
     return f"[{bind}]" if ":" in bind else bind
 
 
-def _port_libre(bind: str, port: int) -> bool:
-    """Vrai si ``port`` peut être écouté sur ``bind`` à cet instant."""
-    import socket
-    famille = socket.AF_INET6 if ":" in bind else socket.AF_INET
-    with socket.socket(famille, socket.SOCK_STREAM) as sonde:
-        if os.name != "nt":
-            # Même règle que _serve_web.Server.allow_reuse_address.
-            sonde.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sonde.bind((bind, port))
-        except OSError:
-            return False
-    return True
-
-
 def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
                                 delai_s=30.0, popen=None,
                                 instance_existante=None, attendre=time.sleep):
@@ -6137,9 +6101,10 @@ def _demarrer_nouvelle_instance(*, bind, port_depart, sans_icone=False,
             "démarrée d'ici ne pourrait pas être arrêtée : lancez-la dans un "
             "terminal avec --serve-gui --new-instance.")}
     popen = popen or subprocess.Popen
-    instance_existante = instance_existante or _instance_existante
+    instance_existante = instance_existante or (
+        lambda hote, p: serveweb.instance_existante("lidar2map", hote, p))
     port = next((p for p in range(port_depart, port_depart + PORT_RANGE_SIZE)
-                 if _port_libre(bind, p)), None)
+                 if serveweb.port_libre(bind, p)), None)
     if port is None:
         return {"ok": False, "error": (
             f"Aucun port libre de {port_depart} à "
@@ -6325,7 +6290,8 @@ def main_serve_gui():
     # second serveur démarré en silence (ancien comportement, à l'inverse du
     # choix interactif). --no-browser (démarrage automatique) : rien à faire.
     hote_url = _hote_url(args.bind)
-    if not args.new_instance and _instance_existante(hote_url, port_depart):
+    if not args.new_instance and serveweb.instance_existante(
+            "lidar2map", hote_url, port_depart):
         url_existante = f"http://{hote_url}:{port_depart}/"
         nouvelle = False
         interactif = not args.no_browser and _terminal_interactif()
@@ -6349,8 +6315,11 @@ def main_serve_gui():
             return
         port_depart = args.port + 1
 
-    server, port = _premier_port_libre(
-        args.bind, port_depart, trusted_host, gui_dir, api_routes, post_routes,
+    import _serve_web
+    server, port = serveweb.premier_port_libre(
+        args.bind, port_depart, PORT_RANGE_SIZE, trusted_host=trusted_host,
+        gui_dir=gui_dir, api_routes=api_routes, post_routes=post_routes,
+        favicon=_fichier_icone(gui_dir), handler=_serve_web.Handler,
     )
     if server is None:
         derniere = port_depart + PORT_RANGE_SIZE - 1
@@ -6378,7 +6347,8 @@ def main_serve_gui():
     # adresse (joker comprise) : l'utilisateur a choisi lui-même.
     if _bind_boucle_locale(args.bind):
         import _serve_web
-        etat_serveur["ecoute"] = _serve_web.EcouteHoteConfiance(port)
+        etat_serveur["ecoute"] = serveweb.EcouteHoteConfiance(
+            port, handler=_serve_web.Handler)
         etat_ecoute = etat_serveur["ecoute"].definir(trusted_host)
     else:
         etat_ecoute = "actif"
@@ -6553,7 +6523,7 @@ def _api_get_init_data():
         # cache ici.
         "autostart_actif": _autostart_actif_sans_erreur(),
         # Identifiant minimal, pas juste un détail de debug : c'est ce que
-        # _instance_existante() interroge pour distinguer « un lidar2map
+        # serveweb.instance_existante() interroge pour distinguer « un lidar2map
         # tourne déjà sur ce port » d'« un service tiers occupe ce port par
         # coïncidence », avant de proposer de le rejoindre.
         "app":        "lidar2map",
@@ -6820,7 +6790,7 @@ class Api:
         try:
             # Sous le verrou de _sauver_historique : une sauvegarde lue avant
             # ce vidage et écrite après ferait sinon réapparaître les entrées.
-            with _atomic_files_impl.verrou_inter_processus(_HISTORIQUE_PATH):
+            with atomique.verrou_inter_processus(_HISTORIQUE_PATH):
                 _ecrire_json_atomique(_HISTORIQUE_PATH, [], indent=2)
             return {"ok": True}
         except Exception as e:
@@ -7735,28 +7705,20 @@ class Api:
         return remote_result
 
     def check_update(self):
-        """Compare la dernière release GitHub à la version locale.
+        """Compare la dernière release GitHub à la version locale, par le
+        même vérificateur que le menu de l'icône (nico579_commons.maj).
 
         Appelé par le JS après l'init (non bloquant côté UI) ; silencieux
         et {"update": False} sur toute erreur (hors ligne, rate-limit de
-        l'API GitHub, JSON inattendu). Une requête, timeout court.
+        l'API GitHub, JSON inattendu).
         """
-        try:
-            with _urlopen("https://api.github.com/repos/nico579/lidar2map"
-                          "/releases/latest", timeout=6) as r:
-                d = json.loads(r.read())
-            tag = str(d.get("tag_name") or "")
-
-            def _triplet(v):
-                n = re.findall(r"\d+", v)
-                return tuple(int(x) for x in n[:3]) if n else (0,)
-
-            if tag and _triplet(tag) > _triplet(VERSION):
-                return {"update": True, "latest": tag,
-                        "url": d.get("html_url") or
-                               "https://github.com/nico579/lidar2map/releases/latest"}
-        except Exception:
-            pass
+        verificateur = _verificateur_de_version()
+        nouvelle = verificateur.disponible()
+        if nouvelle is None and verificateur.verifier():
+            nouvelle = verificateur.disponible()
+        if nouvelle:
+            return {"update": True, "latest": "v" + nouvelle["version"],
+                    "url": nouvelle["page"]}
         return {"update": False}
 
     def open_url(self, url):

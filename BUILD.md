@@ -75,8 +75,8 @@ patch sans reconstruction retiré en 1.53 (D2) ; il reste en place.
 
 Depuis la 1.49.0, il n'y a plus de backend graphique embarqué (pywebview,
 PyQt6/QtWebEngine et Cocoa retirés, plus collectés par les specs) : un
-lancement sans argument équivaut à `--serve-gui`. `_serve_web.py` (stdlib,
-`ThreadingHTTPServer`) sert `gui/` sur `http://127.0.0.1:8766/` et le
+lancement sans argument équivaut à `--serve-gui`. `nico579_commons.serveweb` (stdlib,
+`ThreadingHTTPServer`, réglé par `_serve_web.py`) sert `gui/` sur `http://127.0.0.1:8766/` et le
 navigateur par défaut l'affiche. Les appels de `app.js` passent par
 `gui/web_bridge.js` (fetch vers `/api/*`).
 
@@ -87,7 +87,7 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Seconde instance | `_instance_existante()` interroge `/api/init` : question dans le terminal s'il est visible (`_terminal_interactif()`), sinon dans la page (`?deja-ouverte=1`) ; rien avec `--no-browser`. `--new-instance` et le bouton « Nouvelle instance » (`/api/new-instance`, `_demarrer_nouvelle_instance()`) démarrent un serveur parallèle (10 ports) |
 | Console Windows | `lidar2map.exe` reste une application console (`console=True`) avec `hide_console="hide-early"` : double-clic sans fenêtre de console, CLI inchangée depuis un terminal. La console (même masquée) reste nécessaire à l'arrêt propre des traitements (`CTRL_BREAK_EVENT`). Changement de spec : rebuild |
 | Démarrage automatique | `_autostart.py` : raccourci `.lnk` (dossier Démarrage, comme blink2video et watch2notif), agent `launchd`, service `systemd --user`. En mode figé, lance le programme en cours (`sys.executable`) ; aucune variable d'environnement à transmettre, et celles d'un lanceur ≤ 1.54 sont ignorées. Le `.vbs` d'une version ≤ 1.53 est remplacé au démarrage du serveur (exécutable seulement) |
-| Dossiers de données | `_dossiers.py` : état (préférences, historique, `lidar2map.env`, journaux) dans `platformdirs.user_data_dir("lidar2map-data")`, sorties (`Projets/`, `cache/`, `production/`) dans `Documents/lidar2map` ; `LIDAR2MAP_HOME` regroupe les deux. Reprise unique de l'état d'une version ≤ 1.53 au lancement (`_preparer_etat()`, sous `__main__` seulement), sorties laissées en place via le réglage `dossier_sorties` |
+| Dossiers de données | `_dossiers.py` (les noms et fichiers de lidar2map, la logique est dans `nico579_commons.dossiers`) : état (préférences, historique, `lidar2map.env`, journaux) dans `platformdirs.user_data_dir("lidar2map-data")`, sorties (`Projets/`, `cache/`, `production/`) dans `Documents/lidar2map` ; `LIDAR2MAP_HOME` regroupe les deux. Reprise unique de l'état d'une version ≤ 1.53 au lancement (`_preparer_etat()`, sous `__main__` seulement), sorties laissées en place via le réglage `dossier_sorties` |
 | Accès distant | `--trusted-host` (réglage enregistré) : `_serve_web.EcouteHoteConfiance` écoute en plus sur son adresse (même port, IPv4/IPv6), réessaie toutes les 30 s tant qu'elle n'existe pas (VPN arrêté), suit les changements à chaud ; le serveur principal reste sur 127.0.0.1. `--bind` sur une autre adresse désactive ce complément |
 
 ### Osmosis et JRE
@@ -105,7 +105,7 @@ navigateur par défaut l'affiche. Les appels de `app.js` passent par
 | Fichier | Rôle |
 |---------|------|
 | `lidar2map.py` | Script principal : façade, CLI, API du GUI web |
-| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py`, `_autostart.py`…), compilés dans le programme |
+| `_*.py` | Modules extraits de `lidar2map.py` (pipelines, formats, `_serve_web.py` (réglages du serveur commun), `_autostart.py`…), compilés dans le programme |
 | `providers/` | Un fichier par source LiDAR/raster |
 | `gui/` | Front-end servi par `_serve_web.py` (`index.html`, `app.js`, `style.css`, `web_bridge.js`) |
 | `_loader.py` | Entry point PyInstaller : exécute `_internal/lidar2map.py` |

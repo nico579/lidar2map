@@ -10,7 +10,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -42,9 +41,9 @@ class _Isole(unittest.TestCase):
                      if cle != "LIDAR2MAP_HOME"}
         for correctif in (
                 mock.patch.dict(os.environ, sans_home, clear=True),
-                mock.patch.object(_dossiers, "_dossier_etat_standard",
+                mock.patch.object(_dossiers.DOSSIERS, "dossier_etat_standard",
                                   return_value=self.etat),
-                mock.patch.object(_dossiers, "_documents",
+                mock.patch.object(_dossiers.DOSSIERS, "documents",
                                   return_value=self.documents)):
             correctif.start()
             self.addCleanup(correctif.stop)
@@ -56,130 +55,27 @@ class _Isole(unittest.TestCase):
         return json.loads((self.etat / "preferences.json").read_text(encoding="utf-8"))
 
 
-class DossiersTests(_Isole):
-    def test_etat_dans_le_dossier_standard(self):
-        self.assertEqual(_dossiers.dossier_etat(), self.etat)
+class ConfigurationTests(unittest.TestCase):
+    """Les paramètres propres à lidar2map. Les règles (calcul des dossiers,
+    reprise unique, repli sans platformdirs) sont celles de
+    nico579_commons.dossiers et y sont éprouvées."""
 
-    def test_sorties_dans_documents_par_defaut(self):
-        self.assertEqual(_dossiers.dossier_sorties(), self.documents / "lidar2map")
+    def test_noms_et_fichiers_de_lidar2map(self):
+        d = _dossiers.DOSSIERS
+        self.assertEqual((d.application, d.nom_etat, d.nom_sorties, d.variable_home),
+                         ("lidar2map", "lidar2map-data", "lidar2map", "LIDAR2MAP_HOME"))
+        self.assertEqual((d.preferences, d.cle_sorties, d.marqueur),
+                         ("preferences.json", "dossier_sorties",
+                          ".lidar2map_etat_migre.json"))
+        self.assertEqual(d.fichiers_etat,
+                         ("preferences.json", "historique.json", "lidar2map.env"))
+        self.assertEqual(d.dossiers_sorties, ("Projets", "cache", "production"))
 
-    def test_simple_calcul_rien_n_est_cree(self):
-        _dossiers.dossier_etat()
-        _dossiers.dossier_sorties()
-        self.assertFalse(self.etat.exists())
-        self.assertFalse(self.documents.exists())
-
-    def test_lidar2map_home_regroupe_etat_et_sorties(self):
-        portable = self.racine / "portable"
-        with mock.patch.dict(os.environ, {"LIDAR2MAP_HOME": str(portable)}):
-            self.assertEqual(_dossiers.dossier_etat(), portable)
-            self.assertEqual(_dossiers.dossier_sorties(), portable)
-
-    def test_reglage_dossier_sorties_prioritaire(self):
-        self.etat.mkdir(parents=True)
-        cartes = self.racine / "D" / "Cartes"
-        (self.etat / "preferences.json").write_text(
-            json.dumps({"lang": "fr", "dossier_sorties": str(cartes)}), encoding="utf-8")
-        self.assertEqual(_dossiers.dossier_sorties(), cartes)
-
-
-class RepliSansPlatformdirsTests(unittest.TestCase):
-    def test_repli_identique_a_platformdirs(self):
-        # Calcul pur : rien n'est écrit, le vrai dossier peut être comparé.
-        try:
-            import platformdirs  # noqa: F401
-        except ImportError:
-            self.skipTest("platformdirs absent : rien à comparer")
-        reel = _dossiers._dossier_etat_standard()
-        with mock.patch.dict(sys.modules, {"platformdirs": None}):
-            repli = _dossiers._dossier_etat_standard()
-        self.assertEqual(repli, reel)
-        self.assertEqual(reel.name, "lidar2map-data")
-
-
-class RepriseTests(_Isole):
-    def test_etat_copie_et_sorties_laissees_en_place(self):
-        self.ecrire_ancien("preferences.json", json.dumps({"lang": "fr"}))
-        self.ecrire_ancien("historique.json", "[]")
-        self.ecrire_ancien("lidar2map.env", "IGN_APIKEY=secret\n")
-        (self.ancien / "Projets" / "Gareoult").mkdir(parents=True)
-
-        repris = _dossiers.preparer_etat(self.ancien)
-
-        self.assertEqual(repris, ["preferences.json", "historique.json",
-                                  "lidar2map.env", "dossier_sorties"])
-        self.assertEqual(self.preferences(),
-                         {"lang": "fr", "dossier_sorties": str(self.ancien)})
-        self.assertEqual((self.etat / "lidar2map.env").read_text(encoding="utf-8"),
-                         "IGN_APIKEY=secret\n")
-        self.assertEqual(_dossiers.dossier_sorties(), self.ancien)
-        # Copiés, jamais déplacés : revenir à la 1.53 reste possible.
-        for nom in ("preferences.json", "historique.json", "lidar2map.env"):
-            self.assertTrue((self.ancien / nom).is_file(), nom)
-        self.assertTrue((self.ancien / "Projets" / "Gareoult").is_dir())
-        marqueur = json.loads((self.etat / _dossiers.MARQUEUR).read_text(encoding="utf-8"))
-        self.assertEqual(marqueur["depuis"], str(self.ancien))
-        self.assertEqual(marqueur["dossier_sorties"], str(self.ancien))
-
-    def test_une_seule_reprise(self):
-        self.ecrire_ancien("historique.json", "[]")
-        self.assertEqual(_dossiers.preparer_etat(self.ancien), ["historique.json"])
-        self.ecrire_ancien("preferences.json", "{}")
-        self.assertEqual(_dossiers.preparer_etat(self.ancien), [])
-        self.assertFalse((self.etat / "preferences.json").exists())
-
-    def test_rien_a_reprendre_ni_marqueur_ni_reglage(self):
-        self.assertEqual(_dossiers.preparer_etat(self.ancien), [])
-        self.assertFalse((self.etat / _dossiers.MARQUEUR).exists())
-        self.assertFalse((self.etat / "preferences.json").exists())
-        # Sans marqueur, la version installée pourra encore reprendre.
-        self.ecrire_ancien("historique.json", "[]")
-        self.assertEqual(_dossiers.preparer_etat(self.ancien), ["historique.json"])
-
-    def test_n_ecrase_jamais_l_etat_ni_le_reglage_existants(self):
-        self.etat.mkdir(parents=True)
-        (self.etat / "historique.json").write_text("[1]", encoding="utf-8")
-        (self.etat / "preferences.json").write_text(
-            json.dumps({"dossier_sorties": "D:/Cartes"}), encoding="utf-8")
-        self.ecrire_ancien("historique.json", "[]")
-        self.ecrire_ancien("preferences.json", "{}")
-        (self.ancien / "cache").mkdir()
-
-        self.assertEqual(_dossiers.preparer_etat(self.ancien), [])
-        self.assertEqual((self.etat / "historique.json").read_text(encoding="utf-8"), "[1]")
-        self.assertEqual(self.preferences(), {"dossier_sorties": "D:/Cartes"})
-
-    def test_sans_effet_avec_lidar2map_home(self):
-        self.ecrire_ancien("historique.json", "[]")
-        with mock.patch.dict(os.environ, {"LIDAR2MAP_HOME": str(self.racine / "portable")}):
-            self.assertEqual(_dossiers.preparer_etat(self.ancien), [])
-        self.assertFalse(self.etat.exists())
-
-    def test_ancien_dossier_deja_dossier_d_etat(self):
-        self.etat.mkdir(parents=True)
-        (self.etat / "historique.json").write_text("[]", encoding="utf-8")
-        self.assertEqual(_dossiers.preparer_etat(self.etat), [])
-        self.assertFalse((self.etat / _dossiers.MARQUEUR).exists())
-
-    def test_lancements_simultanes_une_seule_reprise(self):
-        # Démarrage automatique et lancement manuel au même instant : le
-        # verrou exclut aussi deux fils d'un même processus.
-        self.ecrire_ancien("historique.json", "[]")
-        (self.ancien / "Projets").mkdir()
-        resultats = []
-        depart = threading.Barrier(4)
-
-        def lancer():
-            depart.wait()
-            resultats.append(_dossiers.preparer_etat(self.ancien))
-
-        fils = [threading.Thread(target=lancer) for _ in range(4)]
-        for f in fils:
-            f.start()
-        for f in fils:
-            f.join()
-        self.assertEqual(sorted(bool(r) for r in resultats), [False, False, False, True])
-        self.assertEqual(self.preferences(), {"dossier_sorties": str(self.ancien)})
+    def test_la_copie_locale_de_la_logique_n_existe_plus(self):
+        for nom in ("dossier_etat", "dossier_sorties", "preparer_etat", "_documents",
+                    "_dossier_etat_standard", "_force", "_reprendre",
+                    "_copier_si_absent", "_ecrire_json"):
+            self.assertFalse(hasattr(_dossiers, nom), nom)
 
 
 class LancementReelTests(unittest.TestCase):
@@ -199,7 +95,7 @@ class LancementReelTests(unittest.TestCase):
             self.assertEqual(resultat.returncode, 0, resultat.stdout + resultat.stderr)
             self.assertTrue(list((Path(tmp) / "logs").glob("lidar_*.log")),
                             resultat.stdout + resultat.stderr)
-            self.assertFalse((Path(tmp) / _dossiers.MARQUEUR).exists())
+            self.assertFalse((Path(tmp) / _dossiers.DOSSIERS.marqueur).exists())
         apres = set(journaux_sources.iterdir()) if journaux_sources.is_dir() else set()
         self.assertEqual(apres - avant, set())
 

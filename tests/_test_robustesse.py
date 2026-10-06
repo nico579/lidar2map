@@ -549,7 +549,7 @@ print("== 9. préférences et historique : lecture ratée jamais réécrite, ver
 import subprocess as _sp
 import threading as _th
 
-_af = l2m._atomic_files_impl
+_af = l2m.atomique
 _saved_prefs, _saved_hist = l2m._PREFS_PATH, l2m._HISTORIQUE_PATH
 _d9 = tmp / "prefs_historique"
 _d9.mkdir(parents=True, exist_ok=True)
@@ -656,10 +656,12 @@ try:
     _enfant = _sp.Popen(
         [getattr(sys, "_base_executable", sys.executable), "-c",
          "import sys, time; sys.path.insert(0, sys.argv[1]); "
-         "import _atomic_files as a\n"
+         "from nico579_commons import atomique as a\n"
          "with a.verrou_inter_processus(sys.argv[2]):\n"
          "    print('pris', flush=True); time.sleep(60)\n",
-         str(_APP.parent), str(_cible)],
+         # Dossier qui contient le paquet nico579_commons (bibliothèque
+         # standard seule) : l'interpréteur de base n'a pas le venv.
+         str(Path(l2m.atomique.__file__).resolve().parents[1]), str(_cible)],
         stdout=_sp.PIPE, text=True)
     try:
         _enfant.stdout.readline()             # l'enfant tient le verrou

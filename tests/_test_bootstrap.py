@@ -1437,7 +1437,7 @@ class IntegratedSmoketestTests(unittest.TestCase):
         # Les modes lancés écrivent sous la racine des sorties, que le
         # diagnostic doit donc connaître (Projets/smoke, voir _dossiers.py).
         self.assertEqual(execute.call_args.kwargs["sorties"],
-                         L._dossiers_impl.dossier_sorties())
+                         L._dossiers_impl.DOSSIERS.dossier_sorties())
 
 
 class LoggingHelpersTests(unittest.TestCase):
@@ -1550,7 +1550,7 @@ class LogActivationTests(unittest.TestCase):
         self.assertIs(activate.call_args.kwargs["classe_logger"], L._TeeLogger)
         self.assertIs(activate.call_args.kwargs["rediger_secrets"], L._rediger_secrets)
         self.assertEqual(activate.call_args.kwargs["dossier"],
-                         L._dossiers_impl.dossier_etat())
+                         L._dossiers_impl.DOSSIERS.dossier_etat())
 
     def test_import_does_not_activate_the_file_log(self):
         # Chargé comme module (tests, outils), lidar2map ne détourne pas
@@ -1662,14 +1662,14 @@ class RuntimePathTests(unittest.TestCase):
             ROOT)
 
     def test_state_preparation_takes_the_program_folder_and_never_blocks(self):
-        with mock.patch.object(L._dossiers_impl, "preparer_etat",
+        with mock.patch.object(L._dossiers_impl.DOSSIERS, "preparer_etat",
                                return_value=[]) as preparer:
             L._preparer_etat()
         self.assertEqual(preparer.call_args.args[0], ROOT)
         # Verrou tenu trop longtemps, disque refusé : le lancement continue,
         # la reprise sera retentée au suivant.
         sortie = io.StringIO()
-        with mock.patch.object(L._dossiers_impl, "preparer_etat",
+        with mock.patch.object(L._dossiers_impl.DOSSIERS, "preparer_etat",
                                side_effect=TimeoutError("verrou occupé")), \
                 contextlib.redirect_stdout(sortie):
             L._preparer_etat()
@@ -2018,52 +2018,28 @@ class BootstrapVenvEngineTests(unittest.TestCase):
 class SystemEnvironmentRestoreTests(unittest.TestCase):
     """Programmes du système lancés depuis le binaire Linux (systemctl,
     xdg-open) : LD_LIBRARY_PATH d'origine, pas celui que préfixe PyInstaller.
-    tests/exe_smoke.py le vérifie aussi sur le vrai binaire."""
-
-    BUNDLE = "/tmp/_MEI123/lib"
-
-    def restore(self, environ, fige=True, plateforme="linux"):
-        bootstrap_runtime.retablir_environnement_systeme(
-            fige=fige, plateforme=plateforme, environ=environ)
-        return environ
-
-    def test_original_value_is_restored(self):
-        environ = self.restore({"LD_LIBRARY_PATH": f"{self.BUNDLE}:/usr/local/lib",
-                                "LD_LIBRARY_PATH_ORIG": "/usr/local/lib"})
-        self.assertEqual(environ["LD_LIBRARY_PATH"], "/usr/local/lib")
-
-    def test_variable_unset_before_the_bootloader_is_removed(self):
-        environ = self.restore({"LD_LIBRARY_PATH": self.BUNDLE, "PATH": "/usr/bin"})
-        self.assertNotIn("LD_LIBRARY_PATH", environ)
-        self.assertEqual(environ["PATH"], "/usr/bin")
-
-    def test_source_mode_keeps_the_user_value(self):
-        environ = self.restore({"LD_LIBRARY_PATH": "/choix/utilisateur"}, fige=False)
-        self.assertEqual(environ["LD_LIBRARY_PATH"], "/choix/utilisateur")
-
-    def test_windows_and_macos_are_untouched(self):
-        for plateforme in ("win32", "darwin"):
-            with self.subTest(plateforme=plateforme):
-                environ = self.restore({"LD_LIBRARY_PATH": self.BUNDLE,
-                                        "LD_LIBRARY_PATH_ORIG": "/usr/lib"},
-                                       plateforme=plateforme)
-                self.assertEqual(environ["LD_LIBRARY_PATH"], self.BUNDLE)
-
-    def test_defaults_read_the_running_process(self):
-        with mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": self.BUNDLE,
-                                          "LD_LIBRARY_PATH_ORIG": "/usr/lib"}, clear=True), \
-             mock.patch.object(sys, "frozen", True, create=True), \
-             mock.patch.object(sys, "platform", "linux"):
-            bootstrap_runtime.retablir_environnement_systeme()
-            self.assertEqual(os.environ["LD_LIBRARY_PATH"], "/usr/lib")
+    La fonction est celle de nico579_commons.environnement, et ses
+    comportements y sont éprouvés ; il ne reste à vérifier ici que le câblage
+    de lidar2map.py. tests/exe_smoke.py le vérifie aussi sur le vrai binaire."""
 
     def test_called_before_any_process_is_launched(self):
         # Tout processus lancé ensuite (exécution distante en tête, dès le
         # dispatch précoce) doit hériter d'un environnement déjà rétabli, sans
         # le préfixe que PyInstaller pose sur LD_LIBRARY_PATH.
         source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
-        appel = source.index("_bootstrap_runtime_impl.retablir_environnement_systeme()")
+        appel = source.index("environnement.retablir_environnement_systeme()")
         self.assertLess(appel, source.index("# EXÉCUTION DISTANTE (rlidar2map_CLI"))
+
+    def test_only_in_the_executable_where_the_library_is_embedded(self):
+        # Depuis les sources, la bibliothèque peut ne pas être installée avant
+        # le bootstrap, et la fonction n'y fait rien : l'import est gardé.
+        source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+        appel = source.index("environnement.retablir_environnement_systeme()")
+        garde = source.rindex('if getattr(sys, "frozen", False):', 0, appel)
+        self.assertLess(appel - garde, 400)
+
+    def test_the_local_copy_no_longer_exists(self):
+        self.assertFalse(hasattr(bootstrap_runtime, "retablir_environnement_systeme"))
 
 
 if __name__ == "__main__":
