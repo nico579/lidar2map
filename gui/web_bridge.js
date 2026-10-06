@@ -20,7 +20,6 @@ window.api = {
   get_historique: () => fetch('/api/historique').then(r => r.json()),
   get_help: () => fetch('/api/help').then(r => r.json()),
   get_last_error: () => fetch('/api/last-error').then(r => r.json()),
-  check_update: () => fetch('/api/check-update').then(r => r.json()),
   poll_log: () => fetch('/api/poll-log').then(r => r.json()),
 
   get_usage: (cfg) => {
@@ -54,5 +53,4 @@ window.api = {
   new_instance: () => _post('/api/new-instance'),
 
   // Pas de route serveur : le navigateur ouvre déjà des URL nativement.
-  open_url: (url) => { window.open(url, '_blank'); },
 };

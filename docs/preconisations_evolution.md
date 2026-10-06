@@ -135,7 +135,6 @@ aux effets de bord des routes GET (`main_serve_gui`, dictionnaire
 |---|---|
 | `/api/poll-log` | Vide la file du journal : les lignes d'un traitement en cours disparaissent du GUI. |
 | `/api/usage?cache_dir=/` | Parcourt récursivement n'importe quel dossier : forte charge disque. |
-| `/api/check-update` | Requête vers l'API GitHub, qui peut consommer le quota. |
 | `/api/autocomplete-ville` | Requête vers le géocodeur externe. |
 
 Les routes POST sont protégées : un POST inter-sites porte toujours `Origin`.

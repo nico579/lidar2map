@@ -138,7 +138,6 @@ const I18N = {
     "hist.recalled":"Paramètres rappelés : {nom} ({date})",
     "del.error":"Erreur lors de la suppression : ", "del.unknown":"inconnue",
     "zoom.inverted":"⚠ Zooms d'historique inversés, corrigés au chargement",
-    "update.dispo":"⬆ {tag} disponible : notes de version",
     "header.pid":"PID serveur {pid}",
     "fusion.ignored":"Ignoré(s) : {files}\nSeuls {exts} sont acceptés (une fusion ne mélange pas les types).",
     "req.name":"Le nom du projet est obligatoire.",
@@ -291,7 +290,6 @@ const I18N = {
     "hist.recalled":"Parameters recalled: {nom} ({date})",
     "del.error":"Error while deleting: ", "del.unknown":"unknown",
     "zoom.inverted":"⚠ History zooms inverted, fixed on load",
-    "update.dispo":"⬆ {tag} available: release notes",
     "header.pid":"Server PID {pid}",
     "fusion.ignored":"Ignored: {files}\nOnly {exts} are accepted (a merge cannot mix file types).",
     "req.name":"Project name is required.",
@@ -716,42 +714,11 @@ async function initAsync() {
         if (last && last.params) loadConfig(last.params);
       }
     }).catch(e => console.error('get_historique init error:', e));
-    // Notification de mise à jour : 1 requête GitHub non bloquante,
-    // silencieuse hors ligne. Bandeau discret et fermable en bas à droite.
-    api.check_update().then(r => {
-      if (r && r.update) afficherBandeauUpdate(r.latest, r.url);
-    }).catch(() => {});
     verifierInstanceDejaOuverte();
   } catch(e) {
     console.error('initAsync error:', e);
     document.getElementById('footer-status').textContent = t('initerr') + e;
   }
-}
-
-// ── Bandeau de mise à jour ────────────────────────────────────────────────────
-// Affiché quand Api.check_update() signale une release GitHub plus récente.
-// Clic sur le texte : ouvre les notes de version dans le navigateur système
-// (Api.open_url, restreinte au repo). Croix : ferme pour la session.
-function afficherBandeauUpdate(tag, url) {
-  if (document.getElementById('update-banner')) return;
-  const b = document.createElement('div');
-  b.id = 'update-banner';
-  // Haut-centre : seule zone toujours visible et libre (le bas de la fenêtre
-  // peut être rogné par la barre des tâches, le haut-droit porte FR/EN).
-  b.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);' +
-    'z-index:60;padding:6px 12px;border:1px solid var(--bd);border-radius:6px;' +
-    'background:var(--bg2,#1c2733);font-size:12px;display:flex;gap:10px;' +
-    'align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.35)';
-  const txt = document.createElement('span');
-  txt.textContent = tf('update.dispo', {tag: tag});
-  txt.style.cursor = 'pointer';
-  txt.onclick = () => api.open_url(url);
-  const x = document.createElement('span');
-  x.textContent = '✕';
-  x.style.cssText = 'color:var(--dim);cursor:pointer';
-  x.onclick = () => b.remove();
-  b.appendChild(txt); b.appendChild(x);
-  document.body.appendChild(b);
 }
 
 // ── Sélecteur de région ───────────────────────────────────────────────────────

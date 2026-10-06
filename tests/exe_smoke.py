@@ -20,6 +20,9 @@ figé (menu « Redémarrer », démarrage automatique de la 1.50.0) leur
      pour acquis : seul ce test prouve qu'il est bien embarqué. Sous macOS,
      PyInstaller répartit aussi le .app entre Contents/Frameworks et
      Contents/Resources, et la chaîne doit y survivre ;
+  1c. l'auto-test de la mise à jour automatique : « --self-test-version X »
+     réussit pour sa propre version et échoue pour une autre (c'est le
+     contrôle que la mise à jour fait passer au bundle téléchargé) ;
   5. arrêt de l'arbre de processus, puis contrôle qu'aucune donnée
      utilisateur n'a été écrite à côté du binaire : elles vont dans le
      dossier de données (LIDAR2MAP_HOME ici, voir _dossiers.py).
@@ -43,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -374,6 +378,15 @@ def etape(titre: str) -> None:
     print(f"\n== {titre}", flush=True)
 
 
+def version_du_code() -> str:
+    """VERSION de lidar2map.py : celle que le binaire livré doit annoncer."""
+    source = (Path(__file__).resolve().parents[1] / "lidar2map.py").read_text(encoding="utf-8")
+    trouvee = re.search(r'^VERSION\s*=\s*"([^"]+)"', source, re.MULTILINE)
+    if not trouvee:
+        raise Echec("VERSION introuvable dans lidar2map.py")
+    return trouvee.group(1)
+
+
 def smoke(archive: Path, racine: Path) -> None:
     dest = racine / "archive"
     etape(f"extraction de {archive.name}")
@@ -384,6 +397,22 @@ def smoke(archive: Path, racine: Path) -> None:
     print(f"   programme : {programme}\n   travail   : {travail}", flush=True)
     options_gui = ["--serve-gui", "--no-browser", "--no-tray"]
     processus = None
+    etape("1c. auto-test de la mise à jour automatique (--self-test-version)")
+    attendue = version_du_code()
+    resultat = subprocess.run(
+        [str(programme), "--self-test-version", attendue], env=env, cwd=travail,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+        timeout=DELAI_DEMARRAGE_S)
+    if resultat.returncode != 0:
+        raise Echec(f"--self-test-version {attendue} : code {resultat.returncode}\n"
+                    f"{((resultat.stdout or '') + (resultat.stderr or ''))[-3000:]}")
+    refus = subprocess.run(
+        [str(programme), "--self-test-version", "0.0.0-erronee"], env=env, cwd=travail,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+        timeout=DELAI_DEMARRAGE_S)
+    if refus.returncode == 0:
+        raise Echec("--self-test-version accepte une version qui n'est pas la sienne")
+    print("   OK : accepte sa version, refuse une autre", flush=True)
     try:
         etape("1. démarrage du programme (serveur web)")
         port = port_libre()
