@@ -41,7 +41,7 @@ _SPEC_L2M.loader.exec_module(L2M)
 _SPEC_SW = importlib.util.spec_from_file_location("l2m_serve_web_module", ROOT / "_serve_web.py")
 _serve_web = importlib.util.module_from_spec(_SPEC_SW)
 _SPEC_SW.loader.exec_module(_serve_web)
-from nico579_commons import serveweb  # noqa: E402
+from nico579_commons import demarrage, serveweb  # noqa: E402
 
 
 class HoteAutoriseTests(unittest.TestCase):
@@ -132,6 +132,10 @@ class RoutesLectureSeuleTests(unittest.TestCase):
 
         self.api = L2M.Api()
 
+        # Les routes de la case de demarrage sont celles du commun, avec l'entree de lidar2map.
+        import _autostart
+        routes_demarrage_get, routes_demarrage_post = demarrage.routes(_autostart.entree, lambda: "fr")
+
         def _launch(cfg):
             erreur = L2M._valider_cfg_web(cfg or {})
             if erreur:
@@ -142,6 +146,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
             handler=_serve_web.Handler, bind="127.0.0.1", port=0, trusted_host="",
             gui_dir=ROOT / "gui",
             api_routes={
+                **routes_demarrage_get,
                 "init": L2M._api_get_init_data,
                 "historique": L2M._lire_historique,
                 "usage": L2M._api_get_usage,
@@ -156,7 +161,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 "clear-historique": lambda _payload: self.api.clear_historique(),
                 "set-lang": lambda payload: self.api.set_lang((payload or {}).get("code")),
                 "set-trusted-host": lambda payload: self.api.set_trusted_host((payload or {}).get("host", "")),
-                "set-autostart": lambda payload: self.api.set_autostart(bool((payload or {}).get("actif"))),
+                **routes_demarrage_post,
             },
             favicon=L2M._fichier_icone(ROOT / "gui"),
         )
@@ -352,43 +357,50 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertFalse(data["ok"])
         self.assertIn("error", data)
 
-    def test_api_set_autostart_active_appelle_autostart_enable(self):
-        # import _autostart (nom canonique, pas un alias) : Api.set_autostart()
-        # fait le même import dans lidar2map.py, donc cible la même instance
-        # déjà en cache dans sys.modules - même piège que _serve_web (mocker
-        # un alias différent mockerait une copie que le code réel n'utilise
-        # jamais). enable()/disable() sont mockés : jamais toucher au vrai
-        # dossier Démarrage Windows pendant ce test (voir test_autostart.py
-        # pour le test du VRAI mécanisme, avec un chemin isolé).
+    # La case « Démarrer automatiquement avec le système » est celle du commun
+    # (nico579_commons.demarrage.routes, testée chez lui) : ici, seulement qu'elle est
+    # branchée sur l'entrée de lidar2map. est_actif/activer/desactiver sont simulés : jamais
+    # le vrai dossier Démarrage pendant ce test (test_autostart.py joue le vrai mécanisme,
+    # avec un chemin isolé).
+    def test_la_case_de_demarrage_active_l_entree_de_lidar2map(self):
         import _autostart
-        with mock.patch.object(_autostart, "enable") as m_enable, \
-             mock.patch.object(_autostart, "is_enabled", return_value=True):
-            status, body = self._post("/api/set-autostart", {"actif": True})
+        with mock.patch.object(demarrage, "activer", return_value=[]) as m_activer, \
+             mock.patch.object(demarrage, "est_actif", return_value=True):
+            status, body = self._post("/api/autostart", {"actif": True})
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertTrue(data["ok"])
         self.assertTrue(data["actif"])
-        m_enable.assert_called_once()
+        m_activer.assert_called_once()
+        self.assertEqual(m_activer.call_args[0][0].nom, _autostart.entree().nom)
 
-    def test_api_set_autostart_desactive_appelle_autostart_disable(self):
-        import _autostart
-        with mock.patch.object(_autostart, "disable") as m_disable, \
-             mock.patch.object(_autostart, "is_enabled", return_value=False):
-            status, body = self._post("/api/set-autostart", {"actif": False})
-        self.assertEqual(status, 200)
+    def test_la_case_de_demarrage_desactive(self):
+        with mock.patch.object(demarrage, "desactiver") as m_desactiver, \
+             mock.patch.object(demarrage, "est_actif", return_value=False):
+            status, body = self._post("/api/autostart", {"actif": False})
         data = json.loads(body)
         self.assertTrue(data["ok"])
         self.assertFalse(data["actif"])
-        m_disable.assert_called_once()
+        m_desactiver.assert_called_once()
 
-    def test_api_set_autostart_erreur_remontee_proprement(self):
-        import _autostart
-        with mock.patch.object(_autostart, "enable", side_effect=RuntimeError("OS non supporte")):
-            status, body = self._post("/api/set-autostart", {"actif": True})
+    def test_un_refus_du_systeme_est_remonte_proprement(self):
+        with mock.patch.object(demarrage, "activer", side_effect=RuntimeError("OS non supporte")), \
+             mock.patch.object(demarrage, "est_actif", return_value=False):
+            status, body = self._post("/api/autostart", {"actif": True})
         self.assertEqual(status, 200)  # erreur métier, pas HTTP
         data = json.loads(body)
         self.assertFalse(data["ok"])
         self.assertIn("error", data)
+
+    def test_la_page_ne_porte_plus_sa_propre_case_de_demarrage(self):
+        # Une seule case : celle du panneau Réglages commun.
+        gui = ROOT / "gui"
+        for nom in ("index.html", "app.js", "web_bridge.js"):
+            texte = (gui / nom).read_text(encoding="utf-8")
+            self.assertNotIn("remote-autostart", texte, nom)
+            self.assertNotIn("set_autostart", texte, nom)
+        source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+        self.assertIn("demarrage.routes(_autostart.entree", source)
 
     def test_api_stop_sans_run_actif_ne_plante_pas(self):
         status, body = self._post("/api/stop")

@@ -62,7 +62,7 @@ def raccourci_bureau() -> tuple:
     return commande, _dossier_lancement()
 
 
-def _entree() -> demarrage.Entree:
+def entree() -> demarrage.Entree:
     """L'entree de demarrage de lidar2map. Le .vbs des versions <= 1.53 est
     retire avec elle (VBScript quitte Windows)."""
     return demarrage.Entree(
@@ -72,15 +72,15 @@ def _entree() -> demarrage.Entree:
 
 
 def is_enabled() -> bool:
-    return demarrage.est_actif(_entree())
+    return demarrage.est_actif(entree())
 
 
 def enable() -> None:
-    demarrage.activer(_entree())
+    demarrage.activer(entree())
 
 
 def disable() -> None:
-    demarrage.desactiver(_entree())
+    demarrage.desactiver(entree())
 
 
 def migrer_ancien_demarrage() -> bool:
@@ -94,4 +94,4 @@ def migrer_ancien_demarrage() -> bool:
     sinon le demarrage automatique de l'installation vers python."""
     if not frozen():
         return False
-    return demarrage.migrer_vbs(_entree())
+    return demarrage.migrer_vbs(entree())

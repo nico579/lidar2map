@@ -31,7 +31,7 @@ const I18N = {
     "btn.share":"Téléphone", "tip.share":"Envoyer les cartes générées sur le téléphone via QR (même WiFi).", "share.title":"📲 Envoyer au téléphone", "share.hint":"Même WiFi. Télécharge le fichier. Dans Locus : Gestionnaire de cartes → Importer une carte → gestionnaire de fichiers. « Ouvrir avec » peut aussi fonctionner selon Android.", "share.close":"Fermer",
     "btn.help":"❓ Aide", "tip.help":"Aide : modes et paramètres de la ligne de commande.", "help.title":"❓ Aide : ligne de commande", "help.empty":"Aide indisponible.",
     "btn.usage":"📊 Usage", "tip.usage":"Usage disque : tailles des dossiers cache / production / projets (lecture seule).", "usage.title":"📊 Usage disque", "usage.refresh":"↻ Rafraîchir", "usage.open":"ouvrir", "usage.absent":"(absent)", "usage.empty":"Rien à afficher.", "usage.hint":"Lecture seule. Le ménage est manuel : « ouvrir » ce que tu veux vider dans l'explorateur.",
-    "btn.remote":"🌐 Accès distant", "tip.remote":"Accès distant (VPN maillé type Tailscale/WireGuard).", "remote.title":"🌐 Accès distant", "remote.hint":"Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y accéder depuis un téléphone. Le serveur écoute alors aussi sur cette adresse, au même port, dès qu'elle existe sur cette machine. Ne faites confiance qu'à cette adresse précise.", "ph.trustedhost":"100.x.y.z", "remote.save":"Enregistrer", "remote.saving":"Enregistrement…", "remote.saved":"Enregistré. Pris en compte immédiatement, sans redémarrage.", "remote.error":"Échec de l'enregistrement.", "remote.autostart":"Démarrer à l'ouverture de session (icône dans la zone de notification ; serveur toujours prêt, y compris pour l'accès distant)", "remote.listen.actif":"Écoute aussi sur {h}, port {p}.", "remote.listen.attente":"Adresse pas encore présente sur cette machine (VPN arrêté ?) : nouvel essai toutes les 30 s.", "remote.autostart.on":"Activé : une icône apparaîtra dans la zone de notification à l'ouverture de session.", "remote.autostart.off":"Désactivé.", "btn.newinst":"➕ Nouvelle instance", "tip.newinst":"Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter.", "newinst.starting":"Démarrage d'une nouvelle instance lidar2map…", "instance.title":"lidar2map est déjà ouvert", "instance.hint":"Une instance tourne déjà et s'affiche dans cet onglet. Pour lancer un calcul en parallèle, démarrez une nouvelle instance (second serveur).", "instance.keep":"Continuer avec cette instance", "instance.new":"➕ Nouvelle instance",
+    "btn.remote":"🌐 Accès distant", "tip.remote":"Accès distant (VPN maillé type Tailscale/WireGuard).", "remote.title":"🌐 Accès distant", "remote.hint":"Sur un VPN maillé (Tailscale, WireGuard), indiquez ici l'adresse de cette machine sur ce réseau (ex. 100.x.y.z, donnée par « tailscale ip ») pour y accéder depuis un téléphone. Le serveur écoute alors aussi sur cette adresse, au même port, dès qu'elle existe sur cette machine. Ne faites confiance qu'à cette adresse précise.", "ph.trustedhost":"100.x.y.z", "remote.save":"Enregistrer", "remote.saving":"Enregistrement…", "remote.saved":"Enregistré. Pris en compte immédiatement, sans redémarrage.", "remote.error":"Échec de l'enregistrement.", "remote.listen.actif":"Écoute aussi sur {h}, port {p}.", "remote.listen.attente":"Adresse pas encore présente sur cette machine (VPN arrêté ?) : nouvel essai toutes les 30 s.", "btn.newinst":"➕ Nouvelle instance", "tip.newinst":"Démarre un second serveur lidar2map sur le port suivant, ouvert dans un nouvel onglet, pour lancer un calcul en parallèle. Chaque instance a sa propre icône dans la zone de notification pour l'arrêter.", "newinst.starting":"Démarrage d'une nouvelle instance lidar2map…", "instance.title":"lidar2map est déjà ouvert", "instance.hint":"Une instance tourne déjà et s'affiche dans cet onglet. Pour lancer un calcul en parallèle, démarrez une nouvelle instance (second serveur).", "instance.keep":"Continuer avec cette instance", "instance.new":"➕ Nouvelle instance",
     "browse.title.dir":"📁 Choisir un dossier", "browse.title.file":"📄 Choisir un fichier", "browse.choose":"Choisir ce dossier", "browse.select":"Valider la sélection", "browse.empty":"(dossier vide)", "browse.selected":"sélectionné(s) :",
     "tip.projlist":"Projets existants (remplit le champ Nom)",
     "proj.pick":"↻ projet existant…",
@@ -198,7 +198,7 @@ const I18N = {
     "btn.share":"Phone", "tip.share":"Send the generated maps to the phone via QR (same WiFi).", "share.title":"📲 Send to phone", "share.hint":"Same WiFi. Download the file. In Locus: Map Manager → Import map → system file manager. ‘Open with’ may also work, depending on Android.", "share.close":"Close",
     "btn.help":"❓ Help", "tip.help":"Help: command-line modes and parameters.", "help.title":"❓ Help: command line", "help.empty":"Help unavailable.",
     "btn.usage":"📊 Usage", "tip.usage":"Disk usage: cache / production / project folder sizes (read-only).", "usage.title":"📊 Disk usage", "usage.refresh":"↻ Refresh", "usage.open":"open", "usage.absent":"(missing)", "usage.empty":"Nothing to show.", "usage.hint":"Read-only. Cleanup is manual: 'open' whatever you want to empty in the file explorer.",
-    "btn.remote":"🌐 Remote access", "tip.remote":"Remote access (mesh VPN like Tailscale/WireGuard).", "remote.title":"🌐 Remote access", "remote.hint":"On a mesh VPN (Tailscale, WireGuard), enter this machine's address on that network here (e.g. 100.x.y.z, from 'tailscale ip') to reach it from a phone. The server then also listens on that address, on the same port, as soon as it exists on this machine. Only that exact address is trusted.", "ph.trustedhost":"100.x.y.z", "remote.save":"Save", "remote.saving":"Saving…", "remote.saved":"Saved. Takes effect immediately, no restart needed.", "remote.error":"Failed to save.", "remote.autostart":"Start at login (system tray icon; server always ready, including for remote access)", "remote.listen.actif":"Also listening on {h}, port {p}.", "remote.listen.attente":"Address not present on this machine yet (VPN down?): retrying every 30 s.", "remote.autostart.on":"Enabled: an icon will appear in the system tray at login.", "remote.autostart.off":"Disabled.", "btn.newinst":"➕ New instance", "tip.newinst":"Starts a second lidar2map server on the next port, opened in a new tab, to run a job in parallel. Each instance has its own system tray icon to stop it.", "newinst.starting":"Starting a new lidar2map instance…", "instance.title":"lidar2map is already open", "instance.hint":"An instance is already running and is shown in this tab. To run a job in parallel, start a new instance (second server).", "instance.keep":"Continue with this instance", "instance.new":"➕ New instance",
+    "btn.remote":"🌐 Remote access", "tip.remote":"Remote access (mesh VPN like Tailscale/WireGuard).", "remote.title":"🌐 Remote access", "remote.hint":"On a mesh VPN (Tailscale, WireGuard), enter this machine's address on that network here (e.g. 100.x.y.z, from 'tailscale ip') to reach it from a phone. The server then also listens on that address, on the same port, as soon as it exists on this machine. Only that exact address is trusted.", "ph.trustedhost":"100.x.y.z", "remote.save":"Save", "remote.saving":"Saving…", "remote.saved":"Saved. Takes effect immediately, no restart needed.", "remote.error":"Failed to save.", "remote.listen.actif":"Also listening on {h}, port {p}.", "remote.listen.attente":"Address not present on this machine yet (VPN down?): retrying every 30 s.", "btn.newinst":"➕ New instance", "tip.newinst":"Starts a second lidar2map server on the next port, opened in a new tab, to run a job in parallel. Each instance has its own system tray icon to stop it.", "newinst.starting":"Starting a new lidar2map instance…", "instance.title":"lidar2map is already open", "instance.hint":"An instance is already running and is shown in this tab. To run a job in parallel, start a new instance (second server).", "instance.keep":"Continue with this instance", "instance.new":"➕ New instance",
     "browse.title.dir":"📁 Choose a folder", "browse.title.file":"📄 Choose a file", "browse.choose":"Choose this folder", "browse.select":"Confirm selection", "browse.empty":"(empty folder)", "browse.selected":"selected:",
     "tip.projlist":"Existing projects (fills the Name field)",
     "proj.pick":"↻ existing project…",
@@ -679,8 +679,6 @@ async function initAsync() {
     if (d.ui_zoom) applyUiZoom(d.ui_zoom, false);   // zoom UI sauvé
     const champHote = document.getElementById('remote-trusted-host');
     if (champHote) champHote.value = d.trusted_host || '';
-    const caseAutostart = document.getElementById('remote-autostart');
-    if (caseAutostart) caseAutostart.checked = !!d.autostart_actif;
     // buildCouches AVANT buildProviders : ce dernier appelle applyProviderCountry
     // qui filtre le dropdown des couches → il doit déjà être peuplé.
     buildCouches(d.couches);
@@ -1875,25 +1873,6 @@ function enregistrerHoteConfiance() {
       statut.textContent = t('remote.saved') + ecoute;
     })
     .catch(() => { statut.textContent = t('remote.error'); });
-}
-function toggleAutostart(actif) {
-  const statut = document.getElementById('remote-autostart-status');
-  const caseAutostart = document.getElementById('remote-autostart');
-  if (!statut || !caseAutostart) return;
-  statut.textContent = t('remote.saving');
-  api.set_autostart(actif)
-    .then(r => {
-      if (r && r.ok) {
-        statut.textContent = actif ? t('remote.autostart.on') : t('remote.autostart.off');
-      } else {
-        statut.textContent = (r && r.error) || t('remote.error');
-        caseAutostart.checked = !actif;  // l'appel a echoue : etat reel inchange
-      }
-    })
-    .catch(() => {
-      statut.textContent = t('remote.error');
-      caseAutostart.checked = !actif;
-    });
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
