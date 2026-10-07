@@ -19,7 +19,8 @@ const fmtRes = (r) => (_lang === 'fr' ? String(r).replace('.', ',') : String(r))
 // Le texte FR en dur dans le HTML reste le FALLBACK si une clé manque : pas de
 // page cassée. Variantes d'attribut : data-i18n (textContent), data-i18n-placeholder,
 // data-i18n-title. Détection : navigator.language (l'OS, via QtWebEngine) ;
-// override manuel persisté côté Python (api.set_lang), appliqué dans
+// override manuel gardé côté Python (/api/langue, sélecteur commun
+// /nico579-langue.js qui annonce chaque changement), appliqué aussi dans
 // initAsync après get_init_data.
 // On ne tague que les chaînes qui DIFFÈRENT entre fr et en. Les tokens
 // identiques (cols ×, km, m, JPEG, GPS, SVF, MBTiles, multi, 315°…) ne sont
@@ -356,8 +357,6 @@ function applyI18n(){
     const v = t(el.dataset.i18nTitle); if (v) el.title = v; });
   document.querySelectorAll('[data-i18n-html]').forEach(el => {
     const v = t(el.dataset.i18nHtml); if (v) el.innerHTML = v; });  // contenu statique de confiance
-  document.querySelectorAll('[data-lang-btn]').forEach(b =>
-    b.classList.toggle('active', b.dataset.langBtn === _lang));
   // Le badge de source DFM est posé dynamiquement (pas de data-i18n) → le
   // rafraîchir dans la nouvelle langue.
   if (typeof updateLazUI === 'function') updateLazUI();
@@ -373,7 +372,7 @@ function renderServerInfo(){
   el.textContent = 'lidar2map ' + _serverInfo.version
                  + ' (' + tf('header.pid', {pid: _serverInfo.pid}) + ')';
 }
-function setLang(code, persist){
+function setLang(code){
   _lang = (code === 'en') ? 'en' : 'fr';
   applyI18n();
   // applyI18n a réécrit le header couche depuis sa clé générique : ré-applique
@@ -402,10 +401,10 @@ function setLang(code, persist){
   // reconstruire pour qu'elles basculent elles aussi immédiatement de langue.
   if (typeof ombRender === 'function')
     ombRender(document.getElementById('omb-liste')?.selectedIndex ?? 0);
-  if (persist) {
-    api.set_lang(_lang).catch(e => console.error('set_lang error:', e));
-  }
 }
+// Le choix FR / EN est celui du commun : il dessine les boutons, garde le choix et annonce
+// chaque changement (événement), la page applique ses textes.
+document.addEventListener('nico579-langue', e => setLang(e.detail.code));
 
 // ── Panneau de log ───────────────────────────────────────────────────────────
 function ajouterLigneLog(text, tag, deferScroll) {
@@ -663,7 +662,7 @@ function setLogProgress(pct, cls) {
 // (sections visibles/cachées selon checkboxes), puis l'init async (couches,
 // config) : window.api existe déjà, web_bridge.js est chargé avant ce fichier.
 document.addEventListener('DOMContentLoaded', () => {
-  setLang(detectLang(), false);   // langue OS immédiate ; override sauvé appliqué dans initAsync
+  setLang(detectLang());   // langue OS immédiate ; override sauvé appliqué dans initAsync
   bindAll();
   _acInstaller();
   initAsync();
@@ -675,7 +674,7 @@ async function initAsync() {
   try {
     const d = await api.get_init_data();
     if (d.resolution_m) _resolutionM = d.resolution_m;   // défaut σ LRM/RRIM (provider actif)
-    if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang, false);  // override manuel sauvé
+    if (d.lang === 'fr' || d.lang === 'en') setLang(d.lang);  // override manuel sauvé
     if (d.ui_zoom) applyUiZoom(d.ui_zoom, false);   // zoom UI sauvé
     const champHote = document.getElementById('remote-trusted-host');
     if (champHote) champHote.value = d.trusted_host || '';

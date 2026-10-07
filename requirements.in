@@ -26,7 +26,7 @@ platformdirs
 # Briques communes aux quatre applications (menu de l'icône, relance,
 # raccourci, recherche de version). Fourchette : une version incompatible
 # de la bibliothèque ne peut pas entrer dans le verrou.
-nico579-commons>=0.4.11,<0.5
+nico579-commons>=0.4.12,<0.5
 
 # Linux : l'icône parle le protocole StatusNotifierItem par D-Bus quand le
 # bureau a un hôte (GNOME avec l'extension AppIndicator, KDE), faute de quoi

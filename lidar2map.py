@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.61.0"
+VERSION      = "1.62.0"
 VERSION_DATE = "2026-09"
 
 
@@ -6193,9 +6193,6 @@ def main_serve_gui():
             return {"ok": False, "error": erreur}
         return api.start_share(cfg or {})
 
-    def _set_lang(payload):
-        return api.set_lang((payload or {}).get("code"))
-
     def _set_ui_zoom(payload):
         return api.set_ui_zoom((payload or {}).get("z"))
 
@@ -6242,6 +6239,11 @@ def main_serve_gui():
     import _autostart
     from nico579_commons import demarrage
     routes_demarrage_get, routes_demarrage_post = demarrage.routes(_autostart.entree, _langue_console)
+    # Le choix FR / EN est celui du commun (/nico579-langue.js) ; la console et le menu de
+    # l'icône le relisent par _langue_console.
+    from nico579_commons import langue
+    routes_langue_get, routes_langue_post = langue.routes(
+        lambda: _lire_prefs().get("lang"), lambda code: _ecrire_pref("lang", code))
 
     api_routes = {
         "init": _api_get_init_data,
@@ -6255,14 +6257,15 @@ def main_serve_gui():
         "projets": api.get_projets,
         **routes_maj_get,
         **routes_demarrage_get,
+        **routes_langue_get,
     }
     post_routes = {
         **routes_maj_post,
         **routes_demarrage_post,
+        **routes_langue_post,
         "launch": _launch,
         "stop": _stop,
         "clear-historique": lambda _payload: api.clear_historique(),
-        "set-lang": _set_lang,
         "set-ui-zoom": _set_ui_zoom,
         "set-trusted-host": _set_trusted_host,
         "start-share": _start_share,
@@ -6784,13 +6787,6 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
-
-    def set_lang(self, code):
-        """Persiste l'override manuel de langue de l'UI (toggle FR/EN).
-        'fr' ou 'en' ; toute autre valeur est ignorée."""
-        if code not in ("fr", "en"):
-            return {"ok": False, "error": "lang invalide"}
-        return {"ok": _ecrire_pref("lang", code)}
 
     def set_ui_zoom(self, z):
         """Persiste le zoom de l'interface (Ctrl+molette / Ctrl+±),
