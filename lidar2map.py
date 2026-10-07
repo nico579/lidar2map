@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.60.0"
+VERSION      = "1.60.1"
 VERSION_DATE = "2026-09"
 
 
@@ -5834,9 +5834,11 @@ PORT_RANGE_SIZE = 10
 def _verificateur_de_version():
     """Dernière release publiée de lidar2map, demandée à GitHub au plus une
     fois par heure par un fil de fond (nico579_commons.maj) : le menu de
-    l'icône la lit sans jamais attendre le réseau."""
+    l'icône la lit sans jamais attendre le réseau. Dernière réponse de GitHub gardée dans le dossier d'état : un redémarrage ne repose pas la
+    question tant qu'elle a moins d'une heure (nico579_commons.maj.Verificateur.veiller)."""
     from nico579_commons import maj
-    return maj.Verificateur("nico579/lidar2map", VERSION)
+    return maj.Verificateur("nico579/lidar2map", VERSION,
+                            cache=_dossiers_impl.DOSSIERS.dossier_etat() / "maj.json")
 
 
 def _application_installation():
