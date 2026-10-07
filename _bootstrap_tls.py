@@ -7,6 +7,12 @@ dépendances tierces aient été installées.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+# Certificats intermédiaires publics que des serveurs oublient d'envoyer (voir l'en-tête du
+# fichier) : ajoutés au magasin de certifi, ils complètent la chaîne sans rien affaiblir.
+FICHIER_INTERMEDIAIRES = Path(__file__).resolve().parent / "_certificats_intermediaires.pem"
+
 
 class CertifiIndisponible(ImportError):
     """Signale que le paquet ``certifi`` lui-même n'est pas installé."""
@@ -40,10 +46,23 @@ def _fabrique_contexte(contexte):
     return creer_contexte
 
 
+def _completer_la_chaine(contexte, fichier=None):
+    """Ajoute les certificats intermédiaires du dépôt au contexte. La vérification reste
+    stricte : la chaîne doit toujours aboutir à une racine du magasin, et le nom d'hôte est
+    contrôlé. Un fichier absent ou illisible n'empêche rien : on retombe sur le magasin seul."""
+    fichier = Path(fichier) if fichier else FICHIER_INTERMEDIAIRES
+    try:
+        if fichier.is_file():
+            contexte.load_verify_locations(cafile=str(fichier))
+    except OSError:      # ssl.SSLError en dérive
+        pass
+
+
 def _activer_ca_stricte(*, environnement, module_ssl, chemin_ca):
     """Valide puis publie atomiquement une configuration CA stricte."""
     chemin_ca = str(chemin_ca)
     contexte = module_ssl.create_default_context(cafile=chemin_ca)
+    _completer_la_chaine(contexte)
     fabrique = _fabrique_contexte(contexte)
 
     # Ne publier l'environnement et la fabrique qu'après validation complète.

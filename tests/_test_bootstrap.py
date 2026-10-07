@@ -64,6 +64,7 @@ class BootstrapTlsTests(unittest.TestCase):
                 cafile=cafile,
                 verify_mode="CERT_REQUIRED",
                 check_hostname=True,
+                load_verify_locations=mock.Mock(),
             )
             contexts.append(context)
             return context
@@ -78,6 +79,40 @@ class BootstrapTlsTests(unittest.TestCase):
     @staticmethod
     def _certifi(path="C:/ca/certifi.pem"):
         return SimpleNamespace(where=mock.Mock(return_value=path))
+
+    def test_intermediate_certificates_complete_the_chain_without_weakening_it(self):
+        # de-sh : le serveur n'envoie pas son certificat intermédiaire. On l'ajoute au
+        # magasin ; la vérification de la chaîne et du nom d'hôte reste exigée.
+        fake = self._fake_ssl()
+        context = bootstrap_tls._activer_ca_stricte(
+            environnement={}, module_ssl=fake, chemin_ca="C:/ca/certifi.pem")
+        context.load_verify_locations.assert_called_once_with(
+            cafile=str(bootstrap_tls.FICHIER_INTERMEDIAIRES))
+        self.assertEqual(context.verify_mode, "CERT_REQUIRED")
+        self.assertTrue(context.check_hostname)
+
+    def test_missing_or_unreadable_intermediates_fall_back_to_the_store_alone(self):
+        context = SimpleNamespace(load_verify_locations=mock.Mock())
+        bootstrap_tls._completer_la_chaine(context, fichier=Path("/nulle/part.pem"))
+        context.load_verify_locations.assert_not_called()
+        context = SimpleNamespace(load_verify_locations=mock.Mock(side_effect=OSError("illisible")))
+        bootstrap_tls._completer_la_chaine(context)          # ne lève rien
+
+    def test_the_bundled_intermediate_is_the_expected_public_certificate(self):
+        import hashlib
+        import ssl
+        texte = bootstrap_tls.FICHIER_INTERMEDIAIRES.read_text(encoding="ascii")
+        self.assertEqual(texte.count("BEGIN CERTIFICATE"), 1)
+        der = ssl.PEM_cert_to_DER_cert(texte[texte.index("-----BEGIN CERTIFICATE-----"):])
+        self.assertEqual(
+            hashlib.sha256(der).hexdigest().upper(),
+            "19:9A:B2:AA:AF:FF:40:40:1E:0A:3B:7B:87:EE:99:64:65:9E:FF:A9:4A:1F:EC:BE:91:8A:E1:36:E4:B4:E0:A8"
+            .replace(":", ""))
+        # Le fichier se charge dans un vrai contexte strict.
+        contexte = ssl.create_default_context()
+        contexte.load_verify_locations(cafile=str(bootstrap_tls.FICHIER_INTERMEDIAIRES))
+        self.assertEqual(contexte.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(contexte.check_hostname)
 
     def test_certifi_loader_only_translates_the_package_own_absence(self):
         absent = ModuleNotFoundError("certifi absent", name="certifi")

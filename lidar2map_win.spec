@@ -198,6 +198,9 @@ for _icone in (APP_ICON, APP_ICON.with_suffix(".ico")):
 # ── Ressources statiques ──────────────────────────────────────────────────────
 if (SRC / "tagmapping-min.xml").exists():
     datas += [("tagmapping-min.xml", ".")]
+# Certificat intermediaire que le serveur de de-sh oublie d'envoyer (voir le fichier) : a cote
+# de _bootstrap_tls.py, qui le charge.
+datas += [("_certificats_intermediaires.pem", ".")]
 
 # Front-end GUI (extrait de lancer_gui) : index.html + style.css + app.js,
 # reassembles au runtime (cf. lancer_gui -> BUNDLE_DIR / "gui").
