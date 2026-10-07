@@ -32,6 +32,7 @@ ROOT = TESTS_DIR.parent
 
 FAST_SCRIPTS = (
     "_test_bootstrap.py",
+    "test_amorcage_commun.py",
     "_test_refactor_contracts.py",
     "_test_geojson_osm.py",
     "_test_geojson_raster.py",

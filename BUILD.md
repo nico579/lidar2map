@@ -61,7 +61,7 @@ de D2, [docs/preconisations_evolution.md](docs/preconisations_evolution.md)).
 Au démarrage, la 1.55 retire ce qu'un tel lanceur a laissé : son
 extraction, reconnue à sa marque `.bundle_sha`, et le `lidar2map_bundle.zip`
 resté à côté du programme quand l'archive est décompressée par-dessus
-(`_bootstrap_runtime.nettoyer_ancienne_extraction`). Si une ancienne
+(`_installation.nettoyer_ancienne_extraction`). Si une ancienne
 instance tourne encore depuis l'extraction, son renommage échoue sous
 Windows et le ménage attend le lancement suivant. Le nom des archives et de
 leur dossier racine n'a pas changé : décompressée par-dessus, une archive
@@ -256,7 +256,7 @@ Le script de setup fait 4 étapes sur les 3 OS :
 3. `--telecharger-outils` → osmosis + JRE dans `~/.lidar2map/`
 4. PyInstaller
 
-Le bootstrap (`_bootstrap_venv_si_besoin` mode `auto`, défaut) crée
+Le bootstrap (`_amorcage.py`, copie de `nico579_commons.amorcage`, mode `auto`, défaut) crée
 **systématiquement** `~/.lidar2map/venv` même si le Python système a déjà
 les deps. Permet une désinstallation propre (`rm -rf ~/.lidar2map`) et un
 test fresh reproductible. Pour utiliser un autre env (conda, venv perso) :
@@ -642,7 +642,7 @@ reste l'installe, sans liste à tenir :
 | CI | `pip install --require-hashes -r requirements.txt` |
 
 Avant ce verrou, quatre listes de paquets codées en dur dans
-`_bootstrap_runtime.py` divergeaient entre elles, deux autres vivaient dans la
+`_bootstrap_runtime.py` (devenu `_amorcage.py`, commun aux quatre applications) divergeaient entre elles, deux autres vivaient dans la
 CI, et aucune version n'était figée : deux constructions du même commit, à un
 mois d'écart, n'embarquaient pas les mêmes bibliothèques.
 
