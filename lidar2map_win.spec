@@ -359,6 +359,9 @@ except Exception:
 
 # ── certifi ───────────────────────────────────────────────────────────────────
 datas         += collect_data_files("certifi")
+# Les fichiers JavaScript du paquet commun (bandeau de mise à jour, bouton Réglages) :
+# PyInstaller n'embarque pas les données d'un paquet sans qu'on le lui demande.
+datas         += collect_data_files("nico579_commons")
 hiddenimports += ["urllib3", "charset_normalizer", "idna", "certifi"]
 
 # ── 2 passes PyInstaller ─────────────────────────────────────────────────────
