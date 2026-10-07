@@ -11,6 +11,12 @@ name: Smoke providers
 # la CI mais marche depuis une IP normale, donc exclu via --skip :
 #   es-icgc          : datacloud.icgc.cat throttle les IP cloud (timeout ~370s ;
 #                      PASS en 1,6s en local).
+#   fi-maanmittauslaitos : la clé du secret FI_NLS_API_KEY est refusée par le service
+#                      (HTTP 403 « invalid authorization », vérifié le 2026-10-07 : sans clé
+#                      c'est 401, avec une clé quelconque 403). Le fournisseur marche pour
+#                      ceux qui ont leur propre clé gratuite. Renouveler le secret (clé sur
+#                      maanmittauslaitos.fi/rajapinnat/api-avaimen-ohje), puis retirer fi
+#                      de --skip.
 # us-tnm peut échouer transitoirement (backend USGS/sciencebase) : un re-run
 # repasse, on le garde dans le run pour ne pas perdre le signal.
 #
@@ -65,4 +71,4 @@ jobs:
         # nuage de points (205 / 125 Mo) à chaque run hebdo (ils partagent leur
         # WFS/STAC avec fr-reunion / ch-swisstopo, testés eux ; la conversion
         # DFM est testée en local via _test_interactions section 9).
-        run: python tests/smoke_providers.py --skip es-icgc,fr-ign-laz,ch-swisstopo-laz,fr-craig-laz,pl-gugik-laz,ee-maaamet-laz,be-flanders-laz,ca-nrcan-laz,us-3dep-laz,ca-quebec-laz,lv-lgia-laz
+        run: python tests/smoke_providers.py --skip es-icgc,fi-maanmittauslaitos,fr-ign-laz,ch-swisstopo-laz,fr-craig-laz,pl-gugik-laz,ee-maaamet-laz,be-flanders-laz,ca-nrcan-laz,us-3dep-laz,ca-quebec-laz,lv-lgia-laz

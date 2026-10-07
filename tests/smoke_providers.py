@@ -157,15 +157,25 @@ def smoke_one(code, mod, lon, lat):
                 return ("SKIP", "cle/None") if needs_key else ("FAIL", "discover -> None (reseau/endpoint)")
             if not dalles:
                 return "FAIL", "0 dalle pour un point pourtant couvert"
-            nom, url = next(iter(dalles.items()))
-            if getattr(mod, "COG_WINDOWED", False):
-                res = L.telecharger_cog_fenetre(nom, url, dossier, bbox_natif)
-            elif getattr(mod, "COPC_WINDOWED", False):
-                # Nuages COPC (ca-nrcan-laz, us-3dep-laz…) : lecture fenêtrée
-                # range-request au lieu du download direct (le twin COG_WINDOWED
-                # a toujours été géré, celui-ci manquait — angle mort corrigé).
-                res = L.telecharger_copc_fenetre(nom, url, dossier, bbox_natif)
+            if getattr(mod, "COG_WINDOWED", False) or getattr(mod, "COPC_WINDOWED", False):
+                # Lecture fenêtrée : on lit la fenêtre du point dans chaque feuille que
+                # l'index renvoie. Une feuille dont l'étendue réelle ne contient pas la
+                # fenêtre ne donne AUCUN fichier ("absent"), ce qui est le comportement
+                # correct : l'index du Québec renvoie la feuille voisine d'un point proche
+                # d'une limite (constaté le 2026-10-07 : 7126 et 7145, le point est dans
+                # 7145). On passe donc à la suivante, et on ne conclut « absent » que si
+                # aucune feuille ne donne rien.
+                lire = (L.telecharger_cog_fenetre if getattr(mod, "COG_WINDOWED", False)
+                        # Nuages COPC (ca-nrcan-laz, us-3dep-laz…) : range-request au lieu
+                        # du download direct.
+                        else L.telecharger_copc_fenetre)
+                res = "absent"
+                for nom, url in dalles.items():
+                    res = lire(nom, url, dossier, bbox_natif)
+                    if res != "absent":
+                        break
             else:
+                nom, url = next(iter(dalles.items()))
                 res = L.telecharger_dalle_directe(nom, url, dossier)
             if res != "ok":
                 return "FAIL", f"download={res} ({nom})"
