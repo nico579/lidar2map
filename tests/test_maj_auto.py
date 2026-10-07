@@ -69,6 +69,18 @@ class AutoTest(unittest.TestCase):
                         entree.index("_normaliser_argv_valeurs_negatives()"))
 
 
+class VerificationDeVersion(unittest.TestCase):
+    def test_la_derniere_reponse_est_gardee_dans_le_dossier_d_etat(self):
+        # Un redémarrage ne repose pas la question à GitHub tant qu'elle a moins d'une heure.
+        L2M._verificateur_de_version.cache_clear()
+        try:
+            verificateur = L2M._verificateur_de_version()
+        finally:
+            L2M._verificateur_de_version.cache_clear()
+        self.assertEqual(verificateur._cache, L2M._dossiers_impl.DOSSIERS.dossier_etat() / "maj.json")
+        self.assertEqual(verificateur.fraicheur_s, 3600)
+
+
 class Description(unittest.TestCase):
     def test_service_et_agent_du_demarrage_automatique(self):
         with mock.patch.object(sys, "argv", ["lidar2map", "--port", "9000"]):
