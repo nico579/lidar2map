@@ -95,7 +95,9 @@ class OptionsDocumenteesTests(unittest.TestCase):
         self.assertEqual(manquantes, [])
 
     def test_options_hors_parser_existantes_et_documentees(self):
-        source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
+        # --installer-deps est lu par le moteur d'amorçage (_amorcage.py).
+        source = ((ROOT / "lidar2map.py").read_text(encoding="utf-8")
+                  + (ROOT / "_amorcage.py").read_text(encoding="utf-8"))
         for option in OPTIONS_HORS_PARSER:
             with self.subTest(option=option):
                 # Une option retirée du code doit aussi sortir de cette liste.

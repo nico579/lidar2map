@@ -8,7 +8,6 @@ fonction visee avec ses effets externes simules (pip, venv, exec et sorties).
 from __future__ import annotations
 
 import ast
-import builtins
 import contextlib
 import inspect
 import io
@@ -33,8 +32,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import lidar2map as L  # noqa: E402
-import _bootstrap_policy as bootstrap_policy  # noqa: E402
-import _bootstrap_runtime as bootstrap_runtime  # noqa: E402
+import _amorcage  # noqa: E402
+import _installation as installation  # noqa: E402
 import _bootstrap_tls as bootstrap_tls  # noqa: E402
 import _smoketest as smoketest  # noqa: E402
 import _logging_helpers as logging_helpers  # noqa: E402
@@ -43,410 +42,16 @@ import _runtime_paths as runtime_paths  # noqa: E402
 import _disk_guard as disk_guard  # noqa: E402
 
 
-class BootstrapModeTests(unittest.TestCase):
-    def _resolve(self, argv, env=None):
-        with mock.patch.object(L.sys, "argv", list(argv)), mock.patch.dict(
-            L.os.environ,
-            env or {},
-            clear=True,
-        ):
-            mode = L._resoudre_mode_bootstrap()
-            remaining = list(L.sys.argv)
-        return mode, remaining
-
-    def test_default_and_environment_modes(self):
-        self.assertEqual(self._resolve(["lidar2map.py"]),
-                         ("auto", ["lidar2map.py"]))
-        self.assertEqual(
-            self._resolve(
-                ["lidar2map.py"],
-                {"LIDAR2MAP_BOOTSTRAP": " PIP "},
-            ),
-            ("pip", ["lidar2map.py"]),
-        )
-        self.assertEqual(
-            self._resolve(
-                ["lidar2map.py"],
-                {"LIDAR2MAP_BOOTSTRAP": "invalide"},
-            ),
-            ("auto", ["lidar2map.py"]),
-        )
-
-    def test_cli_forms_override_environment_and_are_consumed(self):
-        mode, argv = self._resolve(
-            [
-                "lidar2map.py",
-                "--bootstrap=auto",
-                "--zone-name",
-                "zone",
-                "--bootstrap",
-                "none",
-            ],
-            {"LIDAR2MAP_BOOTSTRAP": "pip"},
-        )
-        self.assertEqual(mode, "none")
-        self.assertEqual(argv, ["lidar2map.py", "--zone-name", "zone"])
-
-    def test_valid_cli_cleanup_mutates_argv_in_place(self):
-        argv = [
-            "lidar2map.py",
-            "--bootstrap=pip",
-            "--zone-name",
-            "zone",
-            "--no-venv",
-            "--lidar",
-        ]
-        with mock.patch.object(L.sys, "argv", argv), mock.patch.dict(
-            L.os.environ,
-            {},
-            clear=True,
-        ):
-            original_id = id(L.sys.argv)
-            mode = L._resoudre_mode_bootstrap()
-            self.assertEqual(id(L.sys.argv), original_id)
-        self.assertEqual(mode, "pip")
-        self.assertEqual(
-            argv,
-            ["lidar2map.py", "--zone-name", "zone", "--lidar"],
-        )
-
-    def test_invalid_cli_values_fail_without_mutating_argv(self):
-        cases = (
-            ["lidar2map.py", "--bootstrap=invalide", "--lidar"],
-            ["lidar2map.py", "--bootstrap=", "--lidar"],
-            ["lidar2map.py", "--bootstrap", "invalide", "--lidar"],
-            ["lidar2map.py", "--bootstrap"],
-            ["lidar2map.py", "--bootstrap", "--lidar"],
-            [
-                "lidar2map.py",
-                "--bootstrap=none",
-                "--lidar",
-                "--bootstrap",
-                "invalide",
-            ],
-        )
-        for initial in cases:
-            with self.subTest(argv=initial):
-                argv = list(initial)
-                stderr = io.StringIO()
-                with mock.patch.object(L.sys, "argv", argv), mock.patch.dict(
-                    L.os.environ,
-                    {"LIDAR2MAP_BOOTSTRAP": "none"},
-                    clear=True,
-                ), contextlib.redirect_stderr(stderr):
-                    with self.assertRaises(SystemExit) as raised:
-                        L._resoudre_mode_bootstrap()
-                    self.assertIs(L.sys.argv, argv)
-                self.assertEqual(raised.exception.code, 2)
-                self.assertEqual(argv, initial)
-                self.assertIn("--bootstrap", stderr.getvalue())
-
-    def test_legacy_aliases_are_consumed(self):
-        cases = (
-            ("--no-bootstrap", "none"),
-            ("--venv", "auto"),
-            ("--no-venv", "pip"),
-        )
-        for flag, expected in cases:
-            with self.subTest(flag=flag):
-                self.assertEqual(
-                    self._resolve(["lidar2map.py", flag, "--lidar"]),
-                    (expected, ["lidar2map.py", "--lidar"]),
-                )
-
-    def test_legacy_alias_precedence_remains_fixed(self):
-        for aliases in (
-            ["--no-venv", "--venv", "--no-bootstrap"],
-            ["--no-bootstrap", "--venv", "--no-venv"],
-        ):
-            with self.subTest(aliases=aliases):
-                self.assertEqual(
-                    self._resolve(
-                        ["lidar2map.py", "--bootstrap=none", *aliases, "--lidar"]
-                    ),
-                    ("pip", ["lidar2map.py", "--lidar"]),
-                )
-
-    def test_help_prints_bootstrap_documentation_and_exits_zero(self):
-        output = io.StringIO()
-        argv = ["lidar2map.py", "--help-bootstrap"]
-        with mock.patch.object(L.sys, "argv", argv), mock.patch.dict(
-            L.os.environ,
-            {},
-            clear=True,
-        ), contextlib.redirect_stdout(output), self.assertRaises(
-            SystemExit,
-        ) as raised:
-            L._resoudre_mode_bootstrap()
-        self.assertEqual(raised.exception.code, 0)
-        self.assertIn("--bootstrap=auto", output.getvalue())
-
-    def test_help_precedes_invalid_cli_and_leaves_argv_untouched(self):
-        output = io.StringIO()
-        argv = ["lidar2map.py", "--bootstrap=invalide", "--help-bootstrap"]
-        with mock.patch.object(L.sys, "argv", argv), mock.patch.dict(
-            L.os.environ,
-            {},
-            clear=True,
-        ), contextlib.redirect_stdout(output), self.assertRaises(
-            SystemExit,
-        ) as raised:
-            L._resoudre_mode_bootstrap()
-        self.assertEqual(raised.exception.code, 0)
-        self.assertEqual(
-            argv,
-            ["lidar2map.py", "--bootstrap=invalide", "--help-bootstrap"],
-        )
-        self.assertIn("--bootstrap=auto", output.getvalue())
-
-
-class BootstrapOrchestrationTests(unittest.TestCase):
-    def _orchestrate(self, mode):
-        events = []
-        with mock.patch.object(
-            L,
-            "_resoudre_mode_bootstrap",
-            side_effect=lambda: events.append("resolve") or mode,
-        ), mock.patch.object(
-            L,
-            "_bootstrap_venv_si_besoin_avec_mode",
-            side_effect=lambda value: events.append(("venv", value)),
-        ), mock.patch.object(
-            L,
-            "_bootstrap_pip",
-            side_effect=lambda: events.append("pip"),
-        ), mock.patch.object(
-            L,
-            "_installer_deps",
-            side_effect=lambda: events.append("deps"),
-        ), mock.patch.object(
-            L,
-            "_restaurer_tls_strict",
-            side_effect=lambda: events.append("tls"),
-        ):
-            L._bootstrap_environnement()
-        return events
-
-    def test_orchestrator_routes_each_mode_in_order(self):
-        self.assertEqual(
-            self._orchestrate("auto"),
-            ["resolve", ("venv", "auto"), "deps", "tls"],
-        )
-        self.assertEqual(
-            self._orchestrate("pip"),
-            ["resolve", ("venv", "pip"), "pip", "deps", "tls"],
-        )
-        self.assertEqual(
-            self._orchestrate("none"),
-            ["resolve", ("venv", "none")],
-        )
-
-    def test_orchestrator_stops_at_the_first_failed_stage(self):
-        expectations = {
-            "resolve": ["resolve"],
-            "venv": ["resolve", "venv"],
-            "pip": ["resolve", "venv", "pip"],
-            "deps": ["resolve", "venv", "pip", "deps"],
-            "tls": ["resolve", "venv", "pip", "deps", "tls"],
-        }
-        for failed, expected in expectations.items():
-            with self.subTest(failed=failed):
-                events = []
-
-                def stage(name, result=None):
-                    def run(*_args):
-                        events.append(name)
-                        if name == failed:
-                            raise RuntimeError(name)
-                        return result
-
-                    return run
-
-                with mock.patch.object(
-                    L,
-                    "_resoudre_mode_bootstrap",
-                    side_effect=stage("resolve", "pip"),
-                ), mock.patch.object(
-                    L,
-                    "_bootstrap_venv_si_besoin_avec_mode",
-                    side_effect=stage("venv"),
-                ), mock.patch.object(
-                    L,
-                    "_bootstrap_pip",
-                    side_effect=stage("pip"),
-                ), mock.patch.object(
-                    L,
-                    "_installer_deps",
-                    side_effect=stage("deps"),
-                ), mock.patch.object(
-                    L,
-                    "_restaurer_tls_strict",
-                    side_effect=stage("tls"),
-                ), self.assertRaisesRegex(RuntimeError, failed):
-                    L._bootstrap_environnement()
-                self.assertEqual(events, expected)
-
-    def test_frozen_bundle_cleans_bootstrap_flags_then_bypasses_runtime(self):
-        argv = ["lidar2map.py", "--bootstrap=none", "--lidar"]
-        resolver = mock.Mock(wraps=L._resoudre_mode_bootstrap)
-        runtime = (
-            "_bootstrap_venv_si_besoin_avec_mode",
-            "_bootstrap_pip",
-            "_installer_deps",
-            "_restaurer_tls_strict",
-        )
-        patches = [mock.patch.object(L, name) for name in runtime]
-        with mock.patch.object(L.sys, "frozen", True, create=True), \
-             mock.patch.object(L.sys, "argv", argv), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L, "_resoudre_mode_bootstrap", resolver):
-            mocks = [patcher.start() for patcher in patches]
-            try:
-                L._bootstrap_environnement()
-            finally:
-                for patcher in reversed(patches):
-                    patcher.stop()
-        resolver.assert_called_once_with()
-        self.assertEqual(argv, ["lidar2map.py", "--lidar"])
-        for collaborator in mocks:
-            collaborator.assert_not_called()
-
-    def test_frozen_bundle_still_handles_bootstrap_help(self):
-        argv = ["lidar2map.py", "--help-bootstrap"]
-        output = io.StringIO()
-        with mock.patch.object(L.sys, "frozen", True, create=True), \
-             mock.patch.object(L.sys, "argv", argv), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             contextlib.redirect_stdout(output), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_environnement()
-        self.assertEqual(raised.exception.code, 0)
-        self.assertIn("--bootstrap=auto", output.getvalue())
-
-    def test_frozen_bundle_rejects_invalid_bootstrap_before_runtime(self):
-        argv = ["lidar2map.py", "--bootstrap=invalide", "--lidar"]
-        stderr = io.StringIO()
-        with mock.patch.object(L.sys, "frozen", True, create=True), \
-             mock.patch.object(L.sys, "argv", argv), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(
-                 L,
-                 "_bootstrap_venv_si_besoin_avec_mode",
-             ) as venv, \
-             mock.patch.object(L, "_bootstrap_pip") as pip, \
-             mock.patch.object(L, "_installer_deps") as deps, \
-             mock.patch.object(L, "_restaurer_tls_strict") as tls, \
-             contextlib.redirect_stderr(stderr), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_environnement()
-        self.assertEqual(raised.exception.code, 2)
-        self.assertEqual(argv, ["lidar2map.py", "--bootstrap=invalide", "--lidar"])
-        self.assertIn("--bootstrap", stderr.getvalue())
-        for collaborator in (venv, pip, deps, tls):
-            collaborator.assert_not_called()
-
-    def test_mode_wrapper_removes_temporary_environment_on_exception(self):
-        with mock.patch.dict(L.os.environ, {}, clear=True), mock.patch.object(
-            L,
-            "_bootstrap_venv_si_besoin",
-            side_effect=RuntimeError("boom"),
-        ), self.assertRaisesRegex(RuntimeError, "boom"):
-            L._bootstrap_venv_si_besoin_avec_mode("pip")
-        self.assertNotIn("LIDAR2MAP_BOOTSTRAP", L.os.environ)
-
-    def test_mode_wrapper_exposes_mode_only_during_call(self):
-        observed = []
-
-        def probe():
-            observed.append(L.os.environ.get("LIDAR2MAP_BOOTSTRAP"))
-
-        with mock.patch.dict(L.os.environ, {}, clear=True), mock.patch.object(
-            L,
-            "_bootstrap_venv_si_besoin",
-            side_effect=probe,
-        ):
-            L._bootstrap_venv_si_besoin_avec_mode("auto")
-            self.assertNotIn("LIDAR2MAP_BOOTSTRAP", L.os.environ)
-        self.assertEqual(observed, ["auto"])
-
-    def test_mode_wrapper_intentionally_discards_a_previous_environment_value(self):
-        observed = []
-
-        def probe():
-            observed.append(L.os.environ.get("LIDAR2MAP_BOOTSTRAP"))
-
-        with mock.patch.dict(
-            L.os.environ,
-            {"LIDAR2MAP_BOOTSTRAP": "none"},
-            clear=True,
-        ), mock.patch.object(
-            L,
-            "_bootstrap_venv_si_besoin",
-            side_effect=probe,
-        ):
-            L._bootstrap_venv_si_besoin_avec_mode("pip")
-            self.assertNotIn("LIDAR2MAP_BOOTSTRAP", L.os.environ)
-        self.assertEqual(observed, ["pip"])
-
-    def test_mode_wrapper_discards_previous_value_when_the_engine_fails(self):
-        with mock.patch.dict(
-            L.os.environ,
-            {"LIDAR2MAP_BOOTSTRAP": "none"},
-            clear=True,
-        ), mock.patch.object(
-            L,
-            "_bootstrap_venv_si_besoin",
-            side_effect=RuntimeError("boom"),
-        ):
-            with self.assertRaisesRegex(RuntimeError, "boom"):
-                L._bootstrap_venv_si_besoin_avec_mode("auto")
-            self.assertNotIn("LIDAR2MAP_BOOTSTRAP", L.os.environ)
-
-
 class BootstrapControlModuleTests(unittest.TestCase):
     def test_early_bootstrap_modules_parse_with_python_39_grammar(self):
         for name in (
-            "_bootstrap_policy.py",
-            "_bootstrap_runtime.py",
+            "_amorcage.py",
+            "_installation.py",
             "_bootstrap_tls.py",
         ):
             with self.subTest(module=name):
                 source = (ROOT / name).read_text(encoding="utf-8")
                 ast.parse(source, filename=name, feature_version=(3, 9))
-
-    def test_policy_resolution_does_not_mutate_its_inputs(self):
-        argv = [
-            "lidar2map.py",
-            "--bootstrap",
-            "none",
-            "--zone-name",
-            "zone",
-        ]
-        environnement = {"LIDAR2MAP_BOOTSTRAP": "pip", "AUTRE": "valeur"}
-        argv_initial = list(argv)
-        environnement_initial = dict(environnement)
-
-        resolution = bootstrap_policy.resoudre_mode_bootstrap(
-            argv,
-            environnement,
-        )
-
-        self.assertEqual(resolution.mode, "none")
-        self.assertEqual(
-            resolution.argv,
-            ("lidar2map.py", "--zone-name", "zone"),
-        )
-        self.assertFalse(resolution.aide)
-        self.assertEqual(argv, argv_initial)
-        self.assertEqual(environnement, environnement_initial)
-
-    def test_policy_rejects_invalid_cli_without_mutating_inputs(self):
-        argv = ["lidar2map.py", "--bootstrap", "--lidar"]
-        environnement = {"LIDAR2MAP_BOOTSTRAP": "auto"}
-        with self.assertRaisesRegex(ValueError, "--bootstrap"):
-            bootstrap_policy.resoudre_mode_bootstrap(argv, environnement)
-        self.assertEqual(argv, ["lidar2map.py", "--bootstrap", "--lidar"])
-        self.assertEqual(environnement, {"LIDAR2MAP_BOOTSTRAP": "auto"})
 
 
 class BootstrapTlsTests(unittest.TestCase):
@@ -684,101 +289,11 @@ class BootstrapTlsTests(unittest.TestCase):
         )
 
 
-class BootstrapRuntimeFacadeTests(unittest.TestCase):
-    def test_runtime_module_and_historical_facade_signatures_are_stable(self):
-        self.assertIs(L._bootstrap_policy_impl, bootstrap_policy)
-        self.assertIs(L._bootstrap_runtime_impl, bootstrap_runtime)
-        expected = {
-            L._resoudre_mode_bootstrap: "()",
-            L._verifier_venv_linux: "()",
-            L._bootstrap_venv_si_besoin: "()",
-            L._relancer_dans_venv: "(venv_python, is_windows)",
-            L._bootstrap_pip: "()",
-            L._installer_deps: "()",
-            L._bootstrap_environnement: "()",
-            L._bootstrap_venv_si_besoin_avec_mode: "(mode)",
-        }
-        for facade, signature in expected.items():
-            with self.subTest(facade=facade.__name__):
-                self.assertEqual(str(inspect.signature(facade)), signature)
-
-    def test_historical_facades_keep_runtime_documentation(self):
-        pairs = (
-            (L._verifier_venv_linux, bootstrap_runtime.verifier_venv_linux),
-            (
-                L._bootstrap_venv_si_besoin,
-                bootstrap_runtime.bootstrap_venv_si_besoin,
-            ),
-            (L._relancer_dans_venv, bootstrap_runtime.relancer_dans_venv),
-            (L._bootstrap_pip, bootstrap_runtime.bootstrap_pip),
-            (L._installer_deps, bootstrap_runtime.installer_deps),
-            (
-                L._bootstrap_environnement,
-                bootstrap_runtime.orchestrer_bootstrap,
-            ),
-            (
-                L._bootstrap_venv_si_besoin_avec_mode,
-                bootstrap_runtime.bootstrap_venv_avec_mode,
-            ),
-        )
-        for facade, implementation in pairs:
-            with self.subTest(facade=facade.__name__):
-                self.assertEqual(facade.__doc__, implementation.__doc__)
-
-
-class BootstrapRelaunchTests(unittest.TestCase):
-    def test_unix_relaunch_replaces_process_with_exact_argv(self):
-        executable = Path("/tmp/lidar-venv/bin/python")
-        with mock.patch.object(
-            L.sys,
-            "argv",
-            ["lidar2map.py", "--lidar", "--zone-name", "zone"],
-        ), mock.patch.object(L.os, "execv") as execv:
-            L._relancer_dans_venv(executable, False)
-        execv.assert_called_once_with(
-            str(executable),
-            [str(executable), "lidar2map.py", "--lidar", "--zone-name", "zone"],
-        )
-
-    def test_windows_relaunch_waits_for_child_and_propagates_return_code(self):
-        executable = Path("C:/venv/Scripts/python.exe")
-        stdout = SimpleNamespace(flush=mock.Mock())
-        stderr = SimpleNamespace(flush=mock.Mock())
-        stdin = object()
-        completed = SimpleNamespace(returncode=17)
-        with mock.patch.object(L.sys, "argv", ["lidar2map.py", "--lidar"]), \
-             mock.patch.object(L.sys, "stdout", stdout), \
-             mock.patch.object(L.sys, "stderr", stderr), \
-             mock.patch.object(L.sys, "stdin", stdin), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             self.assertRaises(SystemExit) as raised:
-            L._relancer_dans_venv(executable, True)
-        self.assertEqual(raised.exception.code, 17)
-        stdout.flush.assert_called_once_with()
-        stderr.flush.assert_called_once_with()
-        run.assert_called_once_with(
-            [str(executable), "lidar2map.py", "--lidar"],
-            stdout=stdout,
-            stderr=stderr,
-            stdin=stdin,
-        )
-
-    def test_windows_keyboard_interrupt_maps_to_exit_130(self):
-        stream = SimpleNamespace(flush=mock.Mock())
-        with mock.patch.object(L.sys, "argv", ["lidar2map.py"]), \
-             mock.patch.object(L.sys, "stdout", stream), \
-             mock.patch.object(L.sys, "stderr", stream), \
-             mock.patch.object(L.subprocess, "run", side_effect=KeyboardInterrupt), \
-             self.assertRaises(SystemExit) as raised:
-            L._relancer_dans_venv(Path("python.exe"), True)
-        self.assertEqual(raised.exception.code, 130)
-
-
 class BootstrapDependencyTests(unittest.TestCase):
     def test_main_import_by_spec_works_from_isolated_cwd(self):
         app_literal = repr(str(ROOT / "lidar2map.py"))
         code = (
-            "import importlib.util, os\n"
+            "import importlib.util, os, pathlib\n"
             "os.environ['LIDAR2MAP_BOOTSTRAP'] = 'none'\n"
             f"spec = importlib.util.spec_from_file_location('isolated_lidar2map', {app_literal})\n"
             "module = importlib.util.module_from_spec(spec)\n"
@@ -787,7 +302,7 @@ class BootstrapDependencyTests(unittest.TestCase):
             # _bootstrap_runtime (module frère) confirme que l'auto-fixup de
             # sys.path a fonctionne depuis ce cwd isole, et que le module
             # retrouve requirements.in a cote de lui, pas dans ce cwd.
-            "assert 'rasterio' in module._bootstrap_runtime_impl.dependances_directes()\n"
+            "assert 'rasterio' in module._amorcage.dependances_directes(pathlib.Path(module.__file__).parent / 'requirements.in')\n"
         )
         with self.subTest(mode="spec_from_file_location"):
             with tempfile.TemporaryDirectory() as directory:
@@ -812,6 +327,10 @@ class BootstrapDependencyTests(unittest.TestCase):
                 "raise RuntimeError('module TLS hostile chargé')\n",
                 encoding="utf-8",
             )
+            (hostile / "_amorcage.py").write_text(
+                "raise RuntimeError('module d amorçage hostile chargé')\n",
+                encoding="utf-8",
+            )
             app_literal = repr(str(ROOT / "lidar2map.py"))
             root_literal = repr(str(ROOT))
             hostile_literal = repr(str(hostile))
@@ -825,6 +344,8 @@ class BootstrapDependencyTests(unittest.TestCase):
                 "spec.loader.exec_module(module)\n"
                 f"expected = pathlib.Path({root_literal}, '_bootstrap_tls.py').resolve()\n"
                 "assert pathlib.Path(module._bootstrap_tls_impl.__file__).resolve() == expected\n"
+                f"engine = pathlib.Path({root_literal}, '_amorcage.py').resolve()\n"
+                "assert pathlib.Path(module._amorcage.__file__).resolve() == engine\n"
             )
             completed = subprocess.run(
                 [sys.executable, "-I", "-c", code],
@@ -840,153 +361,6 @@ class BootstrapDependencyTests(unittest.TestCase):
             completed.stdout + completed.stderr,
         )
 
-    def test_bootstrap_pip_is_noop_when_pip_exists(self):
-        with mock.patch.object(
-            L.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=0),
-        ) as run:
-            L._bootstrap_pip()
-        run.assert_called_once_with(
-            [L.sys.executable, "-m", "pip", "--version"],
-            capture_output=True,
-        )
-
-    def test_bootstrap_pip_uses_ensurepip_when_missing(self):
-        ensurepip = SimpleNamespace(bootstrap=mock.Mock())
-        with mock.patch.object(
-            L.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=1),
-        ), mock.patch.dict(sys.modules, {"ensurepip": ensurepip}):
-            L._bootstrap_pip()
-        ensurepip.bootstrap.assert_called_once_with(upgrade=True)
-
-    def test_bootstrap_pip_failure_exits_one(self):
-        ensurepip = SimpleNamespace(
-            bootstrap=mock.Mock(side_effect=RuntimeError("ensurepip failed")),
-        )
-        with mock.patch.object(
-            L.subprocess,
-            "run",
-            return_value=SimpleNamespace(returncode=1),
-        ), mock.patch.dict(sys.modules, {"ensurepip": ensurepip}), \
-             contextlib.redirect_stdout(io.StringIO()), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_pip()
-        self.assertEqual(raised.exception.code, 1)
-
-    def test_install_dependencies_is_noop_when_everything_is_present(self):
-        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=[]), \
-             mock.patch.object(L.subprocess, "run") as run:
-            L._installer_deps()
-        run.assert_not_called()
-
-    def test_linux_venv_guard_exits_when_module_and_command_are_missing(self):
-        real_import = builtins.__import__
-
-        def importing(name, *args, **kwargs):
-            if name == "venv":
-                raise ImportError("forced missing venv")
-            return real_import(name, *args, **kwargs)
-
-        output = io.StringIO()
-        with mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 return_value=SimpleNamespace(returncode=1),
-             ) as run, mock.patch.object(
-                 builtins,
-                 "__import__",
-                 side_effect=importing,
-             ), contextlib.redirect_stdout(output), self.assertRaises(
-                 SystemExit,
-             ) as raised:
-            L._verifier_venv_linux()
-        self.assertEqual(raised.exception.code, 1)
-        self.assertIn("python3-venv", output.getvalue())
-        run.assert_called_once()
-
-    def test_venv_guard_is_noop_outside_linux(self):
-        with mock.patch.object(L.platform, "system", return_value="Windows"), \
-             mock.patch.object(L.subprocess, "run") as run:
-            L._verifier_venv_linux()
-        run.assert_not_called()
-
-    def test_linux_venv_guard_accepts_working_command_fallback(self):
-        real_import = builtins.__import__
-
-        def importing(name, *args, **kwargs):
-            if name == "venv":
-                raise ImportError("forced missing import")
-            return real_import(name, *args, **kwargs)
-
-        with mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 return_value=SimpleNamespace(returncode=0),
-             ) as run, mock.patch.object(
-                 builtins,
-                 "__import__",
-                 side_effect=importing,
-             ):
-            L._verifier_venv_linux()
-        run.assert_called_once_with(
-            [L.sys.executable, "-m", "venv", "--help"],
-            capture_output=True,
-        )
-
-    def test_install_dependencies_uses_standard_strategy_first(self):
-        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=["Pillow"]), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             contextlib.redirect_stdout(io.StringIO()):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0],
-                         bootstrap_runtime.commande_installation(L.sys.executable))
-
-    def test_install_dependencies_tries_three_system_strategies(self):
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="denied")
-        output = io.StringIO()
-        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=["Pillow"]), \
-             mock.patch.object(L.sys, "prefix", "system"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             contextlib.redirect_stdout(output), \
-             self.assertRaises(SystemExit) as raised:
-            L._installer_deps()
-        self.assertEqual(raised.exception.code, 1)
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 3)
-        for command in commands:
-            self.assertIn("--require-hashes", command)
-            self.assertIn(str(bootstrap_runtime.VERROU), command)
-        self.assertNotIn("--break-system-packages", commands[0])
-        self.assertIn("--break-system-packages", commands[1])
-        self.assertIn("--user", commands[2])
-        self.assertIn("Missing packages: Pillow", output.getvalue())
-        self.assertIn(f"pip install -r {bootstrap_runtime.VERROU}", output.getvalue())
-
-    def test_install_dependencies_in_a_venv_tries_only_the_standard_strategy(self):
-        completed = SimpleNamespace(returncode=1, stdout="", stderr="no network")
-        with mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=["numba"]), \
-             mock.patch.object(L.sys, "prefix", "venv"), \
-             mock.patch.object(L.sys, "base_prefix", "system"), \
-             mock.patch.object(L.subprocess, "run", return_value=completed) as run, \
-             contextlib.redirect_stdout(io.StringIO()), \
-             self.assertRaises(SystemExit):
-            L._installer_deps()
-        self.assertEqual(run.call_count, 1)
-
 
 class VerrouTests(unittest.TestCase):
     """Dépendances déclarées une fois (requirements.in), verrouillées pour
@@ -1000,12 +374,12 @@ class VerrouTests(unittest.TestCase):
             if ligne[:1].isalnum() and "==" in ligne:
                 nom, reste = ligne.split("==", 1)
                 version, _, marqueur = reste.partition(";")
-                pins[(bootstrap_runtime.nom_normalise(nom),
+                pins[(_amorcage.nom_normalise(nom),
                       marqueur.replace("\\", "").strip())] = version.strip()
         return pins
 
     def test_direct_dependencies_are_read_without_versions_or_markers(self):
-        noms = bootstrap_runtime.dependances_directes(conditionnelles=True)
+        noms = _amorcage.dependances_directes(ROOT / "requirements.in", conditionnelles=True)
         for attendu in ("Pillow", "rasterio", "pystray", "platformdirs",
                         "nico579-commons", "numba", "cloth-simulation-filter"):
             self.assertIn(attendu, noms)
@@ -1018,7 +392,7 @@ class VerrouTests(unittest.TestCase):
         # démarrage ne l'exige pas, sans quoi pip serait relancé à chaque
         # démarrage. Le filtre CSF, compilé depuis ses sources sur Mac
         # Intel, est inconditionnel et donc exigé partout.
-        requises = bootstrap_runtime.dependances_directes()
+        requises = _amorcage.dependances_directes(ROOT / "requirements.in")
         self.assertIn("rasterio", requises)
         self.assertNotIn("numba", requises)
         self.assertIn("cloth-simulation-filter", requises)
@@ -1027,18 +401,18 @@ class VerrouTests(unittest.TestCase):
             fichier.write_text("# commentaire\n-c contraintes.txt\nPillow>=10  # image\n"
                                "numba ; sys_platform != 'darwin'\nlaspy[lazrs]\n",
                                encoding="utf-8")
-            self.assertEqual(bootstrap_runtime.dependances_directes(fichier),
+            self.assertEqual(_amorcage.dependances_directes(fichier),
                              ["Pillow", "laspy"])
             self.assertEqual(
-                bootstrap_runtime.dependances_directes(fichier, conditionnelles=True),
+                _amorcage.dependances_directes(fichier, conditionnelles=True),
                 ["Pillow", "numba", "laspy"])
 
     def test_every_direct_dependency_is_in_both_locks(self):
         for fichier in ("requirements.txt", "requirements-build.txt"):
             verrouilles = {nom for nom, _ in self._pins(fichier)}
             with self.subTest(verrou=fichier):
-                for nom in bootstrap_runtime.dependances_directes(conditionnelles=True):
-                    self.assertIn(bootstrap_runtime.nom_normalise(nom), verrouilles)
+                for nom in _amorcage.dependances_directes(ROOT / "requirements.in", conditionnelles=True):
+                    self.assertIn(_amorcage.nom_normalise(nom), verrouilles)
 
     def test_build_lock_adds_pyinstaller_at_the_same_versions(self):
         execution = self._pins("requirements.txt")
@@ -1059,70 +433,27 @@ class VerrouTests(unittest.TestCase):
                 with self.subTest(verrou=fichier, paquet=entree.split("==", 1)[0]):
                     self.assertIn("--hash=sha256:", entree)
 
-    def test_absent_packages_are_found_from_metadata_with_normalised_names(self):
-        installees = [SimpleNamespace(metadata={"Name": n})
-                      for n in ("pillow", "cloth_simulation_filter", "Rasterio")]
-        self.assertEqual(
-            bootstrap_runtime.dependances_absentes(
-                ["Pillow", "cloth-simulation-filter", "rasterio", "numba"],
-                distributions=installees),
-            ["numba"])
-
-    def test_install_command_verifies_hashes_of_the_lock(self):
-        self.assertEqual(
-            bootstrap_runtime.commande_installation("python", "--user"),
-            ["python", "-m", "pip", "install", "-q", "--disable-pip-version-check",
-             "--require-hashes", "-r", str(bootstrap_runtime.VERROU), "--user"])
-
-
-class BootstrapFullInstallTests(unittest.TestCase):
-    def _run(self, returncode=0, stderr=""):
-        commands = []
-        messages = []
-
-        def lancer(command, **kwargs):
-            commands.append((command, kwargs))
-            return SimpleNamespace(returncode=returncode, stderr=stderr, stdout="")
-
-        ok = bootstrap_runtime.installer_toutes_dependances(
-            lancer=lancer, executable="python-test", ecrire=messages.append)
-        return ok, commands, messages
-
-    def test_full_install_installs_the_whole_lock(self):
-        ok, commands, messages = self._run()
-        self.assertTrue(ok)
-        self.assertEqual(commands[0][0],
-                         bootstrap_runtime.commande_installation("python-test"))
-        self.assertIn("  All dependencies installed.", messages)
-
-    def test_full_install_failure_is_reported_and_returns_false(self):
-        ok, commands, messages = self._run(returncode=1, stderr="hash mismatch")
-        self.assertFalse(ok)
-        self.assertEqual(len(commands), 1)
-        self.assertIn("    ERROR: pip could not install the lock:", messages)
-        self.assertIn("hash mismatch", messages[-1])
-
 
 class BootstrapUninstallPlanningTests(unittest.TestCase):
     def test_windows_targets_use_localappdata(self):
-        targets = bootstrap_runtime.chemins_desinstallation(
+        targets = installation.chemins_desinstallation(
             systeme="Windows", home=Path("/home/test"), localappdata=Path("/local")
         )
         self.assertEqual(targets[0][0], Path("/local/lidar2map"))
         self.assertEqual(targets[1][0], Path("/home/test/.lidar2map/venv"))
 
     def test_macos_and_linux_targets_are_deterministic(self):
-        mac = bootstrap_runtime.chemins_desinstallation(
+        mac = installation.chemins_desinstallation(
             systeme="Darwin", home=Path("/home/test")
         )
-        linux = bootstrap_runtime.chemins_desinstallation(
+        linux = installation.chemins_desinstallation(
             systeme="Linux", home=Path("/home/test")
         )
         self.assertEqual(mac[0][0], Path("/home/test/Library/Application Support/lidar2map"))
         self.assertEqual(linux[0][0], Path("/home/test/.local/share/lidar2map"))
 
     def test_planning_does_not_touch_filesystem(self):
-        targets = bootstrap_runtime.chemins_desinstallation(
+        targets = installation.chemins_desinstallation(
             systeme="Other", home=Path("/path/that/need/not/exist")
         )
         self.assertEqual(len(targets), 4)
@@ -1134,14 +465,14 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
             home = root / "home"
             outside = root / "outside.txt"
             outside.write_bytes(b"preserve")
-            targets = bootstrap_runtime.chemins_desinstallation(
+            targets = installation.chemins_desinstallation(
                 systeme="Linux", home=home
             )
             for index, (path, _label) in enumerate(targets):
                 path.mkdir(parents=True)
                 (path / f"file-{index}.bin").write_bytes(b"data")
             messages = []
-            ok = bootstrap_runtime.desinstaller_lidar2map(
+            ok = installation.desinstaller_lidar2map(
                 systeme="Linux", home=home, ecrire=messages.append
             )
             self.assertTrue(ok)
@@ -1152,7 +483,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
     def test_uninstall_reports_partial_failure_and_continues(self):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp) / "home"
-            targets = bootstrap_runtime.chemins_desinstallation(
+            targets = installation.chemins_desinstallation(
                 systeme="Linux", home=home
             )
             for path, _label in targets[:2]:
@@ -1167,7 +498,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
                 path.rmdir()
 
             messages = []
-            ok = bootstrap_runtime.desinstaller_lidar2map(
+            ok = installation.desinstaller_lidar2map(
                 systeme="Linux",
                 home=home,
                 supprimer_arbre=remover,
@@ -1183,7 +514,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
              mock.patch.object(L.Path, "home", return_value=Path("/home/test")), \
              mock.patch.dict(L.os.environ, {"LOCALAPPDATA": "/local"}, clear=True), \
              mock.patch.object(
-                 L._bootstrap_runtime_impl,
+                 L._installation_impl,
                  "desinstaller_lidar2map",
                  return_value=True,
              ) as uninstall:
@@ -1199,7 +530,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
         with mock.patch.object(L.sys, "frozen", True, create=True), \
              mock.patch.object(L.sys, "executable", "/opt/lidar2map/lidar2map"), \
              mock.patch.object(
-                 L._bootstrap_runtime_impl,
+                 L._installation_impl,
                  "desinstaller_lidar2map",
                  return_value=True,
              ) as uninstall:
@@ -1212,7 +543,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
         # lanceur d'une version <= 1.54 extrayait le sien.
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp) / "home"
-            targets = bootstrap_runtime.chemins_desinstallation(
+            targets = installation.chemins_desinstallation(
                 systeme="Linux", home=home
             )
             for path, _label in targets:
@@ -1221,7 +552,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
             programme = extraction / "lidar2map"
             programme.write_bytes(b"")
             messages = []
-            ok = bootstrap_runtime.desinstaller_lidar2map(
+            ok = installation.desinstaller_lidar2map(
                 systeme="Linux", home=home, executable=str(programme),
                 ecrire=messages.append,
             )
@@ -1245,7 +576,7 @@ class BootstrapUninstallPlanningTests(unittest.TestCase):
                  mock.patch("platform.system", return_value="Windows"), \
                  mock.patch.dict(os.environ, {"LOCALAPPDATA": str(localappdata)}), \
                  mock.patch.object(
-                     bootstrap_runtime,
+                     installation,
                      "desinstaller_lidar2map",
                      return_value=True,
                  ) as uninstall, \
@@ -1280,7 +611,7 @@ class FormerLauncherCleanupTests(unittest.TestCase):
         (self.extraction / ".bundle_sha").write_text("abc\n1", encoding="utf-8")
 
     def nettoyer(self, executable=None):
-        return bootstrap_runtime.nettoyer_ancienne_extraction(
+        return installation.nettoyer_ancienne_extraction(
             systeme="Windows", home=self.root / "home",
             localappdata=str(self.root / "local"),
             executable=executable or self.exe)
@@ -1306,7 +637,7 @@ class FormerLauncherCleanupTests(unittest.TestCase):
     def test_extraction_in_use_waits_for_the_next_launch(self):
         # Sous Windows, renommer un dossier dont un programme tourne encore
         # échoue : rien n'est retiré, le lancement suivant retentera.
-        with mock.patch.object(bootstrap_runtime.os, "rename",
+        with mock.patch.object(installation.os, "rename",
                                side_effect=PermissionError(13, "in use")):
             self.assertEqual(self.nettoyer(), [])
         self.assertTrue((self.extraction / ".bundle_sha").is_file())
@@ -1768,253 +1099,6 @@ class DiskGuardTests(unittest.TestCase):
         self.assertIn("chunk 002x003: 4/9 chunks done", messages[1])
 
 
-class BootstrapVenvEngineTests(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _venv_paths(self, system_name="Linux"):
-        root = self.root / ".lidar2map" / "venv"
-        if system_name == "Windows":
-            return root, root / "Scripts" / "python.exe"
-        return root, root / "bin" / "python"
-
-    @staticmethod
-    def _completed(returncode=0, stderr="", stdout=""):
-        return SimpleNamespace(returncode=returncode, stderr=stderr, stdout=stdout)
-
-    def _existing_venv(self, marque=None):
-        venv_path, venv_python = self._venv_paths()
-        venv_python.parent.mkdir(parents=True)
-        venv_python.touch()
-        if marque is not None:
-            (venv_path / bootstrap_runtime.MARQUE_VERROU).write_text(marque + "\n")
-        return venv_path, venv_python
-
-    def _run_auto(self, run, system_name="Linux", executable=None, output=None):
-        """Lance le moteur en mode auto, dossier personnel temporaire, aucun
-        environnement actif, hors du venv géré ; ``run`` : options du faux
-        subprocess.run. Rend (relance, garde venv linux, code de sortie)."""
-        code = None
-        with contextlib.ExitStack() as pile:
-            for correctif in (
-                mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"),
-                mock.patch.object(L.platform, "system", return_value=system_name),
-                mock.patch.object(Path, "home", return_value=self.root),
-                mock.patch.object(L.sys, "prefix", str(self.root / "system")),
-                mock.patch.dict(L.os.environ, {}, clear=True),
-                mock.patch.object(L.subprocess, "run", **run),
-            ):
-                pile.enter_context(correctif)
-            if executable is not None:
-                pile.enter_context(mock.patch.object(L.sys, "executable", executable))
-            relaunch = pile.enter_context(mock.patch.object(L, "_relancer_dans_venv"))
-            guard = pile.enter_context(mock.patch.object(L, "_verifier_venv_linux"))
-            pile.enter_context(contextlib.redirect_stdout(output or io.StringIO()))
-            try:
-                L._bootstrap_venv_si_besoin()
-            except SystemExit as fin:
-                code = fin.code
-        return relaunch, guard, code
-
-    def test_none_mode_with_all_packages_present_has_no_external_effect(self):
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="none"), \
-             mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=[]) as absentes, \
-             mock.patch.object(
-                 L.subprocess,
-                 "run",
-                 side_effect=AssertionError("subprocess interdit en mode none"),
-             ) as run:
-            L._bootstrap_venv_si_besoin()
-        run.assert_not_called()
-        absentes.assert_called_once_with(bootstrap_runtime.dependances_directes())
-
-    def test_none_mode_reports_every_missing_package_and_exits_one(self):
-        output = io.StringIO()
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="none"), \
-             mock.patch.object(bootstrap_runtime, "dependances_absentes",
-                               return_value=["ijson", "rasterio"]), \
-             mock.patch.object(L.subprocess, "run") as run, \
-             contextlib.redirect_stdout(output), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_venv_si_besoin()
-        self.assertEqual(raised.exception.code, 1)
-        self.assertIn("Missing Python packages: ijson, rasterio", output.getvalue())
-        self.assertIn(f"pip install -r {bootstrap_runtime.VERROU}", output.getvalue())
-        run.assert_not_called()
-
-    def test_pip_mode_delegates_without_touching_venv_or_subprocess(self):
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="pip"), \
-             mock.patch.object(Path, "home") as home, \
-             mock.patch.object(L.subprocess, "run") as run:
-            L._bootstrap_venv_si_besoin()
-        home.assert_not_called()
-        run.assert_not_called()
-
-    def test_auto_mode_returns_when_already_inside_managed_venv(self):
-        venv_path, _python = self._venv_paths()
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(venv_path)), \
-             mock.patch.dict(
-                 L.os.environ,
-                 {
-                     "CONDA_PREFIX": str(self.root / "conda-parent"),
-                     "VIRTUAL_ENV": str(self.root / "other-venv"),
-                 },
-                 clear=True,
-             ), \
-             mock.patch.object(L.subprocess, "run") as run:
-            L._bootstrap_venv_si_besoin()
-        run.assert_not_called()
-
-    def test_auto_mode_rejects_an_external_active_environment(self):
-        cases = (
-            ({"CONDA_PREFIX": str(self.root / "conda")}, self.root / "conda"),
-            ({"VIRTUAL_ENV": str(self.root / "venv")}, self.root / "venv"),
-            (
-                {
-                    "CONDA_PREFIX": str(self.root / "conda-first"),
-                    "VIRTUAL_ENV": str(self.root / "venv-second"),
-                },
-                self.root / "conda-first",
-            ),
-        )
-        for environment, expected in cases:
-            with self.subTest(environment=environment):
-                output = io.StringIO()
-                with mock.patch.object(
-                    L,
-                    "_resoudre_mode_bootstrap",
-                    return_value="auto",
-                ), mock.patch.object(
-                    L.platform,
-                    "system",
-                    return_value="Linux",
-                ), mock.patch.object(
-                    Path,
-                    "home",
-                    return_value=self.root,
-                ), mock.patch.object(
-                    L.sys,
-                    "prefix",
-                    str(self.root / "system"),
-                ), mock.patch.dict(
-                    L.os.environ,
-                    environment,
-                    clear=True,
-                ), mock.patch.object(
-                    L.subprocess,
-                    "run",
-                ) as run, contextlib.redirect_stdout(
-                    output,
-                ), self.assertRaises(SystemExit) as raised:
-                    L._bootstrap_venv_si_besoin()
-                self.assertEqual(raised.exception.code, 1)
-                self.assertIn("Active Python environment detected", output.getvalue())
-                self.assertIn(str(expected), output.getvalue())
-                run.assert_not_called()
-
-    def test_venv_installed_from_the_same_lock_is_relaunched_without_install(self):
-        _venv_path, venv_python = self._existing_venv(
-            marque=bootstrap_runtime.empreinte_verrou())
-        relaunch, guard, _code = self._run_auto({"side_effect": AssertionError("pas de pip")})
-        relaunch.assert_called_once_with(venv_python, False)
-        guard.assert_not_called()
-
-    def test_venv_from_an_older_lock_is_reinstalled_then_relaunched(self):
-        # Nouvelle version de lidar2map, verrou changé : le venv existant est
-        # remis aux versions du verrou actuel, sans être recréé.
-        venv_path, venv_python = self._existing_venv(marque="ancienne-empreinte")
-        run = mock.Mock(return_value=self._completed())
-        relaunch, guard, _code = self._run_auto({"new": run})
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0],
-                         bootstrap_runtime.commande_installation(venv_python))
-        self.assertEqual(
-            (venv_path / bootstrap_runtime.MARQUE_VERROU).read_text().strip(),
-            bootstrap_runtime.empreinte_verrou())
-        relaunch.assert_called_once_with(venv_python, False)
-        guard.assert_not_called()
-
-    def test_new_venv_is_created_installed_and_relaunched(self):
-        venv_path, venv_python = self._venv_paths()
-
-        def run(command, **kwargs):
-            if command[1:3] == ["-m", "venv"]:
-                venv_python.parent.mkdir(parents=True)
-                venv_python.touch()
-            return self._completed()
-
-        appels = mock.Mock(side_effect=run)
-        relaunch, guard, _code = self._run_auto({"new": appels},
-                                         executable=str(self.root / "python"))
-        self.assertEqual(appels.call_count, 2)
-        self.assertEqual(appels.call_args_list[0].args[0],
-                         [str(self.root / "python"), "-m", "venv", str(venv_path)])
-        self.assertEqual(appels.call_args_list[1].args[0],
-                         bootstrap_runtime.commande_installation(venv_python))
-        self.assertTrue((venv_path / bootstrap_runtime.MARQUE_VERROU).exists())
-        relaunch.assert_called_once_with(venv_python, False)
-        guard.assert_called_once_with()
-
-    def test_windows_new_venv_uses_scripts_executables(self):
-        venv_path, venv_python = self._venv_paths("Windows")
-
-        def run(command, **kwargs):
-            if command[1:3] == ["-m", "venv"]:
-                venv_python.parent.mkdir(parents=True)
-                venv_python.touch()
-            return self._completed()
-
-        appels = mock.Mock(side_effect=run)
-        relaunch, guard, _code = self._run_auto({"new": appels}, system_name="Windows",
-                                         executable=str(self.root / "python.exe"))
-        self.assertEqual(appels.call_args_list[0].args[0],
-                         [str(self.root / "python.exe"), "-m", "venv", str(venv_path)])
-        self.assertEqual(appels.call_args_list[1].args[0][0], str(venv_python))
-        relaunch.assert_called_once_with(venv_python, True)
-        guard.assert_called_once_with()
-
-    def test_venv_creation_failure_exits_one_without_install_or_relaunch(self):
-        venv_path, _venv_python = self._venv_paths()
-        error = subprocess.CalledProcessError(2, ["python", "-m", "venv"])
-        output = io.StringIO()
-        with mock.patch.object(L, "_resoudre_mode_bootstrap", return_value="auto"), \
-             mock.patch.object(L.platform, "system", return_value="Linux"), \
-             mock.patch.object(Path, "home", return_value=self.root), \
-             mock.patch.object(L.sys, "prefix", str(self.root / "system")), \
-             mock.patch.dict(L.os.environ, {}, clear=True), \
-             mock.patch.object(L.subprocess, "run", side_effect=error) as run, \
-             mock.patch.object(L, "_verifier_venv_linux"), \
-             mock.patch.object(L, "_relancer_dans_venv") as relaunch, \
-             contextlib.redirect_stdout(output), \
-             self.assertRaises(SystemExit) as raised:
-            L._bootstrap_venv_si_besoin()
-        self.assertEqual(raised.exception.code, 1)
-        self.assertIn("ERROR creating venv", output.getvalue())
-        self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0][-1], str(venv_path))
-        relaunch.assert_not_called()
-
-    def test_failed_install_exits_one_without_marker_or_relaunch(self):
-        venv_path, _venv_python = self._existing_venv()
-        output = io.StringIO()
-        relaunch, _guard, code = self._run_auto(
-            {"return_value": self._completed(returncode=1, stderr="hash mismatch")},
-            output=output)
-        self.assertEqual(code, 1)
-        relaunch.assert_not_called()
-        self.assertIn("hash mismatch", output.getvalue())
-        self.assertIn("--require-hashes", output.getvalue())
-        self.assertFalse((venv_path / bootstrap_runtime.MARQUE_VERROU).exists())
-
-
 class SystemEnvironmentRestoreTests(unittest.TestCase):
     """Programmes du système lancés depuis le binaire Linux (systemctl,
     xdg-open) : LD_LIBRARY_PATH d'origine, pas celui que préfixe PyInstaller.
@@ -2039,7 +1123,7 @@ class SystemEnvironmentRestoreTests(unittest.TestCase):
         self.assertLess(appel - garde, 400)
 
     def test_the_local_copy_no_longer_exists(self):
-        self.assertFalse(hasattr(bootstrap_runtime, "retablir_environnement_systeme"))
+        self.assertFalse(hasattr(installation, "retablir_environnement_systeme"))
 
 
 if __name__ == "__main__":

@@ -581,7 +581,7 @@ while _MODULE_DIR in sys.path:
 sys.path.insert(0, _MODULE_DIR)
 
 import _bootstrap_tls as _bootstrap_tls_impl
-import _bootstrap_runtime as _bootstrap_runtime_impl
+import _installation as _installation_impl
 
 _SSL_CTX_CERTIFI = _bootstrap_tls_impl.initialiser_tls(
     environnement=os.environ,
@@ -632,7 +632,7 @@ if getattr(sys, "frozen", False):
 # mise à jour. Depuis la 1.55, l'archive livre directement le programme (dossier
 # onedir, ou .app sous macOS), comme celles de blink2video et de watch2notif.
 # Ce qu'un ancien lanceur a laissé sur disque est retiré au lancement (voir
-# _bootstrap_runtime.nettoyer_ancienne_extraction).
+# _installation.nettoyer_ancienne_extraction).
 
 # ─────────────────────────────────────────────────────────────────────────────
 # EXÉCUTION DISTANTE (rlidar2map_CLI / rlidar2map_GUI) — dispatch précoce
@@ -742,7 +742,6 @@ import urllib.error
 import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import _bootstrap_policy as _bootstrap_policy_impl
 import _smoketest as _smoketest_impl
 import _logging_helpers as _logging_helpers_impl
 import _tee_logger as _tee_logger_impl
@@ -765,121 +764,25 @@ if sys.version_info < (3, 9):
 # INSTALLATION AUTOMATIQUE DES DÉPENDANCES
 # ============================================================
 
-def _resoudre_mode_bootstrap():
-    """Détermine le mode de bootstrap et nettoie ``sys.argv`` en place."""
-    try:
-        resolution = _bootstrap_policy_impl.resoudre_mode_bootstrap(
-            sys.argv,
-            os.environ,
-        )
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        sys.exit(2)
-    if resolution.aide:
-        print(_bootstrap_venv_si_besoin.__doc__)
-        sys.exit(0)
-    sys.argv[:] = resolution.argv
-    return resolution.mode
+# Le moteur (modes auto, force, pip et none, venv, relance, --installer-deps) est
+# _amorcage.py, copie octet pour octet de nico579_commons.amorcage : il tourne
+# avant l'installation de la bibliothèque commune, qu'il ne peut donc pas
+# importer. tests/test_amorcage_commun.py compare les deux. Le contexte TLS
+# strict est rétabli une fois les dépendances en place.
+import _amorcage
 
-
-def _verifier_venv_linux():
-    return _bootstrap_runtime_impl.verifier_venv_linux()
-
-
-_verifier_venv_linux.__doc__ = _bootstrap_runtime_impl.verifier_venv_linux.__doc__
-
-
-def _bootstrap_venv_si_besoin():
-    return _bootstrap_runtime_impl.bootstrap_venv_si_besoin(
-        resoudre_mode=_resoudre_mode_bootstrap,
-        verifier_venv_linux=_verifier_venv_linux,
-        relancer_dans_venv=_relancer_dans_venv,
-    )
-
-
-_bootstrap_venv_si_besoin.__doc__ = (
-    _bootstrap_runtime_impl.bootstrap_venv_si_besoin.__doc__
-)
-
-
-def _relancer_dans_venv(venv_python, is_windows):
-    return _bootstrap_runtime_impl.relancer_dans_venv(
-        venv_python,
-        is_windows,
-    )
-
-
-_relancer_dans_venv.__doc__ = _bootstrap_runtime_impl.relancer_dans_venv.__doc__
-
-
-def _bootstrap_pip():
-    return _bootstrap_runtime_impl.bootstrap_pip()
-
-
-_bootstrap_pip.__doc__ = _bootstrap_runtime_impl.bootstrap_pip.__doc__
-
-
-def _installer_deps():
-    return _bootstrap_runtime_impl.installer_deps()
-
-
-_installer_deps.__doc__ = _bootstrap_runtime_impl.installer_deps.__doc__
-
-
-def _bootstrap_environnement():
-    return _bootstrap_runtime_impl.orchestrer_bootstrap(
-        frozen=getattr(sys, "frozen", False),
-        resoudre_mode=_resoudre_mode_bootstrap,
-        bootstrap_venv_avec_mode=_bootstrap_venv_si_besoin_avec_mode,
-        bootstrap_pip=_bootstrap_pip,
-        installer_dependances=_installer_deps,
-        restaurer_tls_strict=_restaurer_tls_strict,
-    )
-
-
-_bootstrap_environnement.__doc__ = (
-    _bootstrap_runtime_impl.orchestrer_bootstrap.__doc__
-)
-
-
-def _bootstrap_venv_si_besoin_avec_mode(mode):
-    return _bootstrap_runtime_impl.bootstrap_venv_avec_mode(
-        mode,
-        environnement=os.environ,
-        bootstrap_venv=_bootstrap_venv_si_besoin,
-    )
-
-
-_bootstrap_venv_si_besoin_avec_mode.__doc__ = (
-    _bootstrap_runtime_impl.bootstrap_venv_avec_mode.__doc__
-)
-
-
-_INSTALL_ALL_DEPS   = "--installer-deps"     in sys.argv
 _DESINSTALLER       = "--desinstaller"       in sys.argv
 _TELECHARGER_OUTILS = "--telecharger-outils" in sys.argv  # exécuté après _trouver_java
 _SMOKETEST          = "--smoketest"          in sys.argv  # exécuté après bootstrap
 
-_bootstrap_environnement()
+_amorcage.Amorcage("lidar2map", Path(__file__).resolve().parent,
+                   apres_installation=_restaurer_tls_strict).lancer()
 
 # Modules qui s'appuient sur nico579-commons, que le bootstrap vient
 # d'installer en mode sources : importés après lui, jamais avant.
 from nico579_commons import atomique, serveweb
 import _atomic_files as _atomic_files_impl   # primitives SQLite propres à lidar2map
 import _dossiers as _dossiers_impl
-
-# ── --installer-deps ─────────────────────────────────────────────────────────
-# Installe le verrou complet (requirements.txt) puis quitte. Utilisé par les
-# scripts setup_build_*, qui y ajoutent PyInstaller (requirements-build.txt).
-# Le flag est préservé dans sys.argv lors du re-exec dans le venv, ce qui
-# garantit que l'install complète se fait bien DANS le venv cible.
-def _installer_toutes_dependances():
-    """Installe les dépendances de maintenance via le runtime testable."""
-    return _bootstrap_runtime_impl.installer_toutes_dependances()
-
-
-if _INSTALL_ALL_DEPS:
-    sys.exit(0 if _installer_toutes_dependances() else 1)
 
 # ── --desinstaller ────────────────────────────────────────────────────────────
 # Supprime le venv (~/.lidar2map/venv), osmosis, le JRE et, s'il en reste, le
@@ -889,7 +792,7 @@ if _INSTALL_ALL_DEPS:
 # dernier dossier.
 def _desinstaller_installation():
     """Désinstalle les données gérées et signale tout retrait partiel."""
-    return _bootstrap_runtime_impl.desinstaller_lidar2map(
+    return _installation_impl.desinstaller_lidar2map(
         systeme=platform.system(),
         home=Path.home(),
         localappdata=os.environ.get("LOCALAPPDATA"),
@@ -934,7 +837,7 @@ def _nettoyer_ancienne_extraction():
     if not getattr(sys, "frozen", False):
         return
     try:
-        retires = _bootstrap_runtime_impl.nettoyer_ancienne_extraction(
+        retires = _installation_impl.nettoyer_ancienne_extraction(
             systeme=platform.system(),
             home=Path.home(),
             localappdata=os.environ.get("LOCALAPPDATA"),
@@ -1024,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.58.2"
+VERSION      = "1.59.0"
 VERSION_DATE = "2026-09"
 
 
