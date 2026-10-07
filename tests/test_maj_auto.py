@@ -69,6 +69,59 @@ class AutoTest(unittest.TestCase):
                         entree.index("_normaliser_argv_valeurs_negatives()"))
 
 
+class DossierInstalle(unittest.TestCase):
+    """Le dossier d'installation tel que l'archive publiée le pose doit être reconnu : sinon
+    l'installateur répond unsafe_install, et la mise à jour automatique ne s'applique jamais
+    (constaté chez Nico le 2026-10-07 : lidar2map.png à côté de l'exécutable)."""
+
+    def fichiers_poses_a_cote_de_l_executable(self):
+        """Ce que release.yml copie à côté de l'exécutable, lu dans le workflow lui-même."""
+        import re
+        texte = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        windows = re.findall(r"Copy-Item\s+assets\\(\S+)\s+\$stage\\", texte)
+        linux = re.findall(r"cp\s+assets/(\S+)\s+dist/lidar2map-linux-x86_64/", texte)
+        return set(windows) | set(linux)
+
+    def test_release_yml_pose_bien_un_fichier_a_cote_de_l_executable(self):
+        # Garde le test suivant honnête : si le workflow change de forme, il doit échouer ici.
+        self.assertIn("lidar2map.png", self.fichiers_poses_a_cote_de_l_executable())
+
+    def test_chaque_fichier_pose_a_cote_de_l_executable_est_tolere(self):
+        with mock.patch.object(sys, "argv", ["lidar2map"]):
+            app = L2M._application_installation()
+        for nom in self.fichiers_poses_a_cote_de_l_executable():
+            self.assertIn(nom, app.noms_toleres, f"{nom} : l'installateur refuserait ce dossier")
+
+    def test_un_dossier_comme_l_archive_le_pose_est_reconnu(self):
+        racine = Path(tempfile.mkdtemp(prefix="lidar2map-installe-"))
+        self.addCleanup(__import__("shutil").rmtree, racine, True)
+        (racine / "_internal").mkdir()
+        exe = racine / ("lidar2map.exe" if sys.platform == "win32" else "lidar2map")
+        exe.write_bytes(b"")
+        (racine / "lidar2map.png").write_bytes(b"")
+        with mock.patch.object(sys, "argv", ["lidar2map"]), _systeme_onedir():
+            app = L2M._application_installation()
+            disposition = maj_install.disposition(
+                app, asset_name="lidar2map-windows-x86_64.zip", archive_kind="zip",
+                racine_attendue="lidar2map-windows-x86_64", executable=exe, fige=True)
+        self.assertEqual(disposition.expected_root, "lidar2map-windows-x86_64")
+
+    def test_un_fichier_inconnu_fait_toujours_refuser_le_dossier(self):
+        racine = Path(tempfile.mkdtemp(prefix="lidar2map-installe-"))
+        self.addCleanup(__import__("shutil").rmtree, racine, True)
+        (racine / "_internal").mkdir()
+        exe = racine / ("lidar2map.exe" if sys.platform == "win32" else "lidar2map")
+        exe.write_bytes(b"")
+        (racine / "mes-notes.txt").write_bytes(b"")          # pas un fichier du bundle
+        with mock.patch.object(sys, "argv", ["lidar2map"]), _systeme_onedir():
+            app = L2M._application_installation()
+            with self.assertRaises(maj_archive.ErreurMiseAJour) as c:
+                maj_install.disposition(
+                    app, asset_name="lidar2map-windows-x86_64.zip", archive_kind="zip",
+                    racine_attendue="lidar2map-windows-x86_64", executable=exe, fige=True)
+        self.assertEqual(c.exception.code, "unsafe_install")
+
+
 class VerificationDeVersion(unittest.TestCase):
     def test_la_derniere_reponse_est_gardee_dans_le_dossier_d_etat(self):
         # Un redémarrage ne repose pas la question à GitHub tant qu'elle a moins d'une heure.
