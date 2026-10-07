@@ -243,7 +243,7 @@ class Page(unittest.TestCase):
         self.assertIn('<script src="/nico579-reglages.js"></script>', html)
         self.assertLess(html.index("/app.js"), html.index("/nico579-reglages.js"))
         # L'emplacement du bouton : juste avant FR / EN, comme dans blink2video.
-        self.assertLess(html.index('id="nico579-reglages"'), html.index('data-lang-btn="fr"'))
+        self.assertLess(html.index('id="nico579-reglages"'), html.index('data-nico579-langue'))
 
     def test_les_executables_embarquent_les_fichiers_communs(self):
         # PyInstaller n'embarque les donnees d'un paquet que si le .spec le demande ;

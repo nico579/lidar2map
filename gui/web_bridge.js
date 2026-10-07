@@ -43,7 +43,6 @@ window.api = {
     stop_remote: !!stopRemote, purge_remote: !!purgeRemote,
   }),
   clear_historique: () => _post('/api/clear-historique'),
-  set_lang: (code) => _post('/api/set-lang', { code }),
   set_ui_zoom: (z) => _post('/api/set-ui-zoom', { z }),
   set_trusted_host: (host) => _post('/api/set-trusted-host', { host }),
   start_share: (cfg) => _post('/api/start-share', cfg),

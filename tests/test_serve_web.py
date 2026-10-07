@@ -41,7 +41,7 @@ _SPEC_L2M.loader.exec_module(L2M)
 _SPEC_SW = importlib.util.spec_from_file_location("l2m_serve_web_module", ROOT / "_serve_web.py")
 _serve_web = importlib.util.module_from_spec(_SPEC_SW)
 _SPEC_SW.loader.exec_module(_serve_web)
-from nico579_commons import demarrage, serveweb  # noqa: E402
+from nico579_commons import demarrage, langue, serveweb  # noqa: E402
 
 
 class HoteAutoriseTests(unittest.TestCase):
@@ -135,6 +135,9 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         # Les routes de la case de demarrage sont celles du commun, avec l'entree de lidar2map.
         import _autostart
         routes_demarrage_get, routes_demarrage_post = demarrage.routes(_autostart.entree, lambda: "fr")
+        # Le choix FR / EN est celui du commun, avec les preferences de lidar2map.
+        routes_langue_get, routes_langue_post = langue.routes(
+            lambda: L2M._lire_prefs().get("lang"), lambda code: L2M._ecrire_pref("lang", code))
 
         def _launch(cfg):
             erreur = L2M._valider_cfg_web(cfg or {})
@@ -147,6 +150,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
             gui_dir=ROOT / "gui",
             api_routes={
                 **routes_demarrage_get,
+                **routes_langue_get,
                 "init": L2M._api_get_init_data,
                 "historique": L2M._lire_historique,
                 "usage": L2M._api_get_usage,
@@ -159,7 +163,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
                 "launch": _launch,
                 "stop": lambda payload: {"result": self.api.stop()},
                 "clear-historique": lambda _payload: self.api.clear_historique(),
-                "set-lang": lambda payload: self.api.set_lang((payload or {}).get("code")),
+                **routes_langue_post,
                 "set-trusted-host": lambda payload: self.api.set_trusted_host((payload or {}).get("host", "")),
                 **routes_demarrage_post,
             },
@@ -315,10 +319,16 @@ class RoutesLectureSeuleTests(unittest.TestCase):
         self.assertIn("error", data)
         self.assertIsNone(self.api._process)  # rien n'a été lancé
 
-    def test_api_set_lang_et_clear_historique_repondent_ok(self):
-        status, body = self._post("/api/set-lang", {"code": "en"})
+    def test_la_langue_du_commun_est_gardee_dans_les_preferences(self):
+        status, body = self._post("/api/langue", {"code": "en"})
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(json.loads(self._get("/api/langue")[1])["code"], "en")
+        self.assertEqual(L2M._lire_prefs().get("lang"), "en")         # ce que lit _langue_console
+        status, body = self._post("/api/langue", {"code": "de"})
+        self.assertFalse(json.loads(body)["ok"])
+
+    def test_clear_historique_repond_ok(self):
         status, body = self._post("/api/clear-historique")
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["ok"])
@@ -399,6 +409,8 @@ class RoutesLectureSeuleTests(unittest.TestCase):
             texte = (gui / nom).read_text(encoding="utf-8")
             self.assertNotIn("remote-autostart", texte, nom)
             self.assertNotIn("set_autostart", texte, nom)
+            self.assertNotIn("set_lang", texte, nom)
+            self.assertNotIn("data-lang-btn", texte, nom)
         source = (ROOT / "lidar2map.py").read_text(encoding="utf-8")
         self.assertIn("demarrage.routes(_autostart.entree", source)
 
@@ -425,7 +437,7 @@ class RoutesLectureSeuleTests(unittest.TestCase):
     def test_post_host_non_autorise_refuse_avec_403(self):
         corps = json.dumps({}).encode("utf-8")
         req = urllib.request.Request(
-            self.base + "/api/set-lang", data=corps, method="POST",
+            self.base + "/api/langue", data=corps, method="POST",
             headers={"Content-Type": "application/json", "Host": "evil.example.com"},
         )
         with self.assertRaises(urllib.error.HTTPError) as ctx:
