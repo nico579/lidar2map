@@ -140,7 +140,7 @@ class AutostartCommandeTests(_DossierIsole):
                          ([str(self.programme), "--serve-gui"], self.programme.parent))
 
     def test_service_systemd_lance_le_programme_sans_environnement(self):
-        demarrage.activer(_autostart._entree(), plateforme="linux", accueil=self.tmp,
+        demarrage.activer(_autostart.entree(), plateforme="linux", accueil=self.tmp,
                           lancer=mock.Mock(return_value=subprocess.CompletedProcess([], 0)),
                           env={"XDG_RUNTIME_DIR": "/run/user/1"})
         contenu = (self.tmp / ".config" / "systemd" / "user" / "lidar2map.service"
@@ -155,7 +155,7 @@ class AutostartCommandeTests(_DossierIsole):
         self.assertIn("After=graphical-session.target", contenu)
 
     def test_plist_launchd_lance_le_programme_sans_environnement(self):
-        demarrage.activer(_autostart._entree(), plateforme="darwin", accueil=self.tmp,
+        demarrage.activer(_autostart.entree(), plateforme="darwin", accueil=self.tmp,
                           lancer=mock.Mock(return_value=subprocess.CompletedProcess([], 0)))
         fichier = self.tmp / "Library" / "LaunchAgents" / "com.nico.lidar2map.plist"
         donnees = plistlib.loads(fichier.read_bytes())
@@ -168,7 +168,7 @@ class AutostartCommandeTests(_DossierIsole):
 
     def test_noms_connus_du_reste_de_lidar2map(self):
         # maj_install relance le service par son nom (lidar2map.py).
-        self.assertEqual(_autostart.LINUX_SERVICE_NAME, f"{_autostart._entree().nom}.service")
+        self.assertEqual(_autostart.LINUX_SERVICE_NAME, f"{_autostart.entree().nom}.service")
 
 
 class AutostartWindowsLogiqueTests(_DossierIsole):
@@ -183,7 +183,7 @@ class AutostartWindowsLogiqueTests(_DossierIsole):
         return mock.Mock(side_effect=lancer)
 
     def activer(self, lancer):
-        demarrage.activer(_autostart._entree(), plateforme="win32", dossier=self.startup,
+        demarrage.activer(_autostart.entree(), plateforme="win32", dossier=self.startup,
                           lancer=lancer)
 
     def test_enable_retire_l_ancien_vbs(self):

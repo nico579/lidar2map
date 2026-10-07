@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.60.3"
+VERSION      = "1.61.0"
 VERSION_DATE = "2026-09"
 
 
@@ -6210,9 +6210,6 @@ def main_serve_gui():
             resultat["port"] = etat_serveur["port"]
         return resultat
 
-    def _set_autostart(payload):
-        return api.set_autostart(bool((payload or {}).get("actif")))
-
     def _open_folder(payload):
         return api.open_folder((payload or {}).get("path", ""))
 
@@ -6240,6 +6237,11 @@ def main_serve_gui():
     installateur = _installateur(verificateur, _quitter_pour_la_mise_a_jour)
     from nico579_commons import maj_install
     routes_maj_get, routes_maj_post = maj_install.routes(installateur, _langue_console)
+    # La case « Démarrer automatiquement avec le système » est celle du commun
+    # (/api/autostart, dessinée par reglages.js dans le panneau Réglages).
+    import _autostart
+    from nico579_commons import demarrage
+    routes_demarrage_get, routes_demarrage_post = demarrage.routes(_autostart.entree, _langue_console)
 
     api_routes = {
         "init": _api_get_init_data,
@@ -6252,16 +6254,17 @@ def main_serve_gui():
         "help": api.get_help,
         "projets": api.get_projets,
         **routes_maj_get,
+        **routes_demarrage_get,
     }
     post_routes = {
         **routes_maj_post,
+        **routes_demarrage_post,
         "launch": _launch,
         "stop": _stop,
         "clear-historique": lambda _payload: api.clear_historique(),
         "set-lang": _set_lang,
         "set-ui-zoom": _set_ui_zoom,
         "set-trusted-host": _set_trusted_host,
-        "set-autostart": _set_autostart,
         "start-share": _start_share,
         "stop-share": lambda _payload: api.stop_share(),
         "open-folder": _open_folder,
@@ -6473,18 +6476,6 @@ _OSM_TAGS_DATA = [
 ]
 
 
-def _autostart_actif_sans_erreur() -> bool:
-    """is_enabled() ne doit jamais faire echouer le chargement de la page
-    (lecture d'un fichier/service potentiellement absent ou illisible selon
-    l'OS) : False par defaut, comme les autres lectures non critiques de
-    get_init_data."""
-    try:
-        import _autostart
-        return _autostart.is_enabled()
-    except Exception:
-        return False
-
-
 def _api_get_init_data():
     # couches/wfs reconstruits ICI (pas des constantes figées à l'import) :
     # COUCHES/COUCHES_WFS sont une façade relisable (voir
@@ -6520,11 +6511,6 @@ def _api_get_init_data():
         # préférence reste donc la source de vérité pour pré-remplir le
         # champ au chargement, avec ou sans --trusted-host CLI ce lancement-ci.
         "trusted_host": _lire_prefs().get("trusted_host", ""),
-        # Reflete l'etat REEL du systeme (existence du fichier de lancement
-        # automatique), pas une preference a part : jamais de desync possible
-        # comme pour trusted_host (CLI vs persiste), donc rien a mettre en
-        # cache ici.
-        "autostart_actif": _autostart_actif_sans_erreur(),
         # Identifiant minimal, pas juste un détail de debug : c'est ce que
         # serveweb.instance_existante() interroge pour distinguer « un lidar2map
         # tourne déjà sur ce port » d'« un service tiers occupe ce port par
@@ -6835,22 +6821,6 @@ class Api:
             import _serve_web
             _serve_web.Handler.trusted_host = host
         return {"ok": ok}
-
-    def set_autostart(self, actif):
-        """Active/desactive le lancement automatique du serveur web a
-        l'ouverture de session (meme mecanisme que watch2notif). Utile pour
-        le mode "serveur permanent, accessible a distance" : sans lui,
-        l'acces distant depuis un telephone suppose d'avoir pense a lancer
-        lidar2map soi-meme avant de quitter la maison."""
-        import _autostart
-        try:
-            if actif:
-                _autostart.enable()
-            else:
-                _autostart.disable()
-            return {"ok": True, "actif": _autostart.is_enabled()}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
     # ── Autocomplétion ville (proxy BAN pour FR, Nominatim sinon) ────
     # Relayée en Python plutôt qu'appelée par fetch() depuis la page : un

@@ -436,7 +436,7 @@ def smoke(archive: Path, racine: Path) -> None:
             # Désactiver le démarrage automatique lance systemctl --user (le
             # faux, ici) depuis le programme, dont le bootloader PyInstaller
             # a préfixé la variable de ses bibliothèques.
-            poster_json(f"http://127.0.0.1:{port}/api/set-autostart", {"actif": False})
+            poster_json(f"http://127.0.0.1:{port}/api/autostart", {"actif": False})
             sonde = racine / "systemctl.txt"
             recu = (sonde.read_text(encoding="utf-8").splitlines()
                     if sonde.is_file() else [])
