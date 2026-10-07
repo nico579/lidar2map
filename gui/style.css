@@ -223,3 +223,6 @@ body.log-resizing *{
 .ac-item:last-child{border-bottom:none}
 .ac-item:hover,.ac-item.active{background:var(--bg2);color:var(--ac)}
 .ac-item .ac-meta{color:var(--dim);font-size:11px;margin-left:6px}
+
+/* Bouton Réglages commun (nico579-reglages.js) : même allure que les autres boutons de la barre. */
+#nico579-reglages-bouton{background:var(--bg3);border:1px solid var(--ac);color:var(--fg)}

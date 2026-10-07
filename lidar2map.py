@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.59.0"
+VERSION      = "1.60.0"
 VERSION_DATE = "2026-09"
 
 
@@ -5889,6 +5889,12 @@ def _auto_test_version(argv) -> int:
     try:
         from nico579_commons import maj_install, serveweb  # noqa: F401
         _resoudre_gui_dir()
+        # Les fichiers JavaScript communs (bandeau de mise à jour, bouton Réglages)
+        # doivent être dans le bundle : sans eux la page en réclame un qui n'existe pas.
+        manquants = serveweb.fichiers_manquants()
+        if manquants:
+            print(f"auto-test : fichiers communs absents du bundle : {', '.join(manquants)}")
+            return 1
     except Exception as exc:
         print(f"auto-test : {type(exc).__name__}: {exc}")
         return 1

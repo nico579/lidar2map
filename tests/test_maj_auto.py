@@ -51,6 +51,13 @@ class AutoTest(unittest.TestCase):
     def test_sans_valeur(self):
         self.assertEqual(self.lancer("--self-test-version"), 2)
 
+    def test_refuse_un_bundle_sans_les_fichiers_communs(self):
+        # Un exécutable dont le .spec oublie les données de nico579_commons : refusé par
+        # la CI, et par la mise à jour automatique avant de remplacer quoi que ce soit.
+        from nico579_commons import serveweb
+        with mock.patch.object(serveweb, "fichiers_manquants", return_value=["reglages.js"]):
+            self.assertEqual(self.lancer("--self-test-version", L2M.VERSION), 1)
+
     def test_refuse_si_l_interface_est_introuvable(self):
         with mock.patch.object(L2M, "_resoudre_gui_dir", side_effect=RuntimeError("absente")):
             self.assertEqual(self.lancer("--self-test-version", L2M.VERSION), 1)
@@ -165,6 +172,20 @@ class Page(unittest.TestCase):
         html = (ROOT / "gui" / "index.html").read_text(encoding="utf-8")
         self.assertIn('<script src="/nico579-maj.js"></script>', html)
         self.assertLess(html.index("/app.js"), html.index("/nico579-maj.js"))
+
+    def test_la_page_place_le_bouton_reglages_avant_le_choix_de_langue(self):
+        html = (ROOT / "gui" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('<script src="/nico579-reglages.js"></script>', html)
+        self.assertLess(html.index("/app.js"), html.index("/nico579-reglages.js"))
+        # L'emplacement du bouton : juste avant FR / EN, comme dans blink2video.
+        self.assertLess(html.index('id="nico579-reglages"'), html.index('data-lang-btn="fr"'))
+
+    def test_les_executables_embarquent_les_fichiers_communs(self):
+        # PyInstaller n'embarque les donnees d'un paquet que si le .spec le demande ;
+        # sans cela la page reclame /nico579-maj.js et /nico579-reglages.js en 404.
+        for spec in ("lidar2map_win.spec", "lidar2map_mac.spec"):
+            texte = (ROOT / spec).read_text(encoding="utf-8")
+            self.assertIn('collect_data_files("nico579_commons")', texte, spec)
 
     def test_l_ancien_bandeau_et_sa_route_ont_disparu(self):
         for nom in ("app.js", "web_bridge.js"):

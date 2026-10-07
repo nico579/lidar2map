@@ -1022,9 +1022,9 @@ multivolumefile==0.2.3 \
     # via
     #   -c requirements.txt
     #   py7zr
-nico579-commons==0.4.6 \
-    --hash=sha256:6bea7871e5b51e807a78a486d91918fcb96d1ee5723440f80bab25feed9c6b88 \
-    --hash=sha256:d44c618205bcfb22c4ecbddab1987494768bd3cb8bc9f22f401363b58bff0254
+nico579-commons==0.4.8 \
+    --hash=sha256:3801ca15b6d9ba4e2ceaf1a6dd6db882bfbde1f3e53bd58704f8b8efb5e754ab \
+    --hash=sha256:a8cea75be61c54686202b03d43f46578bba8bb6665fc923bfa1ffc4ff087271c
     # via
     #   -c requirements.txt
     #   -r requirements.in
