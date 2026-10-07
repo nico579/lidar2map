@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.60.2"
+VERSION      = "1.60.3"
 VERSION_DATE = "2026-09"
 
 
@@ -5852,7 +5852,13 @@ def _application_installation():
     return maj_install.Application(
         "lidar2map", arguments_relance=tuple(sys.argv[1:]),
         unite_systemd=_autostart.LINUX_SERVICE_NAME, label_launchd=_autostart.MAC_LABEL,
-        fenetre="Minimized")
+        fenetre="Minimized",
+        # L'archive Windows et l'archive Linux portent, à côté de l'exécutable, l'icône
+        # (release.yml : « Copy-Item assets\lidar2map.png », « cp assets/lidar2map.png »).
+        # Sans ce nom, l'installateur ne reconnaissait pas le dossier comme le bundle publié
+        # (unsafe_install) et refusait toute mise à jour automatique : le menu de l'icône
+        # ouvrait la page GitHub, et le bouton Réglages n'offrait que le lien.
+        noms_toleres=("lidar2map.png",))
 
 
 def _disposition_installation():
