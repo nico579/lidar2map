@@ -42,7 +42,10 @@ SEUIL_DALLE_VALIDE = 100_000              # Float32 1000×1000 (>> erreur XML)
 # ── Endpoints ────────────────────────────────────────────────────────────────
 WCS_URL  = ("https://www.geo.euskadi.eus/geoeuskadi/services/U11/"
             "WCS_KARTOGRAFIA/MapServer/WCSServer")
-COVERAGE = "2"                            # index MapServer = MDT_LIDAR_1M (terrain)
+# Nom de la couverture : le service n'accepte plus l'index MapServer ("2"), il répond
+# « parameter COVERAGE is invalid » (constaté le 2026-10-07, es-euskadi cassé aussi pour
+# les utilisateurs). « MAS_ACTUALIZADA » = la version la plus récente du MDT LiDAR 1 m.
+COVERAGE = "MDT_LIDAR_1M_EGUNERATUENA_MAS_ACTUALIZADA"
 # Étendue du coverage en EPSG:25830 (depuis DescribeCoverage)
 COVERAGE_EXTENT = (461031, 4700735, 606516, 4811755)
 
