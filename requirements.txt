@@ -961,9 +961,9 @@ multivolumefile==0.2.3 \
     --hash=sha256:237f4353b60af1703087cf7725755a1f6fcaeeea48421e1896940cd1c920d678 \
     --hash=sha256:a0648d0aafbc96e59198d5c17e9acad7eb531abea51035d08ce8060dcad709d6
     # via py7zr
-nico579-commons==0.4.12 \
-    --hash=sha256:04039434ecab10d68e9e6ae4c1a2830f1c7b3d85b14ad205750edc0f74cc4444 \
-    --hash=sha256:ddd87146bf13008eeeea15f3569d8cef0093adde16a8fee3f9820203a81a1a3a
+nico579-commons==0.4.15 \
+    --hash=sha256:19d9423585bfb583d3a75b8502b9ef7f38de21a3aa074ddf52ea4ad706fb365a \
+    --hash=sha256:5f63cbe81914b7d9c619d38f56db6c421b45ea7e8aa166be5cee1d5940bf4314
     # via -r requirements.in
 numba==0.60.0 ; (python_full_version < '3.10' and platform_machine != 'x86_64') or (python_full_version < '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin') or (python_full_version < '3.10' and sys_platform != 'darwin') \
     --hash=sha256:01ef4cd7d83abe087d644eaa3d95831b777aa21d441a23703d649e06b8e06b74 \
