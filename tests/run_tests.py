@@ -46,6 +46,7 @@ FAST_SCRIPTS = (
     "_test_rlidar2map_CLI.py",
     "test_phone_share.py",
     "test_serve_web.py",
+    "test_page_navigateur.py",
     "test_autostart.py",
     "test_maj_auto.py",
     "test_dossiers.py",

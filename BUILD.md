@@ -150,11 +150,13 @@ nouveau fichier `_test_*.py` ou `test_*.py` est explicitement enregistré :
 python tests/run_tests.py fast        # contrats, atomicité, CLI, docs (~30 s)
 python tests/run_tests.py scientific  # calculs/tuilage/interactions (~2 min)
 python tests/run_tests.py             # toutes les suites hors réseau
+python tests/test_page_navigateur.py  # la page dans un vrai navigateur (Playwright)
 ```
 
 La CI exécute le profil `fast` sur Windows, macOS et Linux, puis le profil
 `scientific` une seule fois sous Linux pour ne pas tripler les compilations
-Numba. `tests/smoke_providers.py` reste séparé : il contacte les services
+Numba. `tests/test_page_navigateur.py`, sauté sans Playwright,
+a son propre job Linux qui installe Playwright et Chromium. `tests/smoke_providers.py` reste séparé : il contacte les services
 externes et appartient au workflow hebdomadaire `smoke.yml`.
 
 ---
