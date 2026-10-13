@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.62.1"
+VERSION      = "1.63.0"
 VERSION_DATE = "2026-09"
 
 
@@ -6232,6 +6232,10 @@ def main_serve_gui():
             etat_icone["tray"].arret.set()
 
     installateur = _installateur(verificateur, _quitter_pour_la_mise_a_jour)
+
+    # Restes d'une mise à jour ancienne (assistant tué, coupure) à côté de l'installation :
+    # effacés en tâche de fond, sans retarder le démarrage (nico579_commons 0.5.0).
+    threading.Thread(target=installateur.nettoyer_restes, name="menage-maj", daemon=True).start()
     from nico579_commons import maj_install
     routes_maj_get, routes_maj_post = maj_install.routes(installateur, _langue_console)
     # La case « Démarrer automatiquement avec le système » est celle du commun
