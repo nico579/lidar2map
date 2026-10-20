@@ -24,9 +24,11 @@ pystray
 platformdirs
 
 # Briques communes aux quatre applications (menu de l'icône, relance,
-# raccourci, recherche de version). Fourchette : une version incompatible
-# de la bibliothèque ne peut pas entrer dans le verrou.
-nico579-commons>=0.5.1,<0.6
+# raccourci, recherche de version). Fourchette jusqu'à la 1.0 (décision du
+# 2026-09-29) : une version mineure du commun n'oblige plus à republier
+# l'application ; c'est le verrou, version exacte et empreinte, qui fixe ce
+# qui est installé.
+nico579-commons>=0.5.1,<1
 
 # Linux : l'icône parle le protocole StatusNotifierItem par D-Bus quand le
 # bureau a un hôte (GNOME avec l'extension AppIndicator, KDE), faute de quoi
