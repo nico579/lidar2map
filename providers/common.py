@@ -192,6 +192,65 @@ def ign_lidar_hd_dalles(bbox_natif, epsg, filename_fn, ua="lidar2map/1.0",
             return dalles
 
 
+# === Pagination WFS 2.0 (STARTINDEX) =========================================
+# Un GetFeature borné par COUNT tronque en silence une grande zone : sondé le
+# 2026-11-09, le Québec annonce 1 356 tuiles sur ~0,4° × 0,3° autour de
+# Montréal pour une limite de 1 000, et la Flandre 198 tuiles sur 2 km × 2 km
+# (bandes de vol superposées) pour 4 000 (B12). STARTINDEX est la pagination
+# standard WFS 2.0 ; certains serveurs l'exigent avec un SORTBY (Flandre).
+
+
+class WfsTronque(RuntimeError):
+    """Index WFS incomplet : le traiter comme une panne, pas comme une zone vide."""
+
+
+def wfs_toutes_pages(url_page, taille_page, lire_page, ua, nom, tries=1,
+                     max_pages=500):
+    """Rassemble toutes les features d'un GetFeature WFS 2.0 paginé.
+
+    ``url_page(debut)`` construit l'URL de la page qui commence à ``debut`` ;
+    ``lire_page(texte)`` rend ``(features, total)``, ``total`` = numberMatched
+    entier ou None s'il est inconnu. Retourne la liste complète, None sur échec
+    réseau (après ``tries`` essais), et lève WfsTronque si le serveur s'arrête
+    avant le total annoncé ou dépasse ``max_pages``.
+    """
+    toutes, debut = [], 0
+    for _ in range(max_pages):
+        dernier = None
+        for essai in range(tries):
+            try:
+                req = urllib.request.Request(url_page(debut),
+                                             headers={"User-Agent": ua})
+                with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
+                    texte = r.read().decode("utf-8", "replace")
+                break
+            except Exception as e:
+                dernier = e
+                if essai + 1 < tries:
+                    time.sleep(1.5 * (essai + 1))
+        else:
+            print(f"  ERROR {nom} WFS: {type(dernier).__name__}: {dernier}")
+            return None
+        features, total = lire_page(texte)
+        toutes.extend(features)
+        debut += len(features)
+        if isinstance(total, int):
+            if debut >= total:
+                return toutes
+            if not features:
+                raise WfsTronque(
+                    f"{nom} WFS: index truncated ({debut}/{total} features)")
+        elif len(features) < taille_page:
+            return toutes
+    raise WfsTronque(f"{nom} WFS: more than {max_pages} pages, zone too large")
+
+
+def _wfs_geojson_page(texte):
+    gj = json.loads(texte)
+    total = gj.get("numberMatched")
+    return gj.get("features", []), total if isinstance(total, int) else None
+
+
 # === Pologne GUGiK (nuage LiDAR ISOK) ========================================
 # GUGiK publie l'INDEX des nuages LiDAR (« skorowidze ») en WFS, un typename par
 # année. Chaque feature porte l'URL de download LAZ DIRECTE (attribut
@@ -212,41 +271,57 @@ def gugik_dalles(bbox_natif, filename_fn, years=tuple(range(2019, 2009, -1)),
     EPSG:2180 en always_xy (E, N) ; le WFS veut (N, E) → swap. UNION des années
     (newest-first), dédup par tuile (une feuille reprise garde le millésime le
     plus récent = le plus dense). (x, y) = coin SW de la feuille en 2180 (entiers,
-    unique par tuile ; le nommage n'a pas besoin d'être km-aligné). None sur échec
-    réseau total, {} si aucune tuile dans la bbox."""
+    unique par tuile ; le nommage n'a pas besoin d'être km-aligné). None si une
+    année ne répond pas, {} si aucune tuile dans la bbox.
+
+    Chaque année est paginée (STARTINDEX). Une année en panne fait échouer la
+    découverte : la sauter rendait ses feuilles absentes ou remplacées par un
+    millésime plus ancien sans le dire (même défaut que B13 ; les 10 couches
+    2010-2019 répondent, sondé le 2026-11-09)."""
     if bbox_natif is None:
         return {}
     x1, y1, x2, y2 = (float(v) for v in bbox_natif)      # always_xy (E, N)
     bbox = f"{y1},{x1},{y2},{x2},EPSG:2180"              # WFS veut (N, E)
-    dalles, vus, any_ok = {}, set(), False
+    page = 1000
+    dalles, vus = {}, set()
     for year in years:
-        q = (f"{_GUGIK_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
-             f"&TYPENAMES={_GUGIK_TN.format(year=year)}&SRSNAME=EPSG:2180"
-             f"&BBOX={bbox}&COUNT=2000")
-        try:
-            req = urllib.request.Request(q, headers={"User-Agent": ua})
-            with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
-                body = r.read().decode("utf-8", "replace")
-        except Exception as e:
-            print(f"  WARN GUGiK WFS {year}: {type(e).__name__}: {e}")
-            continue
-        any_ok = True
-        # Un membre = une feuille. On parse par membre pour associer chaque
-        # url_do_pobrania à SON lowerCorner (pas au boundedBy du document).
-        for member in re.split(r"<(?:gml|wfs):(?:featureMember|member)\b", body)[1:]:
-            u = re.search(r"<gugik:url_do_pobrania>([^<]+)</", member)
-            lc = re.search(r"<gml:lowerCorner>([^<]+)</", member)
-            if not u or not lc:
+        def url_page(debut, year=year):
+            return (f"{_GUGIK_WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
+                    f"&TYPENAMES={_GUGIK_TN.format(year=year)}&SRSNAME=EPSG:2180"
+                    f"&BBOX={bbox}&COUNT={page}&STARTINDEX={debut}")
+        membres = wfs_toutes_pages(url_page, page, _gugik_page, ua,
+                                   f"GUGiK {year}")
+        if membres is None:
+            return None
+        for membre in membres:
+            if membre is None:
                 continue
-            p = lc.group(1).split()
-            if len(p) < 2:
-                continue
-            x, y = int(float(p[0])), int(float(p[1]))    # coin SW (N, E) brut
+            u, x, y = membre
             if (x, y) in vus:
                 continue
             vus.add((x, y))
-            dalles[filename_fn(x, y)] = u.group(1).strip()
-    return dalles if any_ok else None
+            dalles[filename_fn(x, y)] = u
+    return dalles
+
+
+def _gugik_page(body):
+    """Page GML GUGiK → ([(url, x, y) ou None], numberMatched entier ou None).
+
+    Un membre = une feuille : on parse par membre pour associer chaque
+    url_do_pobrania à SON lowerCorner (pas au boundedBy du document). Un
+    membre incomplet donne None, pour que la taille de page reste juste.
+    """
+    lus = []
+    for member in re.split(r"<(?:gml|wfs):(?:featureMember|member)\b", body)[1:]:
+        u = re.search(r"<gugik:url_do_pobrania>([^<]+)</", member)
+        lc = re.search(r"<gml:lowerCorner>([^<]+)</", member)
+        p = lc.group(1).split() if lc else []
+        if not u or len(p) < 2:
+            lus.append(None)
+            continue
+        lus.append((u.group(1).strip(), int(float(p[0])), int(float(p[1]))))
+    total = re.search(r'numberMatched="(\d+)"', body)
+    return lus, int(total.group(1)) if total else None
 
 
 # === Belgique / Flandre (DHMV II, nuage LiDAR OpenLidar) =====================
@@ -266,20 +341,33 @@ def be_flanders_dalles(bbox_natif, filename_fn, bounds_sink, ua="lidar2map/1.0")
     Par tuile 500 m : `tile_location` (chemin .laz) → URL = base + chemin ;
     bounds = bloc 500 m nominal (coin SW arrondi, anti-couture) dans
     `bounds_sink[(x,y)]`. Dédup par bloc (une tuile par bloc, plusieurs bandes de
-    vol sinon). None sur échec réseau, {} si aucune tuile."""
+    vol sinon). None sur échec réseau, {} si aucune tuile.
+
+    Une page de 4 000 pleine signifie un index tronqué (198 tuiles sur 2 km ×
+    2 km) : on repart alors de zéro en pagination STARTINDEX, que ce serveur
+    n'accepte qu'avec un SORTBY. La requête non triée reste la première, pour
+    que les zones qui tenaient en une page gardent les mêmes tuiles (B12)."""
     if bbox_natif is None:
         return {}
     x1, y1, x2, y2 = (float(v) for v in bbox_natif)      # always_xy (E, N)
-    q = (f"{_BE_WFS}?service=WFS&version=2.0.0&request=GetFeature"
-         f"&typeNames={_BE_TN}&srsName=EPSG:31370&outputFormat=application/json"
-         f"&count=4000&bbox={x1},{y1},{x2},{y2},EPSG:31370")
+    page = 4000
+    base = (f"{_BE_WFS}?service=WFS&version=2.0.0&request=GetFeature"
+            f"&typeNames={_BE_TN}&srsName=EPSG:31370&outputFormat=application/json"
+            f"&count={page}&bbox={x1},{y1},{x2},{y2},EPSG:31370")
     try:
-        req = urllib.request.Request(q, headers={"User-Agent": ua})
+        req = urllib.request.Request(base, headers={"User-Agent": ua})
         with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
             gj = json.loads(r.read().decode("utf-8", "replace"))
     except Exception as e:
         print(f"  ERROR BE Flanders WFS: {type(e).__name__}: {e}")
         return None
+    features = gj.get("features", [])
+    if len(features) >= page:
+        features = wfs_toutes_pages(
+            lambda debut: f"{base}&sortBy=tile_location&startIndex={debut}",
+            page, _wfs_geojson_page, ua, "BE Flanders")
+        if features is None:
+            return None
     dalles = {}
     # Dédup LOCAL à cet appel (bandes de vol superposées → même bloc plusieurs
     # fois). `bounds_sink` (_TILE_BOUNDS) PERSISTE entre appels car bounds_fn le
@@ -287,7 +375,7 @@ def be_flanders_dalles(bbox_natif, filename_fn, bounds_sink, ua="lidar2map/1.0")
     # une découverte ANTÉRIEURE → deux emprises successives/recoupantes perdaient
     # des tuiles (mord surtout la GUI, process persistant ; revue 2026-07-22).
     vus = set()
-    for feat in gj.get("features", []):
+    for feat in features:
         p = feat.get("properties", {})
         loc = p.get("tile_location")
         bbox = _geom_bbox(feat.get("geometry") or {})
@@ -384,15 +472,22 @@ def craig_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
     chacune, télécharge+cache l'index TA (shapefile), garde les tuiles dont la
     géométrie intersecte `bbox_natif`, remplit `bounds_sink[(x,y)]` avec les
     bornes EXACTES de la tuile (anti-couture, tailles variables) et retourne
-    {filename_fn(x,y): url_download_public}. `dalle` = 'X-Y' (hectomètres)."""
+    {filename_fn(x,y): url_download_public}. `dalle` = 'X-Y' (hectomètres).
+
+    Une campagne dont l'index est indisponible ou illisible lève RuntimeError
+    après le parcours : un dict vide signifierait « hors couverture », ce
+    qu'une panne ne prouve pas (B13). L'index illisible est retiré du cache
+    pour que la relance le retélécharge."""
     import fiona
     if bbox_natif is None:
         return {}
     bb = tuple(float(v) for v in bbox_natif)
     dalles = {}
+    en_echec = []
     for (camp, ta, field, prefix) in campaigns:
         ta_local = _craig_ta_local(camp, ta, cache_dir, ua)
         if ta_local is None:
+            en_echec.append(camp)
             continue
         try:
             with fiona.open(f"zip://{ta_local}") as src:
@@ -413,6 +508,13 @@ def craig_dalles(bbox_natif, filename_fn, bounds_sink, cache_dir,
                         camp, subdir, m.group(0) + fmt)
         except Exception as e:
             print(f"  ERROR CRAIG index {camp}: {type(e).__name__}: {e}")
+            en_echec.append(camp)
+            Path(ta_local).unlink(missing_ok=True)
+    if en_echec:
+        raise RuntimeError(
+            f"CRAIG index unavailable for {', '.join(en_echec)}: "
+            "coverage unknown"
+        )
     return dalles
 
 
@@ -531,54 +633,89 @@ def _lgia_base_feuille(name, ua):
     return ax, ay
 
 
+_LGIA_CACHE_VERSION = 2
+
+
 def _lgia_index(cache_path, workers, ua):
+    """Index {nom_las: [x_km, y_km]} de toutes les tuiles LĢIA.
+
+    L'origine de chaque feuille se mesure dans l'en-tête LAS d'une de ses
+    tuiles. Le cache garde la liste des noms et les origines mesurées : une
+    feuille dont l'origine n'a pas pu être lue est remesurée à l'appel
+    suivant, et tant qu'il en reste une, la découverte échoue (son emplacement
+    est inconnu, ses tuiles ne peuvent pas être dites hors zone, B14).
+    """
     cache_path = Path(cache_path)
-    if cache_path.exists():
-        try:
-            idx = json.loads(cache_path.read_text(encoding="utf-8"))
-            if idx:
-                return idx
-        except Exception:
-            pass
-    print("  LV LĢIA: downloading the LAS index (once)...", flush=True)
+    noms, bases = None, {}
     try:
-        req = urllib.request.Request(_LGIA_INDEX, headers={"User-Agent": ua})
-        with urllib.request.urlopen(req, timeout=120, context=_CTX) as r:
-            texte = r.read().decode("utf-8", "replace")
-    except Exception as e:
-        print(f"  ERROR LV index: {type(e).__name__}: {e}")
-        return None
-    noms = re.findall(r"/las/\d+/(\d+-\d+-\d+)\.las", texte)
-    if not noms:
-        return None
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        data = None
+    if isinstance(data, dict) and data.get("v") == _LGIA_CACHE_VERSION:
+        noms = data.get("noms") or None
+        bases = {s: tuple(b) for s, b in (data.get("bases") or {}).items()}
+    elif isinstance(data, dict):
+        # Ancien format {nom: [x_km, y_km]} : les origines connues s'en
+        # déduisent, mais il ne disait pas quelles feuilles manquaient, d'où
+        # une relecture de la liste distante.
+        for nm, (x_km, y_km) in data.items():
+            s, q1, q2, row, col = _lgia_parse(nm)
+            bases[s] = (x_km - q2 * 5 - (col - 1), y_km - q1 * 5 - (row - 1))
+
+    a_sauver = False
+    if noms is None:
+        print("  LV LĢIA: downloading the LAS index (once)...", flush=True)
+        try:
+            req = urllib.request.Request(_LGIA_INDEX, headers={"User-Agent": ua})
+            with urllib.request.urlopen(req, timeout=120, context=_CTX) as r:
+                texte = r.read().decode("utf-8", "replace")
+        except Exception as e:
+            print(f"  ERROR LV index: {type(e).__name__}: {e}")
+            return None
+        noms = re.findall(r"/las/\d+/(\d+-\d+-\d+)\.las", texte)
+        if not noms:
+            return None
+        a_sauver = True
     par_feuille = {}
     for nm in noms:
         par_feuille.setdefault(nm.split("-")[0], nm)
-    print(f"  LV LĢIA: {len(noms)} tiles, measuring {len(par_feuille)} sheet "
-          f"origins (LAS headers)...", flush=True)
-    bases = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        for sheet, base in zip(par_feuille,
-                               ex.map(lambda n: _lgia_base_feuille(n, ua),
-                                      par_feuille.values())):
-            if base:
-                bases[sheet] = base
+    a_mesurer = [s for s in par_feuille if s not in bases]
+    if a_mesurer:
+        print(f"  LV LĢIA: {len(noms)} tiles, measuring {len(a_mesurer)} sheet "
+              f"origins (LAS headers)...", flush=True)
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max(1, workers)) as ex:
+            for sheet, base in zip(
+                    a_mesurer,
+                    ex.map(lambda s: _lgia_base_feuille(par_feuille[s], ua),
+                           a_mesurer)):
+                if base:
+                    bases[sheet] = tuple(base)
+                    a_sauver = True
+    if a_sauver:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_json(cache_path, {
+                "v": _LGIA_CACHE_VERSION,
+                "noms": noms,
+                "bases": {s: list(b) for s, b in bases.items()},
+            })
+        except Exception:
+            pass
+    manquantes = [s for s in par_feuille if s not in bases]
+    if manquantes:
+        raise RuntimeError(
+            f"LV LĢIA: origin of {len(manquantes)} sheet(s) unreadable "
+            f"({', '.join(sorted(manquantes)[:5])}"
+            f"{'...' if len(manquantes) > 5 else ''}): coverage unknown"
+        )
     index = {}
     for nm in noms:
         s, q1, q2, row, col = _lgia_parse(nm)
-        base = bases.get(s)
-        if not base:
-            continue
-        ax, ay = base
+        ax, ay = bases[s]
         index[nm] = [ax + q2 * 5 + (col - 1), ay + q1 * 5 + (row - 1)]
-    if not index:
-        return None
-    try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(cache_path, index)
-    except Exception:
-        pass
-    print(f"  LV LĢIA: {len(index)} tiles indexed ({len(bases)} sheets)")
+    if a_mesurer:
+        print(f"  LV LĢIA: {len(index)} tiles indexed ({len(bases)} sheets)")
     return index
 
 
@@ -618,29 +755,28 @@ def quebec_wfs_features(workspace, layer, bbox_wgs84, count=1000,
     `bbox_wgs84` (lon1,lat1,lon2,lat2). Retourne la LISTE des features, [] si la
     bbox est vide, ou None sur échec réseau (après retry — le GeoServer RGQ coupe
     des connexions par intermittence). L'axe WFS 2.0 pour urn:EPSG::4617 est
-    lat,lon (d'où l'ordre du paramètre bbox)."""
+    lat,lon (d'où l'ordre du paramètre bbox).
+
+    Paginé par startIndex jusqu'à numberMatched : ~0,4° × 0,3° autour de
+    Montréal compte déjà 1 356 tuiles pour des pages de 1 000 (B12). Un index
+    tronqué lève WfsTronque."""
     if bbox_wgs84 is None:
         return []
     lo1, la1, lo2, la2 = (float(v) for v in bbox_wgs84)
     from urllib.parse import urlencode
-    q = urlencode({
-        "service": "WFS", "version": "2.0.0", "request": "GetFeature",
-        "typeNames": f"{workspace}:{layer}", "outputFormat": "application/json",
-        "srsName": "EPSG:4617", "count": str(count),
-        "bbox": f"{la1},{lo1},{la2},{lo2},urn:ogc:def:crs:EPSG::4617",
-    })
-    url = _QC_WFS.format(ws=workspace) + "?" + q
-    last = None
-    for i in range(tries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": ua})
-            with urllib.request.urlopen(req, timeout=90, context=_CTX) as r:
-                return json.loads(r.read().decode("utf-8", "replace")).get("features", [])
-        except Exception as e:
-            last = e
-            time.sleep(1.5 * (i + 1))
-    print(f"  ERROR Québec WFS {layer}: {type(last).__name__}: {last}")
-    return None
+
+    def url_page(debut):
+        return _QC_WFS.format(ws=workspace) + "?" + urlencode({
+            "service": "WFS", "version": "2.0.0", "request": "GetFeature",
+            "typeNames": f"{workspace}:{layer}",
+            "outputFormat": "application/json",
+            "srsName": "EPSG:4617", "count": str(count),
+            "startIndex": str(debut),
+            "bbox": f"{la1},{lo1},{la2},{lo2},urn:ogc:def:crs:EPSG::4617",
+        })
+
+    return wfs_toutes_pages(url_page, count, _wfs_geojson_page, ua,
+                            f"Québec {layer}", tries=tries)
 
 
 def _verifie_crs_las(nom, las, expected_epsg):
