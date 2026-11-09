@@ -79,6 +79,23 @@ def sig_sidecar_stale(chemin, signature):
         return False
 
 
+def sig_sidecar_a_jour(chemin, signature):
+    """Indique si ``chemin`` existe et porte un sidecar égal à ``signature``.
+
+    Contrairement à ``sig_sidecar_stale``, l'absence de sidecar compte comme
+    périmée : un produit non signé ne prouve pas pour quelle demande il a été
+    fait (B15).
+    """
+    try:
+        return (
+            Path(chemin).exists()
+            and Path(str(chemin) + ".sig").read_text(encoding="utf-8").strip()
+            == signature
+        )
+    except OSError:
+        return False
+
+
 def sig_sidecar_ecrire(chemin, signature, *, ecrire_texte_atomique):
     """Écrit un sidecar de signature en best-effort."""
     try:

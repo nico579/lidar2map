@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.63.1"
+VERSION      = "1.63.2"
 VERSION_DATE = "2026-09"
 
 
@@ -1905,14 +1905,15 @@ def telecharger_dalle_directe(
 
 
 def _cog_cache_couvre(chemin, bbox_natif):
-    """True si le GeoTIFF fenêtré déjà en cache `chemin` couvre ENTIÈREMENT
+    """True si le GeoTIFF fenêtré déjà en cache `chemin` vaut pour
     `bbox_natif` (bbox demandée, en CRS_NATIF du provider).
 
-    Les providers COG (ca-nrcan, us-tnm, nz-linz, gb-scotland) nomment le
-    fichier local par ASSET distant, stable, alors que le CONTENU écrit est la
-    fenêtre (intersection bbox∩COG). Sans ce contrôle, une 2e zone dans le même
-    COG réutilisait le fragment de la 1re → relief faux servi en silence (#1).
-    Conservateur : illisible ou bbox non couverte → False (re-télécharge)."""
+    Les providers COG/COPC fenêtrés nomment le fichier local par ASSET
+    distant, stable, alors que le CONTENU écrit est la fenêtre (intersection
+    bbox∩tuile). Sans ce contrôle, une 2e zone dans la même tuile réutilisait
+    le fragment de la 1re → relief faux servi en silence (#1, B01). Le
+    fragment porte la bbox qui l'a produit (tag GeoTIFF) ; sans ce tag, il
+    doit couvrir toute la bbox. Illisible → False (re-télécharge)."""
     return _cog_cache_couvre_impl(
         chemin,
         bbox_natif,
@@ -1960,6 +1961,7 @@ def _dependances_telechargement_copc():
         valider_tif_dalle=_valider_tif_dalle,
         publier_nuage_stage=_publier_nuage_stage,
         creer_fichier=_creer_fichier,
+        cache_couvre=_cog_cache_couvre,
     )
 
 
@@ -2689,6 +2691,10 @@ def _sig_sidecar_stale(chemin, sig):
     return _osm_policy_impl.sig_sidecar_stale(chemin, sig)
 
 
+def _sig_sidecar_a_jour(chemin, sig):
+    return _osm_policy_impl.sig_sidecar_a_jour(chemin, sig)
+
+
 def _sig_sidecar_ecrire(chemin, sig):
     return _osm_policy_impl.sig_sidecar_ecrire(
         chemin, sig, ecrire_texte_atomique=_ecrire_texte_atomique,
@@ -2724,6 +2730,7 @@ def _dependances_carte_osm():
         preparer_osmosis=_preparer_osmosis,
         sidecar_ecrire=_sig_sidecar_ecrire,
         sidecar_stale=_sig_sidecar_stale,
+        sidecar_a_jour=_sig_sidecar_a_jour,
         signature_osm=_signature_osm,
         valider_osm_tags=_valider_osm_tags,
         verifier_mapwriter=_verifier_mapwriter,
@@ -4962,11 +4969,14 @@ def _dependances_export_osm():
         gunzip_vers_fichier=_gunzip_vers_fichier,
         publier_groupe_atomique=_publier_groupe_atomique,
         formater_duree=_hms,
+        sidecar_a_jour=_sig_sidecar_a_jour,
+        sidecar_ecrire=_sig_sidecar_ecrire,
     )
 
 
 def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                        osm_tags=None, ecraser_tuiles=False, formats=None):
+                        osm_tags=None, ecraser_tuiles=False, formats=None,
+                        signature=None):
     return _generer_geojson_osm_impl(
         bbox_wgs84,
         dossier_ville,
@@ -4975,6 +4985,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         osm_tags=osm_tags,
         ecraser_tuiles=ecraser_tuiles,
         formats=formats,
+        signature=signature,
         dependances=_dependances_export_osm(),
     )
 

@@ -967,10 +967,10 @@ print("== 23. R1#4 : signature de config au manifeste (cache/fraîcheur) ==")
 import types as _types
 def _args4(**kw):
     _d = dict(zoom_min=13, zoom_max=18, formats_image="auto", qualite_image=85,
+              ombrages=["lrm"], ombrages_elevation=None,
               shading_specs=None, shading_preset=None, svf_gamma=1.0,
-              svf_conv=None, svf_dist=None, sweep_horizon=True, layer=None,
-              style=None, source=None, dfm=False, dfm_ground=None,
-              elevation_soleil=45)
+              svf_conv=None, svf_dist=None, sweep_horizon=True, couche=None,
+              source=None)
     _d.update(kw)
     return _types.SimpleNamespace(**_d)
 
@@ -984,6 +984,28 @@ check("R1#4 signature déterministe", _sigA == l2m._signature_config(_args4(), _
 check("R1#4 zoom_max ≠ → signature ≠", _sigA != l2m._signature_config(_args4(zoom_max=17), _szA))
 check("R1#4 format ≠ → signature ≠", _sigA != l2m._signature_config(_args4(formats_image="png"), _szA))
 check("R1#4 shading ≠ → signature ≠", _sigA != l2m._signature_config(_args4(shading_specs=["svf"]), _szA))
+# B02 : ces options vivent sous leur nom de parseur (dest), pas sous un alias.
+check("B02 --shadings ≠ → signature ≠",
+      _sigA != l2m._signature_config(_args4(ombrages=["slope"]), _szA))
+check("B02 --shading-elevation ≠ → signature ≠",
+      l2m._signature_config(_args4(ombrages_elevation=25), _szA)
+      != l2m._signature_config(_args4(ombrages_elevation=45), _szA))
+check("B02 --couche raster ≠ → signature ≠",
+      l2m._signature_config(_args4(couche="planign"), _szA)
+      != l2m._signature_config(_args4(couche="ortho"), _szA))
+check("B02 ordre de --shadings indifférent → signature INCHANGÉE",
+      l2m._signature_config(_args4(ombrages=["slope", "lrm"]), _szA)
+      == l2m._signature_config(_args4(ombrages=["lrm", "slope"]), _szA))
+# Garde-fou : un champ signé qu'aucun parseur découpable ne remplit est inerte.
+_dests = {a.dest for p in (l2m._construire_parser_lidar(),
+                           l2m._construire_parser_wmts())
+          for a in p._actions}
+from _split_planning import _SIGNATURE_FIELDS as _champs_sig
+# Dérivés de --format juste après le parse (args.mbtiles = "mbtiles" in formats).
+_derives = {"mbtiles", "rmap", "sqlitedb"}
+_inertes = [c for c in _champs_sig if c not in _dests | _derives]
+check(f"B02 chaque champ signé est un dest de parseur (inertes : {_inertes})",
+      not _inertes)
 # split-width extend : même origine + même pas, +1 rangée → signature INCHANGÉE
 check("R1#4 split-width extend (même origine+pas) → signature INCHANGÉE",
       _sigA == l2m._signature_config(_args4(), _sz(650000, 6300000, 3, 1000)))

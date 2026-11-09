@@ -21,6 +21,7 @@ class DependancesCarteOsm:
     preparer_osmosis: object
     sidecar_ecrire: object
     sidecar_stale: object
+    sidecar_a_jour: object
     signature_osm: object
     valider_osm_tags: object
     verifier_mapwriter: object
@@ -50,6 +51,10 @@ def generer_carte_osm(
     osm_pbf = Path(osm_pbf)
     if geojson_formats is None:
         geojson_formats = ["gz"]
+    # Une seule signature pour la carte et ses GeoJSON, calculée sur le PBF
+    # d'origine : l'export lit parfois le PBF filtré, dont le nom ne dit rien
+    # de la demande (B15).
+    signature = d.signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)
 
     if not want_map:
         if not export_geojson:
@@ -58,7 +63,7 @@ def generer_carte_osm(
         return d.generer_geojson(
             bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
             osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
-            formats=geojson_formats,
+            formats=geojson_formats, signature=signature,
         )
 
     if d.windows:
@@ -72,10 +77,9 @@ def generer_carte_osm(
     need_gz = "gz" in geojson_formats
     need_raw = "geojson" in geojson_formats
     geojson_present = (
-        (not need_gz or chemin_geojson_gz.exists())
-        and (not need_raw or chemin_geojson_raw.exists())
+        (not need_gz or d.sidecar_a_jour(chemin_geojson_gz, signature))
+        and (not need_raw or d.sidecar_a_jour(chemin_geojson_raw, signature))
     )
-    signature = d.signature_osm(bbox_wgs84, osm_tags, osm_pbf, skip_bbox)
     signature_perimee = chemin_map.exists() and d.sidecar_stale(
         chemin_map, signature
     )
@@ -91,7 +95,7 @@ def generer_carte_osm(
         if not export_geojson or geojson_present:
             print(f"  OSM map already present: {chemin_map.name} - skipped")
             return chemin_map
-        print(f"  OSM map already present: {chemin_map.name} - GeoJSON missing, exporting...")
+        print(f"  OSM map already present: {chemin_map.name} - GeoJSON missing or outdated, exporting...")
         filtre = dossier_ville / f"{nom_zone}_filtered.pbf"
         source = filtre if filtre.exists() else osm_pbf
         if source == filtre:
@@ -99,7 +103,7 @@ def generer_carte_osm(
         d.generer_geojson(
             bbox_wgs84, dossier_ville, nom_zone, source,
             osm_tags=osm_tags, ecraser_tuiles=ecraser_tuiles,
-            formats=geojson_formats,
+            formats=geojson_formats, signature=signature,
         )
         return chemin_map
 
@@ -109,7 +113,7 @@ def generer_carte_osm(
             return d.generer_geojson(
                 bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
                 osm_tags=osm_tags, ecraser_tuiles=regen_geojson,
-                formats=geojson_formats,
+                formats=geojson_formats, signature=signature,
             )
         return None
 
@@ -258,6 +262,6 @@ def generer_carte_osm(
         d.generer_geojson(
             bbox_wgs84, dossier_ville, nom_zone, source,
             osm_tags=osm_tags, ecraser_tuiles=regen_geojson,
-            formats=geojson_formats,
+            formats=geojson_formats, signature=signature,
         )
     return chemin_map

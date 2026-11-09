@@ -818,7 +818,7 @@ class AtomicDownloadTests(unittest.TestCase):
         attempts = []
 
         def open_retry(path, mode=None, **kwargs):
-            if mode != "w":
+            if str(path).startswith("/vsicurl/"):
                 attempts.append(str(path))
                 if len(attempts) == 1:
                     raise OSError("temporary range failure")
@@ -924,6 +924,9 @@ class AtomicDownloadTests(unittest.TestCase):
             bounds = SimpleNamespace(left=100, bottom=200, right=300, top=400)
             crs = SimpleNamespace(to_epsg=lambda: 3857)
 
+            def tags(self):
+                return {}
+
             def __enter__(self):
                 return self
 
@@ -950,6 +953,65 @@ class AtomicDownloadTests(unittest.TestCase):
         transform_bbox.assert_called_once_with(
             transformer.transform, 1, 2, 3, 4
         )
+
+    def test_cog_fragment_is_reused_only_for_a_bbox_it_was_read_for(self):
+        # B01 : le fichier local porte le nom de la tuile distante, mais ne
+        # contient que la fenêtre lue. Une 2e zone dans la même tuile ne doit
+        # pas hériter du fragment de la 1re ; une sous-zone, si.
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_origin
+
+        distant = self.tmp / "distant" / "cog.tif"
+        distant.parent.mkdir()
+        with rasterio.open(
+            distant, "w", driver="GTiff", width=100, height=100, count=1,
+            dtype="float32", crs="EPSG:2154",
+            transform=from_origin(0, 100, 1, 1),
+        ) as dst:
+            dst.write(np.arange(10_000, dtype="float32").reshape(1, 100, 100))
+        vrai_open = rasterio.open
+        lectures = []
+
+        def open_distant(path, *args, **kwargs):
+            if str(path).startswith("/vsicurl/"):
+                lectures.append(str(path))
+                path = distant
+            return vrai_open(path, *args, **kwargs)
+
+        L.PROVIDER = SimpleNamespace(
+            CRS_NATIF="EPSG:2154", subdir_from_name=lambda _nom: ""
+        )
+        local = self.tmp / "tiles"
+
+        def demander(bbox):
+            return L.telecharger_cog_fenetre(
+                "cog.tif", "https://example.invalid/cog.tif", local, bbox
+            )
+
+        def bornes():
+            with vrai_open(local / "cog.tif") as src:
+                return tuple(round(v) for v in src.bounds)
+
+        with mock.patch.object(rasterio, "open", side_effect=open_distant), \
+             mock.patch.object(L, "SEUIL_DALLE_VALIDE", 100), \
+             mock.patch.object(L, "MAX_TENTATIVES", 1):
+            self.assertEqual(demander((10, 10, 40, 40)), "ok")
+            self.assertEqual(bornes(), (10, 10, 40, 40))
+            self.assertEqual(demander((20, 20, 30, 30)), "skip")
+            self.assertEqual(len(lectures), 1)
+
+            self.assertEqual(demander((50, 50, 90, 90)), "ok")
+            self.assertEqual(bornes(), (50, 50, 90, 90))
+            self.assertEqual(len(lectures), 2)
+
+            # Zone débordant de la tuile : le fragment est rogné à la tuile,
+            # mais la même demande le réutilise (pas de re-lecture sans fin).
+            self.assertEqual(demander((80, 80, 150, 150)), "ok")
+            self.assertEqual(bornes(), (80, 80, 100, 100))
+            self.assertEqual(demander((80, 80, 150, 150)), "skip")
+            self.assertEqual(len(lectures), 3)
+        self._assert_no_part()
 
     def _fake_rasterio(self, final, old):
         fake = types.ModuleType("rasterio")

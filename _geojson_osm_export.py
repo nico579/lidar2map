@@ -15,11 +15,13 @@ class DependancesExportOsm:
     gunzip_vers_fichier: object
     publier_groupe_atomique: object
     formater_duree: object
+    sidecar_a_jour: object
+    sidecar_ecrire: object
 
 
 def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                        osm_tags=None, ecraser_tuiles=False, formats=None, *,
-                        dependances):
+                        osm_tags=None, ecraser_tuiles=False, formats=None,
+                        signature=None, *, dependances):
     """
     Exporte le PBF OSM filtré par bbox en GeoJSON via PyOsmium.
     Produit un fichier global ``<nom>_osm.geojson(.gz)`` + un fichier par clé
@@ -49,6 +51,11 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
       - Les relations non-multipolygon (route, boundary admin, etc.) ne
         produisent pas de géométrie GeoJSON directement (limitation libosmium).
 
+    ``signature`` (voir ``signature_osm``) décrit la demande : bbox, filtres,
+    PBF d'origine. Fournie, elle est écrite à côté des fichiers globaux, et un
+    fichier existant n'est réutilisé que s'il porte la même (B15). Sans
+    signature, seule la présence des fichiers compte (usage historique).
+
     Retourne le Path du fichier fusionné principal (.gz si demandé sinon
     .geojson), ou None en cas d'échec.
     """
@@ -67,11 +74,23 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
     # et qu'on n'a que le .gz, il faut quand même regénérer le .geojson.
     chemin_gz_attendu  = dossier_ville / f"{nom_zone}_osm.geojson.gz"
     chemin_raw_attendu = dossier_ville / f"{nom_zone}_osm.geojson"
+
+    def _utilisable(chemin):
+        if signature is None:
+            return chemin.exists()
+        return dependances.sidecar_a_jour(chemin, signature)
+
     formats_manquants = []
-    if ecrire_gz and not chemin_gz_attendu.exists():
+    if ecrire_gz and not _utilisable(chemin_gz_attendu):
         formats_manquants.append("gz")
-    if ecrire_geojson and not chemin_raw_attendu.exists():
+    if ecrire_geojson and not _utilisable(chemin_raw_attendu):
         formats_manquants.append("geojson")
+    if signature is not None and any(
+        p.exists() and not _utilisable(p)
+        for p in (chemin_gz_attendu, chemin_raw_attendu)
+    ):
+        print("  OSM GeoJSON: request changed (bbox/tags/PBF) or unsigned, "
+              "regenerating")
 
     if not formats_manquants and not ecraser_tuiles:
         # Tous les formats demandés sont déjà là
@@ -373,6 +392,13 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         if ecrire_gz:
             _publications.append((chemin_global_gz_part, chemin_global_gz))
         dependances.publier_groupe_atomique(_publications)
+        # Après la publication seulement : si elle échoue, l'ancien groupe est
+        # restauré avec son ancienne signature, toujours cohérente.
+        if signature is not None:
+            if ecrire_geojson:
+                dependances.sidecar_ecrire(chemin_global_raw, signature)
+            if ecrire_gz:
+                dependances.sidecar_ecrire(chemin_global_gz, signature)
 
         for cle, (_, path_gz, base) in _streams_paths.items():
             n_cle = _counts_par_cle.get(cle, 0)
