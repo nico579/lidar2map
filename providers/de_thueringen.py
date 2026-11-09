@@ -85,6 +85,24 @@ def dalles_pour_bbox(x1, y1, x2, y2):
 
 
 # ── Index ATOM (téléchargé une fois, caché) ──────────────────────────────────
+class _ServiceIndisponible(Exception):
+    """Le TLBG sert sa page de maintenance (HTML, code 200) au lieu du flux."""
+
+
+def _lire_atom(url, timeout):
+    """Le flux ATOM à url, en octets. Pendant ses maintenances, le TLBG répond
+    200 avec une page HTML (« Dieser Geodaten-Dienst ist im Moment leider noch
+    nicht verfügbar ») : la lire comme du XML donnait un « ParseError:
+    mismatched tag » obscur (smoke du 2026-11-09). On la reconnaît ici."""
+    req = urllib.request.Request(url, headers={"User-Agent": HTTP_UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        type_contenu = (r.headers.get("Content-Type") or "").lower()
+        contenu = r.read()
+    if "html" in type_contenu or contenu.lstrip()[:15].lower().startswith((b"<!doctype html", b"<html")):
+        raise _ServiceIndisponible("ATOM service unavailable (maintenance page served instead of the feed)")
+    return contenu
+
+
 def _dataset_feed_url(top_xml):
     """Flux top-level → href du flux dataset (lien alternate atom+xml de l'entry)."""
     root = ET.fromstring(top_xml)
@@ -109,16 +127,15 @@ def _construire_index(cache_path):
     print("  TH TLBG: downloading the ATOM index (~17k tiles, once)...",
           flush=True)
     try:
-        req = urllib.request.Request(ATOM_TOP, headers={"User-Agent": HTTP_UA})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            top = r.read()
+        top = _lire_atom(ATOM_TOP, 60)
         ds_url = _dataset_feed_url(top)
         if not ds_url:
             print("  TH TLBG: dataset feed not found in the top-level feed")
             return None
-        req = urllib.request.Request(ds_url, headers={"User-Agent": HTTP_UA})
-        with urllib.request.urlopen(req, timeout=180) as r:
-            root = ET.fromstring(r.read())
+        root = ET.fromstring(_lire_atom(ds_url, 180))
+    except _ServiceIndisponible as e:
+        print(f"  TH TLBG: {e}")
+        return None
     except Exception as e:
         print(f"  ERROR TH ATOM index: {type(e).__name__}: {e}")
         return None
