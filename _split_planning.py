@@ -13,6 +13,11 @@ import math
 import re
 
 
+# Noms des attributs de ``args`` tels que le parseur les remplit (``dest``).
+# Un nom absent d'``args`` signe toujours ``None`` : la reprise ignorait ainsi
+# --shadings, --shading-elevation et la couche raster (B02). Les réglages LAZ
+# (--laz-*) n'y figurent pas : ils vivent sur le provider et entrent déjà dans
+# le nom de zone (``variant_tag``), donc dans un autre manifeste.
 _SIGNATURE_FIELDS = (
     "zoom_min",
     "zoom_max",
@@ -21,18 +26,16 @@ _SIGNATURE_FIELDS = (
     "mbtiles",
     "rmap",
     "sqlitedb",
+    "ombrages",
+    "ombrages_elevation",
     "shading_specs",
     "shading_preset",
     "svf_gamma",
     "svf_conv",
     "svf_dist",
     "sweep_horizon",
-    "layer",
-    "style",
+    "couche",
     "source",
-    "dfm",
-    "dfm_ground",
-    "elevation_soleil",
 )
 
 
@@ -163,6 +166,9 @@ def _signature_config(args, sous_zones, provider=None):
     contenu = {
         champ: getattr(args, champ, None) for champ in _SIGNATURE_FIELDS
     }
+    # L'ordre de --shadings ne change pas les sorties produites.
+    if contenu["ombrages"]:
+        contenu["ombrages"] = sorted(set(contenu["ombrages"]))
     code_provider = getattr(provider, "CODE", None) or getattr(
         provider,
         "__name__",
