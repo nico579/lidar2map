@@ -207,7 +207,17 @@ def _run_split_priori(
                     "remaining (coarse)"
                 )
             nb_ok += 1
-        except dependances.zone_hors_couverture:
+        except dependances.zone_hors_couverture as absence:
+            if not getattr(absence, "parcours_complet", True):
+                # Arrêt heuristique ou tuiles en erreur : l'absence n'est pas
+                # démontrée, le morceau n'est pas inscrit fait (B11).
+                print(
+                    f"  [{cle}] ⊘ Probably no coverage, not proven "
+                    "(scan stopped early or tiles in error) - not marked "
+                    "done, relaunch to rescan"
+                )
+                nb_incomplet += 1
+                continue
             manifeste.fin_morceau(
                 cle,
                 int(time.time() - debut_chunk),

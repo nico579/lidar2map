@@ -94,7 +94,7 @@ l2m._planche_depuis_dossier = lambda *a, **k: None   # best-effort → no-op (r�
 args_ns = types.SimpleNamespace(min_free_gb=0.0, nettoyage=False)
 sous_zones = [(0, 0, 1.0, 2.0, 3.0, 4.0), (0, 1, 5.0, 6.0, 7.0, 8.0)]
 
-def _run(racine, overwrite, fail_on=None, hors_couv=None):
+def _run(racine, overwrite, fail_on=None, hors_couv=None, devine=None):
     """Lance _run_split_priori avec un callback traceur. Retourne (calls, exc)."""
     calls = []
     def traiter(coords, nom_z, cle, manifeste):
@@ -103,6 +103,9 @@ def _run(racine, overwrite, fail_on=None, hors_couv=None):
             raise ValueError(f"panne simulée {cle}")
         if hors_couv == cle:
             raise l2m.ZoneHorsCouvertureWMTS(f"mer {cle}")
+        if devine == cle:
+            raise l2m.ZoneHorsCouvertureWMTS(f"mer ? {cle}",
+                                             parcours_complet=False)
     exc = None
     try:
         l2m._run_split_priori(args_ns, sous_zones, "test", "ztest", racine,
@@ -136,6 +139,16 @@ calls, exc = _run(r3, overwrite=False, hors_couv="001x001")
 check("ZoneHorsCouverture : pas fatal, chunk marqué fait",
       exc is None and calls == ["001x001", "001x002"]
       and l2m.Manifeste(r3 / "ztest" / "manifeste.json").deja_traite("001x001"))
+
+# B11 : un arrêt heuristique n'inscrit pas un succès vide définitif.
+r3b = tmp / "split3b"; (r3b / "ztest").mkdir(parents=True)
+calls, exc = _run(r3b, overwrite=False, devine="001x001")
+check("B11 hors couverture non démontrée : pas fatal, chunk PAS marqué fait",
+      exc is None and calls == ["001x001", "001x002"]
+      and not l2m.Manifeste(r3b / "ztest" / "manifeste.json").deja_traite("001x001"))
+calls, exc = _run(r3b, overwrite=False)
+check("B11 relance : SEUL le chunk non démontré est réexaminé",
+      calls == ["001x001"] and exc is None)
 
 # Transactionnel (#1/#3, fix 2026-07-28) : generer_mbtiles retourne None sur
 # échec de tuilage SANS lever ; l'ancien code marquait fin_morceau quand même →

@@ -8,6 +8,11 @@ les exceptions métier et les dépendances patchables restent dans la façade
 
 SEUIL_ERR_CONSEC = 30
 SEUIL_HORS_COUVERTURE = 300
+# Jusqu'à ce nombre de tuiles, le parcours va au bout avant de conclure « hors
+# couverture » (absence démontrée, B11) ; un morceau de découpage de 10 km au
+# z18 en compte ~11 000. Au-delà, l'arrêt anticipé reste (bbox inversée sur un
+# département) mais n'est pas tenu pour une preuve.
+SEUIL_PARCOURS_COMPLET = 20_000
 BATCH_MBTILES_INSERT = 2000
 
 WMTS_URL = "https://data.geopf.fr/private/wmts"

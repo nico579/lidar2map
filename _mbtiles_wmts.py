@@ -41,6 +41,7 @@ class _DependancesMbtilesWMTS:
     batch_insert: int
     seuil_err_consec: int
     seuil_hors_couverture: int
+    seuil_parcours_complet: int
 
 
 def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
@@ -74,6 +75,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     BATCH_MBTILES_INSERT = dependances.batch_insert
     SEUIL_ERR_CONSEC = dependances.seuil_err_consec
     SEUIL_HORS_COUVERTURE = dependances.seuil_hors_couverture
+    SEUIL_PARCOURS_COMPLET = dependances.seuil_parcours_complet
 
     if chemin.exists() and not ecraser_tuiles:
         print(f"  {chemin.name} → already present")
@@ -156,6 +158,7 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     abort_msg   = None # set si on abort à mi-parcours (clé expirée, etc.)
     abort_hors_couv = False  # True si l'abort est un hors-couverture (que des 204),
                              # False si panne I/O systémique — pilote le type d'exception.
+    abort_anticipe = False   # hors-couverture conclu avant la fin de la grille
     # Seuil d'abandon : au-delà de SEUIL_ERR_CONSEC erreurs consécutives,
     # on assume une panne systémique (clé API expirée, IGN down, réseau coupé)
     # et on n'écrit pas un MBTiles tronqué qui aurait l'apparence d'un succès.
@@ -369,11 +372,16 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
                         # côtière, couche historique) ; et on ne fail-fast qu'une
                         # fois la moitié de la grille balayée (total//2), sinon on
                         # risquait d'abort avant d'atteindre une couverture tardive
-                        # dans l'ordre de balayage.
+                        # dans l'ordre de balayage. B11 : l'ordre de balayage n'est
+                        # pas un échantillon de la zone, la moitié vide peut être
+                        # un coin ; l'arrêt anticipé est donc réservé aux très
+                        # grandes grilles et ne vaut pas preuve d'absence.
                         if (ok == 0 and abort_msg is None
+                                and total > SEUIL_PARCOURS_COMPLET
                                 and absentes >= max(SEUIL_HORS_COUVERTURE,
                                                     total // 2)):
                             abort_hors_couv = True
+                            abort_anticipe = True
                             abort_msg = (
                                 f"{absentes} tuiles hors couverture (204) pour "
                                 f"seulement {ok} dans la couche. Zone hors de la "
@@ -434,9 +442,14 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
             print(f"\n  ⊘ {absentes} tiles out of coverage (204) for {ok} in layer.")
         else:
             print(f"\n  ✗ ABANDON : {abort_msg}")
-        _exc_cls = (dependances.zone_hors_couverture
-                    if abort_hors_couv else RuntimeError)
-        raise _exc_cls(f"WMTS abort : {abort_msg}")
+        if not abort_hors_couv:
+            raise RuntimeError(f"WMTS abort : {abort_msg}")
+        # Absence démontrée = toute la grille vue, et vue sans erreur : une
+        # tuile en erreur réseau n'est pas une tuile hors couche.
+        raise dependances.zone_hors_couverture(
+            f"WMTS abort : {abort_msg}",
+            parcours_complet=not abort_anticipe and erreurs == 0,
+        )
 
     if _stop_event.is_set():
         # Partiel supprimé : sans valeur de reprise (les tuiles déjà reçues
