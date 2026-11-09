@@ -144,6 +144,38 @@ exc, chemin = _mbtiles({(10, 1, 1): (204, "", b""), (10, 1, 2): (204, "", b""),
 check("zone 100% hors couverture → ZoneHorsCouvertureWMTS",
       isinstance(exc, l2m.ZoneHorsCouvertureWMTS) and not chemin.exists(),
       type(exc).__name__)
+check("zone 100% hors couverture, grille entière vue → absence démontrée",
+      getattr(exc, "parcours_complet", None) is True)
+
+# B11 : 600 tuiles hors couche en tête de balayage, puis 400 dans la couche.
+_tardive = {(12, x, 0): (204, "", b"") for x in range(600)}
+_tardive.update({(12, x, 0): _OKT for x in range(600, 1000)})
+exc, chemin = _mbtiles(_tardive, "m_tardive")
+_n = 0
+if chemin.exists():
+    con = sqlite3.connect(str(chemin))
+    _n = con.execute("SELECT COUNT(*) FROM tiles").fetchone()[0]
+    con.close()
+check("B11 couverture tardive (petite grille) → parcourue et publiée",
+      exc is None and _n == 400, f"exc={exc!r} n={_n}")
+
+_seuil = l2m.SEUIL_PARCOURS_COMPLET
+l2m.SEUIL_PARCOURS_COMPLET = 100        # simule une très grande grille
+try:
+    exc, chemin = _mbtiles(_tardive, "m_tardive_grande")
+finally:
+    l2m.SEUIL_PARCOURS_COMPLET = _seuil
+check("B11 très grande grille : arrêt anticipé, mais absence NON démontrée",
+      isinstance(exc, l2m.ZoneHorsCouvertureWMTS)
+      and exc.parcours_complet is False and not chemin.exists(),
+      f"{type(exc).__name__} {getattr(exc, 'parcours_complet', None)}")
+
+exc, chemin = _mbtiles({(10, 1, 1): (204, "", b""), (10, 1, 2): (204, "", b""),
+                        (10, 2, 1): (503, "", b"")}, "m_mer_err")
+check("B11 que des 204 + une tuile en erreur → pas une absence démontrée",
+      not (isinstance(exc, l2m.ZoneHorsCouvertureWMTS)
+           and exc.parcours_complet),
+      f"{type(exc).__name__} {getattr(exc, 'parcours_complet', None)}")
 
 
 print("== 3. telecharger_wfs : pagination pilotée par numberMatched ==")

@@ -927,7 +927,7 @@ _HTTP_UA = "lidar2map/1.0 (IGN WMTS/WMS)"
 # ET par le check de mise à jour du GUI (Api.check_update). Le bump de
 # release se fait ICI, nulle part ailleurs (fini les 3 chaînes argparse à
 # synchroniser).
-VERSION      = "1.63.2"
+VERSION      = "1.63.3"
 VERSION_DATE = "2026-09"
 
 
@@ -1240,6 +1240,7 @@ from _raster_policy import (
     COUCHES,
     SEUIL_ERR_CONSEC,
     SEUIL_HORS_COUVERTURE,
+    SEUIL_PARCOURS_COMPLET,
     WMTS_HEADERS,
     WMTS_URL,
     WMTS_URL_PUB,
@@ -2326,8 +2327,16 @@ class ZoneHorsCouvertureWMTS(RuntimeError):
     (que des 204). Distincte d'une panne I/O systémique (qui reste un RuntimeError
     nu). En run simple, elle remonte : bbox probablement erronée, message d'aide
     utile. En chunk de grille auto-généré, la boucle de split la rattrape et
-    saute la cellule (mer, hors frontière) : légitimement vide, pas une erreur."""
-    pass
+    saute la cellule (mer, hors frontière) : légitimement vide, pas une erreur.
+
+    ``parcours_complet`` vaut False quand le producteur s'est arrêté avant la
+    fin de la grille (heuristique d'une très grande zone) : l'absence n'est
+    alors pas démontrée et la cellule ne doit pas être inscrite comme faite
+    (B11)."""
+
+    def __init__(self, *args, parcours_complet=True):
+        super().__init__(*args)
+        self.parcours_complet = parcours_complet
 
 
 from _mbtiles_wmts import (
@@ -2358,6 +2367,7 @@ def _dependances_mbtiles_wmts():
         batch_insert=BATCH_MBTILES_INSERT,
         seuil_err_consec=SEUIL_ERR_CONSEC,
         seuil_hors_couverture=SEUIL_HORS_COUVERTURE,
+        seuil_parcours_complet=SEUIL_PARCOURS_COMPLET,
     )
 
 

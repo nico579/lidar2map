@@ -52,6 +52,7 @@ FAST_SCRIPTS = (
     "test_dossiers.py",
     "test_provider_de_sh.py",
     "test_provider_es_euskadi.py",
+    "test_decouverte_incomplete.py",
 )
 
 SCIENTIFIC_SCRIPTS = (

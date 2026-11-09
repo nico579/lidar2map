@@ -145,21 +145,24 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
     grille = dalles_pour_bbox(x1, y1, x2, y2)
     noms_grille = [f"{x}_{y}" for x, y in grille]
     if not all(n in cache for n in noms_grille):
+        # Au moins une cellule est inconnue du cache : sans réponse du
+        # fishnet, on ne sait pas si elle est couverte. Le cache ne vaut
+        # « hors couverture » que pour une valeur None ENREGISTRÉE, pas pour
+        # une clé absente (B29) ; la panne remonte donc en échec.
         try:
             mapping = _query_fishnet(x1, y1, x2, y2)
         except Exception as e:
-            print(f"  ARSO fishnet : {type(e).__name__}: {e}")
-            # Repli sur le cache seul (zones déjà vues) — sinon échec total.
-            mapping = None
-        if mapping is not None:
-            for n in noms_grille:
-                cache[n] = mapping.get(n)   # None = hors couverture
-            try:
-                atomic_write_json(cache_path, cache)
-            except Exception:
-                pass
-        elif not any(n in cache for n in noms_grille):
-            return None   # réseau KO et rien en cache
+            inconnues = sum(1 for n in noms_grille if n not in cache)
+            raise RuntimeError(
+                f"ARSO fishnet unavailable ({type(e).__name__}: {e}), "
+                f"{inconnues} tile(s) of the zone unresolved"
+            ) from e
+        for n in noms_grille:
+            cache[n] = mapping.get(n)   # None = hors couverture
+        try:
+            atomic_write_json(cache_path, cache)
+        except Exception:
+            pass
 
     dalles = {}
     hors_couv = 0

@@ -249,7 +249,10 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
         except Exception:
             cache = {}
 
-    etat = {"reseau_ok": False, "nouveaux": False}
+    # Un préfixe non listé laisse ses cellules sans réponse : les compter hors
+    # couverture, ou les affecter à une collection moins prioritaire (1 m au
+    # lieu de 50 cm), serait conclure sur une panne (même défaut que B29).
+    etat = {"reseau_ok": False, "nouveaux": False, "echecs": []}
 
     def _availabilite(label, base, grille, cells):
         """{ref_token: url} pour `cells` dans cette collection ; liste S3 par
@@ -266,6 +269,7 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
                 etat["reseau_ok"] = True
             except Exception as e:
                 print(f"  GB-Scotland listing {label}/{pfx} : {type(e).__name__}: {e}")
+                etat["echecs"].append(f"{label}/{pfx}")
                 continue
             trouve = {_osref_depuis_cle(k): f"{S3_BASE}/{k}" for k in keys}
             cache[ck] = trouve
@@ -299,8 +303,13 @@ def discover_dalles(bbox_wgs84, bbox_natif, cache_path, workers=1):
             )
         except Exception:
             pass
-    if not etat["reseau_ok"] and not dalles:
-        return None   # réseau KO et rien en cache
+    if etat["echecs"]:
+        # Les listings réussis restent en cache : la relance ne refait que
+        # les préfixes en échec.
+        raise RuntimeError(
+            f"GB-Scotland listing failed for {', '.join(etat['echecs'])}: "
+            "coverage unknown"
+        )
 
     detail = ", ".join(f"{c}:{n}" for c, n in par_collection.items())
     hors = len(restantes)

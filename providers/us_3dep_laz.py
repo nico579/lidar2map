@@ -67,6 +67,7 @@ COPC_WINDOWED      = True
 _STAC_SEARCH = "https://planetarycomputer.microsoft.com/api/stac/v1/search"
 _SIGN        = "https://planetarycomputer.microsoft.com/api/sas/v1/sign?href="
 _COLLECTION  = "3dep-lidar-copc"
+_MAX_PAGES_STAC = 200   # 20 000 tuiles COPC : bien au-delà d'une zone fenêtrée
 _UA          = "lidar2map/1.0"
 
 
@@ -103,19 +104,38 @@ def _discover(bbox_wgs84, bbox_natif, cache_path, workers=1):
     if bbox_wgs84 is None:
         return {}
     lo1, la1, lo2, la2 = (float(v) for v in bbox_wgs84)
-    body = json.dumps({
+    body = {
         "collections": [_COLLECTION],
         "bbox": [lo1, la1, lo2, la2],
         "limit": 100,
         "sortby": [{"field": "properties.datetime", "direction": "desc"}],
-    }).encode()
+    }
+    # La recherche rend 100 items par page : suivre le lien rel=next (body de
+    # POST à réémettre avec son jeton, comme pt_dgt), sinon les tuiles des
+    # pages suivantes manquaient sans le dire (B12).
+    features, url, pages = [], _STAC_SEARCH, 0
+    while True:
+        try:
+            res = _http_json(url, data=json.dumps(body).encode())
+        except Exception as e:
+            print(f"  ERROR US 3DEP STAC: {type(e).__name__}: {e}")
+            return None
+        page = res.get("features", [])
+        features.extend(page)
+        pages += 1
+        suivant = next((ln for ln in res.get("links", [])
+                        if ln.get("rel") == "next"), None)
+        if not suivant or not page:
+            break
+        if not suivant.get("body") or pages >= _MAX_PAGES_STAC:
+            raise RuntimeError(
+                f"US 3DEP STAC: result truncated after {pages} page(s) "
+                f"({len(features)} items), zone too large or paging unsupported"
+            )
+        body = {**body, **suivant["body"]}
+        url = suivant.get("href") or _STAC_SEARCH
     dalles, vus = {}, set()
-    try:
-        res = _http_json(_STAC_SEARCH, data=body)
-    except Exception as e:
-        print(f"  ERROR US 3DEP STAC: {type(e).__name__}: {e}")
-        return None
-    for feat in res.get("features", []):
+    for feat in features:
         asset = feat.get("assets", {}).get("data")
         if not asset or not str(asset.get("href", "")).endswith(".copc.laz"):
             continue
