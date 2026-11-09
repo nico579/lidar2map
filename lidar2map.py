@@ -1905,14 +1905,15 @@ def telecharger_dalle_directe(
 
 
 def _cog_cache_couvre(chemin, bbox_natif):
-    """True si le GeoTIFF fenêtré déjà en cache `chemin` couvre ENTIÈREMENT
+    """True si le GeoTIFF fenêtré déjà en cache `chemin` vaut pour
     `bbox_natif` (bbox demandée, en CRS_NATIF du provider).
 
-    Les providers COG (ca-nrcan, us-tnm, nz-linz, gb-scotland) nomment le
-    fichier local par ASSET distant, stable, alors que le CONTENU écrit est la
-    fenêtre (intersection bbox∩COG). Sans ce contrôle, une 2e zone dans le même
-    COG réutilisait le fragment de la 1re → relief faux servi en silence (#1).
-    Conservateur : illisible ou bbox non couverte → False (re-télécharge)."""
+    Les providers COG/COPC fenêtrés nomment le fichier local par ASSET
+    distant, stable, alors que le CONTENU écrit est la fenêtre (intersection
+    bbox∩tuile). Sans ce contrôle, une 2e zone dans la même tuile réutilisait
+    le fragment de la 1re → relief faux servi en silence (#1, B01). Le
+    fragment porte la bbox qui l'a produit (tag GeoTIFF) ; sans ce tag, il
+    doit couvrir toute la bbox. Illisible → False (re-télécharge)."""
     return _cog_cache_couvre_impl(
         chemin,
         bbox_natif,
@@ -1960,6 +1961,7 @@ def _dependances_telechargement_copc():
         valider_tif_dalle=_valider_tif_dalle,
         publier_nuage_stage=_publier_nuage_stage,
         creer_fichier=_creer_fichier,
+        cache_couvre=_cog_cache_couvre,
     )
 
 

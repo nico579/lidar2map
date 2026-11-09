@@ -542,6 +542,7 @@ class DependancesTelechargementCopc:
     valider_tif_dalle: object
     publier_nuage_stage: object
     creer_fichier: object
+    cache_couvre: object
 
 
 def copc_post_fetch_crs(
@@ -581,12 +582,21 @@ def telecharger_copc_fenetre(
     appliqué sous verrou avant la conversion. ``bbox`` est exprimée dans le CRS
     natif du provider. La fonction retourne ``ok``, ``skip``, ``absent`` ou
     ``erreur`` et propage toujours ``KeyboardInterrupt``.
+
+    Le fichier local porte le nom de la tuile distante mais ne contient que
+    la fenêtre lue : il n'est réutilisé que s'il a été lu pour une bbox
+    contenant celle-ci (B01).
     """
     d = dependances
     chemin = d.chemin_dalle(dossier_dalles, nom)
     chemin.parent.mkdir(parents=True, exist_ok=True)
     seuil = getattr(d.provider, "SEUIL_DALLE_VALIDE", d.seuil_dalle_valide)
-    if chemin.exists() and chemin.stat().st_size > seuil and not ecraser:
+    if (
+        chemin.exists()
+        and chemin.stat().st_size > seuil
+        and not ecraser
+        and d.cache_couvre(chemin, bbox)
+    ):
         return "skip"
 
     with d.stage_dalle_part(chemin) as chemin_part:
@@ -608,6 +618,7 @@ def telecharger_copc_fenetre(
                 raise IOError(
                     f"GeoTIFF COPC invalide après post_fetch ({nom})"
                 )
+            marquer_bbox_demandee(chemin_part, bbox)
             d.publier_nuage_stage(chemin, chemin_part)
             chemin_part.replace(chemin)
             d.creer_fichier(chemin)
@@ -622,6 +633,39 @@ def telecharger_copc_fenetre(
             return "erreur"
 
 
+TAG_BBOX_DEMANDEE = "LIDAR2MAP_BBOX_DEMANDEE"
+
+
+def marquer_bbox_demandee(chemin, bbox_natif):
+    """Inscrit dans le GeoTIFF fenêtré la bbox (CRS natif) qui l'a produit.
+
+    Un fragment est l'intersection de cette bbox et de la tuile distante. Le
+    noter dans le fichier lui-même (métadonnée GDAL standard) garde la preuve
+    solidaire du contenu, sans fichier annexe à publier en même temps.
+    Best-effort : sans ce tag, la réutilisation retombe sur le contrôle des
+    bornes, plus strict.
+    """
+    try:
+        import rasterio
+
+        valeur = ",".join(repr(float(v)) for v in bbox_natif)
+        with rasterio.open(str(chemin), "r+") as destination:
+            destination.update_tags(**{TAG_BBOX_DEMANDEE: valeur})
+    except Exception:
+        pass
+
+
+def _bbox_contient(exterieure, interieure, tolerance=1e-6):
+    ex1, ey1, ex2, ey2 = exterieure
+    ix1, iy1, ix2, iy2 = interieure
+    return (
+        min(ex1, ex2) - tolerance <= min(ix1, ix2)
+        and max(ex1, ex2) + tolerance >= max(ix1, ix2)
+        and min(ey1, ey2) - tolerance <= min(iy1, iy2)
+        and max(ey1, ey2) + tolerance >= max(iy1, iy2)
+    )
+
+
 def cog_cache_couvre(
     chemin,
     bbox_natif,
@@ -630,13 +674,23 @@ def cog_cache_couvre(
     get_transformer,
     bbox_enveloppe_transform,
 ):
-    """Vérifie qu'un fragment COG en cache couvre toute la bbox demandée."""
+    """Vérifie qu'un fragment fenêtré en cache vaut pour la bbox demandée.
+
+    Avec le tag ``TAG_BBOX_DEMANDEE`` : réutilisable ssi la bbox qui a produit
+    le fragment contient la nouvelle, car alors (ancienne ∩ tuile) contient
+    (nouvelle ∩ tuile), même quand la zone déborde de la tuile distante. Sans
+    tag (fragment antérieur) : le fichier doit couvrir toute la bbox.
+    """
     try:
         import rasterio
 
         with rasterio.open(str(chemin)) as source:
             bornes = source.bounds
             epsg_fichier = source.crs.to_epsg() if source.crs else None
+            bbox_marquee = source.tags().get(TAG_BBOX_DEMANDEE)
+        if bbox_marquee:
+            demandee = tuple(float(v) for v in bbox_marquee.split(","))
+            return len(demandee) == 4 and _bbox_contient(demandee, bbox_natif)
         x1, y1, x2, y2 = bbox_natif
         crs_natif = getattr(provider, "CRS_NATIF", "")
         epsg_natif = int(crs_natif.split(":")[1]) if ":" in crs_natif else None
@@ -843,6 +897,7 @@ def telecharger_cog_fenetre(
                         raise IOError(
                             f"GeoTIFF invalide après post_download ({nom})"
                         )
+                marquer_bbox_demandee(chemin_part, bbox)
                 chemin_part.replace(chemin)
                 d.creer_fichier(chemin)
                 return "ok"
@@ -920,10 +975,19 @@ def telecharger_dalles_zone(
     dalles_dict = dict_sur
 
     force_dl = bool(args.telechargement_forcer or args.telechargement_ecraser)
+    # Un fragment fenêtré porte le nom de la tuile distante, pas celui de la
+    # zone : sa taille ne prouve pas qu'il couvre cette bbox. Seul le moteur
+    # fenêtré sait le vérifier, il reçoit donc aussi les fichiers présents
+    # (B01). Les tuiles entières gardent le préfiltre par taille.
+    fenetre = bool(
+        getattr(provider, "COG_WINDOWED", False)
+        or getattr(provider, "COPC_WINDOWED", False)
+    )
     for nom, url in dalles_dict.items():
         chemin = d.chemin_dalle(dossier_dalles, nom)
         if (
             force_dl
+            or fenetre
             or not chemin.exists()
             or chemin.stat().st_size < d.seuil_dalle_valide
         ):

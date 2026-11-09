@@ -11778,6 +11778,31 @@ class TerrainDownloadContractTests(unittest.TestCase):
             self.assertFalse(any(event[0] == "manifest" for event in events))
             self.assertFalse(any(event[0] == "register" for event in events))
 
+    def test_cached_windowed_fragment_is_judged_by_its_engine(self):
+        # B01 : la taille d'un fragment fenêtré ne prouve pas qu'il couvre la
+        # nouvelle bbox ; seul le moteur fenêtré peut le dire.
+        for name, cog, copc in (("cog", True, False), ("copc", False, True)):
+            with self.subTest(mode=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "tile.tif").write_bytes(b"x" * 32)
+                events = []
+                provider = SimpleNamespace(
+                    COG_WINDOWED=cog, COPC_WINDOWED=copc
+                )
+                terrain_download.telecharger_dalles_zone(
+                    {"tile.tif": "https://invalid/tile"},
+                    (5, 6, 7, 8),
+                    root,
+                    root,
+                    self._args(),
+                    quiet=True,
+                    dependances=self._dependencies(
+                        provider, events, result="skip"
+                    ),
+                )
+                download = next(e for e in events if e[0] == "download")
+                self.assertEqual(download[2], ((5, 6, 7, 8), False))
+
     def test_cached_tile_and_cloud_are_registered_without_download(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
