@@ -2691,6 +2691,10 @@ def _sig_sidecar_stale(chemin, sig):
     return _osm_policy_impl.sig_sidecar_stale(chemin, sig)
 
 
+def _sig_sidecar_a_jour(chemin, sig):
+    return _osm_policy_impl.sig_sidecar_a_jour(chemin, sig)
+
+
 def _sig_sidecar_ecrire(chemin, sig):
     return _osm_policy_impl.sig_sidecar_ecrire(
         chemin, sig, ecrire_texte_atomique=_ecrire_texte_atomique,
@@ -2726,6 +2730,7 @@ def _dependances_carte_osm():
         preparer_osmosis=_preparer_osmosis,
         sidecar_ecrire=_sig_sidecar_ecrire,
         sidecar_stale=_sig_sidecar_stale,
+        sidecar_a_jour=_sig_sidecar_a_jour,
         signature_osm=_signature_osm,
         valider_osm_tags=_valider_osm_tags,
         verifier_mapwriter=_verifier_mapwriter,
@@ -4964,11 +4969,14 @@ def _dependances_export_osm():
         gunzip_vers_fichier=_gunzip_vers_fichier,
         publier_groupe_atomique=_publier_groupe_atomique,
         formater_duree=_hms,
+        sidecar_a_jour=_sig_sidecar_a_jour,
+        sidecar_ecrire=_sig_sidecar_ecrire,
     )
 
 
 def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
-                        osm_tags=None, ecraser_tuiles=False, formats=None):
+                        osm_tags=None, ecraser_tuiles=False, formats=None,
+                        signature=None):
     return _generer_geojson_osm_impl(
         bbox_wgs84,
         dossier_ville,
@@ -4977,6 +4985,7 @@ def generer_geojson_osm(bbox_wgs84, dossier_ville, nom_zone, osm_pbf,
         osm_tags=osm_tags,
         ecraser_tuiles=ecraser_tuiles,
         formats=formats,
+        signature=signature,
         dependances=_dependances_export_osm(),
     )
 

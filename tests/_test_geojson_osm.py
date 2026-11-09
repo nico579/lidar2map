@@ -301,5 +301,65 @@ class GeojsonOsmCharacterizationTests(unittest.TestCase):
         self.assertEqual(len(ET.parse(final).getroot().findall("node")), 1)
 
 
+class OsmGeojsonCacheSignatureTests(unittest.TestCase):
+    """B15 : l'export GeoJSON OSM ne ressert pas le résultat d'un autre filtre."""
+
+    OSM = """<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="test">
+  <node id="1" version="1" lat="43.01" lon="6.01"/>
+  <node id="2" version="1" lat="43.02" lon="6.02"/>
+  <node id="3" version="1" lat="43.03" lon="6.01"/>
+  <node id="4" version="1" lat="43.04" lon="6.02"/>
+  <way id="10" version="1"><nd ref="1"/><nd ref="2"/>
+    <tag k="highway" v="track"/></way>
+  <way id="20" version="1"><nd ref="3"/><nd ref="4"/>
+    <tag k="waterway" v="stream"/></way>
+</osm>
+"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.source = self.root / "source.osm"
+        self.source.write_text(self.OSM, encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _export(self, tags, bbox=(6.0, 43.0, 6.1, 43.1)):
+        with contextlib.redirect_stdout(io.StringIO()):
+            resultat = L.generer_carte_osm(
+                bbox, self.root, "zone", self.source, osm_tags=tags,
+                export_geojson=True, geojson_formats=["gz"],
+                want_map=False,
+            )
+        self.assertIsNotNone(resultat)
+        with gzip.open(self.root / "zone_osm.geojson.gz", "rt",
+                       encoding="utf-8") as stream:
+            features = json.load(stream)["features"]
+        return sorted(
+            k for f in features for k in ("highway", "waterway")
+            if k in f["properties"]
+        )
+
+    def test_new_filter_on_same_zone_is_exported_not_reused(self):
+        self.assertEqual(self._export(["highway=*"]), ["highway"])
+        self.assertEqual(self._export(["waterway=*"]), ["waterway"])
+
+    def test_same_request_reuses_the_signed_export(self):
+        self._export(["highway=*"])
+        final = self.root / "zone_osm.geojson.gz"
+        avant = final.stat().st_mtime_ns
+        with mock.patch.object(L, "_publier_groupe_atomique") as publier:
+            self.assertEqual(self._export(["highway=*"]), ["highway"])
+        publier.assert_not_called()
+        self.assertEqual(final.stat().st_mtime_ns, avant)
+
+    def test_unsigned_previous_export_is_not_trusted(self):
+        self._export(["highway=*"])
+        Path(str(self.root / "zone_osm.geojson.gz") + ".sig").unlink()
+        self.assertEqual(self._export(["waterway=*"]), ["waterway"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -8193,7 +8193,7 @@ class OsmGeojsonExportContractTests(unittest.TestCase):
         self.assertEqual(
             str(inspect.signature(L.generer_geojson_osm)),
             "(bbox_wgs84, dossier_ville, nom_zone, osm_pbf, osm_tags=None, "
-            "ecraser_tuiles=False, formats=None)",
+            "ecraser_tuiles=False, formats=None, signature=None)",
         )
         marker = object()
         with mock.patch.object(
@@ -8202,13 +8202,14 @@ class OsmGeojsonExportContractTests(unittest.TestCase):
             result = L.generer_geojson_osm(
                 (1, 2, 3, 4), "out", "zone", "source.pbf",
                 osm_tags=["highway=*"], ecraser_tuiles=True,
-                formats=["gz", "geojson"],
+                formats=["gz", "geojson"], signature="sig",
             )
 
         self.assertIs(result, marker)
         self.assertEqual(implementation.call_args.args[:4], (
             (1, 2, 3, 4), "out", "zone", "source.pbf",
         ))
+        self.assertEqual(implementation.call_args.kwargs["signature"], "sig")
         self.assertIsInstance(
             implementation.call_args.kwargs["dependances"],
             geojson_osm_export.DependancesExportOsm,
