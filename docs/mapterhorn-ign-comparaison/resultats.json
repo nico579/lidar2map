@@ -1,0 +1,3745 @@
+{
+  "study_utc": "2026-10-03T10:58:58.173565+00:00",
+  "results": [
+    {
+      "site": {
+        "id": "var_ruine1",
+        "label": "Var — Ruine1 (site du test existant)",
+        "lon": 5.86628,
+        "lat": 43.37579,
+        "context": "relief et structures, secteur du test LAZ existant",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frhd2154d",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          }
+        ]
+      },
+      "zoom": 17,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\var_ruine1\\inputs\\LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=931999.75,6257000.25,932999.75,6258000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          931999.75,
+          6257000.25,
+          932999.75,
+          6258000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          931999.75,
+          0.0,
+          -0.5,
+          6258000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2021-06-25Z",
+        "date_acquisition_fin": "2021-06-25Z",
+        "date_edition": "2025-03-14Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          321,
+          1240,
+          800,
+          800
+        ],
+        "working_bounds": [
+          932160.25,
+          6256980.25,
+          932560.25,
+          6257380.25
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154d"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 17,
+          "x": 67670,
+          "y": 47973,
+          "url": "https://tiles.mapterhorn.com/17/67670/47973.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67670_47973.webp",
+          "bytes": 125208
+        },
+        {
+          "z": 17,
+          "x": 67671,
+          "y": 47973,
+          "url": "https://tiles.mapterhorn.com/17/67671/47973.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67671_47973.webp",
+          "bytes": 91558
+        },
+        {
+          "z": 17,
+          "x": 67672,
+          "y": 47973,
+          "url": "https://tiles.mapterhorn.com/17/67672/47973.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67672_47973.webp",
+          "bytes": 99238
+        },
+        {
+          "z": 17,
+          "x": 67670,
+          "y": 47974,
+          "url": "https://tiles.mapterhorn.com/17/67670/47974.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67670_47974.webp",
+          "bytes": 93772
+        },
+        {
+          "z": 17,
+          "x": 67671,
+          "y": 47974,
+          "url": "https://tiles.mapterhorn.com/17/67671/47974.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67671_47974.webp",
+          "bytes": 100310
+        },
+        {
+          "z": 17,
+          "x": 67672,
+          "y": 47974,
+          "url": "https://tiles.mapterhorn.com/17/67672/47974.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67672_47974.webp",
+          "bytes": 100470
+        },
+        {
+          "z": 17,
+          "x": 67670,
+          "y": 47975,
+          "url": "https://tiles.mapterhorn.com/17/67670/47975.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67670_47975.webp",
+          "bytes": 104100
+        },
+        {
+          "z": 17,
+          "x": 67671,
+          "y": 47975,
+          "url": "https://tiles.mapterhorn.com/17/67671/47975.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67671_47975.webp",
+          "bytes": 105644
+        },
+        {
+          "z": 17,
+          "x": 67672,
+          "y": 47975,
+          "url": "https://tiles.mapterhorn.com/17/67672/47975.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_67672_47975.webp",
+          "bytes": 104644
+        }
+      ],
+      "mercator_pixel_m": 0.59716428347762,
+      "approx_ground_pixel_m": 0.43405777567604675,
+      "vertical_rounding_step_m_documented": 0.015625,
+      "compared_fraction_of_core": 0.9666666666666667,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 348000,
+        "bias_median": 0.00244140625,
+        "rmse": 0.02969219748219883,
+        "rmse_after_median_bias_removal": 0.029793585874146343,
+        "abs_error_p50": 0.01593017578125,
+        "abs_error_p95": 0.05926513671875,
+        "abs_error_p99": 0.0943603515625,
+        "correlation": 0.9999920235572249,
+        "reference_std": 7.432855571538581,
+        "candidate_std": 7.4322715231514245,
+        "amplitude_ratio_std": 0.9999214234177517,
+        "regression_gain": 0.9999134476017387,
+        "fraction_abs_error_over_5cm": 0.08017241379310344,
+        "fraction_abs_error_over_10cm": 0.00796551724137931,
+        "abs_error_max": 0.62005615234375
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 348000,
+        "bias_median": 0.001953125,
+        "rmse": 0.02319785897396812,
+        "rmse_after_median_bias_removal": 0.02325742361421754,
+        "abs_error_p50": 0.01220703125,
+        "abs_error_p95": 0.04638671875,
+        "abs_error_p99": 0.0745849609375,
+        "correlation": 0.9999951303979185,
+        "reference_std": 7.432855571538581,
+        "candidate_std": 7.432749346729234,
+        "amplitude_ratio_std": 0.999985708748364,
+        "regression_gain": 0.9999808392158749,
+        "fraction_abs_error_over_5cm": 0.039879310344827584,
+        "fraction_abs_error_over_10cm": 0.003175287356321839
+      },
+      "lrm_sigma_2m": {
+        "pixels": 348000,
+        "bias_median": 0.0023193359375,
+        "rmse": 0.029405726095778118,
+        "rmse_after_median_bias_removal": 0.02949690675312789,
+        "abs_error_p50": 0.01568603515625,
+        "abs_error_p95": 0.05865478515625,
+        "abs_error_p99": 0.093505859375,
+        "correlation": 0.9797587831878154,
+        "reference_std": 0.13236724140175035,
+        "candidate_std": 0.1169373200132539,
+        "amplitude_ratio_std": 0.8834309665662307,
+        "regression_gain": 0.8655492488333658,
+        "fraction_abs_error_over_5cm": 0.0783419540229885,
+        "fraction_abs_error_over_10cm": 0.007689655172413793
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 348000,
+        "bias_median": 0.00164794921875,
+        "rmse": 0.023014810848572504,
+        "rmse_after_median_bias_removal": 0.02307359352798779,
+        "abs_error_p50": 0.011962890625,
+        "abs_error_p95": 0.04608154296875,
+        "abs_error_p99": 0.07427978515625,
+        "correlation": 0.9875322630655402,
+        "reference_std": 0.13236724140175035,
+        "candidate_std": 0.12094407778691678,
+        "amplitude_ratio_std": 0.9137009769648148,
+        "regression_gain": 0.9023091935472569,
+        "fraction_abs_error_over_5cm": 0.03908620689655173,
+        "fraction_abs_error_over_10cm": 0.003086206896551724
+      },
+      "lrm_sigma_5m": {
+        "pixels": 348000,
+        "bias_median": 0.00244140625,
+        "rmse": 0.029668396524147038,
+        "rmse_after_median_bias_removal": 0.029768502462793656,
+        "abs_error_p50": 0.015869140625,
+        "abs_error_p95": 0.05914306640625,
+        "abs_error_p99": 0.09417724609375,
+        "correlation": 0.9927677826476883,
+        "reference_std": 0.23638628601652653,
+        "candidate_std": 0.22602302511198238,
+        "amplitude_ratio_std": 0.956159635657461,
+        "regression_gain": 0.9492444813488788,
+        "fraction_abs_error_over_5cm": 0.08002586206896552,
+        "fraction_abs_error_over_10cm": 0.007951149425287357
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 348000,
+        "bias_median": 0.001708984375,
+        "rmse": 0.023174264454873878,
+        "rmse_after_median_bias_removal": 0.023237002943957356,
+        "abs_error_p50": 0.0120849609375,
+        "abs_error_p95": 0.04638671875,
+        "abs_error_p99": 0.0745849609375,
+        "correlation": 0.9955706763910972,
+        "reference_std": 0.23638628601652653,
+        "candidate_std": 0.22877152345988344,
+        "amplitude_ratio_std": 0.9677867837218327,
+        "regression_gain": 0.9635001428723114,
+        "fraction_abs_error_over_5cm": 0.039959770114942526,
+        "fraction_abs_error_over_10cm": 0.003160919540229885
+      },
+      "lrm_sigma_10m": {
+        "pixels": 348000,
+        "bias_median": 0.00244140625,
+        "rmse": 0.029686116276393518,
+        "rmse_after_median_bias_removal": 0.029786223715354773,
+        "abs_error_p50": 0.01593017578125,
+        "abs_error_p95": 0.0592041015625,
+        "abs_error_p99": 0.09423828125,
+        "correlation": 0.9973964856665445,
+        "reference_std": 0.4048876706228698,
+        "candidate_std": 0.39847000385222014,
+        "amplitude_ratio_std": 0.9841495129728774,
+        "regression_gain": 0.9815872656095886,
+        "fraction_abs_error_over_5cm": 0.08004597701149425,
+        "fraction_abs_error_over_10cm": 0.00795977011494253
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 348000,
+        "bias_median": 0.001708984375,
+        "rmse": 0.023185528817377087,
+        "rmse_after_median_bias_removal": 0.023248230655053177,
+        "abs_error_p50": 0.01214599609375,
+        "abs_error_p95": 0.04638671875,
+        "abs_error_p99": 0.07464599609375,
+        "correlation": 0.9984093866130433,
+        "reference_std": 0.4048876706228698,
+        "candidate_std": 0.4001850564474307,
+        "amplitude_ratio_std": 0.9883853855855756,
+        "regression_gain": 0.9868132465597906,
+        "fraction_abs_error_over_5cm": 0.03995689655172414,
+        "fraction_abs_error_over_10cm": 0.0031695402298850574
+      },
+      "svf_radius_15m": {
+        "pixels": 348000,
+        "bias_median": 0.0027633607387542725,
+        "rmse": 0.010377965370117351,
+        "rmse_after_median_bias_removal": 0.009251756874444156,
+        "abs_error_p50": 0.0029405951499938965,
+        "abs_error_p95": 0.02072236239910125,
+        "abs_error_p99": 0.04076696515083314,
+        "correlation": 0.9501972231786332,
+        "reference_std": 0.024940735356350042,
+        "candidate_std": 0.01941804062148737,
+        "amplitude_ratio_std": 0.77856728536849,
+        "regression_gain": 0.739792472614866
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.02919376080259163
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.09173023656675156
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08160246644053955
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07739512659880587
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08138861608849753
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.09139265000995829
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07091682885331503
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05634861787789423
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04847816569046863
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.055975328492158645
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07029852979637227
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.06147468848167722
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.04202746703699569
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.02919376080259163
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.04150590324459501
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.06066070628473763
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07121349424841715
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05667036912739021
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04881337543702772
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05632032254464068
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07057446909951996
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.09224599019081556
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08212835176170247
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07793913095426505
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08204293845987669
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.09203618248891046
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\var_ruine1\\comparison_z17.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "var_ruine1_z17.png"
+    },
+    {
+      "site": {
+        "id": "var_ruine1",
+        "label": "Var — Ruine1 (site du test existant)",
+        "lon": 5.86628,
+        "lat": 43.37579,
+        "context": "relief et structures, secteur du test LAZ existant",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frhd2154d",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 61.700461674046444
+          }
+        ]
+      },
+      "zoom": 16,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\var_ruine1\\inputs\\LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=931999.75,6257000.25,932999.75,6258000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          931999.75,
+          6257000.25,
+          932999.75,
+          6258000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          931999.75,
+          0.0,
+          -0.5,
+          6258000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2021-06-25Z",
+        "date_acquisition_fin": "2021-06-25Z",
+        "date_edition": "2025-03-14Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          321,
+          1240,
+          800,
+          800
+        ],
+        "working_bounds": [
+          932160.25,
+          6256980.25,
+          932560.25,
+          6257380.25
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154d"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 16,
+          "x": 33835,
+          "y": 23986,
+          "url": "https://tiles.mapterhorn.com/16/33835/23986.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33835_23986.webp",
+          "bytes": 135184
+        },
+        {
+          "z": 16,
+          "x": 33836,
+          "y": 23986,
+          "url": "https://tiles.mapterhorn.com/16/33836/23986.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33836_23986.webp",
+          "bytes": 118824
+        },
+        {
+          "z": 16,
+          "x": 33835,
+          "y": 23987,
+          "url": "https://tiles.mapterhorn.com/16/33835/23987.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33835_23987.webp",
+          "bytes": 121088
+        },
+        {
+          "z": 16,
+          "x": 33836,
+          "y": 23987,
+          "url": "https://tiles.mapterhorn.com/16/33836/23987.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33836_23987.webp",
+          "bytes": 124070
+        }
+      ],
+      "mercator_pixel_m": 1.1943285669553916,
+      "approx_ground_pixel_m": 0.8681155513522036,
+      "vertical_rounding_step_m_documented": 0.03125,
+      "compared_fraction_of_core": 0.9663277777777778,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 347878,
+        "bias_median": 0.0037841796875,
+        "rmse": 0.04449694312347516,
+        "rmse_after_median_bias_removal": 0.044653760556489584,
+        "abs_error_p50": 0.0244140625,
+        "abs_error_p95": 0.08831787109375,
+        "abs_error_p99": 0.140380859375,
+        "correlation": 0.9999820925657473,
+        "reference_std": 7.43405440361104,
+        "candidate_std": 7.433097237855617,
+        "amplitude_ratio_std": 0.999871245796243,
+        "regression_gain": 0.9998533406676531,
+        "fraction_abs_error_over_5cm": 0.19730767682923323,
+        "fraction_abs_error_over_10cm": 0.03380495461052438,
+        "abs_error_max": 0.9285888671875
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 347878,
+        "bias_median": 0.0042724609375,
+        "rmse": 0.0432944459845146,
+        "rmse_after_median_bias_removal": 0.04344239920922114,
+        "abs_error_p50": 0.02374267578125,
+        "abs_error_p95": 0.085693359375,
+        "abs_error_p99": 0.13654968261718636,
+        "correlation": 0.9999830453665755,
+        "reference_std": 7.43405440361104,
+        "candidate_std": 7.433782591316174,
+        "amplitude_ratio_std": 0.9999634368703658,
+        "regression_gain": 0.999946482856858,
+        "fraction_abs_error_over_5cm": 0.18752838638833155,
+        "fraction_abs_error_over_10cm": 0.030760783952995016
+      },
+      "lrm_sigma_2m": {
+        "pixels": 347878,
+        "bias_median": 0.00360107421875,
+        "rmse": 0.043763630513671326,
+        "rmse_after_median_bias_removal": 0.04391100944719243,
+        "abs_error_p50": 0.02386474609375,
+        "abs_error_p95": 0.0869140625,
+        "abs_error_p99": 0.1383056640625,
+        "correlation": 0.9539732075146445,
+        "reference_std": 0.13236701147811544,
+        "candidate_std": 0.10784906285577038,
+        "amplitude_ratio_std": 0.8147729683660746,
+        "regression_gain": 0.7772715820284105,
+        "fraction_abs_error_over_5cm": 0.19104398668498726,
+        "fraction_abs_error_over_10cm": 0.03218944572522551
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 347878,
+        "bias_median": 0.00341796875,
+        "rmse": 0.04262027252025566,
+        "rmse_after_median_bias_removal": 0.04275698054558606,
+        "abs_error_p50": 0.02313232421875,
+        "abs_error_p95": 0.084716796875,
+        "abs_error_p99": 0.13507080078125,
+        "correlation": 0.9557757285756759,
+        "reference_std": 0.13236701147811544,
+        "candidate_std": 0.10916250501987709,
+        "amplitude_ratio_std": 0.8246956987309878,
+        "regression_gain": 0.7882241323078366,
+        "fraction_abs_error_over_5cm": 0.18189997642851805,
+        "fraction_abs_error_over_10cm": 0.029294752758150844
+      },
+      "lrm_sigma_5m": {
+        "pixels": 347878,
+        "bias_median": 0.00372314453125,
+        "rmse": 0.04443578278722678,
+        "rmse_after_median_bias_removal": 0.044590838206949465,
+        "abs_error_p50": 0.0242919921875,
+        "abs_error_p95": 0.08819580078125,
+        "abs_error_p99": 0.140380859375,
+        "correlation": 0.9837408262888253,
+        "reference_std": 0.23639055772386297,
+        "candidate_std": 0.21942568729846443,
+        "amplitude_ratio_std": 0.9282337222402264,
+        "regression_gain": 0.9131414089057562,
+        "fraction_abs_error_over_5cm": 0.1967643829158498,
+        "fraction_abs_error_over_10cm": 0.033629605781337134
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 347878,
+        "bias_median": 0.0035400390625,
+        "rmse": 0.043207603978887295,
+        "rmse_after_median_bias_removal": 0.04335226122421557,
+        "abs_error_p50": 0.0235595703125,
+        "abs_error_p95": 0.08575439453125,
+        "abs_error_p99": 0.1365966796875,
+        "correlation": 0.9845282640377883,
+        "reference_std": 0.23639055772386297,
+        "candidate_std": 0.22043941224186084,
+        "amplitude_ratio_std": 0.9325220701046981,
+        "regression_gain": 0.9180943348571037,
+        "fraction_abs_error_over_5cm": 0.18684136392643397,
+        "fraction_abs_error_over_10cm": 0.03065729939806484
+      },
+      "lrm_sigma_10m": {
+        "pixels": 347878,
+        "bias_median": 0.00372314453125,
+        "rmse": 0.04448250772278826,
+        "rmse_after_median_bias_removal": 0.04463778009003144,
+        "abs_error_p50": 0.02435302734375,
+        "abs_error_p95": 0.08831787109375,
+        "abs_error_p99": 0.1405029296875,
+        "correlation": 0.9941542561207952,
+        "reference_std": 0.40491131445511475,
+        "candidate_std": 0.39433213887491286,
+        "amplitude_ratio_std": 0.9738728575800897,
+        "regression_gain": 0.9681798462837676,
+        "fraction_abs_error_over_5cm": 0.19718981941945166,
+        "fraction_abs_error_over_10cm": 0.03381645289440551
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 347878,
+        "bias_median": 0.0035400390625,
+        "rmse": 0.04325160995048189,
+        "rmse_after_median_bias_removal": 0.0433963759086465,
+        "abs_error_p50": 0.02362060546875,
+        "abs_error_p95": 0.08587646484375,
+        "abs_error_p99": 0.13665771484375,
+        "correlation": 0.994460734418609,
+        "reference_std": 0.40491131445511475,
+        "candidate_std": 0.39496307511624856,
+        "amplitude_ratio_std": 0.9754310660539248,
+        "regression_gain": 0.9700278943227116,
+        "fraction_abs_error_over_5cm": 0.18726105128809525,
+        "fraction_abs_error_over_10cm": 0.03077803137881671
+      },
+      "svf_radius_15m": {
+        "pixels": 347878,
+        "bias_median": 0.003920376300811768,
+        "rmse": 0.01389576306629564,
+        "rmse_after_median_bias_removal": 0.012298046224771327,
+        "abs_error_p50": 0.004155963659286499,
+        "abs_error_p95": 0.027506759762763896,
+        "abs_error_p99": 0.05391424298286435,
+        "correlation": 0.9061162340601191,
+        "reference_std": 0.02493643560918333,
+        "candidate_std": 0.01725137389009505,
+        "amplitude_ratio_std": 0.6918139448823991,
+        "regression_gain": 0.6268638464071143
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.043957557986160994
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08991664247939853
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08197848966306913
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07834514751319485
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08160600767445858
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08927828645546024
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07239132519352898
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06190420243835844
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.056347966073862873
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.061400662868479394
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07155010589958044
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.06398565166974729
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.051216116977781195
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.043957557986160994
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.0506638129275838
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.06317167289424035
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0723722944393846
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.062017744202172084
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05662481552123788
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06166042034094979
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.07176085461202256
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08998187622866534
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08220818129628299
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07878044605856237
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08199898609913975
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08961011468472628
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\var_ruine1\\comparison_z16.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "var_ruine1_z16.png"
+    },
+    {
+      "site": {
+        "id": "toulouse",
+        "label": "Toulouse",
+        "lon": 1.444,
+        "lat": 43.604,
+        "context": "contrôle en terrain peu accidenté",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frhd2154c",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          }
+        ]
+      },
+      "zoom": 17,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\toulouse\\inputs\\LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=573999.75,6279000.25,574999.75,6280000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          573999.75,
+          6279000.25,
+          574999.75,
+          6280000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          573999.75,
+          0.0,
+          -0.5,
+          6280000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2022-05-29Z",
+        "date_acquisition_fin": "2022-06-15Z",
+        "date_edition": "2024-12-20Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          280,
+          469,
+          800,
+          800
+        ],
+        "working_bounds": [
+          574139.75,
+          6279365.75,
+          574539.75,
+          6279765.75
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154c"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 17,
+          "x": 66060,
+          "y": 47859,
+          "url": "https://tiles.mapterhorn.com/17/66060/47859.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66060_47859.webp",
+          "bytes": 69664
+        },
+        {
+          "z": 17,
+          "x": 66061,
+          "y": 47859,
+          "url": "https://tiles.mapterhorn.com/17/66061/47859.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66061_47859.webp",
+          "bytes": 58384
+        },
+        {
+          "z": 17,
+          "x": 66062,
+          "y": 47859,
+          "url": "https://tiles.mapterhorn.com/17/66062/47859.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66062_47859.webp",
+          "bytes": 61160
+        },
+        {
+          "z": 17,
+          "x": 66060,
+          "y": 47860,
+          "url": "https://tiles.mapterhorn.com/17/66060/47860.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66060_47860.webp",
+          "bytes": 56604
+        },
+        {
+          "z": 17,
+          "x": 66061,
+          "y": 47860,
+          "url": "https://tiles.mapterhorn.com/17/66061/47860.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66061_47860.webp",
+          "bytes": 59856
+        },
+        {
+          "z": 17,
+          "x": 66062,
+          "y": 47860,
+          "url": "https://tiles.mapterhorn.com/17/66062/47860.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66062_47860.webp",
+          "bytes": 58362
+        },
+        {
+          "z": 17,
+          "x": 66060,
+          "y": 47861,
+          "url": "https://tiles.mapterhorn.com/17/66060/47861.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66060_47861.webp",
+          "bytes": 63822
+        },
+        {
+          "z": 17,
+          "x": 66061,
+          "y": 47861,
+          "url": "https://tiles.mapterhorn.com/17/66061/47861.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66061_47861.webp",
+          "bytes": 56654
+        },
+        {
+          "z": 17,
+          "x": 66062,
+          "y": 47861,
+          "url": "https://tiles.mapterhorn.com/17/66062/47861.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66062_47861.webp",
+          "bytes": 60372
+        }
+      ],
+      "mercator_pixel_m": 0.59716428347762,
+      "approx_ground_pixel_m": 0.43242081950446054,
+      "vertical_rounding_step_m_documented": 0.015625,
+      "compared_fraction_of_core": 1.0,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 360000,
+        "bias_median": 0.0001220703125,
+        "rmse": 0.02216423727332002,
+        "rmse_after_median_bias_removal": 0.02216457135251698,
+        "abs_error_p50": 0.00390625,
+        "abs_error_p95": 0.0234832763671875,
+        "abs_error_p99": 0.05491653442382827,
+        "correlation": 0.9997881949853114,
+        "reference_std": 1.0748149800985336,
+        "candidate_std": 1.073194707932118,
+        "amplitude_ratio_std": 0.9984925106214402,
+        "regression_gain": 0.9982810249005607,
+        "fraction_abs_error_over_5cm": 0.011752777777777777,
+        "fraction_abs_error_over_10cm": 0.004066666666666666,
+        "abs_error_max": 1.6741943359375
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 360000,
+        "bias_median": 4.57763671875e-05,
+        "rmse": 0.017207239031897793,
+        "rmse_after_median_bias_removal": 0.017207419891536863,
+        "abs_error_p50": 0.0034027099609375,
+        "abs_error_p95": 0.01849365234375,
+        "abs_error_p99": 0.04245010375976577,
+        "correlation": 0.9998723116033265,
+        "reference_std": 1.0748149800985336,
+        "candidate_std": 1.073634835028399,
+        "amplitude_ratio_std": 0.9989020016542509,
+        "regression_gain": 0.9987744534592256,
+        "fraction_abs_error_over_5cm": 0.007555555555555556,
+        "fraction_abs_error_over_10cm": 0.0026972222222222224
+      },
+      "lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.0001678466796875,
+        "rmse": 0.021899148425247535,
+        "rmse_after_median_bias_removal": 0.021899800395490488,
+        "abs_error_p50": 0.0038909912109375,
+        "abs_error_p95": 0.0232086181640625,
+        "abs_error_p99": 0.05374160766601577,
+        "correlation": 0.9833971777399899,
+        "reference_std": 0.10988665688343947,
+        "candidate_std": 0.09901012827952273,
+        "amplitude_ratio_std": 0.9010204795341635,
+        "regression_gain": 0.8860609966598318,
+        "fraction_abs_error_over_5cm": 0.011375,
+        "fraction_abs_error_over_10cm": 0.003913888888888889
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.0001220703125,
+        "rmse": 0.017041441602743214,
+        "rmse_after_median_bias_removal": 0.01704188155389024,
+        "abs_error_p50": 0.003387451171875,
+        "abs_error_p95": 0.018341064453125,
+        "abs_error_p99": 0.041900634765625,
+        "correlation": 0.9898700805850497,
+        "reference_std": 0.10988665688343947,
+        "candidate_std": 0.10191707912746094,
+        "amplitude_ratio_std": 0.9274745635001697,
+        "regression_gain": 0.9180793209124964,
+        "fraction_abs_error_over_5cm": 0.007391666666666667,
+        "fraction_abs_error_over_10cm": 0.0026138888888888887
+      },
+      "lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.000152587890625,
+        "rmse": 0.022141702730792807,
+        "rmse_after_median_bias_removal": 0.02214225534978608,
+        "abs_error_p50": 0.00390625,
+        "abs_error_p95": 0.0234375,
+        "abs_error_p99": 0.05477920532226577,
+        "correlation": 0.994794154677225,
+        "reference_std": 0.2083521172260599,
+        "candidate_std": 0.20098625344529086,
+        "amplitude_ratio_std": 0.9646470413699845,
+        "regression_gain": 0.9596252380815393,
+        "fraction_abs_error_over_5cm": 0.011708333333333333,
+        "fraction_abs_error_over_10cm": 0.004044444444444444
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.0001068115234375,
+        "rmse": 0.01719119204922375,
+        "rmse_after_median_bias_removal": 0.017191534380567537,
+        "abs_error_p50": 0.0034027099609375,
+        "abs_error_p95": 0.018463134765625,
+        "abs_error_p99": 0.04245010375976577,
+        "correlation": 0.9968460089688672,
+        "reference_std": 0.2083521172260599,
+        "candidate_std": 0.20299012805733704,
+        "amplitude_ratio_std": 0.9742647723473568,
+        "regression_gain": 0.9711919499934262,
+        "fraction_abs_error_over_5cm": 0.007533333333333334,
+        "fraction_abs_error_over_10cm": 0.0026777777777777776
+      },
+      "lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.0001220703125,
+        "rmse": 0.022161663331097575,
+        "rmse_after_median_bias_removal": 0.02216202481004981,
+        "abs_error_p50": 0.00390625,
+        "abs_error_p95": 0.0234832763671875,
+        "abs_error_p99": 0.054901123046875,
+        "correlation": 0.9974843504211989,
+        "reference_std": 0.3055579255454657,
+        "candidate_std": 0.3001010009163944,
+        "amplitude_ratio_std": 0.9821411124606575,
+        "regression_gain": 0.9796703895847756,
+        "fraction_abs_error_over_5cm": 0.011727777777777778,
+        "fraction_abs_error_over_10cm": 0.004063888888888889
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 9.1552734375e-05,
+        "rmse": 0.017204843147011786,
+        "rmse_after_median_bias_removal": 0.017205093909885418,
+        "abs_error_p50": 0.0034027099609375,
+        "abs_error_p95": 0.018479156494140447,
+        "abs_error_p99": 0.0424652099609375,
+        "correlation": 0.9984795204812489,
+        "reference_std": 0.3055579255454657,
+        "candidate_std": 0.3015860001654954,
+        "amplitude_ratio_std": 0.9870010723077145,
+        "regression_gain": 0.9855003573922883,
+        "fraction_abs_error_over_5cm": 0.0075361111111111115,
+        "fraction_abs_error_over_10cm": 0.002686111111111111
+      },
+      "svf_radius_15m": {
+        "pixels": 360000,
+        "bias_median": 8.565187454223633e-05,
+        "rmse": 0.006566651107072076,
+        "rmse_after_median_bias_removal": 0.006555085775128503,
+        "abs_error_p50": 0.0001423954963684082,
+        "abs_error_p95": 0.004193967580795287,
+        "abs_error_p99": 0.01938033699989336,
+        "correlation": 0.9820342190870394,
+        "reference_std": 0.030154659692935702,
+        "candidate_std": 0.026469790873509282,
+        "amplitude_ratio_std": 0.8778010146043973,
+        "regression_gain": 0.8620306338908379
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.021573750933486423
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07647697363794002
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06352731072905486
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.058426916489044314
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06376507612034192
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07655024065518679
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06427695017996858
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04638516229534989
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0366499096623093
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0445964960391604
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06119361308758863
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.05983884976037362
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.03759468532314045
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.021573750933486423
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.032655311041920224
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.052999793101642774
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0665318447610637
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.047415697365159465
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.035000310419871186
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04070956492005125
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05651001152985447
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.08004465318522831
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06479994047669584
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.056166697034244366
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.0582118209810999
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06886068183190604
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\toulouse\\comparison_z17.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "toulouse_z17.png"
+    },
+    {
+      "site": {
+        "id": "toulouse",
+        "label": "Toulouse",
+        "lon": 1.444,
+        "lat": 43.604,
+        "context": "contrôle en terrain peu accidenté",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frhd2154c",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 527.0733934682836
+          }
+        ]
+      },
+      "zoom": 16,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\toulouse\\inputs\\LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=573999.75,6279000.25,574999.75,6280000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          573999.75,
+          6279000.25,
+          574999.75,
+          6280000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          573999.75,
+          0.0,
+          -0.5,
+          6280000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2022-05-29Z",
+        "date_acquisition_fin": "2022-06-15Z",
+        "date_edition": "2024-12-20Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          280,
+          469,
+          800,
+          800
+        ],
+        "working_bounds": [
+          574139.75,
+          6279365.75,
+          574539.75,
+          6279765.75
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154c"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 16,
+          "x": 33030,
+          "y": 23929,
+          "url": "https://tiles.mapterhorn.com/16/33030/23929.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33030_23929.webp",
+          "bytes": 76008
+        },
+        {
+          "z": 16,
+          "x": 33031,
+          "y": 23929,
+          "url": "https://tiles.mapterhorn.com/16/33031/23929.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33031_23929.webp",
+          "bytes": 71664
+        },
+        {
+          "z": 16,
+          "x": 33030,
+          "y": 23930,
+          "url": "https://tiles.mapterhorn.com/16/33030/23930.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33030_23930.webp",
+          "bytes": 66552
+        },
+        {
+          "z": 16,
+          "x": 33031,
+          "y": 23930,
+          "url": "https://tiles.mapterhorn.com/16/33031/23930.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33031_23930.webp",
+          "bytes": 70414
+        }
+      ],
+      "mercator_pixel_m": 1.19432856695542,
+      "approx_ground_pixel_m": 0.8648416390090515,
+      "vertical_rounding_step_m_documented": 0.03125,
+      "compared_fraction_of_core": 1.0,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 360000,
+        "bias_median": 0.0001678466796875,
+        "rmse": 0.03364316718205092,
+        "rmse_after_median_bias_removal": 0.03364358305123233,
+        "abs_error_p50": 0.0074615478515625,
+        "abs_error_p95": 0.0352325439453125,
+        "abs_error_p99": 0.0868377685546875,
+        "correlation": 0.9995122548733147,
+        "reference_std": 1.0748149800985336,
+        "candidate_std": 1.072005004537584,
+        "amplitude_ratio_std": 0.9973856192805463,
+        "regression_gain": 0.996899149305314,
+        "fraction_abs_error_over_5cm": 0.026211111111111112,
+        "fraction_abs_error_over_10cm": 0.007983333333333334,
+        "abs_error_max": 2.1763458251953125
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 360000,
+        "bias_median": 1.52587890625e-05,
+        "rmse": 0.03369404636204695,
+        "rmse_after_median_bias_removal": 0.03369412286865255,
+        "abs_error_p50": 0.007232666015625,
+        "abs_error_p95": 0.03521728515625,
+        "abs_error_p99": 0.086578369140625,
+        "correlation": 0.9995108383162402,
+        "reference_std": 1.0748149800985336,
+        "candidate_std": 1.0719754897811873,
+        "amplitude_ratio_std": 0.9973581589669638,
+        "regression_gain": 0.9968702895706104,
+        "fraction_abs_error_over_5cm": 0.02614722222222222,
+        "fraction_abs_error_over_10cm": 0.00805
+      },
+      "lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.000244140625,
+        "rmse": 0.03290555701452252,
+        "rmse_after_median_bias_removal": 0.0329064887238796,
+        "abs_error_p50": 0.0072021484375,
+        "abs_error_p95": 0.03436279296875,
+        "abs_error_p99": 0.08337417602539077,
+        "correlation": 0.9618298695723643,
+        "reference_std": 0.10988665688343947,
+        "candidate_std": 0.09232985869179733,
+        "amplitude_ratio_std": 0.840228116046289,
+        "regression_gain": 0.8081564992678365,
+        "fraction_abs_error_over_5cm": 0.02468888888888889,
+        "fraction_abs_error_over_10cm": 0.007505555555555555
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.000244140625,
+        "rmse": 0.03297295511083568,
+        "rmse_after_median_bias_removal": 0.03297389733761153,
+        "abs_error_p50": 0.00701904296875,
+        "abs_error_p95": 0.03436279296875,
+        "abs_error_p99": 0.08352676391601577,
+        "correlation": 0.9615659791944111,
+        "reference_std": 0.10988665688343947,
+        "candidate_std": 0.0923642038447028,
+        "amplitude_ratio_std": 0.84054066675881,
+        "regression_gain": 0.8082353092846605,
+        "fraction_abs_error_over_5cm": 0.02471111111111111,
+        "fraction_abs_error_over_10cm": 0.00755
+      },
+      "lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.0001983642578125,
+        "rmse": 0.033573203968736365,
+        "rmse_after_median_bias_removal": 0.033573867747995194,
+        "abs_error_p50": 0.0074310302734375,
+        "abs_error_p95": 0.035064697265625,
+        "abs_error_p99": 0.08634963989257827,
+        "correlation": 0.9880833460305818,
+        "reference_std": 0.2083521172260599,
+        "candidate_std": 0.195934161028924,
+        "amplitude_ratio_std": 0.9403991840233495,
+        "regression_gain": 0.9291927723542194,
+        "fraction_abs_error_over_5cm": 0.026058333333333333,
+        "fraction_abs_error_over_10cm": 0.007913888888888889
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.0001983642578125,
+        "rmse": 0.03362413798440133,
+        "rmse_after_median_bias_removal": 0.03362478458290358,
+        "abs_error_p50": 0.0071868896484375,
+        "abs_error_p95": 0.035003662109375,
+        "abs_error_p99": 0.0861515808105473,
+        "correlation": 0.9880503946920088,
+        "reference_std": 0.2083521172260599,
+        "candidate_std": 0.19589734805649972,
+        "amplitude_ratio_std": 0.9402224976862276,
+        "regression_gain": 0.9289872099371835,
+        "fraction_abs_error_over_5cm": 0.025972222222222223,
+        "fraction_abs_error_over_10cm": 0.007972222222222223
+      },
+      "lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.0001678466796875,
+        "rmse": 0.03363344363668344,
+        "rmse_after_median_bias_removal": 0.033633956175165264,
+        "abs_error_p50": 0.0074462890625,
+        "abs_error_p95": 0.03515625,
+        "abs_error_p99": 0.08673126220703153,
+        "correlation": 0.9942322490532788,
+        "reference_std": 0.3055579255454657,
+        "candidate_std": 0.29622622494480566,
+        "amplitude_ratio_std": 0.9694601258206555,
+        "regression_gain": 0.9638685212621424,
+        "fraction_abs_error_over_5cm": 0.026255555555555556,
+        "fraction_abs_error_over_10cm": 0.007966666666666667
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.0001678466796875,
+        "rmse": 0.03368402164365002,
+        "rmse_after_median_bias_removal": 0.033684490417318476,
+        "abs_error_p50": 0.0072174072265625,
+        "abs_error_p95": 0.0351409912109375,
+        "abs_error_p99": 0.08639541625976577,
+        "correlation": 0.9942169921098498,
+        "reference_std": 0.3055579255454657,
+        "candidate_std": 0.29618383743232013,
+        "amplitude_ratio_std": 0.9693214041284924,
+        "regression_gain": 0.9637158108003249,
+        "fraction_abs_error_over_5cm": 0.026119444444444445,
+        "fraction_abs_error_over_10cm": 0.008033333333333333
+      },
+      "svf_radius_15m": {
+        "pixels": 360000,
+        "bias_median": 0.00010180473327636719,
+        "rmse": 0.009553742849635602,
+        "rmse_after_median_bias_removal": 0.009540791176714032,
+        "abs_error_p50": 0.00021469593048095703,
+        "abs_error_p95": 0.005592975020408623,
+        "abs_error_p99": 0.02824618995189669,
+        "correlation": 0.962078218292186,
+        "reference_std": 0.030154659692935702,
+        "candidate_std": 0.024319095160154493,
+        "amplitude_ratio_std": 0.8064788463141469,
+        "regression_gain": 0.7758957315522524
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.03240798144810564
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07384578728440566
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06337816071797368
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.05965845628009282
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06421357188643846
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07451191352405377
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06320314490393743
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04927415097561801
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.042674594398835274
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04854857823691987
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.06118089882604737
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.05911748699325141
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.04222353005188574
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.03240798144810564
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.03925256152399424
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.053844169465478584
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0660994878133859
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05054065359322366
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04118596225308438
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04561215189912656
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.05759987371419399
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.07849528199297813
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06500278217763632
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.05713287094879988
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.059377741553856986
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.06824529459619799
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\toulouse\\comparison_z16.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "toulouse_z16.png"
+    },
+    {
+      "site": {
+        "id": "chambord",
+        "label": "Secteur de Chambord",
+        "lon": 1.516,
+        "lat": 47.614,
+        "context": "terrain peu accidenté, parc et forêt",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frhd2154a",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          }
+        ]
+      },
+      "zoom": 17,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\chambord\\inputs\\LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=587999.75,6724000.25,588999.75,6725000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          587999.75,
+          6724000.25,
+          588999.75,
+          6725000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          587999.75,
+          0.0,
+          -0.5,
+          6725000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2024-01-11Z",
+        "date_acquisition_fin": "2024-01-11Z",
+        "date_edition": "2024-12-20Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          649,
+          34,
+          800,
+          800
+        ],
+        "working_bounds": [
+          588324.25,
+          6724583.25,
+          588724.25,
+          6724983.25
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154a"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 17,
+          "x": 66086,
+          "y": 45770,
+          "url": "https://tiles.mapterhorn.com/17/66086/45770.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66086_45770.webp",
+          "bytes": 66870
+        },
+        {
+          "z": 17,
+          "x": 66087,
+          "y": 45770,
+          "url": "https://tiles.mapterhorn.com/17/66087/45770.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66087_45770.webp",
+          "bytes": 65832
+        },
+        {
+          "z": 17,
+          "x": 66088,
+          "y": 45770,
+          "url": "https://tiles.mapterhorn.com/17/66088/45770.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66088_45770.webp",
+          "bytes": 60162
+        },
+        {
+          "z": 17,
+          "x": 66086,
+          "y": 45771,
+          "url": "https://tiles.mapterhorn.com/17/66086/45771.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66086_45771.webp",
+          "bytes": 67380
+        },
+        {
+          "z": 17,
+          "x": 66087,
+          "y": 45771,
+          "url": "https://tiles.mapterhorn.com/17/66087/45771.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66087_45771.webp",
+          "bytes": 72100
+        },
+        {
+          "z": 17,
+          "x": 66088,
+          "y": 45771,
+          "url": "https://tiles.mapterhorn.com/17/66088/45771.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66088_45771.webp",
+          "bytes": 62296
+        },
+        {
+          "z": 17,
+          "x": 66086,
+          "y": 45772,
+          "url": "https://tiles.mapterhorn.com/17/66086/45772.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66086_45772.webp",
+          "bytes": 73378
+        },
+        {
+          "z": 17,
+          "x": 66087,
+          "y": 45772,
+          "url": "https://tiles.mapterhorn.com/17/66087/45772.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66087_45772.webp",
+          "bytes": 69794
+        },
+        {
+          "z": 17,
+          "x": 66088,
+          "y": 45772,
+          "url": "https://tiles.mapterhorn.com/17/66088/45772.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\17_66088_45772.webp",
+          "bytes": 72082
+        }
+      ],
+      "mercator_pixel_m": 0.59716428347762,
+      "approx_ground_pixel_m": 0.402561538574598,
+      "vertical_rounding_step_m_documented": 0.015625,
+      "compared_fraction_of_core": 1.0,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 360000,
+        "bias_median": 0.00063323974609375,
+        "rmse": 0.015963577203217554,
+        "rmse_after_median_bias_removal": 0.015975532614082525,
+        "abs_error_p50": 0.00714111328125,
+        "abs_error_p95": 0.03246307373046875,
+        "abs_error_p99": 0.056549072265625,
+        "correlation": 0.9999811354307423,
+        "reference_std": 2.59813366262177,
+        "candidate_std": 2.5976909208711545,
+        "amplitude_ratio_std": 0.9998295923889579,
+        "regression_gain": 0.9998107310343678,
+        "fraction_abs_error_over_5cm": 0.015211111111111111,
+        "fraction_abs_error_over_10cm": 0.0011444444444444445,
+        "abs_error_max": 0.38951873779296875
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 360000,
+        "bias_median": 0.0004119873046875,
+        "rmse": 0.012415478271008562,
+        "rmse_after_median_bias_removal": 0.012423590960528214,
+        "abs_error_p50": 0.00565338134765625,
+        "abs_error_p95": 0.02524566650390625,
+        "abs_error_p99": 0.043792724609375,
+        "correlation": 0.9999885864791583,
+        "reference_std": 2.59813366262177,
+        "candidate_std": 2.5978713141605394,
+        "amplitude_ratio_std": 0.9998990242630681,
+        "regression_gain": 0.9998876118947175,
+        "fraction_abs_error_over_5cm": 0.0062722222222222224,
+        "fraction_abs_error_over_10cm": 0.00036666666666666667
+      },
+      "lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.00054931640625,
+        "rmse": 0.015758474764844214,
+        "rmse_after_median_bias_removal": 0.01576799531501752,
+        "abs_error_p50": 0.00707244873046875,
+        "abs_error_p95": 0.0320587158203125,
+        "abs_error_p99": 0.055694656372070384,
+        "correlation": 0.9831476332406027,
+        "reference_std": 0.07951280790680651,
+        "candidate_std": 0.07208726543809788,
+        "amplitude_ratio_std": 0.9066119954232809,
+        "regression_gain": 0.8913334375679403,
+        "fraction_abs_error_over_5cm": 0.014452777777777778,
+        "fraction_abs_error_over_10cm": 0.0010777777777777778
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.000396728515625,
+        "rmse": 0.012288594712315698,
+        "rmse_after_median_bias_removal": 0.012294955500671605,
+        "abs_error_p50": 0.00560760498046875,
+        "abs_error_p95": 0.0249786376953125,
+        "abs_error_p99": 0.04328170776367202,
+        "correlation": 0.9897215015249538,
+        "reference_std": 0.07951280790680651,
+        "candidate_std": 0.0740361080359086,
+        "amplitude_ratio_std": 0.93112179012321,
+        "regression_gain": 0.9215512562233459,
+        "fraction_abs_error_over_5cm": 0.005997222222222222,
+        "fraction_abs_error_over_10cm": 0.00035555555555555557
+      },
+      "lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.00060272216796875,
+        "rmse": 0.01594341554355797,
+        "rmse_after_median_bias_removal": 0.015954706700865573,
+        "abs_error_p50": 0.0071258544921875,
+        "abs_error_p95": 0.0324249267578125,
+        "abs_error_p99": 0.0564422607421875,
+        "correlation": 0.9952712154037904,
+        "reference_std": 0.15831547202850932,
+        "candidate_std": 0.15335845509969498,
+        "amplitude_ratio_std": 0.9686889925204425,
+        "regression_gain": 0.9641082709340933,
+        "fraction_abs_error_over_5cm": 0.015113888888888889,
+        "fraction_abs_error_over_10cm": 0.0011305555555555557
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.00043487548828125,
+        "rmse": 0.012401417713115615,
+        "rmse_after_median_bias_removal": 0.01240895299319515,
+        "abs_error_p50": 0.005645751953125,
+        "abs_error_p95": 0.02521514892578125,
+        "abs_error_p99": 0.043716506958007884,
+        "correlation": 0.9971241418484917,
+        "reference_std": 0.15831547202850932,
+        "candidate_std": 0.1547228802394373,
+        "amplitude_ratio_std": 0.9773073866815427,
+        "regression_gain": 0.9744967892670298,
+        "fraction_abs_error_over_5cm": 0.006261111111111111,
+        "fraction_abs_error_over_10cm": 0.00036666666666666667
+      },
+      "lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.00061798095703125,
+        "rmse": 0.015959726185631632,
+        "rmse_after_median_bias_removal": 0.01597152755692384,
+        "abs_error_p50": 0.00713348388671875,
+        "abs_error_p95": 0.0324554443359375,
+        "abs_error_p99": 0.05654144287109375,
+        "correlation": 0.9981907060532859,
+        "reference_std": 0.2610624287979165,
+        "candidate_std": 0.2577063104877024,
+        "amplitude_ratio_std": 0.9871443841012754,
+        "regression_gain": 0.9853583497425855,
+        "fraction_abs_error_over_5cm": 0.015194444444444444,
+        "fraction_abs_error_over_10cm": 0.001138888888888889
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.00045013427734375,
+        "rmse": 0.01241177147041739,
+        "rmse_after_median_bias_removal": 0.012419786764670551,
+        "abs_error_p50": 0.00565338134765625,
+        "abs_error_p95": 0.02523040771484375,
+        "abs_error_p99": 0.04374710083007827,
+        "correlation": 0.9989024711679577,
+        "reference_std": 0.2610624287979165,
+        "candidate_std": 0.25864680050841954,
+        "amplitude_ratio_std": 0.9907469324459289,
+        "regression_gain": 0.9896595591223131,
+        "fraction_abs_error_over_5cm": 0.006288888888888889,
+        "fraction_abs_error_over_10cm": 0.00036944444444444443
+      },
+      "svf_radius_15m": {
+        "pixels": 360000,
+        "bias_median": 0.0004970431327819824,
+        "rmse": 0.0044649214149317775,
+        "rmse_after_median_bias_removal": 0.004302327259572597,
+        "abs_error_p50": 0.0005515813827514648,
+        "abs_error_p95": 0.0076697468757629395,
+        "abs_error_p99": 0.019017705917358407,
+        "correlation": 0.9673230371198862,
+        "reference_std": 0.014518699144978562,
+        "candidate_std": 0.01215915808329245,
+        "amplitude_ratio_std": 0.8374826120353777,
+        "regression_gain": 0.8101162238091576
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.016361460319317907
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04973933206914635
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04291158006224099
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.0418433590318181
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04754349552690211
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.05766386766919082
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04162072707252723
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03095784491989613
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.026569191354228
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.034141902427497456
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04643802608238062
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.0399256146787665
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.025642126352576247
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.016361460319317907
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.025506516391753258
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.03982665095594884
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.046217157117159714
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03376919421648393
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.025809764084821343
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03018171834666261
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.0410493151495845
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.057351106561016336
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.046971579674918405
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04079916643149171
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04178278823829197
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04878680220932886
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\chambord\\comparison_z17.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "chambord_z17.png"
+    },
+    {
+      "site": {
+        "id": "chambord",
+        "label": "Secteur de Chambord",
+        "lon": 1.516,
+        "lat": 47.614,
+        "context": "terrain peu accidenté, parc et forêt",
+        "mapterhorn_coverage_at_center": [
+          {
+            "source": "glo30",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frhd2154a",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frrgealti1metro",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          },
+          {
+            "source": "frrgealti5metro",
+            "boundary_distance_ground_m_approx": 34.26489309900067
+          }
+        ]
+      },
+      "zoom": 16,
+      "grid_m": 0.5,
+      "core_side_m": 300,
+      "input_halo_m": 50,
+      "exclusion_from_nodata_or_coverage_edge_m": 40,
+      "native": {
+        "path": "cache\\mapterhorn-comparison-ign\\chambord\\inputs\\LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif",
+        "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=587999.75,6724000.25,588999.75,6725000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif",
+        "shape": [
+          2000,
+          2000
+        ],
+        "resolution_m": [
+          0.5,
+          0.5
+        ],
+        "crs_reported": "PROJCS[\"EPSG:2154\",GEOGCS[\"unknown\",DATUM[\"unnamed\",SPHEROID[\"unretrievable - using WGS84\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Lambert_Conformal_Conic_2SP\"],PARAMETER[\"latitude_of_origin\",46.5],PARAMETER[\"central_meridian\",3],PARAMETER[\"standard_parallel_1\",49],PARAMETER[\"standard_parallel_2\",44],PARAMETER[\"false_easting\",700000],PARAMETER[\"false_northing\",6600000],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+        "crs_authority_reported": null,
+        "working_crs": "EPSG:2154 (requête IGN et paramètres Lambert-93 vérifiés)",
+        "bounds": [
+          587999.75,
+          6724000.25,
+          588999.75,
+          6725000.25
+        ],
+        "transform": [
+          0.5,
+          0.0,
+          587999.75,
+          0.0,
+          -0.5,
+          6725000.25
+        ],
+        "tags": {
+          "AREA_OR_POINT": "Area"
+        },
+        "nodata": -9999.0,
+        "date_acquisition_debut": "2024-01-11Z",
+        "date_acquisition_fin": "2024-01-11Z",
+        "date_edition": "2024-12-20Z",
+        "classement": "IGN_AUTO_V5",
+        "working_window": [
+          649,
+          34,
+          800,
+          800
+        ],
+        "working_bounds": [
+          588324.25,
+          6724583.25,
+          588724.25,
+          6724983.25
+        ]
+      },
+      "mapterhorn_sources_declared": [
+        "frhd2154a"
+      ],
+      "coverage_mask_note": "MVT z14 généralisé ; sources superposées, priorité fine déduite du pipeline, pas provenance exacte pixel par pixel.",
+      "mapterhorn_input_tiles": [
+        {
+          "z": 16,
+          "x": 33043,
+          "y": 22885,
+          "url": "https://tiles.mapterhorn.com/16/33043/22885.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33043_22885.webp",
+          "bytes": 76610
+        },
+        {
+          "z": 16,
+          "x": 33044,
+          "y": 22885,
+          "url": "https://tiles.mapterhorn.com/16/33044/22885.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33044_22885.webp",
+          "bytes": 67830
+        },
+        {
+          "z": 16,
+          "x": 33043,
+          "y": 22886,
+          "url": "https://tiles.mapterhorn.com/16/33043/22886.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33043_22886.webp",
+          "bytes": 84390
+        },
+        {
+          "z": 16,
+          "x": 33044,
+          "y": 22886,
+          "url": "https://tiles.mapterhorn.com/16/33044/22886.webp",
+          "path": "cache\\mapterhorn-comparison-ign\\mapterhorn_tiles\\16_33044_22886.webp",
+          "bytes": 76536
+        }
+      ],
+      "mercator_pixel_m": 1.19432856695542,
+      "approx_ground_pixel_m": 0.8051230771493174,
+      "vertical_rounding_step_m_documented": 0.03125,
+      "compared_fraction_of_core": 1.0,
+      "same_acquisition_confirmed": false,
+      "epoch_note": "Métadonnées d'acquisition IGN enregistrées ; la campagne de chaque tuile RGB Mapterhorn n'est pas exposée.",
+      "identity_control_max_abs_difference_m": 0.0,
+      "height": {
+        "pixels": 360000,
+        "bias_median": 0.0009613037109375,
+        "rmse": 0.023046079849668572,
+        "rmse_after_median_bias_removal": 0.023065211668633023,
+        "abs_error_p50": 0.01082611083984375,
+        "abs_error_p95": 0.046333694458007724,
+        "abs_error_p99": 0.08161163330078125,
+        "correlation": 0.9999606780799415,
+        "reference_std": 2.59813366262177,
+        "candidate_std": 2.597519287742474,
+        "amplitude_ratio_std": 0.9997635322277161,
+        "regression_gain": 0.9997242196060255,
+        "fraction_abs_error_over_5cm": 0.04137777777777778,
+        "fraction_abs_error_over_10cm": 0.004808333333333334,
+        "abs_error_max": 0.45162200927734375
+      },
+      "simulated_reprojection_quantization_control_height": {
+        "pixels": 360000,
+        "bias_median": 0.00075531005859375,
+        "rmse": 0.022539131814769554,
+        "rmse_after_median_bias_removal": 0.022557061818561513,
+        "abs_error_p50": 0.01050567626953125,
+        "abs_error_p95": 0.04534912109375,
+        "abs_error_p99": 0.07999420166015625,
+        "correlation": 0.9999623887132825,
+        "reference_std": 2.59813366262177,
+        "candidate_std": 2.5975644078447084,
+        "amplitude_ratio_std": 0.9997808985791411,
+        "regression_gain": 0.9997432955331141,
+        "fraction_abs_error_over_5cm": 0.03930555555555556,
+        "fraction_abs_error_over_10cm": 0.004552777777777778
+      },
+      "lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.00080108642578125,
+        "rmse": 0.022518360162568467,
+        "rmse_after_median_bias_removal": 0.022532608046140448,
+        "abs_error_p50": 0.01055908203125,
+        "abs_error_p95": 0.04528045654296875,
+        "abs_error_p99": 0.07945259094238288,
+        "correlation": 0.9646810556182078,
+        "reference_std": 0.07951280790680651,
+        "candidate_std": 0.06843587433210462,
+        "amplitude_ratio_std": 0.8606899458552051,
+        "regression_gain": 0.8302912855275807,
+        "fraction_abs_error_over_5cm": 0.03907222222222222,
+        "fraction_abs_error_over_10cm": 0.004327777777777778
+      },
+      "simulated_control_lrm_sigma_2m": {
+        "pixels": 360000,
+        "bias_median": 0.00075531005859375,
+        "rmse": 0.022051774781054714,
+        "rmse_after_median_bias_removal": 0.022064637068633007,
+        "abs_error_p50": 0.01027679443359375,
+        "abs_error_p95": 0.04443359375,
+        "abs_error_p99": 0.0779571533203125,
+        "correlation": 0.9659830010901366,
+        "reference_std": 0.07951280790680651,
+        "candidate_std": 0.06884145279081204,
+        "amplitude_ratio_std": 0.8657907399207697,
+        "regression_gain": 0.8363391372647164,
+        "fraction_abs_error_over_5cm": 0.03709722222222222,
+        "fraction_abs_error_over_10cm": 0.004130555555555556
+      },
+      "lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.0009002685546875,
+        "rmse": 0.022987000465174573,
+        "rmse_after_median_bias_removal": 0.023004616879678592,
+        "abs_error_p50": 0.0107879638671875,
+        "abs_error_p95": 0.04619598388671875,
+        "abs_error_p99": 0.08135231018066413,
+        "correlation": 0.9901662107311776,
+        "reference_std": 0.15831547202850932,
+        "candidate_std": 0.15060380270267576,
+        "amplitude_ratio_std": 0.9512892250705297,
+        "regression_gain": 0.9419344472974852,
+        "fraction_abs_error_over_5cm": 0.04113055555555555,
+        "fraction_abs_error_over_10cm": 0.004752777777777778
+      },
+      "simulated_control_lrm_sigma_5m": {
+        "pixels": 360000,
+        "bias_median": 0.00087738037109375,
+        "rmse": 0.022480173671576877,
+        "rmse_after_median_bias_removal": 0.022497151614793622,
+        "abs_error_p50": 0.01047515869140625,
+        "abs_error_p95": 0.0452423095703125,
+        "abs_error_p99": 0.07960525512695327,
+        "correlation": 0.9905741296756568,
+        "reference_std": 0.15831547202850932,
+        "candidate_std": 0.15089961444303204,
+        "amplitude_ratio_std": 0.9531577205281501,
+        "regression_gain": 0.9441733794558044,
+        "fraction_abs_error_over_5cm": 0.03908333333333333,
+        "fraction_abs_error_over_10cm": 0.004486111111111111
+      },
+      "lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.0009307861328125,
+        "rmse": 0.023033463439698264,
+        "rmse_after_median_bias_removal": 0.023052249167419582,
+        "abs_error_p50": 0.01081085205078125,
+        "abs_error_p95": 0.046295166015625,
+        "abs_error_p99": 0.08152008056640625,
+        "correlation": 0.9962375486500714,
+        "reference_std": 0.2610624287979165,
+        "candidate_std": 0.2557609260600346,
+        "amplitude_ratio_std": 0.9796925863200877,
+        "regression_gain": 0.9760065406261754,
+        "fraction_abs_error_over_5cm": 0.041305555555555554,
+        "fraction_abs_error_over_10cm": 0.004805555555555556
+      },
+      "simulated_control_lrm_sigma_10m": {
+        "pixels": 360000,
+        "bias_median": 0.00091552734375,
+        "rmse": 0.02252326025527498,
+        "rmse_after_median_bias_removal": 0.022541762993617966,
+        "abs_error_p50": 0.010498046875,
+        "abs_error_p95": 0.04534912109375,
+        "abs_error_p99": 0.0798876190185549,
+        "correlation": 0.9963975778113758,
+        "reference_std": 0.2610624287979165,
+        "candidate_std": 0.25598123696859654,
+        "amplitude_ratio_std": 0.9805364875646153,
+        "regression_gain": 0.977004181165059,
+        "fraction_abs_error_over_5cm": 0.03924444444444444,
+        "fraction_abs_error_over_10cm": 0.004530555555555556
+      },
+      "svf_radius_15m": {
+        "pixels": 360000,
+        "bias_median": 0.0006304383277893066,
+        "rmse": 0.00578377322094322,
+        "rmse_after_median_bias_removal": 0.005580931509318387,
+        "abs_error_p50": 0.000709235668182373,
+        "abs_error_p95": 0.009762009978294368,
+        "abs_error_p99": 0.02466011881828309,
+        "correlation": 0.943857161422409,
+        "reference_std": 0.014518699144978562,
+        "candidate_std": 0.011284307280334796,
+        "amplitude_ratio_std": 0.777225780881174,
+        "regression_gain": 0.7335901193268212
+      },
+      "svf_note": "Valeurs brutes sans stretch ni gamma ; erreurs sans unité, seuils en cm non applicables.",
+      "alignment_diagnostic": {
+        "meaning": "Translation appliquée à Mapterhorn pour le diagnostic, jamais aux mesures principales.",
+        "best_in_5x5_grid": {
+          "shift_east_m": 0.0,
+          "shift_south_m": 0.0,
+          "lrm_5m_rmse_bias_removed_m": 0.023363011266625416
+        },
+        "scores": [
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04912048667762234
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04338783212686766
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04256520574328429
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04782644455535016
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.05687249875387911
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04222003361781303
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03358876154612671
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.030332787334466944
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.036410899858032184
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": -0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04676217715593258
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.04081146090505843
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.029575584294729826
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.023363011266625416
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.029393270301397215
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.0,
+            "lrm_5m_rmse_bias_removed_m": 0.04065506015692642
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04650724016602216
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03603265131041394
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.02965975525053248
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.03288119075823802
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.25,
+            "lrm_5m_rmse_bias_removed_m": 0.04167065381406351
+          },
+          {
+            "shift_east_m": -0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.056404329996714915
+          },
+          {
+            "shift_east_m": -0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04717575949808694
+          },
+          {
+            "shift_east_m": 0.0,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.041599663397648284
+          },
+          {
+            "shift_east_m": 0.25,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04241354152345843
+          },
+          {
+            "shift_east_m": 0.5,
+            "shift_south_m": 0.5,
+            "lrm_5m_rmse_bias_removed_m": 0.04833488220324666
+          }
+        ]
+      },
+      "figure": "cache\\mapterhorn-comparison-ign\\chambord\\comparison_z16.png",
+      "verification_exported_rasters": "Grilles identiques, effectifs et RMSE relus, différence pixel par pixel exacte.",
+      "figure_exported": "chambord_z16.png"
+    }
+  ],
+  "http_inputs": [
+    {
+      "url": "https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=IGNF_LIDAR-HD_METADONNEE%3Ametadata&SRSNAME=EPSG%3A2154&BBOX=588523.4219974653%2C6724781.9901205115%2C588525.4219974653%2C6724783.9901205115%2CEPSG%3A2154&COUNT=20&OUTPUTFORMAT=application%2Fjson&SORTBY=coordonnees_nw+ASC",
+      "fetched_utc": "2026-10-03T10:36:38.385772+00:00",
+      "bytes": 2640,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "content-type": "application/json;charset=UTF-8",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "30",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';, frame-ancestors 'self';",
+        "content-disposition": "inline; filename=metadata.json",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-origin": "*",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "transfer-encoding": "chunked",
+        "x-iplb-request-id": "5A774862:07C0_91EFC1E7:01BB_6AC0DAB6_BD974049:3DA25E",
+        "x-iplb-instance": "61218",
+        "connection": "close"
+      },
+      "sha256": "5624612ffb46c18ae5ba832f301bca09b0daeebd4d827877cd7ccf4ad18e3522",
+      "seconds": 0.0940000000409782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/chambord/ign_metadata.geojson.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=587999.75,6724000.25,588999.75,6725000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif",
+      "fetched_utc": "2026-10-03T10:46:47.725677+00:00",
+      "bytes": 16000513,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:46:41 GMT",
+        "content-type": "image/geotiff",
+        "content-length": "16000513",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "40",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "content-disposition": "attachment; filename=\"LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif\"",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "x-iplb-request-id": "5A774862:086A_91EFC1E7:01BB_6AC0DD0F_BE4FFB63:38C2F7",
+        "x-iplb-instance": "61217",
+        "connection": "close"
+      },
+      "sha256": "ab33fe73aea1d3deea4912720126fc8641fa12869c00e9e43b68305f5ccbb619",
+      "seconds": 7.920999999972992,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/chambord/inputs/LHD_FXX_0588_6725_MNT_O_0M50_LAMB93_IGN69.tif.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8257/5982.mvt",
+      "fetched_utc": "2026-10-03T10:36:38.246345+00:00",
+      "bytes": 190,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "190",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=4J0LmUHrjj%2BHltzTDjwm7HKuLE%2FHVRX73wwuwqaT0lFOpDBGA%2FsMVXrFYbfT4YIbWQEg2WN5EImcgWv1C4Ya9qHvr2sdAnhdWjb0gIArE9Ma7O5WeyIzuv%2BWNZFW2WaReJ%2BhDZ4sqWzymhbMccS0lHBZBLq%2B\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b4e921903e281-MRS"
+      },
+      "sha256": "4c62ea58cd0d78dee82c71eef955d065a9e6db2b65945b43717dbeb6cf6fed3f",
+      "seconds": 0.3440000000409782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8257_5982.mvt.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8260/5721.mvt",
+      "fetched_utc": "2026-10-03T10:36:38.271246+00:00",
+      "bytes": 190,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "190",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=fB%2FzL9mnXOZ%2B1uPOBfPp5i%2FRqsLb0lP8V%2BPCxmQjmCCuygYowBYSVmDQa1KOTvupmCyjD2fDsq0oF2PYN%2Fq708EbakkaFiPp0KoT0%2BDTXhE%2FybexQ5SDcV%2BgihhQKSiUGGXMW1rM%2FU4O1rwEwzooHM4aJ3Fu\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b4e921b05e162-MRS"
+      },
+      "sha256": "a24ee0dcca2e1d5f288cefa52718c59b2de99ef9afbd80c4988a1d98014dd42f",
+      "seconds": 0.375,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8260_5721.mvt.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8261/5721.mvt",
+      "fetched_utc": "2026-10-03T10:46:48.601229+00:00",
+      "bytes": 190,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "190",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=d4qGYInHhXnS8zqy0L1TUDj99TvH4AkElLF1dYmiYX1gmNpGnYvIw0aWony%2BIZdDrplqYLtZdVMqIBWoE6J%2FWBpkZhiParvfvJlcegEYr0r1hw2QVi1xI63I65MDNAh5d2xv5YKQbQmrM6Uqa0z6P2Hf6B0b\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d790e794777-MRS"
+      },
+      "sha256": "a24ee0dcca2e1d5f288cefa52718c59b2de99ef9afbd80c4988a1d98014dd42f",
+      "seconds": 0.14100000000325963,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8261_5721.mvt.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8375/5767.mvt",
+      "fetched_utc": "2026-10-03T10:36:38.254397+00:00",
+      "bytes": 151,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "151",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=HG3Ifql9p%2BIShrzpECFZUVtfWS8Zea5se6MsnBzOwN7mzHVcDLxnu%2FRrsbGWvGKqzKThq8IIxdCR6pzDFXs0phddarKppV9AnU%2F5abX9uthzdtSZ1X40V8JVWw2QO%2Bn6ouI1RhVbJa3HGdZWfAn%2F5wWLbaSm\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b4e920c79e1c9-MRS"
+      },
+      "sha256": "8458ae7227c95aa2766dd75d89a39729e7392342faa50a1709c21cb8ef0fd1ae",
+      "seconds": 0.40600000001722947,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8375_5767.mvt.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8458/5996.mvt",
+      "fetched_utc": "2026-10-03T10:36:38.206827+00:00",
+      "bytes": 190,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "190",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=QDMK4kOQtoCQzEI3F1uAvhkxXQo%2FBmk4nyjD3dWD4mnGmm1GJXwn4ugZes5RktVnAcu78JlJczEIFSSqjxFqg866iLEmEvwd0afKEklgM7NjGxaB%2Ff1H2C7tYwO6ja2fbTG%2FFqiIX3xBr7KfmWwutCDTX9PK\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b4e92281c4b79-MRS"
+      },
+      "sha256": "a4e14c360aae74761e11d48fb4a7919c7f205c362dfb2a272e6d7949095e05b3",
+      "seconds": 0.35899999999674037,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8458_5996.mvt.http.json"
+    },
+    {
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8459/5996.mvt",
+      "fetched_utc": "2026-10-03T10:46:02.812449+00:00",
+      "bytes": 190,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:02 GMT",
+        "Content-Type": "application/x-protobuf",
+        "Content-Length": "190",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=btSCYTE4MGp9%2B6ex16T7HDw1nwkh9qaCpUCIA4EBgU97uoYAhNe4a3OPiYHEHYaY4qZirUde9m0hZ3%2BmV2F6I7lAHh1T8aDKoe%2BghlboRACfdwGzQZiTqVttMIFLoPZ0Fq%2FBYIfO99zz6EIKLhChdouAXNAR\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5a3b01e280-MRS"
+      },
+      "sha256": "a4e14c360aae74761e11d48fb4a7919c7f205c362dfb2a272e6d7949095e05b3",
+      "seconds": 0.29699999996228144,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/coverage/14_8459_5996.mvt.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33030/23929.webp",
+      "fetched_utc": "2026-10-03T10:47:06.048028+00:00",
+      "bytes": 76008,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:06 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "76008",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=phJI5ruLjoRX5RLO8URulNiIShEa4fQ0c7fHER5fJUN2bXOx5i57eiEbdy18AmF%2F5fbqDGKuFkQINIvuEENC13ruofulXMmmaelC%2FRR4qfWqk%2FSv7kLADNga5K3QB1aoLE5%2FWmS4\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5de4fa9511a4-MRS"
+      },
+      "sha256": "3aa040ed2ed5217d6b0e9b8fd8139159e319651910e96fb4b2923566d64bf80b",
+      "seconds": 0.34399999998277053,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33030_23929.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33030/23930.webp",
+      "fetched_utc": "2026-10-03T10:47:05.791856+00:00",
+      "bytes": 66552,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:05 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "66552",
+        "Connection": "close",
+        "CF-Ray": "a44b5de50bdd8ca3-MRS",
+        "CF-Cache-Status": "HIT",
+        "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
+        "Age": "95122",
+        "Cache-Control": "public, max-age=604800",
+        "Last-Modified": "Fri, 02 Oct 2026 08:21:43 GMT",
+        "Server": "cloudflare",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=POU0K8I2a4f0dtj9u0nnskF1WE5LVw47soBlDozXOfEVi%2F8wjzB%2Bh42X9SuqMmAezMRaw1%2FTBTTskhaEb2571sA%2B%2FuzQiozigMq%2B8IPz%2FwO3w1kOPwfJ5QdXN4369UvH8fxqJ6xq\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}"
+      },
+      "sha256": "f4f85081270eaabc3f128f6d2450670e7d474760ad33c96d0a8b0da8276c0dda",
+      "seconds": 0.0779999999795109,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33030_23930.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33031/23929.webp",
+      "fetched_utc": "2026-10-03T10:47:06.005262+00:00",
+      "bytes": 71664,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:05 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "71664",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=stiA5lOsSLD87OJC8fOjwclIrejZW0pNbkaoFZ%2Fc%2FlxVjf6%2BC%2BH2mgDDQE7E6A9hIRiUJPAZHtqXfngZBxeK0xN%2BmYLxGQYOw7yFDpJ%2F4L%2BBWMJ8%2Fn1aGpqIse%2FPdIccm1lB7jyF\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5de4f9832a48-MRS"
+      },
+      "sha256": "d56aed8dda0bc5d95b950cdffd6be44b94c5bea68206b7f512d8ef57b023b955",
+      "seconds": 0.2970000000204891,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33031_23929.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33031/23930.webp",
+      "fetched_utc": "2026-10-03T10:47:06.049098+00:00",
+      "bytes": 70414,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:06 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "70414",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=OwjlTDoJgqer%2FVDp%2F28aMxV7bN14WW14a%2BmBv8l1l5nRfqPeNC0p8vrk1rjqqeVxBeV2OJLmgpg0h%2BIIMOjEVUWaI2Ae8%2B%2BhD8YeG1wyUpShRWpNzEsSl609q0QfEHt10zT5GxLU\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5de50ad99620-MRS"
+      },
+      "sha256": "7555e188ebc8eb9564f88b1ab9bd33c98ceaa44079ba1ffdf7605446618e778e",
+      "seconds": 0.34399999998277053,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33031_23930.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33043/22885.webp",
+      "fetched_utc": "2026-10-03T10:47:07.465023+00:00",
+      "bytes": 76610,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:07 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "76610",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=k6rraT3r2fJhM1p7nk3qa%2FgrUit7vvx3i0ojNSYdBBPS4IHNhvXN6sxWgfZ%2BiojwiQnjLqyNkZOyx43c8ok%2FIKSOnloF7jdgbzRYiq4CeFpHWqp3SLCQkOKEesStC4NourQH%2FcGH\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5debac4ee214-MRS"
+      },
+      "sha256": "4892a33c990cd2f9c38f19b0836d3e564b418fb6a44e2d4e32caaefdd8f6f500",
+      "seconds": 0.6720000000204891,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33043_22885.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33043/22886.webp",
+      "fetched_utc": "2026-10-03T10:47:07.501189+00:00",
+      "bytes": 84390,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:07 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "84390",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=NSBrjy2UnKennTQJAprwxQncl0OVtpp102wmOBa%2FlCOFDLRFWpCWN2a0qFw6dvvxVZlowYeu7v4W3LcZ6X4OqKnW4wTF8TKYyoNAJdFdlrRzQu%2F%2BJxWIKkkW%2FST5zPajA2oQCopd\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5debbc4f93a1-MRS"
+      },
+      "sha256": "846317ae6d32d0c5cf5ed007c3001b6cd1019155315031680783f001e317aadf",
+      "seconds": 0.7190000000409782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33043_22886.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33044/22885.webp",
+      "fetched_utc": "2026-10-03T10:47:07.396351+00:00",
+      "bytes": 67830,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:07 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "67830",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=%2FBir0u9gzDnxPxweXs1kCB4IktgasTofwz1jFyx4ckb605NupdItBXAwUaVfsBZzBvHwWi1CoS5XqY%2F9pj77fqBkd2btn%2Fdc%2FqV5sRc7x%2F1IbsnsBZLGOYG8rovGrvE0I95UntJS\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5debac5ffb6d-MRS"
+      },
+      "sha256": "2d33d5b5d8749bb4ba86e53ad9d3479d05eca83718f5ae07306235ed4245cab0",
+      "seconds": 0.6089999999967404,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33044_22885.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33044/22886.webp",
+      "fetched_utc": "2026-10-03T10:47:07.443410+00:00",
+      "bytes": 76536,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:07 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "76536",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=qEQ56K4XBAVVxkVRgNZn09HJFlkmhCJljtLBz8KwIUqgNxtuW2oi9%2Fd%2Bn3geuSkp%2BytBKZ5pyu4OADWZWekh89dAz4mFymBhAJCQGZ7KrtOnfowTHT%2FCXgQeX1FenEV94vdNiY3O\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5debbd2ca7d5-MRS"
+      },
+      "sha256": "f1f0349259d48711a60f21f8d0abd14079bcebf59fddd7414181980c4f4e0194",
+      "seconds": 0.6560000000172295,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33044_22886.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33835/23986.webp",
+      "fetched_utc": "2026-10-03T10:47:24.544616+00:00",
+      "bytes": 135184,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:24 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "135184",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=pmkCCL%2FIonk5hnmCmpymIEvyRZwrRapV1h0NuLToTfNJS%2FnmV5V7sLrNgLiBHIkG63R8c%2FMFpYC%2BSP1oCUyV3i0ah%2Fu1IIT0%2BVzxxOLM4%2Bex9Ej4xa1anNNRWo%2FKJAPc38Pg%2BOVK\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5e56c902c0fb-MRS"
+      },
+      "sha256": "1538a48e46c1d60bb397934eb80a7e33f6d75e3fd84469ee58ab49ddc8acd45e",
+      "seconds": 0.7189999999827705,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33835_23986.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33835/23987.webp",
+      "fetched_utc": "2026-10-03T10:47:24.562646+00:00",
+      "bytes": 121088,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:24 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "121088",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=H2JPpqiTt8RV5e1vDQkao0FCqWjMeXjpLFyOJgBUVqtdqJCUHOsFtrKt2fo3GFSg4E7K49Ve%2F2ZS%2BuXT6ZGoIFdrNE6teD5GLBnQ92v7EC2DyAZrY3elXgwo2IrCnSe8vzSUNgeu\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5e56dd48fb6d-MRS"
+      },
+      "sha256": "332c8a0fd2f29a915cd9396bc48326635876436b471904e014df832e699efc47",
+      "seconds": 0.6719999999622814,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33835_23987.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33836/23986.webp",
+      "fetched_utc": "2026-10-03T10:47:24.534644+00:00",
+      "bytes": 118824,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:24 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "118824",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=IuSYCh3ovZG6QOzKxRMFMttF6nzI222i0j0hAHEj8%2Fbh4DhNqCRNqD8oncFbcrlhO3PDjZ1H2MDoMKwjWhMyNGpUNQwXg6PlraHfoUSVvgzNXq2aKv0xRmqZ1qhJUC%2BNvpqPoj6z\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5e56ea823169-MRS"
+      },
+      "sha256": "537f9fba5dd514b783ebe2c4328ce53aae98e686c9b8dec4cf3ad79e4e31d3da",
+      "seconds": 0.7189999999827705,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33836_23986.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/16/33836/23987.webp",
+      "fetched_utc": "2026-10-03T10:47:24.549681+00:00",
+      "bytes": 124070,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:47:24 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "124070",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=%2FpLm5IEQkWHL2hP6OXHD17qVvWQjEm%2B0FFCbuR5gUuVLXby%2BngGIEb6sPOw14AZCOW%2B%2BNhy7P5%2FF45RXVRMxwQznYn2nuVgTaCsvTIaZ6w3zR7pPYhOm8VXW%2Fox086nkGPMz0Tll\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5e56cb02e1d5-MRS"
+      },
+      "sha256": "d26b1724dbd45df8356b1cedb14ac9b8a4022e68b4b1c3c7ce61e8524306de2b",
+      "seconds": 0.6410000000032596,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/16_33836_23987.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66060/47859.webp",
+      "fetched_utc": "2026-10-03T10:46:48.330201+00:00",
+      "bytes": 69664,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "69664",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=Jy7%2ByIXI7hhN28VLM5IoTbQex9pfA0dFQ%2FV566ej7QeGePmBu4W%2BLS%2FzDFlpNtLaX7o7RKVoC80iYFmWcXG8P1%2FxBwMbA3qIS1OWeAbk99ngtIMjinc%2FmrRDHnmKoM4cH7CS1H6S\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7469870ba3-MRS"
+      },
+      "sha256": "9f510a27ecefbdbecf75e73999d686bcabfc824946bc2359b25c2bd9f525cf64",
+      "seconds": 0.625,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66060_47859.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66060/47860.webp",
+      "fetched_utc": "2026-10-03T10:46:48.289988+00:00",
+      "bytes": 56604,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "56604",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=kLPQDtswH6HTikY4Jg5pe7dD32gQKkzTVNdP8N3KQzKHH8n91g7MX1%2BQ%2BWbp0b8ksln3ZfY1XYzPJIrRv%2BuQMm%2F0MLl0SMfQbYwcPV%2FW8%2FcNU7juYYu8h8Uq7aqzek3afr84S5ah\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d747d35e27d-MRS"
+      },
+      "sha256": "38e3aec6dd0772d305ca3dbacd83545dd56d91c3003071839f624b3f3e9a2e79",
+      "seconds": 0.5779999999795109,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66060_47860.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66060/47861.webp",
+      "fetched_utc": "2026-10-03T10:46:48.595155+00:00",
+      "bytes": 63822,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "63822",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=HUPSLmyHdtWsD1KcAZcQA06Oh7YI%2F1Wg70rZiXKg5o%2F7UdHnFFv4hpWnmQv4OZ7rMsnik%2FH96qDt2wenCZkBxjQf2XF9MAZiEZZN5r6lN9iqeHJPQgAMtMlhlSwT%2Fppkf41FcF7y\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d78ec49c1fb-MRS"
+      },
+      "sha256": "68f2ccd73a2f4a9cb4dae2de50ca238bcae3d8df7e209d8ecca9f90c47e2a401",
+      "seconds": 0.1720000000204891,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66060_47861.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66061/47859.webp",
+      "fetched_utc": "2026-10-03T10:46:48.376328+00:00",
+      "bytes": 58384,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "58384",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=ANbjtycY9vkN8uLqrOzvVPMmkwkTSgA%2B6fo0BKawUL2DV3pN%2B37r1SDN8ADF8j8oO7atJTzRpNy0EN%2F88LHMBdLqJ3P3Ua48yshs25GvNPu59OIb2RITAdK%2FK0r59W9UG8S6KZaU\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d746ec88137-MRS"
+      },
+      "sha256": "aedd9fbdaf3e7f2d1080e2684b1a7a8d79c4d73fc0fdd162f753576fb53ead91",
+      "seconds": 0.6720000000204891,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66061_47859.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66061/47860.webp",
+      "fetched_utc": "2026-10-03T10:46:48.562457+00:00",
+      "bytes": 59856,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "59856",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=eSl0oRPCjgMcuzNjcUx%2FxoJ7lze7%2F%2FQNvil312Hx7LBJy%2F4d2dbtyfCQHYSTQECym4ZpASK3y89JL4XPx%2FAeDRKATBbqNrkptQ7B2%2FVsxmk7QMiG0XNrB0pCrbsAb%2FyhiHTfIZjV\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d78db222115-MRS"
+      },
+      "sha256": "d113c4e82c9b5ab6e99fc4c802de8ebcaa34a5dde2a841aaa6eeb9865c13fd85",
+      "seconds": 0.15600000001722947,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66061_47860.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66061/47861.webp",
+      "fetched_utc": "2026-10-03T10:46:48.776709+00:00",
+      "bytes": 56654,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "56654",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=kObvaDdSUU5kAjVNMIrvi%2Ftpd4hHi3u4ZPDxBLgMhZ2vkPbkNXiBmpADRECi5vSBDf1NDIlEyrVAK0LGE5HsLVdQ5KQKeZUQXJDlqo86PNNhu7jvN538YtVyJYH3M0fMYuN6bXRr\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d78eca61624-MRS"
+      },
+      "sha256": "0f2c73d3babd1463ba915336102bafefaa38c9c064648b3898d6aec8e3f6e0ca",
+      "seconds": 0.34299999999348074,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66061_47861.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66062/47859.webp",
+      "fetched_utc": "2026-10-03T10:46:48.376328+00:00",
+      "bytes": 61160,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "61160",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=T2KKA6i0V029HdMFCv6bT3E3ahEqO0m7lB1Mqp04uHHB77gF8GpgT%2FUYimGmAXLhN0D6ME6R2b4OraROLcxFzLkjWQA1Po97mv%2BCmgloHc3%2B8%2BkeDfbkJA48%2FiX4JbbDsDQWb3DL\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d748eb6e1bc-MRS"
+      },
+      "sha256": "80528193dad161145497ea416532cff1329b2fff9067b2a700f70fde9c405e93",
+      "seconds": 0.6720000000204891,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66062_47859.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66062/47860.webp",
+      "fetched_utc": "2026-10-03T10:46:48.667446+00:00",
+      "bytes": 58362,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "58362",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=uApycGn5YAkfbSixxXsrT%2BiNBuemSSTW2%2FYfPF1yTkZ06FuXCKJfu9ep3nd7nkMfvervUm3yNRkHgrO0%2Ba%2BvrEjQO4ljuvtESxPHbj%2F0Ve7SllQ00w6IkuYX%2BIX9ie3oJBVHzXnp\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d78f80b121c-MRS"
+      },
+      "sha256": "61941300993c3d6ad10364277f780f561c7c2dbcd3496f999a1499eb4214a0e5",
+      "seconds": 0.23399999999674037,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66062_47860.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66062/47861.webp",
+      "fetched_utc": "2026-10-03T10:46:48.721138+00:00",
+      "bytes": 60372,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:48 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "60372",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=Oy%2F0h8cylg2BtmM4jxLAkB1yDqu%2FxwSFIV5xAH%2B9V1azNEDjEg2FoOmcUoKDLrNmXrRnET1k0%2B7oNTeo%2Fr8lg20DgWICfChklueHx6akdXxgEMdvPuKaJD66Tc9nPHNbM2dTHh27\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d79db63e18d-MRS"
+      },
+      "sha256": "8058fb9eaebbefa8259091caac1cf43e4e22b6436e9fd06c7e2b4740f4b8ad8d",
+      "seconds": 0.14100000000325963,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66062_47861.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66086/45770.webp",
+      "fetched_utc": "2026-10-03T10:46:49.188414+00:00",
+      "bytes": 66870,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "66870",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=Exfx9o3i3ThwsJ0VQXqhWbr21ymRz0P2wmTYz%2Ffisv0GlPZhJiJTzhSW07W%2BPHcJ9%2BFY7mgUx9DdJrR22RzgzpnR83WD4W1hslYYEnmjMgspo76fDr2EwdiSza%2FUApU%2BwtV%2FgnTG\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7a6830e242-MRS"
+      },
+      "sha256": "1c88bf676ba24a95a9d2a9af8c0db83dceb35c05002f9ae185b5f2e06ae41d53",
+      "seconds": 0.5310000000172295,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66086_45770.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66086/45771.webp",
+      "fetched_utc": "2026-10-03T10:46:49.199460+00:00",
+      "bytes": 67380,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "67380",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=o567ERnU4t5G0WogqMLsoB0HuTsOjqSskiShyO8oFOCfV2chS6CCAR%2FEsmbvf%2FVLe451HYf6LMQHU00vmeToegsDM0Ef1qDMIljFxm1OanmlkJCWJfF3CmEXdL%2FwNIY5Y%2BAfP4k%2F\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7a79c3e1ec-MRS"
+      },
+      "sha256": "235d45ce4360748f83e82be6c14ddcfaaa5a42812f06f6085134e146c3a42de0",
+      "seconds": 0.5310000000172295,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66086_45771.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66086/45772.webp",
+      "fetched_utc": "2026-10-03T10:46:49.543661+00:00",
+      "bytes": 73378,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "73378",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=QqlpkIyyKXbkla1Lk5d%2BFUYCMm3pWpFmdGT24ZtuTVOZzY046t7Fj1NOWH8Q15jtCJ9uc8E5Z%2FFcoaH3vHRfwkTJ%2FkEtbCUDUSTZ%2FZxpu5gEKzBRLZwCHc6%2FugFZNj1x2mc9XSgX\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7e8d8d8aa0-MRS"
+      },
+      "sha256": "d87af8f8e4ef9a6b3d4fccc42882f074574e19f458e98847a93d8d777e302d9a",
+      "seconds": 0.21899999998277053,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66086_45772.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66087/45770.webp",
+      "fetched_utc": "2026-10-03T10:46:49.231477+00:00",
+      "bytes": 65832,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "65832",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=L3rSpTfYzZtstaSfgSbTFIC9LSGnuSfARKW%2Fh4vL0FWlhGU66l6ezeOB12FGfbqo0XknhrQhE46oHd0KvHVFqFhtaYqyeR0N%2F3jYHBXklI7pdXlhg3IQZNeR2kZ10Ca39nWhY6eg\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7a8bdbe20d-MRS"
+      },
+      "sha256": "e204e3aeafaa9c9d1badee3decc988e00c01eae11fce4b0a7f2d89e1c2b2ad91",
+      "seconds": 0.5630000000237487,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66087_45770.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66087/45771.webp",
+      "fetched_utc": "2026-10-03T10:46:49.669060+00:00",
+      "bytes": 72100,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "72100",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=iCNQ9KIJZjZi1BoP%2FJcyshvgAmPZ%2BHB%2Bwj%2BuZFIkry5xVvi99I%2FIayCoUQXgMXVizSCJSseURoksjh07BGJ6%2BBxsGYrnIXSFPsxNyaX9PtRCCt0LJ3xfhh%2Bd2m9bPbV4XlvG721w\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7e8bdf88ed-MRS"
+      },
+      "sha256": "689940e03b59b6c2cb4a31e138272a47f831feb00a960acbe4eba92bbc7cd815",
+      "seconds": 0.34399999998277053,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66087_45771.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66087/45772.webp",
+      "fetched_utc": "2026-10-03T10:46:49.518590+00:00",
+      "bytes": 69794,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "69794",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=3AzgR84pAejlxwp1Zeth5m17GeeXTxCnLUya8wJPjqsR%2FqCwre3En306ZDf0ytFs%2BlEchZSJ3Du1dpH14N3i29cywQoWrayMKlUfQG5Wuu6%2FZkqxG9uLgOg3Z3FxAZ7rLaCOWLYy\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7e9fb7e276-MRS"
+      },
+      "sha256": "62e160b71f7bb1f4b04659e49a94bf633b10dee5bded66b1434882a99633fea4",
+      "seconds": 0.2029999999795109,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66087_45772.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66088/45770.webp",
+      "fetched_utc": "2026-10-03T10:46:49.179208+00:00",
+      "bytes": 60162,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "60162",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=6gOf%2B0FxlPGlH2kk9%2BEmPQCnzUR2yA3BnYY450JNmlQUus5GYvExGGyd11EQAu%2Ftd5ft0ce%2FtQ5l5lqnS9HKroadAjiqJQyqA%2F5G84tOkPX7Fkrlac6DrN0eGZsvionE%2BMZEuFN%2B\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7a7ad61412-MRS"
+      },
+      "sha256": "1df45f44de8773f5e9d82eabc0b8970d1feb9fc2a3a8c82aaf15eef740d27e7d",
+      "seconds": 0.5160000000032596,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66088_45770.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66088/45771.webp",
+      "fetched_utc": "2026-10-03T10:46:49.724196+00:00",
+      "bytes": 62296,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "62296",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=t%2Bbd%2F8dszli1KpsgY%2FADp3uNiUCNTShSoZMFvmh7b%2BVjWZ5uHFENJ79XmuSZxCGgdgHhPF%2BvXgGYgYV7Nx%2BmGfatwrUYVtiS1XO5g2HIawjryWCtZTVGSoO%2FZqEE7TH6rJiLcrko\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7e88d6164b-MRS"
+      },
+      "sha256": "5e0711fe047ae179687605ab7b6ad68e6254f5f8b54ca640cca4dd44dffebbd7",
+      "seconds": 0.40700000000651926,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66088_45771.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/66088/45772.webp",
+      "fetched_utc": "2026-10-03T10:46:49.755200+00:00",
+      "bytes": 72082,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:49 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "72082",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=pfbPJMj7fykGqbZlt0nOGhOp7eW5n1IUp3iNPrIDrU9uX2upEpRYg0KFwi2U6VHbuG2W9powMewgmvhW4aDgcAaVFBJ1iTbFidH5TH3Lsl%2Fge9iVsKpvy5MJ3omTq5CCXPk7k2rl\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5d7fe945e214-MRS"
+      },
+      "sha256": "bc8be755fa58a6db0c9a53575f4143ead452666ff3b088a29349965a350c3095",
+      "seconds": 0.2190000000409782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_66088_45772.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67670/47973.webp",
+      "fetched_utc": "2026-10-03T10:46:03.292029+00:00",
+      "bytes": 125208,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "125208",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=g4Wu6mr20kgIRkNeJRCn1kqHvrCcHUz7aVhluodRhHmGzOSGBt33jw5B6BmTpqYwGNtM%2FVsbw5BNpPYIYh3AQgNuEvkAj98%2Bfvx7071cqmlcEokiBxNugINNkcuZr86G4yfCDmp8\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5c8d7697e0-MRS"
+      },
+      "sha256": "d09bca6143f3218fa9e0beba0b2941360a3be219badde346b87f03366f837686",
+      "seconds": 0.375,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67670_47973.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67670/47974.webp",
+      "fetched_utc": "2026-10-03T10:46:03.283267+00:00",
+      "bytes": 93772,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "93772",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=eWGsZGoOePkzwT8UD0tEtf%2BjmwZX0wZ5QVEj87wP0j9rDE8xdoxPeGoYFUii1i8s1vp4YqjqKHcMUUxdFjdV%2Fa7FoYsbU5IAaqFWgk53xGespgc21rYtqKC%2BbshXNeQp9QyeMCK5\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5c8c75b618-MRS"
+      },
+      "sha256": "b47cb6168552afdd6ddadaf1b66db45664661d766d5a198b6d1115b4baca5c95",
+      "seconds": 0.375,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67670_47974.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67670/47975.webp",
+      "fetched_utc": "2026-10-03T10:46:03.925632+00:00",
+      "bytes": 104100,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "104100",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=vGduepmxE1gMxv9DW%2BgcMvNMiFSdFqWn2SgeJI4zlUwbA5eCUlDb%2FuBhDmlwgwiPkdLrmvKgizDXYqKdb%2FxdorDMQy%2BsnU3IXlIqVYnJFmp14c9IM0j%2Bx%2FmmEFJlXrh82h147lMp\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5fab27536e-MRS"
+      },
+      "sha256": "9f02250f8757f4f16f1b329707e8f967e06da68ab86eed825e4b1f02a4ddd240",
+      "seconds": 0.5320000000065193,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67670_47975.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67671/47973.webp",
+      "fetched_utc": "2026-10-03T10:46:03.605338+00:00",
+      "bytes": 91558,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "91558",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=YwgdFxNKvGlzscViIZZmDV9jFXBH7aVpYK%2BD9SpKCHwbhG6In3LwaQBRuFG5N3N2Ar1bCFC0vosO5oPDjqmdz32lM2FjzrCXq5UYxr1W5RggP2kLn0nkyqXDA1oo5GotxrLI7y9w\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5c78ede1bc-MRS"
+      },
+      "sha256": "177e715520875c9a55efc4a3f788b6fd13811e5e1fc4ae5ae9e7c7bd805f09d1",
+      "seconds": 0.6880000000237487,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67671_47973.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67671/47974.webp",
+      "fetched_utc": "2026-10-03T10:46:03.488200+00:00",
+      "bytes": 100310,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "100310",
+        "Connection": "close",
+        "CF-Ray": "a44b5c5f9eb9e1b5-MRS",
+        "CF-Cache-Status": "HIT",
+        "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": "*",
+        "Age": "45506",
+        "Cache-Control": "public, max-age=604800",
+        "Last-Modified": "Fri, 02 Oct 2026 22:07:36 GMT",
+        "Server": "cloudflare",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=OAjE%2FLkxaGjCM0i1%2BlLgxvbRHNxKzotbdYkJWPMXMbVi17DkW5bmoA5ljuw3nYGcImiKsUy%2FOi1xsG0EkZXCujkm6%2FW2yfMXWBXS1uKNdMRN8eeMooB4v8an46CH81b71afzfEf4\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}"
+      },
+      "sha256": "f3db2db919c75fbdab3adac45264479ca6b03c7599066b5a857e0a1d1578349f",
+      "seconds": 0.0940000000409782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67671_47974.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67671/47975.webp",
+      "fetched_utc": "2026-10-03T10:46:04.199996+00:00",
+      "bytes": 105644,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:04 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "105644",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=x3t2Zd5BpMDlxOE7FKULoWI%2F3w3RmKeh8fezk8hMmg1KQC99plH7ceKO7RM84DCpLT82XE2PqfGWWwZRgo0bekXJlP786wWCpEmVDLRwfAXZWP5ouo6u6vJauHl4iOAXJldvoFeU\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c602f15e5bf-MRS"
+      },
+      "sha256": "cbd4c0946505cf22e229a2eaf7cd6050fc72d6b9b264b0711a57de04680a3dd2",
+      "seconds": 0.6869999999762513,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67671_47975.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67672/47973.webp",
+      "fetched_utc": "2026-10-03T10:46:03.305126+00:00",
+      "bytes": 99238,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "99238",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=r52Ud8PSlb2ECAPj2ZGEmOO6k9XyYmAAkLnPBlDK2%2Fujr3a69Ojw4wOhhPC%2FfIWFkYF%2BmOto3Qz2dMDQElBS1FOGTbtzzZB6ru1nCfJk2OzlGv8%2B0DWzOOuEGP16n1pNjL%2BLaWsz\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5c9ade7662-MRS"
+      },
+      "sha256": "8a874510e1195c19d2cceb82c99c58a2e450dac2a4b3d08e1ebc72667cf56bb7",
+      "seconds": 0.39100000000325963,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67672_47973.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67672/47974.webp",
+      "fetched_utc": "2026-10-03T10:46:03.918652+00:00",
+      "bytes": 100470,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:03 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "100470",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=0K3HIk4EkBqz1pUCj%2FGU6s9WhBCl2DKyXgUrYXGXJYzpDyOLulnznjF2EHGDk1c6lgeECd0XZGRSMk47s22wIcaF7TEOaIOK4f8MpHAp6dImmPfFVqCbZoi4MiGz3Iqb2veR9x5B\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c5fac898036-MRS"
+      },
+      "sha256": "4d464b051049f635bb52c7d9315de43180e9ee48c2d9906059549c70b818de8b",
+      "seconds": 0.5160000000032596,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67672_47974.webp.http.json"
+    },
+    {
+      "url": "https://tiles.mapterhorn.com/17/67672/47975.webp",
+      "fetched_utc": "2026-10-03T10:46:04.155330+00:00",
+      "bytes": 104644,
+      "headers": {
+        "Date": "Sat, 03 Oct 2026 10:46:04 GMT",
+        "Content-Type": "image/webp",
+        "Content-Length": "104644",
+        "Connection": "close",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "public, max-age=604800",
+        "Vary": "Origin",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=KGkcD2PfR1Zn6XNjgchDG9xSBiGcFingc%2B2h1VaNmZnVsLJoqiijRTSDpqCxOI8l3syqe2yH%2BqpoZ9boPsRpsMFPXS1HiyWt6M9n%2Fw2HKqY33zQY1EOSOL4QjpgCSJugBqJArnOq\"}]}",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "Server": "cloudflare",
+        "CF-RAY": "a44b5c610a44e197-MRS"
+      },
+      "sha256": "1eab6c906ae3c55b1497f52662039c2e5bb74bbe6208340601e36798c61a47b9",
+      "seconds": 0.5309999999590218,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mapterhorn_tiles/17_67672_47975.webp.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=IGNF_LIDAR-HD_METADONNEE%3Ametadata&SRSNAME=EPSG%3A2154&BBOX=778836.9601747479%2C6647617.045372299%2C778838.9601747479%2C6647619.045372299%2CEPSG%3A2154&COUNT=20&OUTPUTFORMAT=application%2Fjson&SORTBY=coordonnees_nw+ASC",
+      "fetched_utc": "2026-10-03T10:36:38.377794+00:00",
+      "bytes": 147,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "content-type": "application/json;charset=UTF-8",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "30",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';, frame-ancestors 'self';",
+        "content-disposition": "inline; filename=metadata.json",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-origin": "*",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "transfer-encoding": "chunked",
+        "x-iplb-request-id": "5A774862:07BF_91EFC1E7:01BB_6AC0DAB6_BE3B99E3:38C2F7",
+        "x-iplb-instance": "61217",
+        "connection": "close"
+      },
+      "sha256": "50e90643bd1f39d35dda22507198cd40e2248f9edcd26794496356ee6a91b587",
+      "seconds": 0.11000000004423782,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/mont_beuvray/ign_metadata.geojson.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=IGNF_LIDAR-HD_METADONNEE%3Ametadata&SRSNAME=EPSG%3A2154&BBOX=574339.1378183409%2C6279564.507739102%2C574341.1378183409%2C6279566.507739102%2CEPSG%3A2154&COUNT=20&OUTPUTFORMAT=application%2Fjson&SORTBY=coordonnees_nw+ASC",
+      "fetched_utc": "2026-10-03T10:36:38.371736+00:00",
+      "bytes": 2652,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "content-type": "application/json;charset=UTF-8",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "30",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';, frame-ancestors 'self';",
+        "content-disposition": "inline; filename=metadata.json",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-origin": "*",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "transfer-encoding": "chunked",
+        "x-iplb-request-id": "5A774862:07BE_91EFC1E7:01BB_6AC0DAB6_BD974017:3DA25E",
+        "x-iplb-instance": "61218",
+        "connection": "close"
+      },
+      "sha256": "e0954007d37cc8d72722cc789daf318001916d0870e1cbbb71e0910709952989",
+      "seconds": 0.125,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/toulouse/ign_metadata.geojson.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=573999.75,6279000.25,574999.75,6280000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif",
+      "fetched_utc": "2026-10-03T10:46:46.961145+00:00",
+      "bytes": 16000513,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:46:41 GMT",
+        "content-type": "image/geotiff",
+        "content-length": "16000513",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "40",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "content-disposition": "attachment; filename=\"LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif\"",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "x-iplb-request-id": "5A774862:0869_91EFC1E7:01BB_6AC0DD0F_BDAB076B:3DA25E",
+        "x-iplb-instance": "61218",
+        "connection": "close"
+      },
+      "sha256": "81abc19f66f775658ba1d9fe452cd099ab28d863c15e3967cf1d8e01c6c419eb",
+      "seconds": 7.172000000020489,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/toulouse/inputs/LHD_FXX_0574_6280_MNT_O_0M50_LAMB93_IGN69.tif.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wfs/ows?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature&TYPENAMES=IGNF_LIDAR-HD_METADONNEE%3Ametadata&SRSNAME=EPSG%3A2154&BBOX=932359.4910580469%2C6257178.783418978%2C932361.4910580469%2C6257180.783418978%2CEPSG%3A2154&COUNT=20&OUTPUTFORMAT=application%2Fjson&SORTBY=coordonnees_nw+ASC",
+      "fetched_utc": "2026-10-03T10:36:38.346476+00:00",
+      "bytes": 2642,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:36:38 GMT",
+        "content-type": "application/json;charset=UTF-8",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "30",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "SAMEORIGIN",
+        "content-security-policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';, frame-ancestors 'self';",
+        "content-disposition": "inline; filename=metadata.json",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-origin": "*",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "transfer-encoding": "chunked",
+        "x-iplb-request-id": "5A774862:07BD_91EFC1E7:01BB_6AC0DAB6_BD973FFE:3DA25E",
+        "x-iplb-instance": "61218",
+        "connection": "close"
+      },
+      "sha256": "871f9856ae4af51cd72697987e2ccd69bd18f9f906a5d7cc290bf5c6d0b64e8e",
+      "seconds": 0.10999999998603016,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/var_ruine1/ign_metadata.geojson.http.json"
+    },
+    {
+      "url": "https://data.geopf.fr/wms-r?SERVICE=WMS&VERSION=1.3.0&EXCEPTIONS=text/xml&REQUEST=GetMap&LAYERS=IGNF_LIDAR-HD_MNT_ELEVATION.ELEVATIONGRIDCOVERAGE.LAMB93&FORMAT=image/geotiff&STYLES=&CRS=EPSG:2154&BBOX=931999.75,6257000.25,932999.75,6258000.25&WIDTH=2000&HEIGHT=2000&FILENAME=LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif",
+      "fetched_utc": "2026-10-03T10:45:08.103679+00:00",
+      "bytes": 16000513,
+      "headers": {
+        "date": "Sat, 03 Oct 2026 10:45:02 GMT",
+        "content-type": "image/geotiff",
+        "content-length": "16000513",
+        "x-ratelimit-limit-second": "1",
+        "ratelimit-limit": "40",
+        "www-authenticate": "Key realm=\"kong\"",
+        "cache-control": "private, max-age=1814400",
+        "content-disposition": "attachment; filename=\"LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif\"",
+        "access-control-allow-origin": "*",
+        "strict-transport-security": "max-age=31536000; includeSubDomains",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, PUT, POST, DELETE, PATCH, OPTIONS",
+        "access-control-allow-headers": "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,Content-Disposition,Content-Length,X-Community",
+        "access-control-max-age": "1728000",
+        "x-iplb-request-id": "5A774862:084C_91EFC1E7:01BB_6AC0DCAC_BE4CA31D:38C2F7",
+        "x-iplb-instance": "61217",
+        "connection": "close"
+      },
+      "sha256": "944ba52bb507f1a43874eaf64407bca72d78dd1b0da87c09c260be3b33d13be8",
+      "seconds": 7.23399999999674,
+      "sidecar_path": "cache/mapterhorn-comparison-ign/var_ruine1/inputs/LHD_FXX_0932_6258_MNT_O_0M50_LAMB93_IGN69.tif.http.json"
+    }
+  ],
+  "script_sha256": {
+    "providers/fr_ign.py": "03a60b8fe9a2e810e589ed24669be9f7cf349bf800c2261c09a5077b6c8e3c3d",
+    "_ombrages_pures.py": "ab31e474b97880b03e862f753a56fa1f4683af3c3751c34cdab6b79e67194b9a",
+    "tools/provider_candidates/compare_ign_mapterhorn.py": "ce137be1753c9ef6c09c796f619b2db6510eb9324fb4773e62d8b47ee0c317eb"
+  },
+  "excluded": [
+    {
+      "site": "mont_beuvray",
+      "reason": "Index IGN : 0 dalle MNT HD ; Mapterhorn : RGE ALTI, aucune source frhd2154 au centre."
+    }
+  ],
+  "versions": {
+    "python": "3.12.0 (tags/v3.12.0:0fb18b0, Oct  2 2023, 13:03:39) [MSC v.1935 64 bit (AMD64)]",
+    "numpy": "1.26.4",
+    "rasterio": "1.4.3"
+  }
+}
