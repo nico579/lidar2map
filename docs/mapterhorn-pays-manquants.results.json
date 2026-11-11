@@ -1,0 +1,723 @@
+{
+  "audit_utc": "2026-10-03T11:32:30.908400+00:00",
+  "active_provider_count": 66,
+  "active_countries": [
+    "at",
+    "au",
+    "be",
+    "ca",
+    "ch",
+    "cz",
+    "de",
+    "dk",
+    "ee",
+    "es",
+    "fi",
+    "fr",
+    "gb",
+    "ie",
+    "it",
+    "jp",
+    "lu",
+    "lv",
+    "nl",
+    "no",
+    "nz",
+    "ph",
+    "pl",
+    "pt",
+    "se",
+    "si",
+    "us"
+  ],
+  "mapterhorn_source_count": 151,
+  "mapterhorn_country_count": 32,
+  "absent_countries": {
+    "cy": [
+      {
+        "source": "cy",
+        "name": "Cyprus DTM 2019",
+        "website": "https://www.data.gov.cy/el/dataset/ypsometria-inspire",
+        "license": "CC BY 4.0",
+        "producer": "Τμήμα Κτηματολογίου και Χωρομετρίας",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/cy/LICENSE.pdf",
+        "resolution": 1,
+        "access_year": 2025,
+        "tarball_size": 6957598720,
+        "tarball_md5sum": "bad2c168fb71ea47ed32badeeae661e1",
+        "tarball_url": "https://download.mapterhorn.com/sources/cy.tar"
+      }
+    ],
+    "il": [
+      {
+        "source": "isr10",
+        "name": "10 meter Digital Elevation Model (DEM) of Israel",
+        "website": "https://www.jspacesystems.or.jp/ersdac/GDEM/E/",
+        "license": "ASTER GDEM Public Domain",
+        "producer": "ASTER GDEM courtesy of METI and NASA processed by 4cast LTD using VTbuilder",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/isr10/LICENSE.pdf",
+        "resolution": 10.0,
+        "access_year": 2026,
+        "tarball_size": 1449093120,
+        "tarball_md5sum": "80a845ff3f99877fcd5b4a123dbc3eca",
+        "tarball_url": "https://download.mapterhorn.com/sources/isr10.tar"
+      }
+    ],
+    "is": [
+      {
+        "source": "is",
+        "name": "ÍslandsDEM útgáfa 1.0",
+        "website": "https://gatt.lmi.is/geonetwork/srv/eng/catalog.search#/metadata/e6712430-a63c-4ae5-9158-c89d16da6361",
+        "license": "CC BY 4.0",
+        "producer": "Natural Science Institute of Iceland",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/is/LICENSE.pdf",
+        "resolution": 10.0,
+        "access_year": 2025,
+        "tarball_size": 1701160960,
+        "tarball_md5sum": "4d80c7f53fc39d9a4a40a192297604f3",
+        "tarball_url": "https://download.mapterhorn.com/sources/is.tar"
+      }
+    ],
+    "ro": [
+      {
+        "source": "ro",
+        "name": "LAKI II MNT 0.5m",
+        "website": "https://geoportal.ancpi.ro/portal/apps/webappviewer/index.html?id=3f34ee5af71c400396dda574f0d53274",
+        "license": "Romanian Open Government License v1.0 (OGL-ROU-1.0)",
+        "producer": "www.geoportal.gov.ro",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/ro/LICENSE.pdf",
+        "resolution": 0.5,
+        "access_year": 2025,
+        "tarball_size": 37634693120,
+        "tarball_md5sum": "a7a01f5395c9049e52d53d4af272ab3b",
+        "tarball_url": "https://download.mapterhorn.com/sources/ro.tar"
+      }
+    ],
+    "rw": [
+      {
+        "source": "rw",
+        "name": "Rwanda 10m Digital Elevation Model",
+        "website": "https://github.com/WASAC/rwanda-dem",
+        "license": "Creative Commons Namensnennung 4.0 International (CC BY 4.0)",
+        "producer": "the National Land Authority (NLA), Water and Sanitation Corporation (WASAC) Ltd., Rwanda through UNDP, EMD, and windPRO",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/rw/LICENSE.pdf",
+        "resolution": 10.0,
+        "access_year": 2026,
+        "tarball_size": 316180480,
+        "tarball_md5sum": "a17e0a79989abfa31678cc5b258cff32",
+        "tarball_url": "https://download.mapterhorn.com/sources/rw.tar"
+      }
+    ],
+    "sk": [
+      {
+        "source": "sk",
+        "name": "DMR v 5.0",
+        "website": "https://geoportal.gov.sk/gallery/datasets/detail/c310bf1e-68a0-43b9-9955-c7dad13a93aa?csrt=4917832570778447195",
+        "license": "CC BY Creative Commons Attribution („uvedenie autora“) 4.0",
+        "producer": "ÚGKK SR",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/sk/LICENSE.pdf",
+        "resolution": 1.0,
+        "access_year": 2025,
+        "tarball_size": 61222748160,
+        "tarball_md5sum": "681b0b9e66fe72c935b85cf02bff0b3c",
+        "tarball_url": "https://download.mapterhorn.com/sources/sk.tar"
+      }
+    ],
+    "tw": [
+      {
+        "source": "aatw",
+        "name": "2024 edition of the 20-meter grid digital terrain model Taiwan",
+        "website": "https://data.gov.tw/en/datasets/169807",
+        "license": "Open Government Data License, version 1.0",
+        "producer": "Department of Land Administration, MOI",
+        "license_pdf": "https://github.com/mapterhorn/mapterhorn/blob/main/source-catalog/aatw/LICENSE.pdf",
+        "resolution": 20,
+        "access_year": 2026,
+        "tarball_size": 150374400,
+        "tarball_md5sum": "1785de52c6ccf6469cc67c8547762c4b",
+        "tarball_url": "https://download.mapterhorn.com/sources/aatw.tar"
+      }
+    ]
+  },
+  "global_fallback_excluded": "glo30",
+  "territories_grouped": "Greenland and Faroe Islands with DK; Dutch Caribbean with NL; overseas FR with FR",
+  "probes": [
+    {
+      "source": "aatw",
+      "label": "Taipei",
+      "lon": 121.565,
+      "lat": 25.033,
+      "point_sources": [
+        "aatw",
+        "glo30"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/13724/7014.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/12/3431/1753.webp",
+      "zoom": 12,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 17.31421421929023,
+      "tile_elevation_min_m": -2.5,
+      "tile_elevation_max_m": 386.0,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "cy",
+      "label": "Larnaca",
+      "lon": 33.622,
+      "lat": 34.921,
+      "point_sources": [
+        "cy",
+        "glo30"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9722/6494.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/16/38888/25976.webp",
+      "zoom": 16,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 0.9792802952258575,
+      "tile_elevation_min_m": 5.96875,
+      "tile_elevation_max_m": 13.875,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "is",
+      "label": "Reykjavík",
+      "lon": -21.943,
+      "lat": 64.147,
+      "point_sources": [
+        "glo30",
+        "is"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/7193/4354.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/12/1798/1088.webp",
+      "zoom": 12,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 8.332853915482449,
+      "tile_elevation_min_m": -3.5,
+      "tile_elevation_max_m": 57.5,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "isr10",
+      "label": "Jérusalem",
+      "lon": 35.214,
+      "lat": 31.78,
+      "point_sources": [
+        "glo30",
+        "isr10"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9794/6665.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/13/4897/3332.webp",
+      "zoom": 13,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 8.122165981980249,
+      "tile_elevation_min_m": 594.25,
+      "tile_elevation_max_m": 829.5,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "ro",
+      "label": "Arad",
+      "lon": 21.31,
+      "lat": 46.18,
+      "point_sources": [
+        "glo30",
+        "ro"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9161/5816.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/16/36647/23267.webp",
+      "zoom": 16,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 0.8269472159546954,
+      "tile_elevation_min_m": 107.125,
+      "tile_elevation_max_m": 109.84375,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "rw",
+      "label": "Kigali",
+      "lon": 30.06,
+      "lat": -1.95,
+      "point_sources": [
+        "glo30",
+        "rw"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9560/8280.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/13/4780/4140.webp",
+      "zoom": 13,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 9.549095469673919,
+      "tile_elevation_min_m": 1371.5,
+      "tile_elevation_max_m": 1559.75,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    },
+    {
+      "source": "sk",
+      "label": "Bratislava, forêt au nord",
+      "lon": 17.072,
+      "lat": 48.2,
+      "point_sources": [
+        "glo30",
+        "sk"
+      ],
+      "expected_source_at_point": true,
+      "coverage_url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8968/5681.mvt",
+      "tile_url": "https://tiles.mapterhorn.com/16/35875/22726.webp",
+      "zoom": 16,
+      "tile_shape": [
+        512,
+        512,
+        3
+      ],
+      "ground_pixel_m_at_latitude": 0.7960587700225905,
+      "tile_elevation_min_m": 282.1875,
+      "tile_elevation_max_m": 343.5,
+      "note": "Sondage de disponibilité, pas une mesure de qualité altimétrique."
+    }
+  ],
+  "archive_headers": {
+    "ro": {
+      "archive_member": "files/T28193.tif",
+      "crs": "EPSG:3844",
+      "resolution": [
+        1.0,
+        1.0
+      ],
+      "shape": [
+        9482,
+        15433
+      ],
+      "transform": [
+        1.0,
+        0.0,
+        297968.5001220703,
+        0.0,
+        -1.0,
+        555405.5001220703,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "bounds": [
+        297968.5001220703,
+        545923.5001220703,
+        313401.5001220703,
+        555405.5001220703
+      ],
+      "nodata": -3.4028234663852886e+38,
+      "note": "En-tête d'une dalle du stock Mapterhorn; pas une comparaison des altitudes au natif officiel."
+    },
+    "cy": {
+      "archive_member": "files/ETRS89_1500_3700.tif",
+      "crs": "EPSG:4258",
+      "resolution": [
+        9.988184396126938e-06,
+        9.988184396128697e-06
+      ],
+      "shape": [
+        2269,
+        2756
+      ],
+      "transform": [
+        9.988184396126938e-06,
+        0.0,
+        32.45234085641981,
+        0.0,
+        -9.988184396128697e-06,
+        34.9817650685712,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "bounds": [
+        32.45234085641981,
+        34.959101878176384,
+        32.479868292615535,
+        34.9817650685712
+      ],
+      "nodata": -3.4028230607370965e+38,
+      "note": "En-tête d'une dalle du stock Mapterhorn; pas une comparaison des altitudes au natif officiel.",
+      "pixel_m_at_tile_center": [
+        0.9121309287803083,
+        1.1080895100325476
+      ]
+    }
+  },
+  "archive_footprints": {
+    "ro": {
+      "source": "ro",
+      "bbox_wgs84": [
+        20.705276754510226,
+        45.196239759762776,
+        23.773335595031252,
+        47.600055152937024
+      ],
+      "polygon_area_km2": 27975.960011008265,
+      "input": "cache\\mapterhorn-countries\\ro-coverage.gpkg",
+      "note": "Emprise généralisée du jeu archivé, pas une garantie pixel par pixel."
+    },
+    "cy": {
+      "source": "cy",
+      "bbox_wgs84": [
+        32.26942646151897,
+        34.56234006114751,
+        34.08763381456538,
+        35.20803405170247
+      ],
+      "polygon_area_km2": 5971.420680417639,
+      "input": "cache\\mapterhorn-countries\\cy-coverage.gpkg",
+      "note": "Emprise généralisée du jeu archivé, pas une garantie pixel par pixel."
+    }
+  },
+  "http_inputs": [
+    {
+      "cache_file": "attribution.json.http.json",
+      "url": "https://download.mapterhorn.com/attribution.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:22.608886+00:00",
+      "bytes": 94917,
+      "sha256": "09f9a9db46bd55a38b4612f0f76a771bd321ed5a75f6e9f3e1170f73eec312c2"
+    },
+    {
+      "cache_file": "cy-tar-prefix.http.json",
+      "url": "https://download.mapterhorn.com/sources/cy.tar",
+      "status": 206,
+      "fetched_utc": "2026-10-03T11:23:31.144276+00:00",
+      "bytes": 10485760,
+      "sha256": "3196349e70eebcb936be8764e6275d795bfd83e0ce492e22a8f0111cd8c408c3"
+    },
+    {
+      "cache_file": "official\\is-inspire.xml.http.json",
+      "url": "https://gatt.lmi.is/geonetwork/srv/api/records/e6712430-a63c-4ae5-9158-c89d16da6361/formatters/xml",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:19:24.032554+00:00",
+      "bytes": 51246,
+      "sha256": "e48dfe1361291a21060545efb53ad4b847a76bedb080caf2a913d192f1bb7dea"
+    },
+    {
+      "cache_file": "pipeline\\source_create_tarball.py.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/pipelines/source_create_tarball.py",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:20:50.210647+00:00",
+      "bytes": 1551,
+      "sha256": "354306829c3584fb146af38983b0d79ebf58137241135cafeed2c94a1412b974"
+    },
+    {
+      "cache_file": "probes\\aatw-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/13724/7014.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.315812+00:00",
+      "bytes": 94,
+      "sha256": "1091177807adbca59ef2b2c4d7b41e70e342490e7cc2738b32754531a58cae23"
+    },
+    {
+      "cache_file": "probes\\aatw-z12.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/12/3431/1753.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.885708+00:00",
+      "bytes": 108800,
+      "sha256": "5f6e3ba876e57afc3414965cb36c13fd7145ab5109c8f7c4d05a596ecfd988d7"
+    },
+    {
+      "cache_file": "probes\\cy-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9722/6494.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.937933+00:00",
+      "bytes": 1186,
+      "sha256": "3bed656167a91b6ba01fc08e7111b9159b66811a021b785ba6021a7abedf0885"
+    },
+    {
+      "cache_file": "probes\\cy-z16.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/16/38888/25976.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.819269+00:00",
+      "bytes": 71202,
+      "sha256": "e37383adf516ff3c3e5e9b9f262739e462846e7e0751d78c01b6c0430403519b"
+    },
+    {
+      "cache_file": "probes\\is-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/7193/4354.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.931043+00:00",
+      "bytes": 92,
+      "sha256": "ba5e12eb1d855b2d95d36481acf8175b2bad7f42e31b0c36cb9c53b8bbe70527"
+    },
+    {
+      "cache_file": "probes\\is-z12.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/12/1798/1088.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:21:26.304097+00:00",
+      "bytes": 31596,
+      "sha256": "827890599385cb4e22b0d4fc0bd58c384368b8cff049cb2d03267c4d266d0728"
+    },
+    {
+      "cache_file": "probes\\isr10-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9794/6665.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.014785+00:00",
+      "bytes": 95,
+      "sha256": "b1b00c2033a916f4d53e4cd8535ca2baa35ffbfe9746e1edc6992b2d6007841a"
+    },
+    {
+      "cache_file": "probes\\isr10-z13.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/13/4897/3332.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.183108+00:00",
+      "bytes": 101772,
+      "sha256": "7c107ea9be46ae1b3ff2b6106cdd8557e65496f42681675cfdce2b17ff743fe1"
+    },
+    {
+      "cache_file": "probes\\ro-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9161/5816.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.946439+00:00",
+      "bytes": 92,
+      "sha256": "b5253d61c0b9545c5a2edbaa5e02f354c733a389e67e96ffd2626061f4d30b04"
+    },
+    {
+      "cache_file": "probes\\ro-z16.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/16/36647/23267.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:21:26.459257+00:00",
+      "bytes": 62370,
+      "sha256": "26d52cf0f0e39fb5c5a9282bb9717a3a2eb2298743f83edee51b13b48bdc1e44"
+    },
+    {
+      "cache_file": "probes\\rw-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/9560/8280.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.149883+00:00",
+      "bytes": 92,
+      "sha256": "1ad68495be0aaab2190f944d15cf0741898e281c4abea5983b43524aace087b2"
+    },
+    {
+      "cache_file": "probes\\rw-z13.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/13/4780/4140.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.426830+00:00",
+      "bytes": 109504,
+      "sha256": "63594dd8600d58ebc6f43681f11098c94b48c58bee1ded9e1dbf25f0502d1031"
+    },
+    {
+      "cache_file": "probes\\sk-coverage.mvt.http.json",
+      "url": "https://single-archive-tiles.mapterhorn.com/coverage/14/8968/5681.mvt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.916505+00:00",
+      "bytes": 92,
+      "sha256": "bd878f94514ae1744399174a745f3ca7e41c7114ae06b1a0d56d2a45605bb81f"
+    },
+    {
+      "cache_file": "probes\\sk-z16.webp.http.json",
+      "url": "https://tiles.mapterhorn.com/16/35875/22726.webp",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:25.428925+00:00",
+      "bytes": 85162,
+      "sha256": "307b9591fb2ea062e76fed2e46b7eb34f6e28e647d21a2c85209c3b2cfc923b6"
+    },
+    {
+      "cache_file": "ro-tar-prefix.http.json",
+      "url": "https://download.mapterhorn.com/sources/ro.tar",
+      "status": 206,
+      "fetched_utc": "2026-10-03T11:23:30.079981+00:00",
+      "bytes": 16777216,
+      "sha256": "4b1f99e8d90bec8569db979798690baaca054be410ea1512dec1a8870cc58ca0"
+    },
+    {
+      "cache_file": "sources\\aatw\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/aatw/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.287412+00:00",
+      "bytes": 332,
+      "sha256": "da7825a87009de4de5adc6a401fa5588323afd5d048359742b702d811cf880bb"
+    },
+    {
+      "cache_file": "sources\\aatw\\README.md.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/aatw/README.md",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.457470+00:00",
+      "bytes": 46,
+      "sha256": "d9da73d534cfffc835591c0bb8817de1e2ac9d7d1391eb9dc9272a111049834f"
+    },
+    {
+      "cache_file": "sources\\cy\\create_file_list.py.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/cy/create_file_list.py",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.480637+00:00",
+      "bytes": 447,
+      "sha256": "fa8c8456705d4e28ade265a0883423f2352367c95d06efe00580efe04c5e3d5e"
+    },
+    {
+      "cache_file": "sources\\cy\\file_list.txt.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/cy/file_list.txt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.494600+00:00",
+      "bytes": 98348,
+      "sha256": "84053cc8ed7b653d08d66d1947a86816129ced0759713736f5e1ab790befbd47"
+    },
+    {
+      "cache_file": "sources\\cy\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/cy/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.482734+00:00",
+      "bytes": 373,
+      "sha256": "460af400477bddf7451f5bc8f2f82340743e89307799e6579704b44d71ea63ed"
+    },
+    {
+      "cache_file": "sources\\cy\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/cy/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.470480+00:00",
+      "bytes": 303,
+      "sha256": "c69cb52810cc924d8b03507208ddb2562b386368e1ce6afa0816b31e88649947"
+    },
+    {
+      "cache_file": "sources\\is\\file_list.txt.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/is/file_list.txt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.013549+00:00",
+      "bytes": 73,
+      "sha256": "dbdfa7e732072d74e3908153d2e6258cc66eafb322c470c82f7b231d34dc5186"
+    },
+    {
+      "cache_file": "sources\\is\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/is/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.983149+00:00",
+      "bytes": 296,
+      "sha256": "46411a3cc2a82e641af1e6a8058c4b9b80ffe4fbb1eb4803e75eff0368bd4dd3"
+    },
+    {
+      "cache_file": "sources\\is\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/is/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.954866+00:00",
+      "bytes": 343,
+      "sha256": "39a5b9515152059eb0bfe0738c7ae7bedcdbefe412b509d1c7fba3ca80c3de1a"
+    },
+    {
+      "cache_file": "sources\\isr10\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/isr10/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.041702+00:00",
+      "bytes": 270,
+      "sha256": "b9272cf969a9811b77937388e2c4bc405c395d09eb6fb857bdbccc6fc6c9a5a2"
+    },
+    {
+      "cache_file": "sources\\isr10\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/isr10/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.041702+00:00",
+      "bytes": 350,
+      "sha256": "a5f580b84d164c3d5df34c73ca2742584fcd61397ee43b703c9976026d85d35f"
+    },
+    {
+      "cache_file": "sources\\ro\\file_list.txt.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/ro/file_list.txt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.795833+00:00",
+      "bytes": 21380,
+      "sha256": "3f7cb2f4877cdfb66ea3cb3ae73fe41dd03fb086c464c0b710b97cc4b833cdf7"
+    },
+    {
+      "cache_file": "sources\\ro\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/ro/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.731099+00:00",
+      "bytes": 391,
+      "sha256": "d174a242eadc9c1655cbd03e7636f632e446853f6bf53343401d0cbf032c4170"
+    },
+    {
+      "cache_file": "sources\\ro\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/ro/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.482734+00:00",
+      "bytes": 340,
+      "sha256": "c66677cfc4a0467197d27f6f7f5b53a40e9a71a0c5eea5cacbf5326ebd19d66b"
+    },
+    {
+      "cache_file": "sources\\ro\\source_unzip_ro.py.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/ro/source_unzip_ro.py",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.785057+00:00",
+      "bytes": 1152,
+      "sha256": "df7a0e19c547e5cd41e7db20c36b614aa0ea6fc2ba2831d26c7c179977d45031"
+    },
+    {
+      "cache_file": "sources\\rw\\file_list.txt.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/rw/file_list.txt",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.259728+00:00",
+      "bytes": 63,
+      "sha256": "06f5e64a291d94a5c53e5b230be5eecb7922bbf9fb46038d65e14d1e0a0f154f"
+    },
+    {
+      "cache_file": "sources\\rw\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/rw/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.228728+00:00",
+      "bytes": 296,
+      "sha256": "724cd270f04b92d5f1c1e9657fc3954ef204423e40c4fb823b1681977aeeb35e"
+    },
+    {
+      "cache_file": "sources\\rw\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/rw/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.203649+00:00",
+      "bytes": 403,
+      "sha256": "4da9ac05cd56030572c13d8a417b4d155fb0d3bcab783bacf13da26e19c7c882"
+    },
+    {
+      "cache_file": "sources\\rw\\README.md.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/rw/README.md",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:24.233714+00:00",
+      "bytes": 128,
+      "sha256": "c2bf3a9918205c723aef4e37987e762f1e28ac08c3d7b741d57a7e1f4f50837e"
+    },
+    {
+      "cache_file": "sources\\sk\\Justfile.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/sk/Justfile",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.798826+00:00",
+      "bytes": 425,
+      "sha256": "1e3405df316249f7d3ad152848cc187ea69a0085b8fcee051c91a8e4c6abbe9b"
+    },
+    {
+      "cache_file": "sources\\sk\\metadata.json.http.json",
+      "url": "https://raw.githubusercontent.com/mapterhorn/mapterhorn/main/source-catalog/sk/metadata.json",
+      "status": 200,
+      "fetched_utc": "2026-10-03T11:18:23.749119+00:00",
+      "bytes": 348,
+      "sha256": "deb8cb1ed3f60a33ae75be04b5ba00a35be80c199772e18a108bcbcd41d69136"
+    }
+  ]
+}

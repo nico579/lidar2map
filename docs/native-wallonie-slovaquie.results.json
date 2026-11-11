@@ -1,0 +1,566 @@
+{
+  "archaeological_ground_truth_tested": false,
+  "slovakia_original_metadata": {
+    "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+    "archive_bytes": 196930690205,
+    "world_file": [
+      1.0,
+      0.0,
+      0.0,
+      -1.0,
+      191148.5,
+      5497219.5
+    ],
+    "metadata_sha256": "56574156b687c0b1885653cb89c1ef2a3b4c24ffbb6cf48cb9c354b94ebcb0a6",
+    "members_crc_checked": true,
+    "http_records": [
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=-65536",
+        "status": 206,
+        "content_range": "bytes 196930624669-196930690204/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 65536,
+        "date_utc": "2026-10-03T14:21:25.341499+00:00",
+        "sha256": "a5ea03dfbd6f32a694cc964fc3a413bf2d33c73948919bca0c44e71fad510f11"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=37-66",
+        "status": 206,
+        "content_range": "bytes 37-66/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 30,
+        "date_utc": "2026-10-03T14:17:50.606831+00:00",
+        "sha256": "404f1cd64421267a414e75f9d794be96b3a890f8c0d65d8280391e14409a30e0"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=67-88",
+        "status": 206,
+        "content_range": "bytes 67-88/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 22,
+        "date_utc": "2026-10-03T14:17:50.811496+00:00",
+        "sha256": "3415cb12a479a946bb9fa0143be1cae3651c1beb457ecf0d375e6b388183a220"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=89-128",
+        "status": 206,
+        "content_range": "bytes 89-128/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 40,
+        "date_utc": "2026-10-03T14:17:51.118860+00:00",
+        "sha256": "b23cc242197dc54bc436e9ba71babb3befef8ef0e007da962cb1d8da240e9771"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=196928189667-196928189696",
+        "status": 206,
+        "content_range": "bytes 196928189667-196928189696/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 30,
+        "date_utc": "2026-10-03T14:17:51.425491+00:00",
+        "sha256": "978084084ace2ac003a7d5713701c8121215b0c0baf943b5a0863b424b810a99"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=196928189697-196928189722",
+        "status": 206,
+        "content_range": "bytes 196928189697-196928189722/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 26,
+        "date_utc": "2026-10-03T14:17:51.733140+00:00",
+        "sha256": "c288a307cf45e5ec284f07301dd95ec2784f7ef8cee8b16b15f06a37544d38f1"
+      },
+      {
+        "url": "https://opendata.skgeodesy.sk/static/INSPIRE/Elevation/DTM5_0_etrs89-tm34_h.zip",
+        "range": "bytes=196928189723-196928192743",
+        "status": 206,
+        "content_range": "bytes 196928189723-196928192743/196930690205",
+        "etag": "\"669643f4-2dd9fbdc9d\"",
+        "last_modified": "Tue, 16 Jul 2024 09:57:08 GMT",
+        "bytes": 3021,
+        "date_utc": "2026-10-03T14:17:51.945130+00:00",
+        "sha256": "0b39d5547f45eef16857eec60ae7ed99c6b1ea71c792ffe2ea04c5905ee68924"
+      }
+    ],
+    "native_grid_matches_WCS": true
+  },
+  "samples": {
+    "sk_bratislava": {
+      "sample_center_wgs84": [
+        17.072,
+        48.2
+      ],
+      "tiles": [
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\tiles\\207\\sk_ugkk_dmr5_native_207_5345.tif",
+          "sha256": "7b3e1b5eecdeb24628edc4f2147073f9eb09c29d772ef5af8ad59da759744e13",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            207000.0,
+            5345000.0,
+            208000.0,
+            5346000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 289.02569580078125,
+          "max": 391.2008056640625
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\tiles\\207\\sk_ugkk_dmr5_native_207_5346.tif",
+          "sha256": "db0f2c4356f8e8f1eca0bf9524af55d437f6de859508e468b9b279d289e1d870",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            207000.0,
+            5346000.0,
+            208000.0,
+            5347000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 278.4800109863281,
+          "max": 391.28448486328125
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\tiles\\208\\sk_ugkk_dmr5_native_208_5345.tif",
+          "sha256": "97a45acbfda91b8bd0957e9ca7d1f265a60e486a184d7375a17b67426ec662df",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            208000.0,
+            5345000.0,
+            209000.0,
+            5346000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 260.1896057128906,
+          "max": 386.2821044921875
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\tiles\\208\\sk_ugkk_dmr5_native_208_5346.tif",
+          "sha256": "510cbdd8077e2cbfb497bc99095ed652d45712e8bba7591b3805fceb1172340d",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            208000.0,
+            5346000.0,
+            209000.0,
+            5347000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 297.8135986328125,
+          "max": 409.9652099609375
+        }
+      ],
+      "urls": {
+        "sk_ugkk_dmr5_native_207_5345.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28207000%2C208000%29&subset=N%285345000%2C5346000%29",
+        "sk_ugkk_dmr5_native_207_5346.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28207000%2C208000%29&subset=N%285346000%2C5347000%29",
+        "sk_ugkk_dmr5_native_208_5345.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28208000%2C209000%29&subset=N%285345000%2C5346000%29",
+        "sk_ugkk_dmr5_native_208_5346.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28208000%2C209000%29&subset=N%285346000%2C5347000%29"
+      },
+      "crop": {
+        "file": "cache\\native-provider-validation\\sk_bratislava\\native_crop.tif",
+        "sha256": "01595adc3d5b0c49889d7d7cb606175e348e3a72a277ae878ab0151c11f557d6",
+        "shape": [
+          400,
+          400
+        ],
+        "dtype": "float32",
+        "crs": "EPSG:3046",
+        "resolution": [
+          1.0,
+          1.0
+        ],
+        "bounds": [
+          207948.0,
+          5345793.0,
+          208348.0,
+          5346193.0
+        ],
+        "nodata": 3.3999999521443642e+38,
+        "valid_pixels": 160000,
+        "min": 326.24169921875,
+        "max": 387.5487976074219
+      },
+      "overlap_reference": {
+        "url": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28207948%2C208348%29&subset=N%285345793%2C5346193%29",
+        "method": "GET",
+        "date_utc": "2026-10-03T14:12:27.946850+00:00",
+        "status": 200,
+        "final_url": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28207948%2C208348%29&subset=N%285345793%2C5346193%29",
+        "headers": {
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "SAMEORIGIN",
+          "Content-Security-Policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'self';",
+          "Cross-Origin-Opener-Policy": "same-origin",
+          "Cross-Origin-Embedder-Policy": "require-corp",
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "Content-Disposition": "inline; filename=el__EL.GridCoverage.tif",
+          "Content-Type": "image/tiff",
+          "Date": "Sat, 03 Oct 2026 14:12:29 GMT",
+          "Connection": "close",
+          "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+          "Transfer-Encoding": "chunked"
+        },
+        "truncated": false,
+        "bytes_read": 640418,
+        "sha256": "e2ca411f5e32fd70b99df90e55134e2aab42b20a784291381ca7a2ec293e3c09"
+      },
+      "overlap_bitwise_identical": true,
+      "core_download_success": true,
+      "outputs": [
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\shadings\\sk_bratislava_lrm_s10m_ombrage.tif",
+          "sha256": "47efb94ae74ead423d29fb87ada0e3293ab57b8197c8ecf10db88a193295324d",
+          "shape": [
+            2000,
+            2000
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            207000.0,
+            5345000.0,
+            209000.0,
+            5347000.0
+          ],
+          "nodata": null,
+          "valid_pixels": 4000000,
+          "min": 0.0,
+          "max": 255.0
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_bratislava\\shadings\\sk_bratislava_svf_flux_15m_g1p0_ombrage.tif",
+          "sha256": "dd64c16e4e530fd18fe2bff1b196be5324db33788a87a907a4299f6fb9c8cd87",
+          "shape": [
+            2000,
+            2000
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            207000.0,
+            5345000.0,
+            209000.0,
+            5347000.0
+          ],
+          "nodata": null,
+          "valid_pixels": 4000000,
+          "min": 0.0,
+          "max": 255.0
+        }
+      ],
+      "raw_relief_stats": {
+        "lrm_sigma2_std_m": 0.060685232281684875,
+        "svf_min": 0.6897271275520325,
+        "svf_max": 1.0
+      }
+    },
+    "sk_banska_stiavnica": {
+      "sample_center_wgs84": [
+        18.907,
+        48.474
+      ],
+      "tiles": [
+        {
+          "file": "cache\\native-provider-validation\\sk_banska_stiavnica\\tiles\\345\\sk_ugkk_dmr5_native_345_5370.tif",
+          "sha256": "679a61b722eb59c41aed1fa89e6e12c9613824734d8983da2a2d8a482db2c3c9",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            345000.0,
+            5370000.0,
+            346000.0,
+            5371000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 568.772216796875,
+          "max": 738.4080200195312
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_banska_stiavnica\\tiles\\345\\sk_ugkk_dmr5_native_345_5371.tif",
+          "sha256": "65a7d158b96863f197aaeaf019b61276c625fa066e2be40ad9bc7fe6f47c5ca7",
+          "shape": [
+            1000,
+            1000
+          ],
+          "dtype": "float32",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            345000.0,
+            5371000.0,
+            346000.0,
+            5372000.0
+          ],
+          "nodata": 3.3999999521443642e+38,
+          "valid_pixels": 1000000,
+          "min": 573.7647705078125,
+          "max": 780.31982421875
+        }
+      ],
+      "urls": {
+        "sk_ugkk_dmr5_native_345_5370.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28345000%2C346000%29&subset=N%285370000%2C5371000%29",
+        "sk_ugkk_dmr5_native_345_5371.tif": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28345000%2C346000%29&subset=N%285371000%2C5372000%29"
+      },
+      "crop": {
+        "file": "cache\\native-provider-validation\\sk_banska_stiavnica\\native_crop.tif",
+        "sha256": "dc8150917795c7807676699e58e7f10da3301410671d0c2e6d4e68523c144aad",
+        "shape": [
+          400,
+          400
+        ],
+        "dtype": "float32",
+        "crs": "EPSG:3046",
+        "resolution": [
+          1.0,
+          1.0
+        ],
+        "bounds": [
+          345111.0,
+          5370901.0,
+          345511.0,
+          5371301.0
+        ],
+        "nodata": 3.3999999521443642e+38,
+        "valid_pixels": 160000,
+        "min": 608.127685546875,
+        "max": 731.6168212890625
+      },
+      "overlap_reference": {
+        "url": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28345111%2C345511%29&subset=N%285370901%2C5371301%29",
+        "method": "GET",
+        "date_utc": "2026-10-03T14:22:19.967215+00:00",
+        "status": 200,
+        "final_url": "https://inspirews.skgeodesy.sk/geoserver/el/ows?service=WCS&version=2.0.1&request=GetCoverage&coverageId=el__EL.GridCoverage&format=image%2Ftiff&subset=E%28345111%2C345511%29&subset=N%285370901%2C5371301%29",
+        "headers": {
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "SAMEORIGIN",
+          "Content-Security-Policy": "base-uri 'self'; form-action 'self'; default-src 'none'; child-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'self';",
+          "Cross-Origin-Opener-Policy": "same-origin",
+          "Cross-Origin-Embedder-Policy": "require-corp",
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "Content-Disposition": "inline; filename=el__EL.GridCoverage.tif",
+          "Content-Type": "image/tiff",
+          "Date": "Sat, 03 Oct 2026 14:22:20 GMT",
+          "Connection": "close",
+          "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+          "Transfer-Encoding": "chunked"
+        },
+        "truncated": false,
+        "bytes_read": 640418,
+        "sha256": "8465d071dcb4d112cda23f9283507ec2499cde01ee90082a08556f97f5534b7e"
+      },
+      "overlap_bitwise_identical": true,
+      "core_download_success": true,
+      "outputs": [
+        {
+          "file": "cache\\native-provider-validation\\sk_banska_stiavnica\\shadings\\sk_banska_stiavnica_lrm_s10m_ombrage.tif",
+          "sha256": "2159bbbc384421077ea874546f53e9efd7097bbb510acc7864865d88c0b10ce1",
+          "shape": [
+            2000,
+            1000
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            345000.0,
+            5370000.0,
+            346000.0,
+            5372000.0
+          ],
+          "nodata": null,
+          "valid_pixels": 2000000,
+          "min": 0.0,
+          "max": 255.0
+        },
+        {
+          "file": "cache\\native-provider-validation\\sk_banska_stiavnica\\shadings\\sk_banska_stiavnica_svf_flux_15m_g1p0_ombrage.tif",
+          "sha256": "cc5160407d84e2a8647aa9de55d0751ecf9998dc81c1219a4729ec7a3597b7f9",
+          "shape": [
+            2000,
+            1000
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3046",
+          "resolution": [
+            1.0,
+            1.0
+          ],
+          "bounds": [
+            345000.0,
+            5370000.0,
+            346000.0,
+            5372000.0
+          ],
+          "nodata": null,
+          "valid_pixels": 2000000,
+          "min": 0.0,
+          "max": 255.0
+        }
+      ],
+      "raw_relief_stats": {
+        "lrm_sigma2_std_m": 0.12225434184074402,
+        "svf_min": 0.3803401291370392,
+        "svf_max": 1.0
+      }
+    },
+    "be_wallonia": {
+      "crop": {
+        "file": "cache\\native-provider-validation\\be_wallonia_native_crop.tif",
+        "sha256": "79a8bac9e3220ab1661c11c7bd120b00f908efa894bb8dba72e095a2c8fe43ca",
+        "shape": [
+          256,
+          256
+        ],
+        "dtype": "float32",
+        "crs": "EPSG:3812",
+        "resolution": [
+          0.5,
+          0.5
+        ],
+        "bounds": [
+          676769.0,
+          666220.5,
+          676897.0,
+          666348.5
+        ],
+        "nodata": -9999.0,
+        "valid_pixels": 65536,
+        "min": 92.72312927246094,
+        "max": 96.06187438964844
+      },
+      "native_crop_bitwise_identical": true,
+      "access": "Archive officielle : préfixe séquentiel borné (33 554 432 octets)",
+      "automatic_provider_ready": false,
+      "archive_crc_checked": false,
+      "outputs": [
+        {
+          "file": "cache\\native-provider-validation\\be_wallonia\\shadings\\be_wallonia_lrm_s10m_ombrage.tif",
+          "sha256": "5dd8a91cafb812e13a7d426c7b213406c8751340e9254bb83190ba67c739daa3",
+          "shape": [
+            256,
+            256
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3812",
+          "resolution": [
+            0.5,
+            0.5
+          ],
+          "bounds": [
+            676769.0,
+            666220.5,
+            676897.0,
+            666348.5
+          ],
+          "nodata": null,
+          "valid_pixels": 65536,
+          "min": 0.0,
+          "max": 255.0
+        },
+        {
+          "file": "cache\\native-provider-validation\\be_wallonia\\shadings\\be_wallonia_svf_flux_15m_g1p0_ombrage.tif",
+          "sha256": "729c95592a3f61dfba6ad8fac9f192283c78c4bd642dbe257095538567343373",
+          "shape": [
+            256,
+            256
+          ],
+          "dtype": "uint8",
+          "crs": "EPSG:3812",
+          "resolution": [
+            0.5,
+            0.5
+          ],
+          "bounds": [
+            676769.0,
+            666220.5,
+            676897.0,
+            666348.5
+          ],
+          "nodata": null,
+          "valid_pixels": 65536,
+          "min": 0.0,
+          "max": 255.0
+        }
+      ],
+      "raw_relief_stats": {
+        "lrm_sigma2_std_m": 0.015628669410943985,
+        "svf_min": 0.9944548606872559,
+        "svf_max": 0.9999978542327881
+      }
+    }
+  },
+  "active_catalogue_unchanged": true,
+  "active_provider_count": 66
+}
