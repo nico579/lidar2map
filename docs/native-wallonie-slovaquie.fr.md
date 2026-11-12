@@ -15,7 +15,7 @@ Ces sources sont des **MNT officiels dérivés du LiDAR**, donc déjà classifi�
 
 ## Slovaquie : provider natif préparé
 
-Le [service WCS publié par GKÚ](https://www.gku.sk/geoportal/inspire/ukladacie-sluzby/) expose `el__EL.GridCoverage`, identifié comme le DMR 5.0. Le candidat `tools/provider_candidates/sk_ugkk.py` utilise directement `inspirews.skgeodesy.sk`. Il remplace notre ancien prototype Mapterhorn et demeure hors du catalogue actif.
+Le [service WCS publié par GKÚ](https://www.gku.sk/geoportal/inspire/ukladacie-sluzby/) expose `el__EL.GridCoverage`, identifié comme le DMR 5.0. Le candidat [sk_ugkk.py](../tools/provider_candidates/sk_ugkk.py) utilise directement `inspirews.skgeodesy.sk`. Il remplace notre ancien prototype Mapterhorn et demeure hors du catalogue actif.
 
 L'extraction conserve la grille officielle de 1 m en EPSG:3046, avec une bande Float32 et son NoData. Les requêtes ne demandent ni changement de CRS, ni mise à l'échelle, ni interpolation. Les bornes entières sont nécessaires : le premier essai avec des demi-pixels donnait 399 × 399 pixels et un décalage. Ce comportement a été corrigé dans le candidat, puis contrôlé.
 
