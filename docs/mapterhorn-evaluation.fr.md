@@ -18,7 +18,7 @@ grossier ne justifie pas un nouveau provider LiDAR.
 | `sk-ugkk` | DMR 5.0 LiDAR ÚGKK, source 1 m | Mapterhorn Terrarium WebP z16, source `sk`, grille EPSG:5514 à 1 m | Retiré : conservation du microrelief non qualifiée |
 | `de-sachsen` | DGM1 GeoSN natif, 1 m | ZIP GeoTIFF officiel de 2 km, EPSG:25833 à 1 m | Candidat natif, ajout soumis à validation de l'utilisateur |
 
-Les trois prototypes sont conservés dans `tools/provider_candidates/` (pas encore publié dans ce dépôt)
+Les trois prototypes sont conservés dans [tools/provider_candidates](../tools/provider_candidates/)
 et sont exclus du catalogue actif, de la GUI/CLI et de la carte de couverture.
 Tout nouvel ajout nécessite désormais la validation explicite de l'utilisateur.
 Un téléchargement correct et un export LRM/SVF valide prouvent le fonctionnement

@@ -174,7 +174,7 @@ candidats n'est activé par cette étude.
 
 - [Mesures CSV](mesures.csv), [résultats JSON avec entrées HTTP, dates et SHA-256](resultats.json).
 - [Graphique de synthèse SVG](synthese.svg), [profil SVG](profil_ruine1.svg).
-- Script isolé : `tools/provider_candidates/compare_ign_mapterhorn.py` (pas encore publié dans ce dépôt).
+- [Script isolé](../../tools/provider_candidates/compare_ign_mapterhorn.py).
 
 Depuis la racine du projet :
 
