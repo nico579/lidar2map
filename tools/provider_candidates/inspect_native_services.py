@@ -1,7 +1,4 @@
 """Inspection ponctuelle des configurations publiées par les portails officiels."""
-import re
-import json
-import html
 from probe_native_sources import fetch
 
 url = "https://zbgis.skgeodesy.sk/mapka/7104.d91c5f6dc5f62120.js"
