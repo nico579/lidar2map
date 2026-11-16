@@ -74,7 +74,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest, macos-15-intel]
+        # Linux en ubuntu-24.04, pas ubuntu-latest : passé à Ubuntu 26 le
+        # 19 octobre 2026, il n'a plus le paquet apt python3.12 qu'installe
+        # setup_build_linux.sh (release v1.63.5 tombée le 2026-11-16). Une glibc
+        # plus ancienne fait aussi un binaire qui tourne sur plus de systèmes.
+        os: [windows-latest, ubuntu-24.04, macos-latest, macos-15-intel]
 
     steps:
       - name: Checkout
