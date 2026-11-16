@@ -2264,7 +2264,6 @@ from _mbtiles_wmts_helpers import (
     _est_image_valide,
     _wmts_close_all_conns,
     _wmts_fetch as _wmts_fetch_impl,
-    _wmts_get_conn,        # noqa: F401 - réexport de façade (contrat historique)
     calculer_grille_xyz,
     compter_tuiles_xyz,
     construire_url_wmts,   # noqa: F401 - réexport de façade (contrat historique)

@@ -180,7 +180,6 @@ class PublicFacadeContractTests(unittest.TestCase):
         self.assertIs(L.compter_tuiles_xyz, mbtiles_wmts_helpers.compter_tuiles_xyz)
         self.assertIs(L.estimer_taille, mbtiles_wmts_helpers.estimer_taille)
         self.assertIs(L.construire_url_wmts, mbtiles_wmts_helpers.construire_url_wmts)
-        self.assertIs(L._wmts_get_conn, mbtiles_wmts_helpers._wmts_get_conn)
         self.assertIs(L._wmts_fetch_impl, mbtiles_wmts_helpers._wmts_fetch)
         self.assertIs(L._est_image_valide, mbtiles_wmts_helpers._est_image_valide)
         self.assertIs(

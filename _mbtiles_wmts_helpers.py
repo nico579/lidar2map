@@ -26,6 +26,9 @@ import urllib.request
 import xml.etree.ElementTree as _ET
 from dataclasses import dataclass
 
+from nico579_commons.tuiles import Connexions as _Connexions
+from nico579_commons.tuiles import est_image as _est_image
+
 
 @dataclass(frozen=True)
 class _DependancesTelechargementWmts:
@@ -253,112 +256,29 @@ def construire_url_wmts(z, x, y, layer, style, fmt, apikey, apikey_requis,
 
 
 
-# ── Connexions keep-alive pour le download WMTS ───────────────────────────────
-# urllib.request.urlopen rouvre une connexion TCP+TLS par tuile (~90 ms de
-# poignée de main perdus à chaque fois ; benchmark IGN planign : ~2x plus lent
-# qu'une connexion réutilisée). Les tuiles d'un batch tapent toutes le même hôte
-# (data.geopf.fr) : on garde une connexion HTTP/1.1 keep-alive par worker
-# (thread-local), réutilisée d'une tuile à l'autre, avec reconnexion auto si le
-# serveur ferme. Fermeture en fin de batch (generer_mbtiles_wmts).
+# ── Connexions keep-alive et contrôle des images ──────────────────────────────
+# Repris du commun (nico579_commons.tuiles, tiré de hike2gpx et de ce module) :
+# une connexion HTTP/1.1 gardée ouverte par fil et par hôte, redirections
+# suivies, et un corps validé par sa signature d'image (JPEG, PNG, GIF, WebP,
+# TIFF ; ni par taille, ni par Content-Type). Fermeture en fin de batch
+# (generer_mbtiles_wmts).
 
-_wmts_conn_tl    = threading.local()
-_wmts_conns      = []                  # connexions ouvertes (fermées en fin de batch)
-_wmts_conns_lock = threading.Lock()
-
-
-def _wmts_get_conn(scheme, host):
-    cache = getattr(_wmts_conn_tl, "by_host", None)
-    if cache is None:
-        cache = {}; _wmts_conn_tl.by_host = cache
-    conn = cache.get(host)
-    if conn is None:
-        cls = (http.client.HTTPSConnection if scheme == "https"
-               else http.client.HTTPConnection)
-        conn = cls(host, timeout=15)
-        cache[host] = conn
-        with _wmts_conns_lock:
-            _wmts_conns.append(conn)
-    return conn
-
-
-def _wmts_drop_conn(host):
-    cache = getattr(_wmts_conn_tl, "by_host", None)
-    if cache and host in cache:
-        try: cache[host].close()
-        except Exception: pass
-        del cache[host]
+_connexions_wmts = _Connexions()
 
 
 def _wmts_close_all_conns():
     """À appeler en fin de batch WMTS pour libérer les sockets keep-alive."""
-    with _wmts_conns_lock:
-        for c in _wmts_conns:
-            try: c.close()
-            except Exception: pass
-        _wmts_conns.clear()
+    _connexions_wmts.fermer()
 
 
 def _wmts_fetch(url, *, headers):
-    """GET via la connexion keep-alive thread-local (réutilisée d'une tuile à
-    l'autre). Retourne (status, content_type, data). Une reconnexion si la
-    connexion persistante a été fermée par le serveur.
-
-    Suit les redirections (301/302/303/307/308) jusqu'à 3 sauts :
-    http.client ne le fait pas seul (contrairement à urllib), et sans ça
-    une bascule d'infra côté serveur classerait tout le batch en erreurs
-    « HTTP 301 » peu parlantes."""
-    for _hop in range(4):
-        parts = urllib.parse.urlsplit(url)
-        host  = parts.netloc
-        path  = parts.path + (("?" + parts.query) if parts.query else "")
-        last_exc = None
-        reponse  = None
-        for _essai in (1, 2):
-            conn = _wmts_get_conn(parts.scheme, host)
-            try:
-                conn.request("GET", path, headers=headers)
-                resp = conn.getresponse()
-                data = resp.read()        # lecture complète = condition de réutilisation
-                reponse = (resp.status, resp.headers.get("content-type", ""),
-                           data, resp.headers.get("location"))
-                break
-            except (http.client.HTTPException, OSError) as e:
-                last_exc = e
-                _wmts_drop_conn(host)     # connexion morte → on en recrée une au prochain tour
-        if reponse is None:
-            raise last_exc if last_exc else IOError("WMTS fetch failed")
-        status, ct, data, loc = reponse
-        if status in (301, 302, 303, 307, 308) and loc:
-            url = urllib.parse.urljoin(url, loc)
-            continue
-        return status, ct, data
-    raise IOError(f"WMTS fetch: too many redirects ({url})")
+    """GET via la connexion keep-alive du fil (réutilisée d'une tuile à
+    l'autre) ; retourne (status, content_type, data). Reconnexion si le
+    serveur a fermé la connexion, redirections suivies (3 sauts)."""
+    return _connexions_wmts.obtenir(url, headers)
 
 
-def _est_image_valide(data):
-    """True si `data` commence par une signature d'image raster connue.
-
-    Validation par MAGIE, pas par taille (R2#16) : le jumeau des dalles valide
-    déjà son contenu (`_valider_tif_dalle`, magic TIFF), mais `telecharger_tuile`
-    ne se fiait qu'à un seuil `len < 500` → une tuile PNG uniforme valide (zone
-    de relief plat) tombait sous le seuil et était jetée = TROU de couverture,
-    tandis qu'une page d'erreur HTML/JSON >500 o servie en `image/png` passait
-    pour une tuile. Couvre JPEG/PNG/GIF/WebP/TIFF (tout ce qu'un WMTS raster
-    peut servir)."""
-    if not data or len(data) < 4:
-        return False
-    if data[:3] == b'\xff\xd8\xff':                       # JPEG
-        return True
-    if data[:8] == b'\x89PNG\r\n\x1a\n':                  # PNG
-        return True
-    if data[:6] in (b'GIF87a', b'GIF89a'):               # GIF
-        return True
-    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':     # WebP
-        return True
-    if data[:4] in (b'II\x2a\x00', b'MM\x00\x2a',         # TIFF / BigTIFF
-                    b'II\x2b\x00', b'MM\x00\x2b'):
-        return True
-    return False
+_est_image_valide = _est_image
 
 
 def telecharger_tuile(z, x, y, layer, style, fmt, apikey, apikey_requis,

@@ -21,6 +21,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Callable
 
+from nico579_commons.tuiles import FENETRE as FENETRE_PAR_CONNEXION
+
 
 @dataclass(frozen=True)
 class _DependancesMbtilesWMTS:
@@ -148,7 +150,10 @@ def generer_mbtiles_wmts(chemin, tuiles_iter, total, nom_zone, fmt_ext,
     con.commit()
 
     BATCH       = BATCH_MBTILES_INSERT
-    FENETRE     = workers * 4   # nb de futures en vol simultané — équilibre RAM/débit
+    # Futures en vol simultanément : la fenêtre du commun (32 par connexion),
+    # mesurée sur hike2gpx : une tuile lente n'arrête que sa connexion, et un
+    # commit SQLite lent ne vide pas la file. Équilibre RAM/débit.
+    FENETRE     = FENETRE_PAR_CONNEXION * workers
     batch       = []
     done        = 0
     ok          = 0
